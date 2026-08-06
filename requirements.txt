@@ -6,3 +6,4 @@ requests
 sqlalchemy
 asyncpg
 python-dotenv
+httpx
