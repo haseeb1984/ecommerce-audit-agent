@@ -1,21 +1,11 @@
 import os
 import json
 import requests
-from typing import Optional
 from pydantic import BaseModel
 from groq import Groq
-from supabase import create_client, Client
+from sqlalchemy.ext.asyncio import AsyncSession
+from models import AuditLead
 
-# =====================================================================
-# 1. SUPABASE DATABASE INITIALIZATION
-# =====================================================================
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-supabase: Optional[Client] = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
-
-# =====================================================================
-# 2. SCHEMAS
-# =====================================================================
 class StoreAuditMetrics(BaseModel):
     domain: str
     mobile_score: int
@@ -37,9 +27,6 @@ class LeadDossier(BaseModel):
     contact: ContactInfo
     pitch: PersonalizedPitch
 
-# =====================================================================
-# 3. AGENT CLASS WITH MULTI-MODEL DATABASE LOGGING
-# =====================================================================
 class UniversalEcommerceAgent:
     def __init__(self):
         self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -53,12 +40,17 @@ class UniversalEcommerceAgent:
             params["key"] = self.pagespeed_key
 
         try:
-            res = requests.get(endpoint, params=params, timeout=25)
+            res = requests.get(endpoint, params=params, timeout=20)
             data = res.json()
             lighthouse = data.get("lighthouseResult", {})
             score = int((lighthouse.get("categories", {}).get("performance", {}).get("score", 0)) * 100)
             speed_index = float(lighthouse.get("audits", {}).get("speed-index", {}).get("numericValue", 0) / 1000.0)
-            return StoreAuditMetrics(domain=clean_domain, mobile_score=score, speed_index_sec=round(speed_index, 2), is_slow=score < 60)
+            return StoreAuditMetrics(
+                domain=clean_domain,
+                mobile_score=score,
+                speed_index_sec=round(speed_index, 2),
+                is_slow=score < 60
+            )
         except Exception:
             return StoreAuditMetrics(domain=clean_domain, mobile_score=45, speed_index_sec=4.5, is_slow=True)
 
@@ -80,27 +72,23 @@ class UniversalEcommerceAgent:
         parsed = json.loads(response.choices[0].message.content)
         return PersonalizedPitch(**parsed)
 
-    def process_and_save_lead(self, domain: str, user_email: str = "", source: str = "web_audit") -> LeadDossier:
+    async def process_and_save_lead(self, domain: str, user_email: str, db: AsyncSession, source: str = "web_audit") -> LeadDossier:
         audit_res = self.run_audit(domain)
         contact_res = ContactInfo(email=user_email if user_email else f"contact@{audit_res.domain}")
         pitch_res = self.generate_pitch(audit_res, contact_res)
 
-        dossier = LeadDossier(store_url=domain, audit=audit_res, contact=contact_res, pitch=pitch_res)
+        # Asynchronously log lead into Supabase
+        db_lead = AuditLead(
+            domain=audit_res.domain,
+            mobile_score=audit_res.mobile_score,
+            speed_index_sec=audit_res.speed_index_sec,
+            contact_email=contact_res.email,
+            revenue_leak_hypothesis=pitch_res.revenue_leak_hypothesis,
+            email_subject=pitch_res.email_subject,
+            email_body=pitch_res.email_body,
+            source_channel=source
+        )
+        db.add(db_lead)
+        await db.commit()
 
-        # Log lead to database for Model 3 (Data Sales) & Model 2 (Agency Outreach)
-        if supabase:
-            try:
-                supabase.table("leads").insert({
-                    "domain": audit_res.domain,
-                    "mobile_score": audit_res.mobile_score,
-                    "speed_index": audit_res.speed_index_sec,
-                    "contact_email": contact_res.email,
-                    "revenue_leak": pitch_res.revenue_leak_hypothesis,
-                    "email_subject": pitch_res.email_subject,
-                    "email_body": pitch_res.email_body,
-                    "source_channel": source
-                }).execute()
-            except Exception as e:
-                print(f"[Database Error] {e}")
-
-        return dossier
+        return LeadDossier(store_url=domain, audit=audit_res, contact=contact_res, pitch=pitch_res)
