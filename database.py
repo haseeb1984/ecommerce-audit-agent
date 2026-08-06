@@ -1,12 +1,19 @@
-# database.py
 import os
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
-# Ensure DATABASE_URL uses postgresql+asyncpg://
+# Declarative Base required by models.py
+Base = declarative_base()
+
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Standardize postgres connection string to use asyncpg driver
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+asyncpg://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# Configure low-overhead connection pool for serverless environment
 engine = create_async_engine(
     DATABASE_URL,
     pool_pre_ping=True,
