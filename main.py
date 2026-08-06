@@ -1,9 +1,14 @@
+import logging
 from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
+
+# Configure basic logging for Vercel stdout
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("audit_service")
 
 app = FastAPI(title="AI E-Commerce Audit Engine")
 agent = UniversalEcommerceAgent()
@@ -22,6 +27,7 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
             "result": result.scalar()
         }
     except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
 @app.post("/audit-lead", response_model=LeadDossier)
@@ -35,4 +41,8 @@ async def audit_lead(
         dossier = await agent.process_and_save_lead(domain=domain, user_email=email, db=db, source=source)
         return dossier
     except Exception as e:
+        logger.error(f"Audit failed for domain {domain}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Ensure Vercel ASGI loader finds the app
+app = app
