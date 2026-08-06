@@ -2,7 +2,7 @@ import os
 import json
 import httpx
 from pydantic import BaseModel
-from groq import Groq
+from groq import AsyncGroq
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import AuditLead
 
@@ -34,7 +34,10 @@ class LeadDossier(BaseModel):
 
 class UniversalEcommerceAgent:
     def __init__(self):
-        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set.")
+        self.groq_client = AsyncGroq(api_key=api_key)
         self.pagespeed_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
 
     async def run_audit(self, domain: str) -> StoreAuditMetrics:
@@ -71,14 +74,14 @@ class UniversalEcommerceAgent:
                 domain=clean_domain, mobile_score=45, speed_index_sec=4.5, is_slow=True
             )
 
-    def generate_pitch(self, audit: StoreAuditMetrics, contact: ContactInfo) -> PersonalizedPitch:
+    async def generate_pitch(self, audit: StoreAuditMetrics, contact: ContactInfo) -> PersonalizedPitch:
         system_prompt = f"""
         You are an elite E-commerce Agency Strategist.
         1. Write a 3-sentence cold email to {contact.first_name} pointing out their mobile score ({audit.mobile_score}/100) is burning ad budget.
         2. End with a soft question offering a 90-second loom video.
         Respond STRICTLY in valid JSON with keys: "revenue_leak_hypothesis", "email_subject", "email_body".
         """
-        response = self.groq_client.chat.completions.create(
+        response = await self.groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"},
             messages=[
@@ -95,12 +98,10 @@ class UniversalEcommerceAgent:
     async def process_and_save_lead(
         self, domain: str, user_email: str, db: AsyncSession, source: str = "web_audit"
     ) -> LeadDossier:
-        # Fully async PageSpeed audit call
         audit_res = await self.run_audit(domain)
         contact_res = ContactInfo(email=user_email if user_email else f"contact@{audit_res.domain}")
-        pitch_res = self.generate_pitch(audit_res, contact_res)
+        pitch_res = await self.generate_pitch(audit_res, contact_res)
 
-        # Asynchronously log lead into Supabase
         db_lead = AuditLead(
             domain=audit_res.domain,
             mobile_score=audit_res.mobile_score,
