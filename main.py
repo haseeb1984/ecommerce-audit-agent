@@ -1,22 +1,16 @@
 import os
-from fastapi import FastAPI, HTTPException
-from ecommerce_agent import EcommerceLeadAgent, LeadDossier
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from database import get_db
 
-app = FastAPI(title="Free E-Commerce Audit Agent API")
+app = FastAPI()
 
-agent = EcommerceLeadAgent(
-    agency_name="Apex Commerce Labs",
-    agency_offering="Mobile Speed & Conversion Rate Optimization (CRO) for Shopify Stores"
-)
-
-@app.get("/")
-def home():
-    return {"status": "Free Groq AI Agent is online and operational."}
-
-@app.post("/audit-lead", response_model=LeadDossier)
-def audit_lead(domain: str):
+@app.get("/health-check")
+def health_check(db: Session = Depends(get_db)):
     try:
-        dossier = agent.process_lead(domain)
-        return dossier
+        # Simple ping query to confirm connection
+        result = db.execute(text("SELECT 1")).fetchone()
+        return {"status": "success", "db_connected": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
