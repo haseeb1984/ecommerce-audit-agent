@@ -1,21 +1,27 @@
 import hashlib
 from datetime import datetime, timezone
 from fastapi import Security, HTTPException, status, Depends
-from fastapi.security.api_key import APIKeyHeader
+from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from fastapi.security import APIKeyHeader
+
 from database import get_async_db
 from models import SoftwareLicense, APIKey, AuditLead
 
-#API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
-#LICENSE_HEADER = APIKeyHeader(name="X-License-Key", auto_error=False)
+# Define explicit scheme_names to prevent Swagger UI schema collisions
+API_KEY_HEADER = APIKeyHeader(
+    name="X-API-Key",
+    scheme_name="APIKeyAuth",
+    auto_error=False,
+    description="SaaS Client API Key"
+)
 
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False, description="Enter your API Key")
-LICENSE_HEADER = APIKeyHeader(name="X-License-Key", auto_error=False, description="Enter your Software License Key")
-
-
-
+LICENSE_HEADER = APIKeyHeader(
+    name="X-License-Key",
+    scheme_name="LicenseKeyAuth",
+    auto_error=False,
+    description="Software License Key"
+)
 
 async def verify_license_or_api_key(
     api_key: str = Security(API_KEY_HEADER),
@@ -59,7 +65,7 @@ async def verify_license_or_api_key(
             detail="License expired. Renewal required."
         )
 
-    # Validate Usage Quotas (Current Month)
+    # Validate Monthly Quotas
     first_day_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     count_stmt = select(func.count(AuditLead.id)).where(
         AuditLead.license_id == license_obj.id,
