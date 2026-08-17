@@ -13,7 +13,8 @@ logger = logging.getLogger("audit_service")
 
 app = FastAPI(
     title="AI E-Commerce Audit Engine - Commercial Edition",
-    description="Multi-model API serving SaaS, Managed Services, White-Label, and Enterprise integrations."
+    description="Multi-model API serving SaaS, Managed Services, White-Label, and Enterprise integrations.",
+    swagger_ui_parameters={"persistAuthorization": True}
 )
 agent = UniversalEcommerceAgent()
 
