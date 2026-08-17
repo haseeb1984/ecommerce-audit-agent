@@ -4,12 +4,18 @@ from fastapi import Security, HTTPException, status, Depends
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-
+from fastapi.security import APIKeyHeader
 from database import get_async_db
 from models import SoftwareLicense, APIKey, AuditLead
 
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
-LICENSE_HEADER = APIKeyHeader(name="X-License-Key", auto_error=False)
+#API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+#LICENSE_HEADER = APIKeyHeader(name="X-License-Key", auto_error=False)
+
+API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False, description="Enter your API Key")
+LICENSE_HEADER = APIKeyHeader(name="X-License-Key", auto_error=False, description="Enter your Software License Key")
+
+
+
 
 async def verify_license_or_api_key(
     api_key: str = Security(API_KEY_HEADER),
