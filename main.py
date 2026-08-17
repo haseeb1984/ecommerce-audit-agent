@@ -1,5 +1,6 @@
 import logging
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
@@ -16,7 +17,38 @@ app = FastAPI(
     description="Multi-model API serving SaaS, Managed Services, White-Label, and Enterprise integrations.",
     swagger_ui_parameters={"persistAuthorization": True}
 )
+
 agent = UniversalEcommerceAgent()
+
+# Custom OpenAPI schema override to show both X-API-Key and X-License-Key in Swagger UI
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version="1.0.0",
+        description=app.description,
+        routes=app.routes,
+    )
+    # Define OR security requirement so Swagger UI presents both fields separately
+    openapi_schema["components"]["securitySchemes"] = {
+        "APIKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "Enter your X-API-Key"
+        },
+        "LicenseKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-License-Key",
+            "description": "Enter your X-License-Key"
+        }
+    }
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 @app.get("/")
 def read_root():
@@ -31,8 +63,8 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         logger.error(f"Health check failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
-# Authorized Endpoint supporting SaaS / Managed Service / Enterprise
 @app.post("/api/v1/audit-lead", response_model=LeadDossier)
+@app.post("/api/v1/audit-lead/", response_model=LeadDossier, include_in_schema=False)
 async def audit_lead(
     domain: str = Query(..., description="E-commerce store URL/domain"),
     email: str = Query("", description="User email for audit copy"),
@@ -41,10 +73,8 @@ async def audit_lead(
     db: AsyncSession = Depends(get_async_db)
 ):
     try:
-        # Run Audit & Generate Pitch
         dossier = await agent.process_and_save_lead(domain=domain, user_email=email, db=db, source=source)
         
-        # Attach License Context for Billing / Tracking
         db_lead = AuditLead(
             license_id=license_obj.id,
             domain=dossier.audit.domain,
