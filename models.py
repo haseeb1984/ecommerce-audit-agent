@@ -1,4 +1,6 @@
 import hashlib
+from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index
 from sqlalchemy.orm import relationship
 from database import Base
@@ -71,7 +73,7 @@ class AuditQuotaReservation(Base):
         nullable=False,
         index=True,
     )
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
     license = relationship("SoftwareLicense", back_populates="audit_reservations")
