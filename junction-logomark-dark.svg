@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <title>Junction Systems Mark</title>
+  <rect width="200" height="200" rx="44" fill="#09090B"/>
+  
+  <rect x="51.60" y="38.40" width="96.80" height="26.40" rx="6" fill="#10B981"/>
+  <polygon points="139.60,38.40 161.60,51.60 139.60,64.80" fill="#09090B"/>
+  <rect x="135.20" y="64.80" width="26.40" height="83.60" rx="6" fill="#10B981"/>
+  <rect x="64.80" y="148.40" width="70.40" height="26.40" rx="6" fill="#10B981"/>
+</svg>
