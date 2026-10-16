@@ -59,9 +59,9 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
     try:
         result = await db.execute(text("SELECT 1"))
         return {"status": "success", "db_connected": True, "result": result.scalar()}
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
+    except Exception:
+        logger.exception("Health check failed")
+        raise HTTPException(status_code=500, detail="Database connection error")
 
 @app.post("/api/v1/audit-lead", response_model=LeadDossier)
 @app.post("/api/v1/audit-lead/", response_model=LeadDossier, include_in_schema=False)
@@ -73,8 +73,9 @@ async def audit_lead(
     db: AsyncSession = Depends(get_async_db)
 ):
     try:
-        dossier = await agent.process_and_save_lead(domain=domain, user_email=email, db=db, source=source)
-        
+        dossier = await agent.process_lead(domain=domain, user_email=email, source=source)
+
+        # Persist one row per successful audit. The agent only gathers metrics and builds the pitch.
         db_lead = AuditLead(
             license_id=license_obj.id,
             domain=dossier.audit.domain,
@@ -90,6 +91,12 @@ async def audit_lead(
         await db.commit()
 
         return dossier
-    except Exception as e:
-        logger.error(f"Audit execution error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        await db.rollback()
+        logger.exception("Audit execution failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Audit execution failed. Check server logs for diagnostic details."
+        )
