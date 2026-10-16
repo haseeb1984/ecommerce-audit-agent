@@ -246,8 +246,9 @@ async def test_api_key_authentication_and_revocation(client, mock_process_lead):
 
 @pytest.mark.asyncio
 async def test_missing_domain_is_rejected(client):
+    await create_license(key="domain-validation-license")
     response = await client.post(
         "/api/v1/audit-lead",
-        headers={"X-License-Key": "not-needed-before-validation"},
+        headers={"X-License-Key": "domain-validation-license"},
     )
     assert response.status_code == 422
