@@ -15,26 +15,27 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+asyncpg://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Keep certificate and hostname verification enabled for database TLS.
-ssl_context = ssl.create_default_context()
+# TLS verification is enabled by default. Only disable it explicitly for local test databases.
+connect_args = {
+    "timeout": 10.0,
+    "command_timeout": 10.0,
+    "server_settings": {
+        "tcp_user_timeout": "10000"
+    },
+}
+if os.getenv("DATABASE_SSL", "true").lower() not in {"0", "false", "no"}:
+    connect_args["ssl"] = ssl.create_default_context()
 
 engine = create_async_engine(
     DATABASE_URL,
     poolclass=NullPool,
-    connect_args={
-        "ssl": ssl_context,
-        "timeout": 10.0,
-        "command_timeout": 10.0,
-        "server_settings": {
-            "tcp_user_timeout": "10000"
-        }
-    }
+    connect_args=connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
-    expire_on_commit=False
+    expire_on_commit=False,
 )
 
 
