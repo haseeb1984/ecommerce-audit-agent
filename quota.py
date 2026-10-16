@@ -28,6 +28,7 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
             select(SoftwareLicense)
             .where(SoftwareLicense.id == license_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         license_obj = result.scalar_one_or_none()
 
@@ -41,7 +42,6 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
                 detail="License is invalid, expired, or revoked.",
             )
 
-        # Expired reservations no longer count against quota; delete them opportunistically.
         await db.execute(
             delete(AuditQuotaReservation).where(
                 AuditQuotaReservation.license_id == license_id,
