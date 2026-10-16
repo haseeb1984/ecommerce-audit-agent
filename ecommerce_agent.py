@@ -82,7 +82,7 @@ class UniversalEcommerceAgent:
         Respond STRICTLY in valid JSON with keys: "revenue_leak_hypothesis", "email_subject", "email_body".
         """
         response = await self.groq_client.chat.completions.create(
-            model="meta-llama/llama-3.3-70b-versatile",
+            model="qwen/qwen3.8-27b",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
