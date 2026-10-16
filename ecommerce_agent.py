@@ -5,7 +5,6 @@ import logging
 import httpx
 from pydantic import BaseModel
 from groq import AsyncGroq
-from models import AuditLead
 
 
 logger = logging.getLogger(__name__)
