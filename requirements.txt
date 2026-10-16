@@ -7,3 +7,7 @@ sqlalchemy
 asyncpg
 python-dotenv
 httpx
+supabase
+sqlalchemy[asyncio]
+greenlet
+psycopg2-binary
