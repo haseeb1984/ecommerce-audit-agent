@@ -1,7 +1,10 @@
 import hashlib
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, func
+from datetime import datetime, timezone
+
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index
 from sqlalchemy.orm import relationship
 from database import Base
+
 
 class SoftwareLicense(Base):
     __tablename__ = "software_licenses"
@@ -17,6 +20,7 @@ class SoftwareLicense(Base):
 
     api_keys = relationship("APIKey", back_populates="license")
     leads = relationship("AuditLead", back_populates="license")
+    audit_reservations = relationship("AuditQuotaReservation", back_populates="license")
 
 
 class APIKey(Base):
@@ -51,3 +55,25 @@ class AuditLead(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     license = relationship("SoftwareLicense", back_populates="leads")
+
+
+class AuditQuotaReservation(Base):
+    """Short-lived, durable quota slot held while an audit runs outside a DB transaction."""
+
+    __tablename__ = "audit_quota_reservations"
+    __table_args__ = (
+        Index("ix_audit_quota_reservations_license_created", "license_id", "created_at"),
+        Index("ix_audit_quota_reservations_expires_at", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    license = relationship("SoftwareLicense", back_populates="audit_reservations")

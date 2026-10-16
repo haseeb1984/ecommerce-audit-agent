@@ -1,12 +1,13 @@
 import hashlib
 from datetime import datetime, timezone
+
 from fastapi import Security, HTTPException, status, Depends
 from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from database import get_async_db
-from models import SoftwareLicense, APIKey, AuditLead
+from models import SoftwareLicense, APIKey
 
 # Define explicit scheme_names to prevent Swagger UI schema collisions
 API_KEY_HEADER = APIKeyHeader(
@@ -23,36 +24,33 @@ LICENSE_HEADER = APIKeyHeader(
     description="Software License Key"
 )
 
+
 async def verify_license_or_api_key(
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
     db: AsyncSession = Depends(get_async_db)
 ) -> SoftwareLicense:
-    
+    """Authenticate a caller without holding a database lock during audit work."""
+
     if not api_key and not license_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed. Provide 'X-API-Key' or 'X-License-Key' header."
         )
 
-    stmt = None
     if api_key:
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         stmt = (
             select(SoftwareLicense)
             .join(APIKey)
-            .where(APIKey.api_key_hash == key_hash, SoftwareLicense.is_active == True)
+            .where(APIKey.api_key_hash == key_hash, SoftwareLicense.is_active.is_(True))
         )
-    elif license_key:
+    else:
         stmt = select(SoftwareLicense).where(
             SoftwareLicense.license_key == license_key,
-            SoftwareLicense.is_active == True
+            SoftwareLicense.is_active.is_(True)
         )
 
-    # Serialize requests for the same license until the audit transaction commits.
-    # This keeps the quota check and subsequent AuditLead insert in one lock scope,
-    # preventing parallel requests from both consuming the final available slot.
-    stmt = stmt.with_for_update(of=SoftwareLicense)
     result = await db.execute(stmt)
     license_obj = result.scalar_one_or_none()
 
@@ -62,25 +60,10 @@ async def verify_license_or_api_key(
             detail="Invalid or revoked license key / API key."
         )
 
-    # Validate License Expiration
     if license_obj.expires_at and license_obj.expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="License expired. Renewal required."
-        )
-
-    # Validate Monthly Quotas after acquiring the license row lock.
-    first_day_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    count_stmt = select(func.count(AuditLead.id)).where(
-        AuditLead.license_id == license_obj.id,
-        AuditLead.created_at >= first_day_of_month
-    )
-    usage_count = (await db.execute(count_stmt)).scalar() or 0
-
-    if usage_count >= license_obj.max_monthly_audits:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Monthly audit quota of {license_obj.max_monthly_audits} exceeded for tier '{license_obj.tier}'."
         )
 
     return license_obj
