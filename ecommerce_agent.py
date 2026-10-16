@@ -1,10 +1,13 @@
 import os
 import json
+import logging
+
 import httpx
 from pydantic import BaseModel
 from groq import AsyncGroq
-from sqlalchemy.ext.asyncio import AsyncSession
-from models import AuditLead
+
+
+logger = logging.getLogger(__name__)
 
 
 class StoreAuditMetrics(BaseModel):
@@ -52,27 +55,73 @@ class UniversalEcommerceAgent:
             params["key"] = self.pagespeed_key
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 res = await client.get(endpoint, params=params)
-                data = res.json()
 
-            lighthouse = data.get("lighthouseResult", {})
-            score = int(
-                (lighthouse.get("categories", {}).get("performance", {}).get("score", 0)) * 100
+            if res.is_error:
+                try:
+                    error_data = res.json().get("error", {})
+                    error_message = error_data.get("message", "No error message provided")
+                except (ValueError, AttributeError):
+                    error_message = "Google returned a non-JSON error response"
+
+                logger.error(
+                    "PageSpeed API returned HTTP %s for %s: %s",
+                    res.status_code,
+                    clean_domain,
+                    error_message,
+                )
+                raise RuntimeError(
+                    f"Google PageSpeed API returned HTTP {res.status_code}. "
+                    "Check the API key, API restrictions, and Google Cloud configuration."
+                )
+
+            data = res.json()
+            lighthouse = data.get("lighthouseResult")
+            if not isinstance(lighthouse, dict):
+                raise RuntimeError(
+                    "Google PageSpeed API response did not contain a Lighthouse report."
+                )
+
+            performance_score = (
+                lighthouse.get("categories", {})
+                .get("performance", {})
+                .get("score")
             )
-            speed_index = float(
-                lighthouse.get("audits", {}).get("speed-index", {}).get("numericValue", 0) / 1000.0
+            speed_index_ms = (
+                lighthouse.get("audits", {})
+                .get("speed-index", {})
+                .get("numericValue")
             )
+
+            if performance_score is None or speed_index_ms is None:
+                raise RuntimeError(
+                    "Google PageSpeed Lighthouse report is missing performance score "
+                    "or Speed Index."
+                )
+
+            performance_score = float(performance_score)
+            speed_index_ms = float(speed_index_ms)
+            if not 0 <= performance_score <= 1 or speed_index_ms < 0:
+                raise RuntimeError(
+                    "Google PageSpeed returned out-of-range performance metrics."
+                )
+
+            score = round(performance_score * 100)
+            speed_index = speed_index_ms / 1000.0
             return StoreAuditMetrics(
                 domain=clean_domain,
                 mobile_score=score,
                 speed_index_sec=round(speed_index, 2),
                 is_slow=score < 60,
             )
-        except Exception:
-            return StoreAuditMetrics(
-                domain=clean_domain, mobile_score=45, speed_index_sec=4.5, is_slow=True
-            )
+        except RuntimeError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+            logger.exception("PageSpeed audit failed for %s", clean_domain)
+            raise RuntimeError(
+                "Google PageSpeed audit failed. Check server logs for diagnostic details."
+            ) from exc
 
     async def generate_pitch(self, audit: StoreAuditMetrics, contact: ContactInfo) -> PersonalizedPitch:
         system_prompt = f"""
@@ -95,24 +144,11 @@ class UniversalEcommerceAgent:
         parsed = json.loads(response.choices[0].message.content)
         return PersonalizedPitch(**parsed)
 
-    async def process_and_save_lead(
-        self, domain: str, user_email: str, db: AsyncSession, source: str = "web_audit"
+    async def process_lead(
+        self, domain: str, user_email: str, source: str = "web_audit"
     ) -> LeadDossier:
         audit_res = await self.run_audit(domain)
         contact_res = ContactInfo(email=user_email if user_email else f"contact@{audit_res.domain}")
         pitch_res = await self.generate_pitch(audit_res, contact_res)
-
-        db_lead = AuditLead(
-            domain=audit_res.domain,
-            mobile_score=audit_res.mobile_score,
-            speed_index_sec=audit_res.speed_index_sec,
-            contact_email=contact_res.email,
-            revenue_leak_hypothesis=pitch_res.revenue_leak_hypothesis,
-            email_subject=pitch_res.email_subject,
-            email_body=pitch_res.email_body,
-            source_channel=source,
-        )
-        db.add(db_lead)
-        await db.commit()
 
         return LeadDossier(store_url=domain, audit=audit_res, contact=contact_res, pitch=pitch_res)
