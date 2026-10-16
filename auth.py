@@ -49,6 +49,10 @@ async def verify_license_or_api_key(
             SoftwareLicense.is_active == True
         )
 
+    # Serialize requests for the same license until the audit transaction commits.
+    # This keeps the quota check and subsequent AuditLead insert in one lock scope,
+    # preventing parallel requests from both consuming the final available slot.
+    stmt = stmt.with_for_update(of=SoftwareLicense)
     result = await db.execute(stmt)
     license_obj = result.scalar_one_or_none()
 
@@ -65,7 +69,7 @@ async def verify_license_or_api_key(
             detail="License expired. Renewal required."
         )
 
-    # Validate Monthly Quotas
+    # Validate Monthly Quotas after acquiring the license row lock.
     first_day_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     count_stmt = select(func.count(AuditLead.id)).where(
         AuditLead.license_id == license_obj.id,
