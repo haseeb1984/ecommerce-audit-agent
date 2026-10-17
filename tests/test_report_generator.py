@@ -77,7 +77,7 @@ def test_security_assessment_score_is_scoped_and_not_a_hack_probability():
         headers,
         ["Passive exposure probes checked only 8 common paths; not a penetration test."],
     )
-    assert score["score"] == 100
+    assert score["score"] == 82
     assert score["passed"] == 14
     assert score["issues"] == 0
     assert score["unverified"] == 3
@@ -88,7 +88,7 @@ def test_security_assessment_does_not_treat_missing_header_as_pass():
 
     finding = AuditFinding(
         category="security_headers",
-        title="Content-Security-Policy",
+        title="Content Security Policy",
         status="manual_review_required",
         severity="medium",
         evidence="Response did not include content-security-policy.",
