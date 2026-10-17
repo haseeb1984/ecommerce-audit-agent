@@ -1,7 +1,5 @@
-import ipaddress
 from urllib.parse import urlsplit
 
-import httpx
 import pytest
 
 import audit_checks
@@ -60,46 +58,82 @@ def test_homepage_findings_include_evidence_and_verification_steps():
     assert any(item.title == "Images missing an alt attribute" for item in findings)
 
 
+class FakeContent:
+    def __init__(self, body):
+        self.body = body.encode()
+
+    async def iter_chunked(self, size):
+        yield self.body
+
+
+class FakeResponse:
+    def __init__(self, status, headers=None, body=""):
+        self.status = status
+        self.headers = headers or {}
+        self.charset = "utf-8"
+        self.content = FakeContent(body)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class FakeSession:
+    def __init__(self, handler):
+        self.handler = handler
+        self.urls = []
+
+    def get(self, url, allow_redirects=False):
+        self.urls.append(url)
+        return self.handler(url)
+
+
 @pytest.mark.asyncio
-async def test_safe_get_rejects_redirect_to_localhost(monkeypatch):
-    async def public_host(host):
-        if host == "shop.example":
-            return None
-        raise ValueError("private host blocked")
-
-    monkeypatch.setattr(audit_checks, "_resolve_public_host", public_host)
-
-    async def handler(request):
-        return httpx.Response(302, headers={"Location": "http://127.0.0.1/admin"})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
-        with pytest.raises(ValueError):
-            await audit_checks._safe_get(client, "https://shop.example/")
+async def test_safe_get_rejects_redirect_to_localhost():
+    client = FakeSession(lambda url: FakeResponse(302, {"Location": "http://127.0.0.1/admin"}))
+    with pytest.raises(ValueError):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
 
 
 @pytest.mark.asyncio
-async def test_safe_get_follows_only_revalidated_public_redirects(monkeypatch):
-    checked = []
+async def test_safe_get_follows_relative_redirect():
+    def handler(url):
+        if urlsplit(url).path == "/":
+            return FakeResponse(301, {"Location": "/home"})
+        return FakeResponse(200, {"Content-Type": "text/html"}, "<h1>Store</h1>")
 
-    async def public_host(host):
-        checked.append(host)
-        if host != "shop.example":
-            raise ValueError("private host blocked")
-
-    monkeypatch.setattr(audit_checks, "_resolve_public_host", public_host)
-
-    async def handler(request):
-        if request.url.path == "/":
-            return httpx.Response(301, headers={"Location": "/home"})
-        return httpx.Response(200, headers={"Content-Type": "text/html"}, text="<h1>Store</h1>")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
-        status, body, headers, final_url = await audit_checks._safe_get(client, "https://shop.example/")
-
+    client = FakeSession(handler)
+    status, body, headers, final_url = await audit_checks._safe_get(client, "https://shop.example/")
     assert status == 200
     assert "<h1>Store</h1>" in body
     assert urlsplit(final_url).path == "/home"
-    assert checked == ["shop.example", "shop.example"]
+    assert len(client.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_private_dns_answer(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve("test.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_pins_public_ip(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    result = await audit_checks.PublicOnlyResolver().resolve("public.example", 443)
+    assert result[0]["host"] == "8.8.8.8"
+    assert result[0]["hostname"] == "public.example"
 
 @pytest.mark.parametrize(
     "viewport,expected_title",
