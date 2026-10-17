@@ -11,3 +11,4 @@ supabase
 sqlalchemy[asyncio]
 greenlet
 psycopg2-binary
+reportlab>=4.2,<5.0
