@@ -99,7 +99,7 @@ def test_security_assessment_does_not_treat_missing_header_as_pass():
     score = calculate_security_assessment([finding], [])
     assert score["score"] == 0
     assert score["issues"] == 1
-    assert score["unverified"] == 16
+    assert score["unverified"] == 22
 
 
 def test_security_assessment_is_not_zero_when_all_checks_are_unverified():
@@ -109,8 +109,8 @@ def test_security_assessment_is_not_zero_when_all_checks_are_unverified():
     assert score["score"] is None
     assert score["passed"] == 0
     assert score["issues"] == 0
-    assert score["unverified"] == 17
-    assert score["assessed"] == 17
+    assert score["unverified"] == 23
+    assert score["assessed"] == 23
 
 
 def test_security_assessment_keeps_unknown_controls_out_of_pass_count():
