@@ -30,7 +30,6 @@ def inspect_exposure_response(path: str, status: int, body: str,
     if status < 200 or status >= 300:
         return []
     normalized_path = urlsplit(path).path.lower()
-    content_type = headers.get("content-type", "").lower()
     matched = None
     safe_evidence = ""
 
@@ -78,6 +77,13 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
             status, body, headers, final_url = await _safe_get(client, url)
         except Exception as exc:
             # A failed probe is not evidence that the path is secure or vulnerable.
+            continue
+        final_parts = urlsplit(final_url)
+        base_parts = urlsplit(origin)
+        # Do not attribute a redirect to a different origin/path to the requested artifact.
+        if (final_parts.scheme.lower(), final_parts.netloc.lower(), final_parts.path.lower()) != (
+            base_parts.scheme.lower(), base_parts.netloc.lower(), path.lower()
+        ):
             continue
         findings.extend(inspect_exposure_response(path, status, body, headers, final_url))
     return findings, limitations
