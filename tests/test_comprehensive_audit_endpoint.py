@@ -82,6 +82,6 @@ async def test_comprehensive_audit_rejects_private_target_before_quota(monkeypat
             )
         assert response.status_code == 422
         reserve.assert_not_awaited()
-        db.added == []
+        assert db.added == []
     finally:
         main.app.dependency_overrides.clear()
