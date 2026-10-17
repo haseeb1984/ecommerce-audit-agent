@@ -100,3 +100,22 @@ async def test_safe_get_follows_only_revalidated_public_redirects(monkeypatch):
     assert "<h1>Store</h1>" in body
     assert urlsplit(final_url).path == "/home"
     assert checked == ["shop.example", "shop.example"]
+
+@pytest.mark.parametrize(
+    "viewport,expected_title",
+    [
+        ("", "Mobile viewport"),
+        ("width=980", "Viewport may use a fixed layout width"),
+        ("width=device-width, initial-scale=1, user-scalable=no", "Viewport may restrict zoom"),
+        ("width=device-width, initial-scale=1, maximum-scale=1.0", "Viewport may restrict zoom"),
+        ("width=device-width, initial-scale=1", "Mobile viewport declaration"),
+    ],
+)
+def test_viewport_checks_identify_common_mobile_misconfigurations(viewport, expected_title):
+    meta = f'<meta name="viewport" content="{viewport}">' if viewport else ""
+    findings = audit_checks.inspect_homepage(
+        f"<html><head>{meta}</head><body><h1>Shop</h1></body></html>",
+        "https://shop.example/",
+        {},
+    )
+    assert any(f.title == expected_title for f in findings)
