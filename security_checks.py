@@ -278,54 +278,57 @@ async def inspect_transport_security(client, homepage_html: str, final_url: str)
         except Exception as exc:
             limitations.append(f"HTTP-to-HTTPS redirect behavior could not be verified ({type(exc).__name__}).")
 
-    # Static source inspection only: this does not see JavaScript-injected resources or CSS URLs.
-    try:
-        from html.parser import HTMLParser
-
-        class _MixedContentParser(HTMLParser):
-            def __init__(self):
-                super().__init__(convert_charrefs=True)
-                self.resources = []
-
-            def handle_starttag(self, tag, attrs):
-                values = {key.lower(): value or "" for key, value in attrs}
-                tag = tag.lower()
-                resource_attrs = {
-                    "script": ("src", True), "iframe": ("src", True),
-                    "img": ("src", False), "audio": ("src", False),
-                    "video": ("src", False), "source": ("src", False),
-                    "link": ("href", False),
-                }
-                if tag not in resource_attrs:
-                    return
-                attr, active = resource_attrs[tag]
-                value = values.get(attr, "").strip()
-                if value.lower().startswith("http://"):
-                    self.resources.append((tag, active, value))
-
-        parser = _MixedContentParser()
-        parser.feed(homepage_html)
-        active = [item for item in parser.resources if item[1]]
-        passive = [item for item in parser.resources if not item[1]]
-        if active or passive:
-            findings.append(_finding(
-                "security_transport", "HTTP resources referenced by HTTPS page", "verified",
-                "high" if active else "medium",
-                f"Static HTML contains {len(active)} potentially active and {len(passive)} potentially passive HTTP resource reference(s). URLs are omitted to avoid unnecessarily reproducing third-party addresses.",
-                "HTTP resources inside an HTTPS page may be blocked by browsers or expose visitors to tampering. Browser mixed-content rules vary by resource type and browser.",
-                "Change eligible resource URLs to HTTPS, remove obsolete resources, and test all storefront flows. Review CSS and JavaScript-injected requests in browser DevTools as well.",
-                ["Open browser DevTools Console and Network on the HTTPS page.", "Confirm no required resource is loaded over HTTP."],
-                final_url,
-            ))
-        else:
-            findings.append(_finding(
-                "security_transport", "No static HTTP mixed-content references detected", "verified", "info",
-                "No HTTP URLs were found in the inspected HTML attributes for common script, frame, image, media, and link resources.",
-                "This is a static source check only; CSS URLs, redirects, and JavaScript-injected resources may still use HTTP.",
-                "Check the browser's mixed-content console and network requests for a complete runtime view.",
-                ["Review DevTools Console and Network on representative pages."],
-                final_url,
-            ))
-    except Exception as exc:
-        limitations.append(f"Static mixed-content inspection could not be completed ({type(exc).__name__}).")
+    # Static mixed-content inspection applies only to HTTPS documents.
+    if parsed.scheme.lower() != "https":
+        limitations.append("Mixed-content inspection was skipped because the final page URL is not HTTPS.")
+    else:
+        try:
+            from html.parser import HTMLParser
+    
+            class _MixedContentParser(HTMLParser):
+                def __init__(self):
+                    super().__init__(convert_charrefs=True)
+                    self.resources = []
+    
+                def handle_starttag(self, tag, attrs):
+                    values = {key.lower(): value or "" for key, value in attrs}
+                    tag = tag.lower()
+                    resource_attrs = {
+                        "script": ("src", True), "iframe": ("src", True),
+                        "img": ("src", False), "audio": ("src", False),
+                        "video": ("src", False), "source": ("src", False),
+                        "link": ("href", False),
+                    }
+                    if tag not in resource_attrs:
+                        return
+                    attr, active = resource_attrs[tag]
+                    value = values.get(attr, "").strip()
+                    if value.lower().startswith("http://"):
+                        self.resources.append((tag, active, value))
+    
+            parser = _MixedContentParser()
+            parser.feed(homepage_html)
+            active = [item for item in parser.resources if item[1]]
+            passive = [item for item in parser.resources if not item[1]]
+            if active or passive:
+                findings.append(_finding(
+                    "security_transport", "HTTP resources referenced by HTTPS page", "verified",
+                    "high" if active else "medium",
+                    f"Static HTML contains {len(active)} potentially active and {len(passive)} potentially passive HTTP resource reference(s). URLs are omitted to avoid unnecessarily reproducing third-party addresses.",
+                    "HTTP resources inside an HTTPS page may be blocked by browsers or expose visitors to tampering. Browser mixed-content rules vary by resource type and browser.",
+                    "Change eligible resource URLs to HTTPS, remove obsolete resources, and test all storefront flows. Review CSS and JavaScript-injected requests in browser DevTools as well.",
+                    ["Open browser DevTools Console and Network on the HTTPS page.", "Confirm no required resource is loaded over HTTP."],
+                    final_url,
+                ))
+            else:
+                findings.append(_finding(
+                    "security_transport", "No static HTTP mixed-content references detected", "verified", "info",
+                    "No HTTP URLs were found in the inspected HTML attributes for common script, frame, image, media, and link resources.",
+                    "This is a static source check only; CSS URLs, redirects, and JavaScript-injected resources may still use HTTP.",
+                    "Check the browser's mixed-content console and network requests for a complete runtime view.",
+                    ["Review DevTools Console and Network on representative pages."],
+                    final_url,
+                ))
+        except Exception as exc:
+            limitations.append(f"Static mixed-content inspection could not be completed ({type(exc).__name__}).")
     return findings, limitations
