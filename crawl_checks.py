@@ -212,6 +212,46 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     final_url,
                 ))
 
+            if looks_like_category:
+                category_schema_found = False
+                category_schema_types = {"collectionpage", "itemlist"}
+                for script_text in page_parser.jsonld_scripts:
+                    try:
+                        schema_data = json.loads(script_text)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    stack = [schema_data]
+                    while stack:
+                        item = stack.pop()
+                        if isinstance(item, dict):
+                            raw_type = item.get("@type", [])
+                            types = raw_type if isinstance(raw_type, list) else [raw_type]
+                            normalized_types = {
+                                str(value).rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower()
+                                for value in types
+                            }
+                            if normalized_types.intersection(category_schema_types):
+                                category_schema_found = True
+                            stack.extend(value for value in item.values() if isinstance(value, (dict, list)))
+                        elif isinstance(item, list):
+                            stack.extend(item)
+
+                findings.append(_finding(
+                    "structured_data",
+                    "Category/list structured data detected" if category_schema_found else "Category/list structured data not detected",
+                    "verified" if category_schema_found else "manual_review_required",
+                    "info" if category_schema_found else "low",
+                    (
+                        f"Detected CollectionPage or ItemList JSON-LD on category-like URL {final_url}."
+                        if category_schema_found else
+                        f"No CollectionPage or ItemList type was detected in the inspected JSON-LD on category-like URL {final_url}."
+                    ),
+                    "Collection and item-list markup may describe a category page, but structured-data needs vary by site and search feature. Its absence alone does not prove an SEO defect.",
+                    "Review whether structured data is useful for this template, ensure any markup accurately reflects visible page content, and validate it with a structured-data tool. Do not add schema just to chase a ranking guarantee.",
+                    ["Inspect the rendered category page and its JSON-LD.", "Validate any markup with Schema.org Validator and applicable search-engine documentation."],
+                    final_url,
+                ))
+
             if looks_like_product:
                 product_nodes: list[dict] = []
                 for script_text in page_parser.jsonld_scripts:
