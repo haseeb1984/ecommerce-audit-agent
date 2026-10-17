@@ -144,6 +144,39 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # A canonical tag is a search-engine hint. Flag an off-origin target
+            # for human review rather than assuming it is wrong in every setup.
+            if page_parser.canonical_href:
+                canonical_url = urljoin(final_url, page_parser.canonical_href)
+                canonical_parts = urlsplit(canonical_url)
+                final_parts = urlsplit(final_url)
+                if (canonical_parts.scheme.lower() not in {"http", "https"}
+                        or not canonical_parts.hostname
+                        or canonical_parts.scheme.lower() != final_parts.scheme.lower()
+                        or canonical_parts.netloc.lower() != final_parts.netloc.lower()):
+                    findings.append(_finding(
+                        "technical_seo", "Canonical URL points outside this page origin",
+                        "manual_review_required", "medium",
+                        f"Page {final_url} declares canonical href={page_parser.canonical_href!r}, resolving to {canonical_url}.",
+                        "A canonical tag tells search engines which URL should represent similar or duplicate content. An off-origin canonical may be intentional for syndicated content, but can also divert indexing signals away from this store.",
+                        "Confirm that the canonical destination is intentional, controlled, indexable, and the preferred version of this page. Do not change it without checking duplicate and platform routing behavior.",
+                        ["Inspect the canonical element in page source.", "Compare the declared canonical with the preferred URL and the destination response."],
+                        final_url,
+                    ))
+
+            robots_tokens = {token.strip().lower() for token in page_parser.meta_robots.replace(";", ",").split(",") if token.strip()}
+            if "noindex" in robots_tokens or "none" in robots_tokens:
+                findings.append(_finding(
+                    "indexability", "Page contains a noindex directive",
+                    "verified", "medium",
+                    f"Page {final_url} has meta robots content={page_parser.meta_robots!r}.",
+                    "The directive asks compliant search crawlers not to index this page. That may be correct for private, duplicate, cart, or account pages, but can be a problem on product or category pages intended to appear in search.",
+                    "Confirm this page should be excluded from search. If it should be indexed, remove the unintended noindex directive and verify the response headers do not also send X-Robots-Tag: noindex.",
+                    ["Inspect the page source and response headers.", "Check the URL's indexing status in the site owner's search console."],
+                    final_url,
+                ))
+
             if page_parser.title_text:
                 title_pages[page_parser.title_text.strip().casefold()].append(url)
             if page_parser.meta_description:
