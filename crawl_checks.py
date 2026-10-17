@@ -179,6 +179,22 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             page_parser = _PageParser()
             page_parser.feed(body)
 
+            # Check mobile viewport on sampled internal pages too; presence alone
+            # cannot establish that the rendered layout is responsive.
+            if not page_parser.viewport and url != _canonical_page_url(final_home):
+                findings.append(_finding(
+                    "mobile_ux", "Internal page has no viewport declaration in returned HTML",
+                    "manual_review_required", "medium",
+                    f"No meta name=\"viewport\" was found in returned HTML for {final_url}.",
+                    "A missing viewport declaration can cause mobile browsers to use a wider virtual layout. This source-only check cannot prove the rendered behavior, and JavaScript may alter the DOM.",
+                    "Inspect the rendered page and add an appropriate responsive viewport declaration if it is genuinely missing. Do not disable user zoom.",
+                    [
+                        "Inspect the rendered DOM and page source for meta name=\"viewport\".",
+                        "Test reflow at 320 CSS px and common mobile widths, including zoom.",
+                    ],
+                    final_url,
+                ))
+
             # Static resource patterns are review signals, not measured Core Web Vitals.
             findings.extend(inspect_static_performance_signals(body, final_url))
 
