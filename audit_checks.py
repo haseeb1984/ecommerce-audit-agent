@@ -343,6 +343,8 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
         "content-security-policy": ("Content Security Policy", "medium"),
         "x-content-type-options": ("X-Content-Type-Options", "low"),
         "referrer-policy": ("Referrer-Policy", "low"),
+        "x-frame-options": ("X-Frame-Options", "medium"),
+        "permissions-policy": ("Permissions-Policy", "low"),
     }
     for header, (label, severity) in security_headers.items():
         value = headers.get(header)
