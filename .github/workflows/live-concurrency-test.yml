@@ -1,0 +1,23 @@
+name: Temporary live concurrency test
+
+on:
+  push:
+    branches:
+      - test/live-concurrency-script
+    paths:
+      - ".github/workflows/live-concurrency-test.yml"
+      - "scripts/test_live_concurrency.py"
+  workflow_dispatch:
+
+jobs:
+  live-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+      - name: Run two simultaneous requests against live API
+        env:
+          AUDIT_TEST_LICENSE_KEY: CONCURRENCY-TEST-2026-10-17
+          AUDIT_BASE_URL: https://ecommerce-audit-agent.vercel.app
+        run: python scripts/test_live_concurrency.py
