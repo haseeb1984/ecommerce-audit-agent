@@ -211,3 +211,99 @@ async def test_bounded_crawl_uses_same_origin_sitemap_urls(monkeypatch):
     assert product in checked
     assert not any("outside.example" in url for url in requests)
     assert any("sitemap.xml" in item for item in limitations)
+
+
+
+@pytest.mark.asyncio
+async def test_product_jsonld_reports_missing_common_properties_for_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title>'
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"Product","name":"Product One"}'
+            '</script></head><body><h1>Product One</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    property_finding = next(
+        f for f in findings if f.title == "Product JSON-LD needs property review"
+    )
+    assert property_finding.status == "manual_review_required"
+    assert "image" in property_finding.evidence
+    assert "offers (price and availability details)" in property_finding.evidence
+
+
+@pytest.mark.asyncio
+async def test_product_jsonld_with_common_properties_has_no_property_gap_finding(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title>'
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"Product","name":"Product One",'
+            '"image":["https://shop.example/one.jpg"],"offers":{"@type":"Offer",'
+            '"price":"10.00","priceCurrency":"USD","availability":"https://schema.org/InStock"}}'
+            '</script></head><body><h1>Product One</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert not any(f.title == "Product JSON-LD needs property review" for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_category_like_page_without_h1_is_flagged_for_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/collections/shoes">Shoes</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Shoes</title></head><body><div>Products</div></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert any(
+        f.title == "Category-like page has no H1 in returned HTML"
+        and f.status == "manual_review_required"
+        for f in findings
+    )
