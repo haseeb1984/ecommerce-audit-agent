@@ -93,7 +93,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 continue
             if parts.username or parts.password:
                 continue
-            if parts.hostname.lower().rstrip(".") != (final_origin.hostname or "").lower().rstrip("."):
+            if parts.scheme.lower() != final_origin.scheme.lower() or parts.netloc.lower() != final_origin.netloc.lower():
                 continue
             candidate = _canonical_page_url(absolute)
             if candidate in seen or candidate == _canonical_page_url(final_home):
