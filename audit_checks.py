@@ -180,12 +180,20 @@ class _PageParser(HTMLParser):
         self.links = 0
         self._title_parts: list[str] = []
         self._h1_parts: list[str] = []
+        self.jsonld_scripts: list[str] = []
+        self._in_jsonld_script = False
+        self._jsonld_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
         if tag == "title":
             self._in_title = True
+        elif tag == "script":
+            script_type = values.get("type", "").split(";", 1)[0].strip().lower()
+            if script_type == "application/ld+json":
+                self._in_jsonld_script = True
+                self._jsonld_parts = []
         elif tag == "meta":
             name = values.get("name", "").strip().lower()
             if name == "description":
@@ -212,6 +220,12 @@ class _PageParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
             self._in_title = False
+        elif tag.lower() == "script" and self._in_jsonld_script:
+            value = "".join(self._jsonld_parts).strip()
+            if value:
+                self.jsonld_scripts.append(value)
+            self._jsonld_parts = []
+            self._in_jsonld_script = False
         elif tag.lower() == "h1":
             if self._in_h1:
                 text = " ".join("".join(self._h1_parts).split())
@@ -220,6 +234,8 @@ class _PageParser(HTMLParser):
             self._in_h1 = False
 
     def handle_data(self, data: str) -> None:
+        if self._in_jsonld_script:
+            self._jsonld_parts.append(data)
         if self._in_title:
             self._title_parts.append(data)
             self.title_text = " ".join("".join(self._title_parts).split())
