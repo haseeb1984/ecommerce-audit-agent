@@ -85,7 +85,7 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
         passed += max(0, checked_paths - len(exposure_findings) - unverified_probes)
     else:
         checked_paths = 0
-        unverified += 8
+        unverified += 14
 
     transport_titles = {
         "TLS certificate validity and expiry",
