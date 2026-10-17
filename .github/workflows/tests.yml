@@ -10,7 +10,7 @@ on:
       - "requirements-dev.txt"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
