@@ -167,3 +167,64 @@ def test_security_assessment_does_not_count_not_tested_info_transport_as_pass():
     assert score["issues"] == 0
     assert score["unverified"] == 23
     assert score["score"] is None
+
+
+
+def test_repeated_same_issue_is_consolidated_across_pages():
+    from report_generator import _consolidate_findings
+
+    shared = dict(
+        category="accessibility",
+        title="Buttons may have no accessible name",
+        status="verified",
+        severity="high",
+        explanation="Screen-reader users may not understand the purpose of these buttons.",
+        recommendation="Give each button an accessible name that describes its action.",
+        verification_steps=["Inspect the accessible name of each affected button."],
+    )
+    result = _consolidate_findings([
+        AuditFinding(
+            **shared,
+            evidence="Button without an accessible name found on the home page.",
+            source_url="https://shop.example/",
+        ),
+        AuditFinding(
+            **shared,
+            evidence="Button without an accessible name found on the product page.",
+            source_url="https://shop.example/products/item",
+        ),
+        AuditFinding(
+            **shared,
+            evidence="Button without an accessible name found on the home page.",
+            source_url="https://shop.example/",
+        ),
+    ])
+
+    assert len(result) == 1
+    assert result[0]["instances"] == 3
+    assert len(result[0]["evidence"]) == 2
+    assert result[0]["source_urls"] == [
+        "https://shop.example/",
+        "https://shop.example/products/item",
+    ]
+
+
+def test_different_remediation_is_not_merged_into_same_issue():
+    from report_generator import _consolidate_findings
+
+    base = dict(
+        category="accessibility",
+        title="Buttons may have no accessible name",
+        status="verified",
+        severity="high",
+        evidence="An unnamed button was found.",
+        explanation="Assistive technology users may not know its purpose.",
+        verification_steps=["Inspect the accessible name."],
+        source_url="https://shop.example/",
+    )
+    findings = [
+        AuditFinding(**base, recommendation="Add a meaningful accessible name."),
+        AuditFinding(**base, recommendation="Replace the control with a correctly labelled link."),
+    ]
+
+    assert len(_consolidate_findings(findings)) == 2
