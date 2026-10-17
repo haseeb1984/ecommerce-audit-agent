@@ -63,3 +63,72 @@ async def test_probe_ignores_redirects_to_other_paths_or_origins(monkeypatch):
     )
     assert findings == []
     assert any("not a penetration test" in item for item in limitations)
+
+
+from security_checks import inspect_security_header_quality
+
+
+def test_csp_wildcard_and_unsafe_inline_are_review_signals_without_echoing_policy():
+    findings = inspect_security_header_quality(
+        {"content-security-policy": "default-src *; script-src 'unsafe-inline'"},
+        "https://shop.example/"
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "manual_review_required"
+    assert "wildcard" in findings[0].evidence
+    assert "unsafe-inline" in findings[0].evidence
+
+
+def test_short_hsts_policy_is_flagged_for_review_not_as_confirmed_vulnerability():
+    findings = inspect_security_header_quality(
+        {"strict-transport-security": "max-age=3600"},
+        "https://shop.example/"
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "manual_review_required"
+    assert findings[0].severity == "low"
+
+
+def test_cookie_review_names_cookie_but_never_reports_cookie_value():
+    findings = inspect_security_header_quality(
+        {"set-cookie": "session_token=top-secret; Path=/; SameSite=Lax"},
+        "https://shop.example/"
+    )
+    assert len(findings) == 1
+    assert "session_token" in findings[0].evidence
+    assert "top-secret" not in findings[0].evidence
+    assert "Secure" in findings[0].evidence
+    assert "HttpOnly" in findings[0].evidence
+
+
+def test_secure_cookie_attributes_do_not_trigger_review():
+    findings = inspect_security_header_quality(
+        {"set-cookie": "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax",
+         "strict-transport-security": "max-age=31536000; includeSubDomains",
+         "content-security-policy": "default-src 'self'; object-src 'none'; base-uri 'self'"},
+        "https://shop.example/"
+    )
+    assert findings == []
+
+
+def test_debug_log_detection_requires_error_signature_and_multiple_lines():
+    found = inspect_exposure_response(
+        "/debug.log", 200, "line one\nFatal error: example\nline three",
+        {"content-type": "text/plain"}, "https://shop.example/debug.log"
+    )
+    generic = inspect_exposure_response(
+        "/debug.log", 200, "ordinary storefront content",
+        {"content-type": "text/plain"}, "https://shop.example/debug.log"
+    )
+    assert len(found) == 1
+    assert generic == []
+
+
+def test_database_dump_detection_does_not_copy_rows_into_evidence():
+    body = "-- MySQL dump\nCREATE TABLE users (id int);\nINSERT INTO users VALUES ('sensitive');\n" + ("x" * 250)
+    findings = inspect_exposure_response(
+        "/backup.sql", 200, body, {"content-type": "text/plain"},
+        "https://shop.example/backup.sql"
+    )
+    assert len(findings) == 1
+    assert "sensitive" not in findings[0].evidence
