@@ -41,7 +41,10 @@ class UniversalEcommerceAgent:
         if not api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set.")
         self.groq_client = AsyncGroq(api_key=api_key)
-        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        # TEMPORARY RECOVERY TEST: force a retired model so fallback is exercised.
+        # Previous default (restore after the live recovery test):
+        # self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        self.model = "llama3-70b-8192"
         self.pagespeed_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
 
     @staticmethod
