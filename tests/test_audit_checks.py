@@ -119,3 +119,42 @@ def test_viewport_checks_identify_common_mobile_misconfigurations(viewport, expe
         {},
     )
     assert any(f.title == expected_title for f in findings)
+
+def test_robots_directive_summary_counts_rules_without_claiming_full_validation():
+    findings = audit_checks.inspect_discovery_contents(
+        "robots_txt",
+        "User-agent: *\\nDisallow: /admin/\\nAllow: /products/\\nSitemap: https://shop.example/sitemap.xml\\n",
+        "https://shop.example/robots.txt",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "verified"
+    assert "1 User-agent" in findings[0].evidence
+    assert "1 Allow" in findings[0].evidence
+    assert "1 Disallow" in findings[0].evidence
+
+
+def test_sitemap_parser_flags_malformed_xml_and_invalid_locations():
+    malformed = audit_checks.inspect_discovery_contents(
+        "sitemap_xml", "<urlset><url>", "https://shop.example/sitemap.xml"
+    )[0]
+    assert malformed.status == "verified"
+    assert "not well-formed XML" in malformed.evidence
+
+    invalid = audit_checks.inspect_discovery_contents(
+        "sitemap_xml",
+        "<urlset><url><loc>/relative-path</loc></url></urlset>",
+        "https://shop.example/sitemap.xml",
+    )[0]
+    assert invalid.status == "manual_review_required"
+    assert "without an absolute HTTP(S) URL: 1" in invalid.evidence
+
+
+def test_sitemap_parser_accepts_basic_urlset():
+    finding = audit_checks.inspect_discovery_contents(
+        "sitemap_xml",
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://shop.example/product/1</loc></url></urlset>',
+        "https://shop.example/sitemap.xml",
+    )[0]
+    assert finding.status == "verified"
+    assert "Root element: urlset" in finding.evidence
+    assert "loc entries: 1" in finding.evidence
