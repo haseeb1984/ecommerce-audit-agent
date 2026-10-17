@@ -209,9 +209,6 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
         (bool(parser.meta_description), "Meta description", "The HTML response has no meta description.",
          "Add a concise, page-specific meta description; search engines may choose another snippet.",
          ["Inspect the page source for meta name=\"description\"."]),
-        (bool(parser.viewport), "Mobile viewport", "No meta name=\"viewport\" was found in the returned HTML.",
-         "Add a responsive viewport declaration such as width=device-width, initial-scale=1. Do not disable zoom.",
-         ["Inspect the page source for meta name=\"viewport\".", "Test at 320 CSS px and common mobile widths in a browser."]),
         (parser.h1_count > 0, "Primary heading (H1)", "No H1 heading was found in the returned HTML.",
          "Provide a clear primary page heading in the page's semantic HTML.",
          ["Inspect the rendered page and heading outline; confirm the main heading is meaningful."]),
@@ -230,6 +227,44 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ("This is a basic source-HTML check, not a complete SEO or responsive-layout assessment."
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
+        ))
+    viewport = parser.viewport.lower().replace(" ", "")
+    viewport_steps = [
+        "Inspect the page source for meta name=\"viewport\".",
+        "Test reflow at 320 CSS px and common mobile widths in a real browser.",
+        "Confirm users can zoom without the page preventing magnification.",
+    ]
+    if not viewport:
+        findings.append(_finding(
+            "mobile_ux", "Mobile viewport", "verified", "medium",
+            f"No meta name=\"viewport\" was found in the returned HTML. URL: {final_url}",
+            "Without an appropriate viewport declaration, mobile browsers may lay the page out at a wider virtual width. This source check does not prove how the page actually renders.",
+            "Add a responsive declaration such as width=device-width, initial-scale=1. Do not disable user zoom.",
+            viewport_steps, final_url,
+        ))
+    elif "user-scalable=no" in viewport or "maximum-scale=1" in viewport:
+        findings.append(_finding(
+            "mobile_ux", "Viewport may restrict zoom", "verified", "medium",
+            f"Viewport declaration may restrict zoom: {parser.viewport[:200]}",
+            "Preventing users from zooming can make content harder to use, especially for people with low vision. Browser behavior varies, so verify the rendered experience.",
+            "Remove user-scalable=no and restrictive maximum-scale settings unless a documented, accessibility-reviewed exception applies.",
+            viewport_steps, final_url,
+        ))
+    elif "width=device-width" not in viewport:
+        findings.append(_finding(
+            "mobile_ux", "Viewport may use a fixed layout width", "verified", "medium",
+            f"Viewport declaration does not include width=device-width: {parser.viewport[:200]}",
+            "A fixed or unusual viewport width can make mobile content appear scaled down or require horizontal scrolling. Actual layout behavior needs browser testing.",
+            "Review the responsive viewport declaration; commonly use width=device-width, initial-scale=1 and test the rendered page.",
+            viewport_steps, final_url,
+        ))
+    else:
+        findings.append(_finding(
+            "mobile_ux", "Mobile viewport declaration", "verified", "info",
+            f"Found: {parser.viewport[:200]}",
+            "A responsive viewport declaration is present in source HTML. This alone does not prove responsive layout quality or WCAG reflow.",
+            "Test the rendered page at 320 CSS px and common phone, tablet, desktop, portrait, landscape, and zoom settings.",
+            viewport_steps, final_url,
         ))
     if parser.images_missing_alt:
         findings.append(_finding(
