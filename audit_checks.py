@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -303,6 +304,80 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     return findings
 
 
+def inspect_discovery_contents(category: str, body: str, source_url: str) -> list[AuditFinding]:
+    """Perform bounded semantic checks on robots.txt and sitemap.xml content."""
+    if category == "robots_txt":
+        directives: list[tuple[str, str]] = []
+        for raw_line in body.splitlines():
+            line = raw_line.split("#", 1)[0].strip()
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key and value:
+                directives.append((key, value))
+        user_agents = sum(1 for key, _ in directives if key == "user-agent")
+        disallow_count = sum(1 for key, _ in directives if key == "disallow")
+        allow_count = sum(1 for key, _ in directives if key == "allow")
+        sitemap_count = sum(1 for key, _ in directives if key == "sitemap")
+        return [_finding(
+            category,
+            "robots.txt directive summary",
+            "verified" if user_agents else "manual_review_required",
+            "info" if user_agents else "low",
+            f"Parsed {len(directives)} non-empty directive(s): {user_agents} User-agent, "
+            f"{allow_count} Allow, {disallow_count} Disallow, {sitemap_count} Sitemap.",
+            "This is a lightweight directive count, not a complete robots.txt standards validator. "
+            "Rules must be reviewed against the site's intended crawl policy and important URL paths.",
+            "Check every User-agent group, Allow/Disallow rule, and Sitemap reference. Make sure important public pages are not accidentally blocked.",
+            ["Review the file with a robots.txt tester and compare rules against intended crawl behavior.",
+             "Check important product and category URLs with the relevant search-engine tools."],
+            source_url,
+        )]
+
+    if category == "sitemap_xml":
+        try:
+            root = ET.fromstring(body)
+        except ET.ParseError as exc:
+            return [_finding(
+                category, "Sitemap XML parsing", "verified", "medium",
+                f"The response was not well-formed XML: {str(exc)[:180]}",
+                "Search engines may not be able to process a malformed sitemap. A successful HTTP status alone does not validate its contents.",
+                "Generate valid XML with the correct sitemap namespace and URL entries, then validate the published file.",
+                ["Run the sitemap through an XML parser and the search engine's sitemap reporting tool."],
+                source_url,
+            )]
+        root_name = root.tag.rsplit("}", 1)[-1].lower()
+        loc_values = [
+            (element.text or "").strip()
+            for element in root.iter()
+            if element.tag.rsplit("}", 1)[-1].lower() == "loc"
+        ]
+        invalid_locations = 0
+        for value in loc_values:
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                invalid_locations += 1
+        valid_root = root_name in {"urlset", "sitemapindex"}
+        if not valid_root or not loc_values or invalid_locations:
+            status = "manual_review_required"
+            severity = "medium"
+        else:
+            status = "verified"
+            severity = "info"
+        return [_finding(
+            category, "Sitemap XML structure", status, severity,
+            f"Root element: {root_name or 'missing'}; loc entries: {len(loc_values)}; "
+            f"entries without an absolute HTTP(S) URL: {invalid_locations}.",
+            "This checks basic XML shape and URL format only. It does not prove that listed URLs are canonical, indexable, current, or accepted by a search engine.",
+            "Use a urlset for URL entries or sitemapindex for child sitemap locations. Remove invalid entries and verify that listed URLs return the intended canonical pages.",
+            ["Validate the XML with a sitemap validator.", "Inspect search-engine sitemap status and sample listed URLs."],
+            source_url,
+        )]
+    return []
+
+
 async def run_phase_one_checks(target: str) -> AuditCheckResult:
     """Run bounded, unauthenticated checks against a public site's homepage and common files."""
     from datetime import datetime, timezone
@@ -366,6 +441,7 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                         [f"Open {final_url} directly.", "Review the response content and compare it with the intended site configuration."],
                         final_url,
                     ))
+                    findings.extend(inspect_discovery_contents(category, body, final_url))
                 else:
                     findings.append(_finding(
                         category, f"{description} availability",
