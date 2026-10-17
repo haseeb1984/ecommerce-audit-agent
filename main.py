@@ -14,6 +14,7 @@ from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
+from crawl_checks import run_bounded_site_crawl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audit_service")
@@ -150,6 +151,10 @@ async def comprehensive_audit_pdf(
         # Keep this call strict rather than writing fabricated placeholder metrics.
         metrics = await agent.run_audit(target_url)
         result = await run_phase_one_checks(target_url)
+        crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
+        result.findings.extend(crawl_findings)
+        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
+        result.limitations.extend(crawl_limitations)
         result.findings.insert(0, AuditFinding(
             category="performance",
             title="Google PageSpeed mobile performance snapshot",
