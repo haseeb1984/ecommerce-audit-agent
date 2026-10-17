@@ -1,6 +1,8 @@
 import logging
+import re
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,8 @@ from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, AuditLead, AuditQuotaReservation
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
+from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
+from report_generator import render_audit_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audit_service")
@@ -124,3 +128,96 @@ async def audit_lead(
             status_code=500,
             detail="Audit execution failed. Check server logs for diagnostic details."
         )
+
+
+@app.post("/api/v1/comprehensive-audit", response_class=Response)
+async def comprehensive_audit_pdf(
+    domain: str = Query(..., min_length=1, max_length=2048, description="Public website URL or domain"),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a phase-one evidence report as a PDF, using the existing license quota."""
+    try:
+        target_url = normalize_target(domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    reservation_id = None
+    try:
+        reservation_id, reserved_at = await reserve_audit_slot(db, license_obj.id)
+
+        # Existing PageSpeed metric fields are required by the current audit_leads schema.
+        # Keep this call strict rather than writing fabricated placeholder metrics.
+        metrics = await agent.run_audit(target_url)
+        result = await run_phase_one_checks(target_url)
+        result.findings.insert(0, AuditFinding(
+            category="performance",
+            title="Google PageSpeed mobile performance snapshot",
+            status="verified",
+            severity="medium" if metrics.mobile_score < 50 else "low" if metrics.mobile_score < 90 else "info",
+            evidence=(
+                f"Google PageSpeed Insights reported a mobile Lighthouse performance score "
+                f"of {metrics.mobile_score}/100 and Speed Index of {metrics.speed_index_sec} seconds. "
+                "These are lab results; field experience can differ."
+            ),
+            explanation=(
+                "The performance score summarizes a Lighthouse lab run and is not a direct "
+                "measurement of revenue, conversion rate, or search ranking."
+            ),
+            recommendation=(
+                "Review the full PageSpeed Insights report for opportunities relevant to this page, "
+                "then prioritize changes based on measured diagnostics and retest."
+            ),
+            verification_steps=[
+                "Open https://pagespeed.web.dev/ and test the exact target URL.",
+                "Compare the mobile strategy, test time, score, Speed Index, and available field data.",
+            ],
+            source_url=target_url,
+        ))
+        pdf_bytes = render_audit_pdf(result)
+
+        db.add(AuditLead(
+            license_id=license_obj.id,
+            domain=metrics.domain,
+            mobile_score=metrics.mobile_score,
+            speed_index_sec=metrics.speed_index_sec,
+            contact_email=None,
+            revenue_leak_hypothesis=None,
+            email_subject=None,
+            email_body=None,
+            source_channel="comprehensive_audit",
+            created_at=reserved_at,
+        ))
+        await db.execute(
+            delete(AuditQuotaReservation).where(AuditQuotaReservation.id == reservation_id)
+        )
+        await db.commit()
+        reservation_id = None
+
+        hostname = urlsplit(target_url).hostname or "website"
+        safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:180]
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}.pdf"'},
+        )
+    except HTTPException:
+        await db.rollback()
+        if reservation_id is not None:
+            try:
+                await release_audit_reservation(db, reservation_id)
+            except Exception:
+                logger.exception("Failed to release quota reservation %s", reservation_id)
+        raise
+    except Exception as exc:
+        await db.rollback()
+        if reservation_id is not None:
+            try:
+                await release_audit_reservation(db, reservation_id)
+            except Exception:
+                logger.exception("Failed to release quota reservation %s", reservation_id)
+        logger.exception("Comprehensive audit report generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Comprehensive audit report generation failed. Check server logs for diagnostics.",
+        ) from exc
