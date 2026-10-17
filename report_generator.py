@@ -78,7 +78,8 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
         checked_paths = 0
         unverified += 8
 
-    assessed = passed + issues
+    assessed = passed + issues + unverified
+    # Unknown controls never count as passes; this is a conservative coverage score.
     score = round(100 * passed / assessed) if assessed else None
     return {
         "score": score,
