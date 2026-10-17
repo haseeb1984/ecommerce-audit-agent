@@ -123,7 +123,11 @@ def test_viewport_checks_identify_common_mobile_misconfigurations(viewport, expe
 def test_robots_directive_summary_counts_rules_without_claiming_full_validation():
     findings = audit_checks.inspect_discovery_contents(
         "robots_txt",
-        "User-agent: *\\nDisallow: /admin/\\nAllow: /products/\\nSitemap: https://shop.example/sitemap.xml\\n",
+        """User-agent: *
+Disallow: /admin/
+Allow: /products/
+Sitemap: https://shop.example/sitemap.xml
+""",
         "https://shop.example/robots.txt",
     )
     assert len(findings) == 1
@@ -131,8 +135,6 @@ def test_robots_directive_summary_counts_rules_without_claiming_full_validation(
     assert "1 User-agent" in findings[0].evidence
     assert "1 Allow" in findings[0].evidence
     assert "1 Disallow" in findings[0].evidence
-
-
 def test_sitemap_parser_flags_malformed_xml_and_invalid_locations():
     malformed = audit_checks.inspect_discovery_contents(
         "sitemap_xml", "<urlset><url>", "https://shop.example/sitemap.xml"
