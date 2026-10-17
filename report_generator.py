@@ -73,7 +73,16 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
         match = re.search(r"checked only (\d+) common paths", probe_limit)
         checked_paths = int(match.group(1)) if match else 0
         issues += min(len(exposure_findings), checked_paths)
-        passed += max(0, checked_paths - len(exposure_findings))
+        unverified_match = next(
+            (re.search(r"(\\d+) of \\d+ exposure probes could not be verified", item)
+             for item in limitations
+             if "exposure probes could not be verified" in item),
+            None,
+        )
+        unverified_probes = int(unverified_match.group(1)) if unverified_match else 0
+        unverified_probes = min(unverified_probes, max(0, checked_paths - len(exposure_findings)))
+        unverified += unverified_probes
+        passed += max(0, checked_paths - len(exposure_findings) - unverified_probes)
     else:
         checked_paths = 0
         unverified += 8
