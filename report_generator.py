@@ -105,9 +105,11 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
         if finding.title in seen_transport_titles:
             continue
         seen_transport_titles.add(finding.title)
-        if finding.status == "manual_review_required":
+        if finding.status in {"manual_review_required", "not_tested", "insufficient_data"}:
+            # A non-verified observation must never improve the score merely
+            # because its severity field happens to be "info".
             unverified += 1
-        elif finding.severity == "info":
+        elif finding.status == "verified" and finding.severity == "info":
             passed += 1
         else:
             issues += 1
