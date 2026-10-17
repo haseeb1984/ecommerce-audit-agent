@@ -1,0 +1,363 @@
+"""Evidence-first, bounded public website checks for the ecommerce audit engine.
+
+This module intentionally does not claim a full security, accessibility, or SEO audit.
+It performs conservative public-page checks and reports limitations explicitly.
+"""
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import socket
+from html.parser import HTMLParser
+from typing import Any
+from urllib.parse import urljoin, urlsplit, urlunsplit
+
+import httpx
+from pydantic import BaseModel, Field
+
+
+MAX_RESPONSE_BYTES = 1_000_000
+MAX_REDIRECTS = 5
+REQUEST_TIMEOUT_SECONDS = 10.0
+USER_AGENT = "EcommerceAuditBot/1.0 (+https://junctiontools.com)"
+
+
+class AuditFinding(BaseModel):
+    category: str
+    title: str
+    status: str  # verified, manual_review_required, not_tested, insufficient_data
+    severity: str  # critical, high, medium, low, info
+    evidence: str
+    explanation: str
+    recommendation: str
+    verification_steps: list[str] = Field(default_factory=list)
+    source_url: str | None = None
+
+
+class AuditCheckResult(BaseModel):
+    target_url: str
+    checked_at_utc: str
+    findings: list[AuditFinding] = Field(default_factory=list)
+    pages_checked: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+def normalize_target(value: str) -> str:
+    """Normalize an input to an HTTP(S) origin URL, rejecting URL tricks."""
+    raw = (value or "").strip()
+    if not raw or len(raw) > 2048:
+        raise ValueError("Provide a website URL or domain no longer than 2048 characters.")
+    if any(ord(char) < 32 for char in raw) or "\\" in raw:
+        raise ValueError("The website URL contains invalid characters.")
+    if "://" not in raw:
+        raw = "https://" + raw
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("Only public HTTP and HTTPS websites can be audited.")
+    if not parsed.hostname or parsed.username is not None or parsed.password is not None:
+        raise ValueError("The website URL must contain a hostname and no embedded credentials.")
+    if parsed.port not in (None, 80, 443):
+        raise ValueError("Non-standard ports are not supported by this public audit.")
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        raise ValueError("Local and private network hosts cannot be audited.")
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        ip = None
+    if ip is not None and (not ip.is_global):
+        raise ValueError("Private, loopback, link-local, and reserved IP addresses are blocked.")
+    netloc = host
+    if ":" in host and not host.startswith("["):
+        netloc = f"[{host}]"
+    port = parsed.port
+    if port and not ((parsed.scheme.lower() == "https" and port == 443) or
+                     (parsed.scheme.lower() == "http" and port == 80)):
+        netloc = f"{netloc}:{port}"
+    path = parsed.path or "/"
+    return urlunsplit((parsed.scheme.lower(), netloc, path, parsed.query, ""))
+
+
+async def _resolve_public_host(host: str) -> None:
+    """Reject hosts resolving to any non-public address before making a request."""
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+        addresses = [ip]
+    except ValueError:
+        loop = asyncio.get_running_loop()
+        try:
+            records = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ValueError(f"Could not resolve target host: {host}") from exc
+        addresses = [ipaddress.ip_address(record[4][0]) for record in records]
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("Target host resolves to a private or non-public IP address.")
+
+
+async def _safe_get(client: httpx.AsyncClient, url: str) -> tuple[int, str, dict[str, str], str]:
+    """Fetch a public URL with bounded bytes and manually validated redirects."""
+    current = normalize_target(url)
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        parsed = urlsplit(current)
+        await _resolve_public_host(parsed.hostname or "")
+        async with client.stream("GET", current, headers={"User-Agent": USER_AGENT}) as response:
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = headers.get("location")
+                if not location:
+                    return response.status_code, "", headers, current
+                if redirect_count >= MAX_REDIRECTS:
+                    raise ValueError("The website exceeded the redirect limit.")
+                destination = normalize_target(urljoin(current, location))
+                current = destination
+                continue
+            content_length = headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_RESPONSE_BYTES:
+                        raise ValueError("Response exceeded the audit's 1 MB size limit.")
+                except ValueError as exc:
+                    if "size limit" in str(exc):
+                        raise
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_RESPONSE_BYTES:
+                    raise ValueError("Response exceeded the audit's 1 MB size limit.")
+                chunks.append(chunk)
+            body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+            return response.status_code, body, headers, current
+    raise ValueError("The website exceeded the redirect limit.")
+
+
+class _PageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title_text = ""
+        self._in_title = False
+        self.meta_description = ""
+        self.viewport = ""
+        self.h1_count = 0
+        self.h1_text = ""
+        self._in_h1 = False
+        self.images = 0
+        self.images_missing_alt = 0
+        self.links = 0
+        self._title_parts: list[str] = []
+        self._h1_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {key.lower(): value or "" for key, value in attrs}
+        tag = tag.lower()
+        if tag == "title":
+            self._in_title = True
+        elif tag == "meta":
+            name = values.get("name", "").strip().lower()
+            if name == "description":
+                self.meta_description = values.get("content", "").strip()
+            elif name == "viewport":
+                self.viewport = values.get("content", "").strip()
+        elif tag == "h1":
+            self.h1_count += 1
+            self._in_h1 = True
+            self._h1_parts = []
+        elif tag == "img":
+            self.images += 1
+            if "alt" not in values:
+                self.images_missing_alt += 1
+        elif tag == "a" and values.get("href"):
+            self.links += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self._in_title = False
+        elif tag.lower() == "h1":
+            if self._in_h1:
+                text = " ".join("".join(self._h1_parts).split())
+                if text and not self.h1_text:
+                    self.h1_text = text
+            self._in_h1 = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self._title_parts.append(data)
+            self.title_text = " ".join("".join(self._title_parts).split())
+        if self._in_h1:
+            self._h1_parts.append(data)
+            self.h1_text = " ".join("".join(self._h1_parts).split())
+
+
+def _finding(category: str, title: str, status: str, severity: str,
+             evidence: str, explanation: str, recommendation: str,
+             steps: list[str], source_url: str | None = None) -> AuditFinding:
+    return AuditFinding(
+        category=category, title=title, status=status, severity=severity,
+        evidence=evidence, explanation=explanation, recommendation=recommendation,
+        verification_steps=steps, source_url=source_url,
+    )
+
+
+def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list[AuditFinding]:
+    parser = _PageParser()
+    parser.feed(html)
+    findings: list[AuditFinding] = []
+    checks = [
+        (bool(parser.title_text), "Page title", "The HTML response has no readable <title> element.",
+         "Add a unique, descriptive title that accurately reflects this page.",
+         ["Open the page source and find the <title> element."]),
+        (bool(parser.meta_description), "Meta description", "The HTML response has no meta description.",
+         "Add a concise, page-specific meta description; search engines may choose another snippet.",
+         ["Inspect the page source for meta name=\"description\"."]),
+        (bool(parser.viewport), "Mobile viewport", "No meta name=\"viewport\" was found in the returned HTML.",
+         "Add a responsive viewport declaration such as width=device-width, initial-scale=1. Do not disable zoom.",
+         ["Inspect the page source for meta name=\"viewport\".", "Test at 320 CSS px and common mobile widths in a browser."]),
+        (parser.h1_count > 0, "Primary heading (H1)", "No H1 heading was found in the returned HTML.",
+         "Provide a clear primary page heading in the page's semantic HTML.",
+         ["Inspect the rendered page and heading outline; confirm the main heading is meaningful."]),
+    ]
+    for passed, title, evidence, recommendation, steps in checks:
+        findings.append(_finding(
+            "on_page_seo" if title != "Mobile viewport" else "mobile_ux",
+            title,
+            "verified" if not passed else "verified",
+            "low" if not passed else "info",
+            f"{evidence} Final URL: {final_url}" if not passed else
+            (f"Found: {parser.title_text[:160]}" if title == "Page title" else
+             f"Found {parser.h1_count} H1 heading(s)." if title == "Primary heading (H1)" else
+             f"Found: {parser.viewport[:160]}" if title == "Mobile viewport" else
+             f"Found meta description ({len(parser.meta_description)} characters)."),
+            ("This is a basic source-HTML check, not a complete SEO or responsive-layout assessment."
+             if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
+            recommendation, steps, final_url,
+        ))
+    if parser.images_missing_alt:
+        findings.append(_finding(
+            "aria_alt_text", "Images missing an alt attribute", "verified", "medium",
+            f"{parser.images_missing_alt} of {parser.images} image element(s) have no alt attribute in returned HTML.",
+            "Alternative text communicates the purpose of meaningful images to people using screen readers. Decorative images can use an empty alt attribute.",
+            "Add meaningful alt text to informative images and alt=\"\" to decorative images. Do not stuff keywords.",
+            ["Inspect each flagged image in context.", "Use a browser accessibility inspector or an automated accessibility scanner."],
+            final_url,
+        ))
+    findings.append(_finding(
+        "on_page_seo", "H1 count", "manual_review_required", "info",
+        f"Detected {parser.h1_count} H1 element(s); first readable heading: {parser.h1_text[:160] or 'none'}.",
+        "Heading count alone does not determine SEO quality or accessibility; heading purpose and page structure require context.",
+        "Review the heading hierarchy and ensure headings describe the sections they introduce.",
+        ["Inspect the rendered heading outline and compare it with the page content."], final_url,
+    ))
+    security_headers = {
+        "strict-transport-security": ("HSTS header", "medium"),
+        "content-security-policy": ("Content Security Policy", "medium"),
+        "x-content-type-options": ("X-Content-Type-Options", "low"),
+        "referrer-policy": ("Referrer-Policy", "low"),
+    }
+    for header, (label, severity) in security_headers.items():
+        value = headers.get(header)
+        findings.append(_finding(
+            "security_headers", label,
+            "verified" if value else "manual_review_required",
+            "info" if value else severity,
+            f"Header value: {value[:240]}" if value else f"Response did not include {header}.",
+            "Security headers can reduce certain browser-side risks, but their presence alone does not prove a site is secure.",
+            f"Review whether {header} is appropriate for this site and configure it safely; test for compatibility before enforcing restrictive policies.",
+            [f"Inspect the response headers with browser DevTools or a reputable header scanner.", "Review configuration and test critical site flows."],
+            final_url,
+        ))
+    return findings
+
+
+async def run_phase_one_checks(target: str) -> AuditCheckResult:
+    """Run bounded, unauthenticated checks against a public site's homepage and common files."""
+    from datetime import datetime, timezone
+
+    normalized = normalize_target(target)
+    parsed = urlsplit(normalized)
+    findings: list[AuditFinding] = []
+    pages_checked: list[str] = []
+    limitations = [
+        "Only the public homepage and common discovery files are checked in this phase; this is not a full-site crawl.",
+        "HTML source checks do not prove the rendered mobile layout, full accessibility, Google indexing, or legal compliance.",
+        "Security-header checks are passive observations and do not constitute penetration testing.",
+    ]
+    timeout = httpx.Timeout(REQUEST_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        try:
+            status, html, headers, final_url = await _safe_get(client, normalized)
+            pages_checked.append(final_url)
+            if status < 200 or status >= 300:
+                findings.append(_finding(
+                    "crawl", "Homepage HTTP response", "verified", "high" if status >= 500 else "medium",
+                    f"Homepage returned HTTP {status}.",
+                    "The server did not return a successful homepage response to this audit request.",
+                    "Check hosting, redirects, access rules, and server logs; verify the page using a normal browser and search crawler.",
+                    ["Repeat the request with a browser and an HTTP status checker."], final_url,
+                ))
+            else:
+                findings.extend(inspect_homepage(html, final_url, headers))
+        except Exception as exc:
+            findings.append(_finding(
+                "crawl", "Homepage could not be inspected", "not_tested", "info",
+                f"Check stopped safely: {type(exc).__name__}: {str(exc)[:240]}",
+                "The audit could not obtain a reliable homepage response, so downstream page checks were not performed.",
+                "Confirm the target is public and reachable, then rerun the audit.",
+                ["Open the target in a browser.", "Check DNS, TLS, robots/access restrictions, and server availability."],
+                normalized,
+            ))
+            limitations.append("Homepage checks were skipped because a safe, successful fetch was not completed.")
+
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        for filename, category, description in [
+            ("robots.txt", "robots_txt", "robots.txt"),
+            ("sitemap.xml", "sitemap_xml", "sitemap.xml"),
+            ("llms.txt", "llms_txt", "llms.txt"),
+        ]:
+            file_url = urljoin(origin + "/", filename)
+            try:
+                status, body, _, final_url = await _safe_get(client, file_url)
+                if 200 <= status < 300:
+                    findings.append(_finding(
+                        category, f"{description} availability", "verified", "info",
+                        f"GET {final_url} returned HTTP {status}; response size {len(body.encode('utf-8'))} bytes.",
+                        ("This confirms only that a public response was returned. The file's directives or contents still need semantic validation."
+                         if category != "llms_txt" else
+                         "llms.txt is a proposed convention; availability does not establish search ranking, crawling, or AI citation benefits."),
+                        ("Validate syntax and ensure directives reflect the site's intended crawl policy."
+                         if category == "robots_txt" else
+                         "Validate sitemap XML, canonical URLs, and that listed URLs are indexable."
+                         if category == "sitemap_xml" else
+                         "Treat this as an optional convention; keep any content accurate and do not rely on it for guaranteed discovery."),
+                        [f"Open {final_url} directly.", "Review the response content and compare it with the intended site configuration."],
+                        final_url,
+                    ))
+                else:
+                    findings.append(_finding(
+                        category, f"{description} availability",
+                        "verified", "low" if status == 404 else "medium",
+                        f"GET {final_url} returned HTTP {status}.",
+                        (f"{description} was not served successfully at the conventional root path. "
+                         "Whether that is an issue depends on the site's setup and intended use."),
+                        ("Publish and validate this file if the site needs explicit crawl rules."
+                         if category == "robots_txt" else
+                         "Publish a valid sitemap and reference it from robots.txt if appropriate."
+                         if category == "sitemap_xml" else
+                         "No action is required solely for missing llms.txt; it is optional and has no guaranteed ranking benefit."),
+                        [f"Open {file_url} directly and check whether an alternative location is intentionally used."],
+                        final_url,
+                    ))
+            except Exception as exc:
+                findings.append(_finding(
+                    category, f"{description} could not be checked", "not_tested", "info",
+                    f"Check stopped safely: {type(exc).__name__}: {str(exc)[:200]}",
+                    "A reliable response could not be obtained, so availability and content were not verified.",
+                    "Confirm public reachability and rerun; do not treat this result as proof the file is missing.",
+                    ["Open the URL directly and check server/network logs."], file_url,
+                ))
+    return AuditCheckResult(
+        target_url=normalized,
+        checked_at_utc=datetime.now(timezone.utc).isoformat(),
+        findings=findings,
+        pages_checked=pages_checked,
+        limitations=limitations,
+    )
