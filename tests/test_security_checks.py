@@ -46,3 +46,20 @@ def test_phpinfo_detection_uses_content_signature_not_status_only():
     )
     assert len(findings) == 1
     assert findings[0].title == "A public PHP information page was detected"
+
+
+@pytest.mark.asyncio
+async def test_probe_ignores_redirects_to_other_paths_or_origins(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        if url.endswith("/.env"):
+            return 200, "DB_PASSWORD=x\nAPI_KEY=y", {"content-type": "text/plain"}, "https://other.example/.env"
+        return 200, "<html>store</html>", {"content-type": "text/html"}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.probe_common_exposure_paths(
+        object(), "https://shop.example/"
+    )
+    assert findings == []
+    assert any("not a penetration test" in item for item in limitations)
