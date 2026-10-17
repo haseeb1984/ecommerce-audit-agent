@@ -2,6 +2,11 @@
 import asyncio
 import os
 import sys
+from pathlib import Path
+
+# Running a script from scripts/ puts that directory, not the repository root,
+# at sys.path[0]. Add the root so the top-level ecommerce_agent module imports.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ecommerce_agent import ContactInfo, StoreAuditMetrics, UniversalEcommerceAgent
 
