@@ -32,6 +32,64 @@ def _link(url: str, style: ParagraphStyle) -> Paragraph:
     return Paragraph(f'<link href="{safe_url}" color="#1759a8">{label}</link>', style)
 
 
+SECURITY_HEADER_LABELS = {
+    "Strict-Transport-Security",
+    "Content-Security-Policy",
+    "X-Content-Type-Options",
+    "Referrer-Policy",
+    "X-Frame-Options",
+    "Permissions-Policy",
+}
+
+
+def calculate_security_assessment(findings: list[AuditFinding], limitations: list[str]) -> dict[str, object]:
+    """Score only explicit, observable baseline controls; never label a site hack-proof."""
+    passed = 0
+    issues = 0
+    unverified = 0
+    header_findings = {
+        finding.title: finding
+        for finding in findings
+        if finding.category == "security_headers" and finding.title in SECURITY_HEADER_LABELS
+    }
+    for label in SECURITY_HEADER_LABELS:
+        finding = header_findings.get(label)
+        if finding is None:
+            unverified += 1
+        elif finding.status == "verified" and "Response did not include" not in finding.evidence:
+            passed += 1
+        else:
+            issues += 1
+
+    probe_limit = next(
+        (item for item in limitations if "Passive exposure probes checked only" in item),
+        None,
+    )
+    exposure_findings = [
+        finding for finding in findings if finding.category == "security_exposure"
+    ]
+    if probe_limit:
+        import re
+        match = re.search(r"checked only (\d+) common paths", probe_limit)
+        checked_paths = int(match.group(1)) if match else 0
+        issues += min(len(exposure_findings), checked_paths)
+        passed += max(0, checked_paths - len(exposure_findings))
+    else:
+        checked_paths = 0
+        unverified += 8
+
+    assessed = passed + issues
+    score = round(100 * passed / assessed) if assessed else None
+    return {
+        "score": score,
+        "passed": passed,
+        "issues": issues,
+        "unverified": unverified,
+        "assessed": assessed,
+        "checked_exposure_paths": checked_paths,
+    }
+
+
 def render_audit_pdf(result: AuditCheckResult) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -84,6 +142,25 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         _p("Severity is a triage aid, not a revenue-loss estimate. This report does not guarantee rankings, conversions, legal compliance, accessibility conformance, or security.", body_style),
         Paragraph("Summary", section_style),
     ]
+
+    security = calculate_security_assessment(result.findings, result.limitations)
+    story.extend([
+        Paragraph("Security assessment score", section_style),
+        _p(
+            (
+                f"Observed baseline controls score: {security['score']}% "
+                if security["score"] is not None else
+                "Observed baseline controls score: Not enough verified checks to calculate. "
+            ) +
+            "This is NOT a percentage probability of being hacked and does NOT mean the website is hack-proof. "
+            f"Controls passing: {security['passed']}; controls with observed issues: {security['issues']}; "
+            f"controls not verified: {security['unverified']}. "
+            f"Common exposure paths checked: {security['checked_exposure_paths']}. "
+            "The score covers only the baseline response headers and the small set of public exposure paths listed in this report; "
+            "it excludes authenticated flows, application logic, dependencies, infrastructure, and penetration testing.",
+            body_style,
+        ),
+    ])
 
     counts: dict[str, int] = {}
     for finding in result.findings:
