@@ -46,6 +46,9 @@ def inspect_exposure_response(path: str, status: int, body: str,
     normalized_path = urlsplit(path).path.lower()
     matched = None
     safe_evidence = ""
+    finding_category = "security_exposure"
+    finding_status = "verified"
+    finding_severity = "high"
 
     if normalized_path == "/.env":
         keys = sorted({match.group(0).split("=", 1)[0].strip() for match in ENV_KEY_PATTERN.finditer(body)})
@@ -103,17 +106,23 @@ def inspect_exposure_response(path: str, status: int, body: str,
         lower = body.lower()
         if "swagger-ui" in lower and ("swaggerinitializerbundle" in lower or "swagger-ui-bundle" in lower):
             matched = "Interactive API documentation is publicly accessible"
+            finding_category = "security_api_documentation"
+            finding_status = "manual_review_required"
+            finding_severity = "low"
             safe_evidence = "The response contains Swagger UI assets. Public API documentation may be intentional; confirm the documented API is meant to be public and does not expose sensitive operations."
     elif normalized_path == "/openapi.json":
         lower = body.lower()
         if '"openapi"' in lower and ('"paths"' in lower or '"components"' in lower):
             matched = "An OpenAPI schema is publicly accessible"
+            finding_category = "security_api_documentation"
+            finding_status = "manual_review_required"
+            finding_severity = "low"
             safe_evidence = "The response resembles an OpenAPI API schema. Public documentation is not automatically a vulnerability; review whether internal routes or sensitive operation details should be disclosed."
 
     if not matched:
         return []
     return [_finding(
-        "security_exposure", matched, "verified", "high", safe_evidence,
+        finding_category, matched, finding_status, finding_severity, safe_evidence,
         "Publicly accessible configuration, source-control metadata, diagnostic output, or API documentation can disclose implementation details or secrets that attackers may reuse. The response was checked for recognizable content, not just an HTTP 200 status. API documentation exposure may be intentional and requires context.",
         "Restrict the affected path at the web server/CDN, remove backup or repository artifacts from the public document root, and rotate any credentials that may have been exposed. Review access logs and deployment packaging.",
         ["Open the exact URL without being logged in and confirm the sensitive content is no longer returned.",
