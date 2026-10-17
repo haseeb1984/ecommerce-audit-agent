@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from html.parser import HTMLParser
+import xml.etree.ElementTree as ET
 from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 import aiohttp
@@ -26,6 +27,7 @@ from audit_checks import (
 
 MAX_CRAWL_PAGES = 12
 MAX_LINKS_FROM_HOME = 100
+MAX_URLS_FROM_SITEMAP = 100
 
 
 class _LinkParser(HTMLParser):
@@ -62,6 +64,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
     limitations = [
         f"First-hop crawl is capped at {MAX_CRAWL_PAGES} URLs and does not recursively crawl all site pages.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
+        "Only the conventional /sitemap.xml URL set is sampled for discovery; sitemap indexes and alternate sitemap locations are not expanded.",
     ]
 
     async with aiohttp.ClientSession(
@@ -86,7 +89,35 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         candidates: list[str] = []
         seen: set[str] = set()
         final_origin = urlsplit(final_home)
-        for href in link_parser.links[:MAX_LINKS_FROM_HOME]:
+
+        # Use a conventional sitemap as a secondary discovery source. Parsing is
+        # bounded and only same-origin URLs are considered below; sitemap-index
+        # expansion is deliberately excluded to keep the request budget predictable.
+        sitemap_urls: list[str] = []
+        sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
+        try:
+            sitemap_status, sitemap_body, sitemap_headers, _ = await _safe_get(client, sitemap_url)
+            if 200 <= sitemap_status < 300 and (
+                "xml" in sitemap_headers.get("content-type", "").lower()
+                or sitemap_body.lstrip().startswith("<")
+            ):
+                root = ET.fromstring(sitemap_body)
+                if root.tag.rsplit("}", 1)[-1].lower() == "urlset":
+                    for element in root.iter():
+                        if element.tag.rsplit("}", 1)[-1].lower() == "loc" and element.text:
+                            sitemap_urls.append(element.text.strip())
+                            if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
+                                break
+        except (Exception):
+            # The main audit reports sitemap availability/format separately.
+            # Failure here only means sitemap-based URL discovery is unavailable.
+            pass
+
+        discovery_hrefs = [
+            *link_parser.links[:MAX_LINKS_FROM_HOME],
+            *sitemap_urls,
+        ]
+        for href in discovery_hrefs:
             absolute = urljoin(final_home, href)
             parts = urlsplit(absolute)
             if parts.scheme not in {"http", "https"} or not parts.hostname:
