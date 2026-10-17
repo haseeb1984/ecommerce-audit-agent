@@ -170,3 +170,23 @@ async def test_transport_checks_detect_static_mixed_content_on_https_html(monkey
     assert len(mixed) == 1
     assert mixed[0].severity == "high"
     assert not any("Mixed-content inspection" in item for item in limitations)
+
+
+@pytest.mark.asyncio
+async def test_probe_records_request_failures_as_unverified(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        if url.endswith("/.env"):
+            raise TimeoutError("timeout")
+        if url.endswith("/.git/HEAD"):
+            return 200, "not a git head", {}, "https://elsewhere.example/.git/HEAD"
+        return 404, "Not found", {}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.probe_common_exposure_paths(
+        object(), "https://shop.example/"
+    )
+    assert findings == []
+    assert any("2 of 8 exposure probes could not be verified" in item for item in limitations)
+
