@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 import aiohttp
+import json
 
 from audit_checks import (
     REQUEST_TIMEOUT_SECONDS,
@@ -144,6 +145,54 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # Product structured data is checked only on URL paths that look like
+            # product detail pages. JSON-LD detection is a source-level signal,
+            # not proof that all required properties or rich-result rules pass.
+            path_segments = [part.lower() for part in urlsplit(final_url).path.split("/") if part]
+            looks_like_product = any(
+                segment in {"product", "products"} for segment in path_segments
+            )
+            if looks_like_product:
+                product_schema_found = False
+                for script_text in page_parser.jsonld_scripts:
+                    try:
+                        schema_data = json.loads(script_text)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    stack = [schema_data]
+                    while stack:
+                        item = stack.pop()
+                        if isinstance(item, dict):
+                            raw_type = item.get("@type", [])
+                            types = raw_type if isinstance(raw_type, list) else [raw_type]
+                            normalized_types = {
+                                str(value).rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower()
+                                for value in types
+                            }
+                            if normalized_types.intersection({"product", "productgroup"}):
+                                product_schema_found = True
+                            stack.extend(value for value in item.values() if isinstance(value, (dict, list)))
+                        elif isinstance(item, list):
+                            stack.extend(item)
+
+                findings.append(_finding(
+                    "structured_data",
+                    "Product structured data detected" if product_schema_found else "Product structured data not detected",
+                    "verified" if product_schema_found else "manual_review_required",
+                    "info" if product_schema_found else "low",
+                    (
+                        f"Detected Product/ProductGroup type in JSON-LD on {final_url}; "
+                        f"scanned {len(page_parser.jsonld_scripts)} JSON-LD script block(s)."
+                        if product_schema_found else
+                        f"No Product/ProductGroup type was detected in {len(page_parser.jsonld_scripts)} JSON-LD script block(s) on {final_url}."
+                    ),
+                    "Product structured data can help search engines interpret product details, but presence alone does not prove validity, eligibility for rich results, or that a search engine will display them.",
+                    "If this is an indexable product detail page, review the applicable Product structured-data properties, ensure values match visible page content, and validate the markup. Some ecommerce platforms inject data outside the initial HTML response.",
+                    ["Inspect page source for JSON-LD Product or ProductGroup data.", "Validate the markup with a structured-data testing tool and compare price, availability, currency, and product identifiers with the visible page."],
+                    final_url,
+                ))
 
             # A canonical tag is a search-engine hint. Flag an off-origin target
             # for human review rather than assuming it is wrong in every setup.
