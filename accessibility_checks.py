@@ -1,0 +1,143 @@
+"""Conservative HTML accessibility signals; not a WCAG conformance test."""
+from __future__ import annotations
+
+from html.parser import HTMLParser
+
+from audit_checks import AuditFinding
+
+
+class _AccessibilityParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.html_lang = ""
+        self.ids: set[str] = set()
+        self.label_for: set[str] = set()
+        self.wrapped_label_depth = 0
+        self.inputs: list[dict[str, str]] = []
+        self.links: list[dict[str, str | bool]] = []
+        self.buttons: list[dict[str, str | bool]] = []
+        self._active_link: dict[str, str | bool] | None = None
+        self._active_button: dict[str, str | bool] | None = None
+        self._active_label_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        values = {key.lower(): value or "" for key, value in attrs}
+        tag = tag.lower()
+        if tag == "html":
+            self.html_lang = values.get("lang", "").strip()
+        if values.get("id"):
+            self.ids.add(values["id"])
+        if tag == "label":
+            if values.get("for"):
+                self.label_for.add(values["for"])
+            self._active_label_depth += 1
+        if tag == "input" and values.get("type", "text").lower() not in {"hidden", "submit", "button", "reset", "image"}:
+            self.inputs.append({
+                "id": values.get("id", ""),
+                "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+                "title": values.get("title", "").strip(),
+                "inside_label": "true" if self._active_label_depth else "false",
+            })
+        if tag == "a" and values.get("href") is not None:
+            self._active_link = {
+                "text": "", "aria_label": values.get("aria-label", "").strip(),
+                "title": values.get("title", "").strip(), "has_image_alt": False,
+                "has_svg_title": False,
+            }
+            self.links.append(self._active_link)
+        elif tag == "button":
+            self._active_button = {
+                "text": "", "aria_label": values.get("aria-label", "").strip(),
+                "title": values.get("title", "").strip(), "has_image_alt": False,
+            }
+            self.buttons.append(self._active_button)
+        if tag == "img":
+            if self._active_link is not None and values.get("alt", "").strip():
+                self._active_link["has_image_alt"] = True
+            if self._active_button is not None and values.get("alt", "").strip():
+                self._active_button["has_image_alt"] = True
+        if tag == "svg" and self._active_link is not None:
+            # SVG title handling is approximate; rendered accessibility tree needs review.
+            self._active_link["has_svg_title"] = bool(values.get("aria-label", "").strip())
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "a":
+            self._active_link = None
+        elif tag == "button":
+            self._active_button = None
+        elif tag == "label" and self._active_label_depth:
+            self._active_label_depth -= 1
+
+    def handle_data(self, data):
+        if self._active_link is not None:
+            self._active_link["text"] = str(self._active_link["text"]) + data.strip()
+        if self._active_button is not None:
+            self._active_button["text"] = str(self._active_button["text"]) + data.strip()
+
+
+def inspect_static_accessibility_signals(html: str, page_url: str) -> list[AuditFinding]:
+    """Flag clear source-level review signals without asserting WCAG compliance."""
+    parser = _AccessibilityParser()
+    try:
+        parser.feed(html)
+    except Exception:
+        return []
+
+    findings: list[AuditFinding] = []
+    unlabeled_inputs = [item for item in parser.inputs if not (
+        item["aria_label"] or item["aria_labelledby"] or item["title"] or
+        item["inside_label"] == "true" or (item["id"] and item["id"] in parser.label_for)
+    )]
+    if unlabeled_inputs:
+        findings.append(AuditFinding(
+            category="accessibility", title="Form controls may lack accessible labels",
+            status="manual_review_required", severity="medium",
+            evidence=f"Found {len(unlabeled_inputs)} input control(s) without a detectable associated label, aria-label, aria-labelledby, or title in returned HTML for {page_url}.",
+            explanation="People using screen readers need each form control's purpose announced. This static check may miss labels or accessible names created by JavaScript and cannot assess whether a label is meaningful.",
+            recommendation="Give each user-facing form control a visible, programmatically associated label where possible. Use aria-label or aria-labelledby only when a visible label is not practical, and verify the rendered accessibility tree.",
+            verification_steps=["Inspect each flagged control in the rendered page and browser accessibility tree.", "Test keyboard navigation and screen-reader announcements; retest after template changes."],
+            source_url=page_url,
+        ))
+
+    unnamed_links = [item for item in parser.links if not (
+        str(item["text"]).strip() or item["aria_label"] or item["title"] or
+        item["has_image_alt"] or item["has_svg_title"]
+    )]
+    if unnamed_links:
+        findings.append(AuditFinding(
+            category="accessibility", title="Links may have no accessible name",
+            status="manual_review_required", severity="medium",
+            evidence=f"Found {len(unnamed_links)} link(s) with no detectable text, aria-label, title, informative image alt, or SVG label in returned HTML for {page_url}.",
+            explanation="A link needs an accessible name so assistive technology users can understand its destination or purpose. This source check cannot determine whether JavaScript adds a name or whether existing link text is clear.",
+            recommendation="Provide concise link text that describes the destination or action. For icon-only links, provide an appropriate accessible name and verify the rendered accessibility tree.",
+            verification_steps=["Inspect flagged links in the rendered DOM and accessibility tree.", "Navigate links with a keyboard and test with an accessibility scanner."],
+            source_url=page_url,
+        ))
+
+    unnamed_buttons = [item for item in parser.buttons if not (
+        str(item["text"]).strip() or item["aria_label"] or item["title"] or item["has_image_alt"]
+    )]
+    if unnamed_buttons:
+        findings.append(AuditFinding(
+            category="accessibility", title="Buttons may have no accessible name",
+            status="manual_review_required", severity="medium",
+            evidence=f"Found {len(unnamed_buttons)} button(s) with no detectable text, aria-label, title, or image alt in returned HTML for {page_url}.",
+            explanation="Buttons need an accessible name that describes the action. Icon-only controls and names added by JavaScript require rendered-page review.",
+            recommendation="Add meaningful visible button text where possible. For icon-only buttons, provide a concise accessible name and check it in the rendered accessibility tree.",
+            verification_steps=["Inspect flagged buttons in the rendered DOM and accessibility tree.", "Test keyboard activation and screen-reader announcements."],
+            source_url=page_url,
+        ))
+
+    if not parser.html_lang:
+        findings.append(AuditFinding(
+            category="accessibility", title="Document language is not declared in returned HTML",
+            status="manual_review_required", severity="low",
+            evidence=f"No lang attribute was detected on the html element in returned HTML for {page_url}.",
+            explanation="A declared page language helps assistive technology pronounce content correctly. This check examines only the returned source and does not validate language tags or language changes within the page.",
+            recommendation="Set an appropriate BCP 47 language tag on the html element, such as lang=\"en\", matching the page's primary language. Mark meaningful language changes on individual elements when needed.",
+            verification_steps=["Inspect the rendered html element and confirm its lang value matches the primary page language.", "Run an accessibility scanner and manually review language changes."],
+            source_url=page_url,
+        ))
+    return findings
