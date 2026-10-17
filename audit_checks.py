@@ -242,7 +242,7 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             "Add a responsive declaration such as width=device-width, initial-scale=1. Do not disable user zoom.",
             viewport_steps, final_url,
         ))
-    elif "user-scalable=no" in viewport or "maximum-scale=1" in viewport:
+    elif "user-scalable=no" in viewport or "user-scalable=0" in viewport or "maximum-scale=1" in viewport:
         findings.append(_finding(
             "mobile_ux", "Viewport may restrict zoom", "verified", "medium",
             f"Viewport declaration may restrict zoom: {parser.viewport[:200]}",
