@@ -12,3 +12,4 @@ sqlalchemy[asyncio]
 greenlet
 psycopg2-binary
 reportlab>=4.2,<5.0
+aiohttp>=3.10,<4.0
