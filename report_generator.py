@@ -130,6 +130,40 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
     }
 
 
+def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object]]:
+    """Merge repeated instances of the same actionable issue across inspected pages."""
+    groups: dict[tuple[str, str, str, str, str, str], dict[str, object]] = {}
+    for finding in findings:
+        key = (
+            finding.category, finding.title, finding.status, finding.severity,
+            finding.explanation, finding.recommendation,
+        )
+        if key not in groups:
+            groups[key] = {
+                "category": finding.category,
+                "title": finding.title,
+                "status": finding.status,
+                "severity": finding.severity,
+                "explanation": finding.explanation,
+                "recommendation": finding.recommendation,
+                "evidence": [],
+                "verification_steps": [],
+                "source_urls": [],
+                "instances": 0,
+            }
+        item = groups[key]
+        item["instances"] = int(item["instances"]) + 1
+        evidence = str(finding.evidence or "").strip()
+        if evidence and evidence not in item["evidence"]:
+            item["evidence"].append(evidence)
+        for step in finding.verification_steps:
+            if step not in item["verification_steps"]:
+                item["verification_steps"].append(step)
+        if finding.source_url and finding.source_url not in item["source_urls"]:
+            item["source_urls"].append(finding.source_url)
+    return list(groups.values())
+
+
 def render_audit_pdf(result: AuditCheckResult) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -202,10 +236,12 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         ),
     ])
 
+    consolidated_findings = _consolidate_findings(result.findings)
     counts: dict[str, int] = {}
-    for finding in result.findings:
-        counts[finding.status] = counts.get(finding.status, 0) + 1
-    summary_rows = [["Status", "Count"]] + [[status.replace("_", " ").title(), str(count)] for status, count in sorted(counts.items())]
+    for finding in consolidated_findings:
+        status = str(finding["status"])
+        counts[status] = counts.get(status, 0) + 1
+    summary_rows = [["Status", "Consolidated issues"]] + [[status.replace("_", " ").title(), str(count)] for status, count in sorted(counts.items())]
     summary = Table(summary_rows, colWidths=[100 * mm, 35 * mm], repeatRows=1, hAlign="LEFT")
     summary.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF5")),
@@ -222,27 +258,57 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
     story.extend([summary, Spacer(1, 4 * mm)])
 
     story.append(Paragraph("Findings and recommended actions", section_style))
-    if not result.findings:
+    if not consolidated_findings:
         story.append(_p("No findings were produced. This is not proof that the website has no issues; review the limitations and check execution status.", body_style))
 
-    for index, finding in enumerate(result.findings, 1):
+    # Build one shared reference index so a page URL is not printed repeatedly under every finding.
+    evidence_urls: list[str] = []
+    for finding in consolidated_findings:
+        for url in finding["source_urls"]:
+            if url not in evidence_urls:
+                evidence_urls.append(url)
+    evidence_ids = {url: f"E{index}" for index, url in enumerate(evidence_urls, 1)}
+
+    for index, finding in enumerate(consolidated_findings, 1):
         blocks = [
-            Paragraph(f"{index}. {escape(finding.title)}", finding_style),
-            _p(f"Category: {finding.category.replace('_', ' ').title()} | Status: {finding.status.replace('_', ' ').title()} | Severity: {finding.severity.title()}", small_style),
-            Paragraph("<b>What was observed</b>", body_style),
-            _p(finding.evidence, body_style),
-            Paragraph("<b>What this means</b>", body_style),
-            _p(finding.explanation, body_style),
-            Paragraph("<b>Recommended solution</b>", body_style),
-            _p(finding.recommendation, body_style),
-            Paragraph("<b>How to verify</b>", body_style),
+            Paragraph(f"{index}. {escape(str(finding['title']))}", finding_style),
+            _p(
+                f"Category: {str(finding['category']).replace('_', ' ').title()} | "
+                f"Status: {str(finding['status']).replace('_', ' ').title()} | "
+                f"Severity: {str(finding['severity']).title()}",
+                small_style,
+            ),
         ]
-        for step in finding.verification_steps:
+        instances = int(finding["instances"])
+        urls = list(finding["source_urls"])
+        if instances > 1:
+            blocks.append(_p(f"Occurrences consolidated: {instances}", small_style))
+        if urls:
+            refs = ", ".join(evidence_ids[url] for url in urls)
+            blocks.append(_p(f"Evidence references: {refs}", small_style))
+            blocks.append(_p(f"Affected pages with recorded evidence: {len(urls)}", small_style))
+        blocks.extend([
+            Paragraph("<b>What was observed</b>", body_style),
+            _p(" | ".join(finding["evidence"]) or "No specific evidence text was recorded.", body_style),
+            Paragraph("<b>What this means</b>", body_style),
+            _p(finding["explanation"], body_style),
+            Paragraph("<b>Recommended solution</b>", body_style),
+            _p(finding["recommendation"], body_style),
+            Paragraph("<b>How to verify</b>", body_style),
+        ])
+        for step in finding["verification_steps"]:
             blocks.append(_p("• " + step, body_style))
-        if finding.source_url:
-            blocks.extend([Paragraph("<b>Evidence URL</b>", body_style), _link(finding.source_url, small_style)])
         blocks.append(Spacer(1, 3 * mm))
         story.append(KeepTogether(blocks))
+
+    if evidence_urls:
+        story.append(Paragraph("Evidence & References", section_style))
+        story.append(_p(
+            "Each reference ID below is used by the relevant consolidated finding. URLs are listed once here to keep the report concise.",
+            body_style,
+        ))
+        for url, reference_id in evidence_ids.items():
+            story.append(_p(f"{reference_id}: {url}", small_style))
 
     story.append(Paragraph("Coverage and limitations", section_style))
     for limitation in result.limitations:
