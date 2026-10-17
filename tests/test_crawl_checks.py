@@ -32,7 +32,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
         ),
         "https://shop.example/products/one": (
             200,
-            '<html><head></head><body><h1>Product One</h1></body></html>',
+            '<html><head></head><body><h1>Product One</h1><img src="/photo.jpg"></body></html>',
             {"content-type": "text/html"},
             "https://shop.example/products/one",
         ),
@@ -53,6 +53,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
     assert any(f.title == "Internal page missing a title" for f in findings)
     assert any(f.title == "Internal page missing meta description" for f in findings)
     assert any(f.title == "Internal page missing primary heading (H1)" for f in findings)
+    assert any(f.title == "Internal page images missing alt attributes" for f in findings)
     assert len(checked) == 2
     assert limitations
 
