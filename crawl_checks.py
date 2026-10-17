@@ -13,6 +13,8 @@ from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 import aiohttp
 import json
 
+from performance_checks import inspect_static_performance_signals
+
 from audit_checks import (
     REQUEST_TIMEOUT_SECONDS,
     USER_AGENT,
@@ -176,6 +178,9 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # Static resource patterns are review signals, not measured Core Web Vitals.
+            findings.extend(inspect_static_performance_signals(body, final_url))
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
