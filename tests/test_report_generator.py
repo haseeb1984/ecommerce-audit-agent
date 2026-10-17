@@ -165,5 +165,5 @@ def test_security_assessment_does_not_count_not_tested_info_transport_as_pass():
     score = calculate_security_assessment([finding], [])
     assert score["passed"] == 0
     assert score["issues"] == 0
-    assert score["unverified"] == 17
+    assert score["unverified"] == 23
     assert score["score"] is None
