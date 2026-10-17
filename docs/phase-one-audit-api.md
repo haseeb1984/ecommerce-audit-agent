@@ -30,7 +30,7 @@ A successful response is a downloadable `application/pdf` attachment. The endpoi
 
 This is an initial phase, not a full-site ecommerce audit. It does not yet crawl product/category URLs, compare raw HTML with a browser-rendered DOM, execute checkout flows, run a full Core Web Vitals field-data analysis, prove Google indexing, test every mobile width in a real browser, establish WCAG conformance, or perform penetration testing. Header presence alone does not prove security. The presence or absence of `llms.txt` does not establish ranking or AI citation outcomes.
 
-The URL checks and DNS preflight are defense-in-depth, not a complete defense against sophisticated DNS rebinding. Run this feature only with outbound network controls that prevent access to private, loopback, link-local, and cloud metadata services.
+The custom DNS resolver validates all returned addresses and passes those exact public IPs to aiohttp for the connection, avoiding a second DNS lookup between validation and connection. Keep deployment-level outbound controls blocking private, loopback, link-local, and cloud metadata services as defense-in-depth.
 
 ## Verification
 
