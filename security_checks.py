@@ -25,6 +25,12 @@ EXPOSURE_PATHS = (
     "/.DS_Store",
     "/debug.log",
     "/backup.sql",
+    "/server-status",
+    "/actuator/env",
+    "/actuator/configprops",
+    "/debug/vars",
+    "/swagger-ui/index.html",
+    "/openapi.json",
 )
 ENV_KEY_PATTERN = re.compile(
     r"(?im)^\s*(?:APP_KEY|APP_SECRET|API_KEY|API_SECRET|DB_PASSWORD|DATABASE_URL|"
@@ -73,11 +79,42 @@ def inspect_exposure_response(path: str, status: int, body: str,
             matched = "A database dump may be publicly readable"
             safe_evidence = "The response contains recognizable database-dump structure; table rows and data values are intentionally excluded from the report."
 
+    elif normalized_path == "/server-status":
+        lower = body.lower()
+        if "server version:" in lower and "server uptime:" in lower and ("scoreboard:" in lower or "total accesses:" in lower):
+            matched = "Apache server-status diagnostics appear publicly accessible"
+            safe_evidence = "The response contains multiple Apache server-status diagnostic markers; raw status output is not copied into this report."
+    elif normalized_path == "/actuator/env":
+        lower = body.lower()
+        if ('"propertysources"' in lower or '"propertySources"' in body) and ('"activeprofiles"' in lower or '"activeProfiles"' in body):
+            matched = "Application environment diagnostics may be publicly accessible"
+            safe_evidence = "The response resembles Spring Actuator environment output; property values are not copied into this report."
+    elif normalized_path == "/actuator/configprops":
+        lower = body.lower()
+        if ('"contexts"' in lower and '"beans"' in lower) or ('"prefix"' in lower and '"properties"' in lower and '"inputs"' in lower):
+            matched = "Application configuration diagnostics may be publicly accessible"
+            safe_evidence = "The response contains recognizable configuration-properties structure; configuration values are not copied into this report."
+    elif normalized_path == "/debug/vars":
+        lower = body.lower()
+        if '"cmdline"' in lower and '"memstats"' in lower and ('"goroutines"' in lower or '"numgoroutine"' in lower):
+            matched = "Go runtime diagnostic variables appear publicly accessible"
+            safe_evidence = "The response resembles Go expvar runtime diagnostics; variable values are not copied into this report."
+    elif normalized_path == "/swagger-ui/index.html":
+        lower = body.lower()
+        if "swagger-ui" in lower and ("swaggerinitializerbundle" in lower or "swagger-ui-bundle" in lower):
+            matched = "Interactive API documentation is publicly accessible"
+            safe_evidence = "The response contains Swagger UI assets. Public API documentation may be intentional; confirm the documented API is meant to be public and does not expose sensitive operations."
+    elif normalized_path == "/openapi.json":
+        lower = body.lower()
+        if '"openapi"' in lower and ('"paths"' in lower or '"components"' in lower):
+            matched = "An OpenAPI schema is publicly accessible"
+            safe_evidence = "The response resembles an OpenAPI API schema. Public documentation is not automatically a vulnerability; review whether internal routes or sensitive operation details should be disclosed."
+
     if not matched:
         return []
     return [_finding(
         "security_exposure", matched, "verified", "high", safe_evidence,
-        "Publicly accessible configuration, source-control metadata, or diagnostic output can disclose implementation details or secrets that attackers may reuse. The response was checked for recognizable content, not just an HTTP 200 status.",
+        "Publicly accessible configuration, source-control metadata, diagnostic output, or API documentation can disclose implementation details or secrets that attackers may reuse. The response was checked for recognizable content, not just an HTTP 200 status. API documentation exposure may be intentional and requires context.",
         "Restrict the affected path at the web server/CDN, remove backup or repository artifacts from the public document root, and rotate any credentials that may have been exposed. Review access logs and deployment packaging.",
         ["Open the exact URL without being logged in and confirm the sensitive content is no longer returned.",
          "Check server/CDN rules and deployment artifacts; do not paste secret values into tickets or reports.",
