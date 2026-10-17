@@ -12,7 +12,7 @@ import ipaddress
 import re
 import socket
 import ssl
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from audit_checks import AuditFinding, _finding, _safe_get
 
