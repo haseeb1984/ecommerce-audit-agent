@@ -50,3 +50,53 @@ def test_render_audit_pdf_handles_html_special_characters():
 
     pdf = render_audit_pdf(result)
     assert pdf.startswith(b"%PDF-")
+
+
+
+def test_security_assessment_score_is_scoped_and_not_a_hack_probability():
+    from report_generator import calculate_security_assessment
+
+    headers = [
+        AuditFinding(
+            category="security_headers",
+            title=label,
+            status="verified",
+            severity="info",
+            evidence="Header value observed.",
+            explanation="Explanation.",
+            recommendation="Recommendation.",
+            verification_steps=[],
+        )
+        for label in (
+            "Strict-Transport-Security", "Content-Security-Policy",
+            "X-Content-Type-Options", "Referrer-Policy",
+            "X-Frame-Options", "Permissions-Policy",
+        )
+    ]
+    score = calculate_security_assessment(
+        headers,
+        ["Passive exposure probes checked only 8 common paths; not a penetration test."],
+    )
+    assert score["score"] == 100
+    assert score["passed"] == 14
+    assert score["issues"] == 0
+    assert score["unverified"] == 0
+
+
+def test_security_assessment_does_not_treat_missing_header_as_pass():
+    from report_generator import calculate_security_assessment
+
+    finding = AuditFinding(
+        category="security_headers",
+        title="Content-Security-Policy",
+        status="manual_review_required",
+        severity="medium",
+        evidence="Response did not include content-security-policy.",
+        explanation="Explanation.",
+        recommendation="Recommendation.",
+        verification_steps=[],
+    )
+    score = calculate_security_assessment([finding], [])
+    assert score["score"] == 0
+    assert score["issues"] == 1
+    assert score["unverified"] == 13
