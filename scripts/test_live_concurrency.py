@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Run a real concurrent quota test against the deployed audit API.
 
-This test intentionally sends both simultaneous requests to junctiontools.com,
-a real domain previously confirmed to return a successful audit.
+This test intentionally sends simultaneous requests to two distinct, well-known domains.
 """
 import os
 import sys
@@ -16,7 +15,7 @@ BASE_URL = os.getenv(
     "AUDIT_BASE_URL", "https://ecommerce-audit-agent.vercel.app"
 ).rstrip("/")
 LICENSE_KEY = os.getenv("AUDIT_TEST_LICENSE_KEY", "").strip()
-TEST_DOMAIN = "junctiontools.com"
+TEST_DOMAINS = ("google.com", "facebook.com")
 
 
 def main() -> int:
@@ -28,7 +27,7 @@ def main() -> int:
 
     def send(request_number: int) -> tuple[int, int, str]:
         query = urllib.parse.urlencode({
-            "domain": TEST_DOMAIN,
+            "domain": TEST_DOMAINS[request_number - 1],
             "source": "live_concurrency_test",
         })
         request = urllib.request.Request(
@@ -49,7 +48,7 @@ def main() -> int:
         results = list(pool.map(send, (1, 2)))
 
     for number, status, body in results:
-        print(f"Request {number} | Domain: {TEST_DOMAIN} | HTTP: {status} | Response: {body}")
+        print(f"Request {number} | Domain: {TEST_DOMAINS[number - 1]} | HTTP: {status} | Response: {body}")
 
     statuses = sorted(status for _, status, _ in results)
     if statuses == [200, 429]:
