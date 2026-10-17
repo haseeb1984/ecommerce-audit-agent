@@ -41,7 +41,69 @@ class UniversalEcommerceAgent:
         if not api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set.")
         self.groq_client = AsyncGroq(api_key=api_key)
+        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         self.pagespeed_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
+
+    @staticmethod
+    def _is_model_configuration_error(exc: Exception) -> bool:
+        """Return True only for errors that plausibly mean this model cannot be used."""
+        status = getattr(exc, "status_code", None)
+        message = str(exc).lower()
+        if status in (401, 403, 429) or status is None and isinstance(exc, (httpx.HTTPError,)):
+            return False
+        model_markers = (
+            "model not found", "model_not_found", "model is not available",
+            "model unavailable", "decommissioned", "retired model",
+            "does not exist", "unsupported model", "invalid model",
+        )
+        json_compatibility_markers = (
+            "response_format", "json_object", "json mode", "json mode is not supported",
+        )
+        return (
+            status in (400, 404)
+            and (
+                any(marker in message for marker in model_markers)
+                or any(marker in message for marker in json_compatibility_markers)
+            )
+        )
+
+    @staticmethod
+    def _is_non_chat_model(model_id: str) -> bool:
+        model_id = model_id.lower()
+        return any(
+            marker in model_id
+            for marker in (
+                "whisper", "orpheus", "prompt-guard", "embedding", "embed",
+                "rerank", "speech", "transcription", "tts", "safeguard",
+            )
+        )
+
+    async def _compatible_model_candidates(self, current_model: str) -> list[str]:
+        """Get active model IDs from Groq and order likely chat models first."""
+        response = await self.groq_client.models.list()
+        available = []
+        for item in getattr(response, "data", []) or []:
+            model_id = getattr(item, "id", None)
+            active = getattr(item, "active", True)
+            if (
+                isinstance(model_id, str)
+                and model_id != current_model
+                and active is not False
+                and not self._is_non_chat_model(model_id)
+            ):
+                available.append(model_id)
+
+        preferred = [
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "qwen/qwen3.6-27b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+        ]
+        ordered = [model_id for model_id in preferred if model_id in available]
+        ordered.extend(sorted(model_id for model_id in available if model_id not in ordered))
+        return ordered
 
     async def run_audit(self, domain: str) -> StoreAuditMetrics:
         clean_domain = domain.replace("https://", "").replace("http://", "").strip("/")
@@ -123,7 +185,12 @@ class UniversalEcommerceAgent:
                 "Google PageSpeed audit failed. Check server logs for diagnostic details."
             ) from exc
 
-    async def generate_pitch(self, audit: StoreAuditMetrics, contact: ContactInfo) -> PersonalizedPitch:
+    async def _request_pitch(
+        self,
+        model: str,
+        audit: StoreAuditMetrics,
+        contact: ContactInfo,
+    ) -> PersonalizedPitch:
         system_prompt = f"""
         You are an elite E-commerce Agency Strategist.
         1. Write a 3-sentence cold email to {contact.first_name} pointing out their mobile score ({audit.mobile_score}/100) is burning ad budget.
@@ -131,7 +198,7 @@ class UniversalEcommerceAgent:
         Respond STRICTLY in valid JSON with keys: "revenue_leak_hypothesis", "email_subject", "email_body".
         """
         response = await self.groq_client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+            model=model,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -141,8 +208,62 @@ class UniversalEcommerceAgent:
                 },
             ],
         )
-        parsed = json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        parsed = json.loads(content)
         return PersonalizedPitch(**parsed)
+
+    async def generate_pitch(self, audit: StoreAuditMetrics, contact: ContactInfo) -> PersonalizedPitch:
+        current_model = getattr(self, "model", os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"))
+        try:
+            return await self._request_pitch(current_model, audit, contact)
+        except Exception as exc:
+            if not self._is_model_configuration_error(exc):
+                raise
+            logger.warning(
+                "Groq model %s appears unavailable or incompatible; discovering alternatives",
+                current_model,
+            )
+
+        try:
+            candidates = await self._compatible_model_candidates(current_model)
+        except Exception:
+            logger.exception("Unable to retrieve the current Groq model list")
+            raise
+
+        last_error = None
+        for candidate in candidates:
+            try:
+                # A real completion plus JSON/Pydantic validation verifies the model
+                # supports the exact output format this backend needs.
+                pitch = await self._request_pitch(candidate, audit, contact)
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                if status in (401, 403, 429) or isinstance(exc, (httpx.HTTPError,)):
+                    logger.warning(
+                        "Stopping Groq model recovery after non-model error (HTTP %s)",
+                        status,
+                    )
+                    raise
+                last_error = exc
+                logger.info("Groq candidate model %s failed compatibility check: %s", candidate, exc)
+                continue
+
+            self.model = candidate
+            logger.warning(
+                "Groq model recovery succeeded: switched from %s to %s",
+                current_model,
+                candidate,
+            )
+            return pitch
+
+        if last_error:
+            raise RuntimeError(
+                "Groq's configured model is unavailable and no listed alternative passed "
+                "the backend's JSON response validation."
+            ) from last_error
+        raise RuntimeError(
+            "Groq's configured model is unavailable and the API returned no compatible chat models."
+        )
 
     async def process_lead(
         self, domain: str, user_email: str, source: str = "web_audit"
