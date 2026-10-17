@@ -177,6 +177,19 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             page_parser = _PageParser()
             page_parser.feed(body)
 
+            # The homepage alt-attribute check is already part of Phase 1. Add
+            # page-specific findings for sampled internal pages without duplicating it.
+            if page_parser.images_missing_alt and url != _canonical_page_url(final_home):
+                findings.append(_finding(
+                    "aria_alt_text", "Internal page images missing alt attributes",
+                    "verified", "medium",
+                    f"{page_parser.images_missing_alt} of {page_parser.images} image element(s) on {final_url} lack an alt attribute in the returned HTML.",
+                    "Alternative text communicates meaningful image content to screen-reader users. Decorative images can use an empty alt attribute; this source check does not judge whether existing text is appropriate.",
+                    "Review each image in context, add concise descriptive alt text to informative images, and use alt=\"\" for decorative images. Avoid keyword stuffing.",
+                    ["Inspect the images on the rendered page.", "Retest with a browser accessibility inspector or automated accessibility scanner."],
+                    final_url,
+                ))
+
             # Product structured data is checked only on URL paths that look like
             # product detail pages. JSON-LD detection is a source-level signal,
             # not proof that all required properties or rich-result rules pass.
