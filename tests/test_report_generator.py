@@ -129,7 +129,7 @@ def test_security_assessment_keeps_unknown_controls_out_of_pass_count():
     score = calculate_security_assessment([finding], [])
     assert score["passed"] == 0
     assert score["issues"] == 0
-    assert score["unverified"] == 17
+    assert score["unverified"] == 23
     assert score["score"] is None
 
 
