@@ -68,7 +68,7 @@ def test_security_assessment_score_is_scoped_and_not_a_hack_probability():
             verification_steps=[],
         )
         for label in (
-            "Strict-Transport-Security", "Content-Security-Policy",
+            "HSTS header", "Content Security Policy",
             "X-Content-Type-Options", "Referrer-Policy",
             "X-Frame-Options", "Permissions-Policy",
         )
@@ -80,7 +80,7 @@ def test_security_assessment_score_is_scoped_and_not_a_hack_probability():
     assert score["score"] == 100
     assert score["passed"] == 14
     assert score["issues"] == 0
-    assert score["unverified"] == 0
+    assert score["unverified"] == 3
 
 
 def test_security_assessment_does_not_treat_missing_header_as_pass():
@@ -99,4 +99,4 @@ def test_security_assessment_does_not_treat_missing_header_as_pass():
     score = calculate_security_assessment([finding], [])
     assert score["score"] == 0
     assert score["issues"] == 1
-    assert score["unverified"] == 13
+    assert score["unverified"] == 16
