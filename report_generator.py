@@ -33,8 +33,8 @@ def _link(url: str, style: ParagraphStyle) -> Paragraph:
 
 
 SECURITY_HEADER_LABELS = {
-    "Strict-Transport-Security",
-    "Content-Security-Policy",
+    "HSTS header",
+    "Content Security Policy",
     "X-Content-Type-Options",
     "Referrer-Policy",
     "X-Frame-Options",
@@ -77,6 +77,32 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
     else:
         checked_paths = 0
         unverified += 8
+
+    transport_titles = {
+        "TLS certificate validity and expiry",
+        "TLS certificate validation failed",
+        "HTTP redirects to HTTPS",
+        "HTTP does not redirect to HTTPS",
+        "HTTP resources referenced by HTTPS page",
+        "No static HTTP mixed-content references detected",
+    }
+    transport_findings = [
+        finding for finding in findings
+        if finding.category == "security_transport" and finding.title in transport_titles
+    ]
+    expected_transport_checks = 3
+    seen_transport_titles = set()
+    for finding in transport_findings:
+        if finding.title in seen_transport_titles:
+            continue
+        seen_transport_titles.add(finding.title)
+        if finding.status == "manual_review_required":
+            unverified += 1
+        elif finding.severity == "info":
+            passed += 1
+        else:
+            issues += 1
+    unverified += max(0, expected_transport_checks - len(seen_transport_titles))
 
     assessed = passed + issues + unverified
     # Unknown controls never count as passes; this is a conservative coverage score.
