@@ -135,7 +135,7 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
             ))
 
     hsts = headers.get("strict-transport-security", "").lower()
-    max_age = re.search(r"(?:^|;)\\s*max-age\\s*=\\s*(\\d+)", hsts)
+    max_age = re.search(r"(?:^|;)\s*max-age\s*=\s*(\d+)", hsts)
     if hsts and (not max_age or int(max_age.group(1)) < 15552000):
         findings.append(_finding(
             "security_headers", "HSTS policy may need review", "manual_review_required", "low",
@@ -148,7 +148,7 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
 
     raw_cookie = headers.get("set-cookie", "")
     if raw_cookie:
-        cookies = re.split(r",(?=\\s*[^;,=\\s]+=[^;,]*)", raw_cookie)
+        cookies = re.split(r",(?=\s*[^;,=\s]+=[^;,]*)", raw_cookie)
         insecure = []
         session_names = ("session", "sessid", "auth", "token", "jwt")
         for cookie in cookies:
