@@ -138,7 +138,13 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 continue
             seen.add(candidate)
             candidates.append(candidate)
-            if len(candidates) >= MAX_CRAWL_PAGES - 1:
+            # A small fixed set of safe GET probes looks for recognizable exposed artifacts.
+    # The public-only resolver, redirect validation, timeout and response cap still apply.
+    exposure_findings, exposure_limitations = await probe_common_exposure_paths(client, final_home)
+    findings.extend(exposure_findings)
+    limitations.extend(exposure_limitations)
+
+    if len(candidates) >= MAX_CRAWL_PAGES - 1:
                 break
 
         title_pages: dict[str, list[str]] = defaultdict(list)
