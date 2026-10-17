@@ -234,6 +234,15 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 title_pages[page_parser.title_text.strip().casefold()].append(url)
             if page_parser.meta_description:
                 description_pages[page_parser.meta_description.strip().casefold()].append(url)
+            if page_parser.h1_count == 0:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page missing primary heading (H1)",
+                    "verified", "low",
+                    f"No H1 heading was found in the returned HTML for {url}.",
+                    "A primary heading helps visitors understand the page topic and gives the document a clearer semantic structure. Some themes render headings with JavaScript, which this source-only crawler does not execute.",
+                    "Review the rendered page and add a meaningful main heading where appropriate. Avoid adding an H1 solely to satisfy a tool if the page already has an accessible, equivalent structure.",
+                    ["Inspect the page source and rendered heading outline.", "Retest after the template change."], url,
+                ))
             if not page_parser.title_text:
                 findings.append(_finding(
                     "on_page_seo", "Internal page missing a title",
