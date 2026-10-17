@@ -99,3 +99,65 @@ async def test_crawl_flags_off_origin_canonical_and_noindex(monkeypatch):
 
     assert any(f.title == "Canonical URL points outside this page origin" for f in findings)
     assert any(f.title == "Page contains a noindex directive" for f in findings)
+
+
+
+@pytest.mark.asyncio
+async def test_product_page_detects_product_jsonld(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product One</title>'
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"Product",'
+            '"name":"Product One","offers":{"@type":"Offer","price":"10.00"}}'
+            '</script></head><body><h1>Product One</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    schema_finding = next(f for f in findings if f.category == "structured_data")
+    assert schema_finding.title == "Product structured data detected"
+    assert schema_finding.status == "verified"
+
+
+@pytest.mark.asyncio
+async def test_product_page_without_product_jsonld_requires_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product One</title></head><body>'
+            '<h1>Product One</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    schema_finding = next(f for f in findings if f.category == "structured_data")
+    assert schema_finding.title == "Product structured data not detected"
+    assert schema_finding.status == "manual_review_required"
