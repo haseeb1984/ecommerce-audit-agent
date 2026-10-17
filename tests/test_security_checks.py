@@ -132,3 +132,41 @@ def test_database_dump_detection_does_not_copy_rows_into_evidence():
     )
     assert len(findings) == 1
     assert "sensitive" not in findings[0].evidence
+
+
+
+@pytest.mark.asyncio
+async def test_transport_checks_flag_http_resources_in_https_html(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        return 200, "<html></html>", {}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.inspect_transport_security(
+        object(),
+        '<html><script src="http://cdn.example/app.js"></script><img src="http://cdn.example/a.png"></html>',
+        "http://shop.example/",
+    )
+    assert any("HTTP does not redirect to HTTPS" == item.title for item in findings)
+    assert any("Mixed-content inspection was skipped" in item for item in limitations)
+    assert not any("HTTP resources referenced by HTTPS page" == item.title for item in findings)
+
+
+@pytest.mark.asyncio
+async def test_transport_checks_detect_static_mixed_content_on_https_html(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        return 200, "<html></html>", {}, "https://shop.example/"
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.inspect_transport_security(
+        object(),
+        '<html><script src="http://cdn.example/app.js"></script><img src="http://cdn.example/a.png"></html>',
+        "https://shop.example/",
+    )
+    mixed = [item for item in findings if item.title == "HTTP resources referenced by HTTPS page"]
+    assert len(mixed) == 1
+    assert mixed[0].severity == "high"
+    assert not any("Mixed-content inspection" in item for item in limitations)
