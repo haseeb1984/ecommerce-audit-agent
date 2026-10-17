@@ -16,6 +16,8 @@ import json
 from performance_checks import inspect_static_performance_signals
 from accessibility_checks import inspect_static_accessibility_signals
 
+from security_checks import probe_common_exposure_paths
+
 from audit_checks import (
     REQUEST_TIMEOUT_SECONDS,
     USER_AGENT,
