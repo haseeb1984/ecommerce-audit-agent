@@ -162,3 +162,51 @@ async def test_product_page_without_product_jsonld_requires_review(monkeypatch):
     schema_finding = next(f for f in findings if f.category == "structured_data")
     assert schema_finding.title == "Product structured data not detected"
     assert schema_finding.status == "manual_review_required"
+
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_uses_same_origin_sitemap_urls(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    product = "https://shop.example/products/from-sitemap"
+    requests = []
+
+    async def fake_safe_get(client, url):
+        requests.append(url)
+        if url == homepage:
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="https://outside.example/products/skip">External</a>'
+                '</body></html>',
+                {"content-type": "text/html"},
+                homepage,
+            )
+        if url == "https://shop.example/sitemap.xml":
+            return (
+                200,
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{product}</loc></url>'
+                '<url><loc>https://outside.example/products/skip</loc></url>'
+                '</urlset>',
+                {"content-type": "application/xml"},
+                url,
+            )
+        if url == product:
+            return (
+                200,
+                '<html><head><title>Product</title><meta name="description" content="Item">'
+                '</head><body><h1>Product</h1></body></html>',
+                {"content-type": "text/html"},
+                product,
+            )
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert product in requests
+    assert product in checked
+    assert not any("outside.example" in url for url in requests)
+    assert any("sitemap.xml" in item for item in limitations)
