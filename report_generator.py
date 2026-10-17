@@ -74,7 +74,7 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
         checked_paths = int(match.group(1)) if match else 0
         issues += min(len(exposure_findings), checked_paths)
         unverified_match = next(
-            (re.search(r"(\\d+) of \\d+ exposure probes could not be verified", item)
+            (re.search(r"(\d+) of \d+ exposure probes could not be verified", item)
              for item in limitations
              if "exposure probes could not be verified" in item),
             None,
