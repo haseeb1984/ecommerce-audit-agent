@@ -307,3 +307,37 @@ async def test_category_like_page_without_h1_is_flagged_for_review(monkeypatch):
         and f.status == "manual_review_required"
         for f in findings
     )
+
+
+
+@pytest.mark.asyncio
+async def test_category_page_detects_itemlist_jsonld(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/collections/shoes">Shoes</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Shoes</title>'
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"ItemList",'
+            '"itemListElement":[{"@type":"ListItem","position":1,"url":"https://shop.example/products/one"}]}'
+            '</script></head><body><h1>Shoes</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    schema_finding = next(
+        f for f in findings if f.title == "Category/list structured data detected"
+    )
+    assert schema_finding.status == "verified"
