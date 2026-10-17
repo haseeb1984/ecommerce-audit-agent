@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-import httpx
+import aiohttp
 from pydantic import BaseModel, Field
 
 
@@ -79,38 +79,69 @@ def normalize_target(value: str) -> str:
     return urlunsplit((parsed.scheme.lower(), netloc, path, parsed.query, ""))
 
 
-async def _resolve_public_host(host: str) -> None:
-    """Reject hosts resolving to any non-public address before making a request."""
-    try:
-        ip = ipaddress.ip_address(host.strip("[]"))
-        addresses = [ip]
-    except ValueError:
-        loop = asyncio.get_running_loop()
+class PublicOnlyResolver(aiohttp.abc.AbstractResolver):
+    """Resolve DNS once, validate every address, and return those exact IPs to aiohttp.
+
+    This pins the connection to the checked DNS answer, preventing a second DNS lookup
+    between preflight validation and TCP connection (a common DNS-rebinding gap).
+    """
+    async def resolve(self, host: str, port: int = 0, family: int = socket.AF_UNSPEC):
         try:
-            records = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-        except OSError as exc:
-            raise ValueError(f"Could not resolve target host: {host}") from exc
-        addresses = [ipaddress.ip_address(record[4][0]) for record in records]
-    if not addresses or any(not address.is_global for address in addresses):
-        raise ValueError("Target host resolves to a private or non-public IP address.")
+            literal = ipaddress.ip_address(host.strip("[]"))
+            addresses = [literal]
+        except ValueError:
+            loop = asyncio.get_running_loop()
+            try:
+                records = await loop.getaddrinfo(
+                    host, port, family=family, type=socket.SOCK_STREAM
+                )
+            except OSError as exc:
+                raise OSError(f"Could not resolve target host: {host}") from exc
+            addresses = []
+            seen = set()
+            for record in records:
+                address = ipaddress.ip_address(record[4][0])
+                if address not in seen:
+                    seen.add(address)
+                    addresses.append(address)
+
+        if not addresses or any(not address.is_global for address in addresses):
+            raise OSError("Target host resolves to a private or non-public IP address.")
+
+        return [
+            {
+                "hostname": host,
+                "host": str(address),
+                "port": port,
+                "family": socket.AF_INET6 if address.version == 6 else socket.AF_INET,
+                "proto": 0,
+                "flags": 0,
+            }
+            for address in addresses
+        ]
+
+    async def close(self) -> None:
+        return None
 
 
-async def _safe_get(client: httpx.AsyncClient, url: str) -> tuple[int, str, dict[str, str], str]:
-    """Fetch a public URL with bounded bytes and manually validated redirects."""
+async def _resolve_public_host(host: str) -> None:
+    """Compatibility helper that applies the same public-only DNS policy."""
+    await PublicOnlyResolver().resolve(host, 443, socket.AF_UNSPEC)
+
+
+async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, dict[str, str], str]:
+    """Fetch a public URL with pinned public DNS answers, bounded bytes, and safe redirects."""
     current = normalize_target(url)
     for redirect_count in range(MAX_REDIRECTS + 1):
-        parsed = urlsplit(current)
-        await _resolve_public_host(parsed.hostname or "")
-        async with client.stream("GET", current, headers={"User-Agent": USER_AGENT}) as response:
+        async with client.get(current, allow_redirects=False) as response:
             headers = {key.lower(): value for key, value in response.headers.items()}
-            if response.status_code in {301, 302, 303, 307, 308}:
+            if response.status in {301, 302, 303, 307, 308}:
                 location = headers.get("location")
                 if not location:
-                    return response.status_code, "", headers, current
+                    return response.status, "", headers, current
                 if redirect_count >= MAX_REDIRECTS:
                     raise ValueError("The website exceeded the redirect limit.")
-                destination = normalize_target(urljoin(current, location))
-                current = destination
+                current = normalize_target(urljoin(current, location))
                 continue
             content_length = headers.get("content-length")
             if content_length:
@@ -122,13 +153,13 @@ async def _safe_get(client: httpx.AsyncClient, url: str) -> tuple[int, str, dict
                         raise
             chunks: list[bytes] = []
             size = 0
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.content.iter_chunked(65536):
                 size += len(chunk)
                 if size > MAX_RESPONSE_BYTES:
                     raise ValueError("Response exceeded the audit's 1 MB size limit.")
                 chunks.append(chunk)
-            body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-            return response.status_code, body, headers, current
+            body = b"".join(chunks).decode(response.charset or "utf-8", errors="replace")
+            return response.status, body, headers, current
     raise ValueError("The website exceeded the redirect limit.")
 
 
@@ -391,8 +422,18 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
         "HTML source checks do not prove the rendered mobile layout, full accessibility, Google indexing, or legal compliance.",
         "Security-header checks are passive observations and do not constitute penetration testing.",
     ]
-    timeout = httpx.Timeout(REQUEST_TIMEOUT_SECONDS)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+    connector = aiohttp.TCPConnector(
+        resolver=PublicOnlyResolver(),
+        use_dns_cache=False,
+        family=socket.AF_UNSPEC,
+    )
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        connector=connector,
+        headers={"User-Agent": USER_AGENT},
+        trust_env=False,
+    ) as client:
         try:
             status, html, headers, final_url = await _safe_get(client, normalized)
             pages_checked.append(final_url)
