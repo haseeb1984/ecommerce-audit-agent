@@ -52,6 +52,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
     assert not any("other.example" in url for url in requested)
     assert any(f.title == "Internal page missing a title" for f in findings)
     assert any(f.title == "Internal page missing meta description" for f in findings)
+    assert any(f.title == "Internal page missing primary heading (H1)" for f in findings)
     assert len(checked) == 2
     assert limitations
 
