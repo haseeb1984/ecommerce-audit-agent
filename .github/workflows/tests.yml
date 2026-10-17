@@ -5,6 +5,9 @@ on:
     branches: ["main", "fix/**"]
   pull_request:
     branches: ["main"]
+    paths-ignore:
+      - "requirements.txt"
+      - "requirements-dev.txt"
 
 permissions:
   contents: write
@@ -43,16 +46,18 @@ jobs:
         run: python -m pip install --upgrade pip pip-tools
       - name: Generate hashed production lock
         run: pip-compile --resolver=backtracking --generate-hashes --strip-extras --output-file=requirements.txt requirements.in
-      - name: Commit refreshed production lock when changed
+      - name: Generate hashed development lock
+        run: pip-compile --resolver=backtracking --generate-hashes --strip-extras --output-file=requirements-dev.txt requirements-dev.in
+      - name: Commit refreshed dependency locks when changed
         if: github.event_name == 'pull_request'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Refresh hashed production dependency lock"
-          file_pattern: requirements.txt
+          file_pattern: requirements.txt requirements-dev.txt
       - name: Verify production dependencies are fully pinned and hashed
         run: python -m pip install --require-hashes -r requirements.txt
       - name: Install development dependencies
-        run: python -m pip install -r requirements-dev.txt
+        run: python -m pip install --require-hashes -r requirements-dev.txt
       - name: Audit Python dependencies for known vulnerabilities
         run: |
           python -m pip install pip-audit
