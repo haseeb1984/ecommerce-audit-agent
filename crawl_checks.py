@@ -190,15 +190,30 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     final_url,
                 ))
 
-            # Product structured data is checked only on URL paths that look like
-            # product detail pages. JSON-LD detection is a source-level signal,
-            # not proof that all required properties or rich-result rules pass.
+            # Product structured data is inspected only on product-detail-like paths.
+            # Static JSON-LD property checks are evidence, not a guarantee of Google
+            # rich-result eligibility; variants and platform-specific output need review.
             path_segments = [part.lower() for part in urlsplit(final_url).path.split("/") if part]
             looks_like_product = any(
                 segment in {"product", "products"} for segment in path_segments
             )
+            looks_like_category = any(
+                segment in {"collection", "collections", "category", "categories", "catalog"}
+                for segment in path_segments
+            )
+            if looks_like_category and page_parser.h1_count == 0:
+                findings.append(_finding(
+                    "ecommerce_category", "Category-like page has no H1 in returned HTML",
+                    "manual_review_required", "low",
+                    f"The URL path resembles a category/collection page, but no H1 was found in returned HTML: {final_url}.",
+                    "Category pages benefit from a clear heading that tells shoppers what products they are browsing. Some themes add headings with JavaScript, which this source-only check does not execute.",
+                    "Check the rendered page and add a clear category heading if one is missing; do not add a redundant heading solely to satisfy an automated check.",
+                    ["Open the category page at desktop and mobile widths.", "Inspect the rendered heading outline and retest after any template change."],
+                    final_url,
+                ))
+
             if looks_like_product:
-                product_schema_found = False
+                product_nodes: list[dict] = []
                 for script_text in page_parser.jsonld_scripts:
                     try:
                         schema_data = json.loads(script_text)
@@ -216,27 +231,75 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                                 for value in types
                             }
                             if normalized_types.intersection({"product", "productgroup"}):
-                                product_schema_found = True
+                                product_nodes.append(item)
                             stack.extend(value for value in item.values() if isinstance(value, (dict, list)))
                         elif isinstance(item, list):
                             stack.extend(item)
 
+                product_schema_found = bool(product_nodes)
                 findings.append(_finding(
                     "structured_data",
                     "Product structured data detected" if product_schema_found else "Product structured data not detected",
                     "verified" if product_schema_found else "manual_review_required",
                     "info" if product_schema_found else "low",
                     (
-                        f"Detected Product/ProductGroup type in JSON-LD on {final_url}; "
+                        f"Detected {len(product_nodes)} Product/ProductGroup object(s) in JSON-LD on {final_url}; "
                         f"scanned {len(page_parser.jsonld_scripts)} JSON-LD script block(s)."
                         if product_schema_found else
                         f"No Product/ProductGroup type was detected in {len(page_parser.jsonld_scripts)} JSON-LD script block(s) on {final_url}."
                     ),
-                    "Product structured data can help search engines interpret product details, but presence alone does not prove validity, eligibility for rich results, or that a search engine will display them.",
-                    "If this is an indexable product detail page, review the applicable Product structured-data properties, ensure values match visible page content, and validate the markup. Some ecommerce platforms inject data outside the initial HTML response.",
-                    ["Inspect page source for JSON-LD Product or ProductGroup data.", "Validate the markup with a structured-data testing tool and compare price, availability, currency, and product identifiers with the visible page."],
+                    "Product structured data can help search engines interpret product details, but presence alone does not prove validity, rich-result eligibility, or that a search engine will display it.",
+                    "If this is an indexable product detail page, validate its structured data and ensure it matches visible page content. Some ecommerce platforms inject markup outside the initial HTML response.",
+                    ["Inspect page source for JSON-LD Product or ProductGroup data.", "Use a structured-data testing tool and compare the results with the visible product page."],
                     final_url,
                 ))
+
+                if product_nodes:
+                    def has_value(value):
+                        if isinstance(value, str):
+                            return bool(value.strip())
+                        if isinstance(value, (int, float)):
+                            return True
+                        if isinstance(value, list):
+                            return any(has_value(entry) for entry in value)
+                        if isinstance(value, dict):
+                            return bool(value)
+                        return False
+
+                    missing_properties: list[str] = []
+                    for property_name in ("name", "image"):
+                        if not any(has_value(node.get(property_name)) for node in product_nodes):
+                            missing_properties.append(property_name)
+
+                    offer_nodes = []
+                    for node in product_nodes:
+                        offers = node.get("offers", [])
+                        if isinstance(offers, dict):
+                            offers = [offers]
+                        if isinstance(offers, list):
+                            offer_nodes.extend(offer for offer in offers if isinstance(offer, dict))
+                    if not offer_nodes:
+                        missing_properties.append("offers (price and availability details)")
+                    else:
+                        for offer_property in ("price", "priceCurrency"):
+                            if not any(has_value(offer.get(offer_property)) for offer in offer_nodes):
+                                missing_properties.append(f"offers.{offer_property}")
+                    if not any(
+                        has_value(offer.get("availability")) for offer in offer_nodes
+                    ) and offer_nodes:
+                        missing_properties.append("offers.availability")
+
+                    if missing_properties:
+                        findings.append(_finding(
+                            "structured_data", "Product JSON-LD needs property review",
+                            "manual_review_required", "medium",
+                            f"On {final_url}, sampled Product/ProductGroup JSON-LD does not expose these commonly useful properties in the inspected objects: "
+                            + ", ".join(missing_properties) + ".",
+                            "Missing properties in the initial HTML can limit how completely a search engine interprets a product. Requirements differ by schema type and search feature; this automated signal is not a formal validity verdict.",
+                            "Compare the detected JSON-LD with the visible product and the current structured-data requirements for your intended search feature. Add only accurate values supported by the page; never invent price, currency, availability, or images.",
+                            ["Run the URL through Google's Rich Results Test and Schema.org Validator.", "Confirm name, images, price, currency, and availability match the visible product and selected variant.", "Retest after changes."],
+                            final_url,
+                        ))
 
             # A canonical tag is a search-engine hint. Flag an off-origin target
             # for human review rather than assuming it is wrong in every setup.
