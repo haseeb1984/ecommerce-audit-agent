@@ -17,6 +17,9 @@ EXPOSURE_PATHS = (
     "/config.php.bak",
     "/wp-config.php.bak",
     "/phpinfo.php",
+    "/.DS_Store",
+    "/debug.log",
+    "/backup.sql",
 )
 ENV_KEY_PATTERN = re.compile(
     r"(?im)^\s*(?:APP_KEY|APP_SECRET|API_KEY|API_SECRET|DB_PASSWORD|DATABASE_URL|"
@@ -50,6 +53,20 @@ def inspect_exposure_response(path: str, status: int, body: str,
         if "phpinfo()" in body.lower() and ("php version" in body.lower() or "phpinfo" in body.lower()):
             matched = "A public PHP information page was detected"
             safe_evidence = "The response contains recognizable phpinfo output markers."
+    elif normalized_path == "/.ds_store":
+        if body.startswith("Bud1") or body.startswith("\x00\x00\x00\x01Bud1"):
+            matched = "A macOS directory metadata file appears publicly readable"
+            safe_evidence = "The response begins with a recognizable .DS_Store file signature."
+    elif normalized_path == "/debug.log":
+        lines = [line.strip() for line in body.splitlines() if line.strip()]
+        if len(lines) >= 3 and any(token in body.lower() for token in ("fatal error", "stack trace", "traceback", "exception")):
+            matched = "A debug log appears publicly readable"
+            safe_evidence = f"The response resembles a diagnostic log ({len(lines)} non-empty lines) and contains error/trace markers; log contents are not copied into the report."
+    elif normalized_path == "/backup.sql":
+        lower = body.lower()
+        if len(body) >= 200 and ("create table" in lower or "insert into" in lower) and ("-- mysql dump" in lower or "postgresql database dump" in lower or "copy " in lower):
+            matched = "A database dump may be publicly readable"
+            safe_evidence = "The response contains recognizable database-dump structure; table rows and data values are intentionally excluded from the report."
 
     if not matched:
         return []
