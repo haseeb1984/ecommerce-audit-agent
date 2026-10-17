@@ -147,3 +147,23 @@ def test_security_assessment_does_not_count_unverified_exposure_probes_as_passes
     assert score["unverified"] == 11
     assert score["score"] == 35
 
+
+
+def test_security_assessment_does_not_count_not_tested_info_transport_as_pass():
+    from report_generator import calculate_security_assessment
+
+    finding = AuditFinding(
+        category="security_transport",
+        title="HTTP redirects to HTTPS",
+        status="not_tested",
+        severity="info",
+        evidence="The redirect check did not complete.",
+        explanation="Explanation.",
+        recommendation="Recommendation.",
+        verification_steps=[],
+    )
+    score = calculate_security_assessment([finding], [])
+    assert score["passed"] == 0
+    assert score["issues"] == 0
+    assert score["unverified"] == 17
+    assert score["score"] is None
