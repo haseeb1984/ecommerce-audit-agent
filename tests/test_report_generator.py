@@ -132,3 +132,18 @@ def test_security_assessment_keeps_unknown_controls_out_of_pass_count():
     assert score["unverified"] == 17
     assert score["score"] is None
 
+
+def test_security_assessment_does_not_count_unverified_exposure_probes_as_passes():
+    from report_generator import calculate_security_assessment
+
+    limitations = [
+        "Passive exposure probes checked only 8 common paths; this is not a penetration test.",
+        "2 of 8 exposure probes could not be verified due to request failures or redirects.",
+    ]
+    score = calculate_security_assessment([], limitations)
+    assert score["checked_exposure_paths"] == 8
+    assert score["passed"] == 6
+    assert score["issues"] == 0
+    assert score["unverified"] == 11
+    assert score["score"] == 35
+
