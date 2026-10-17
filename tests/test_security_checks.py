@@ -205,7 +205,11 @@ def test_admin_and_diagnostic_exposure_signatures_are_detected(path, body):
         "https://shop.example" + path,
     )
     assert len(findings) == 1
-    assert findings[0].status == "verified"
+    if path in {"/swagger-ui/index.html", "/openapi.json"}:
+        assert findings[0].status == "manual_review_required"
+        assert findings[0].severity == "low"
+    else:
+        assert findings[0].status == "verified"
 
 
 @pytest.mark.parametrize("path", [
