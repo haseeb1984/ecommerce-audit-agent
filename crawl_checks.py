@@ -12,7 +12,6 @@ from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 import aiohttp
 
 from audit_checks import (
-    MAX_RESPONSE_BYTES,
     REQUEST_TIMEOUT_SECONDS,
     USER_AGENT,
     AuditFinding,
@@ -111,7 +110,13 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         description_pages: dict[str, list[str]] = defaultdict(list)
         for url in [_canonical_page_url(final_home), *candidates]:
             try:
-                page_status, body, page_headers, final_url = await _safe_get(client, url)
+                # Reuse the homepage response already fetched for link discovery.
+                # This avoids spending a second request on the same page and keeps
+                # the recorded homepage evidence consistent within this audit run.
+                if url == _canonical_page_url(final_home):
+                    page_status, body, page_headers, final_url = status, homepage, headers, final_home
+                else:
+                    page_status, body, page_headers, final_url = await _safe_get(client, url)
             except Exception as exc:
                 findings.append(_finding(
                     "crawl", "Internal page could not be checked", "not_tested", "info",
