@@ -47,7 +47,7 @@ class FakeModels:
 
 def make_agent(responses, model_ids):
     agent = UniversalEcommerceAgent.__new__(UniversalEcommerceAgent)
-    agent.model = "retired-model"
+    agent.model = "llama3-70b-8192"
     agent.groq_client = SimpleNamespace(
         chat=SimpleNamespace(completions=FakeCompletions(responses)),
         models=FakeModels(model_ids),
@@ -78,7 +78,7 @@ async def test_recovers_to_available_model_that_passes_json_validation(audit_and
     }
     agent = make_agent(
         {
-            "retired-model": GroqError("model not found", 404),
+            "llama3-70b-8192": GroqError("model not found", 404),
             "openai/gpt-oss-20b": valid_pitch,
         },
         [
@@ -93,7 +93,7 @@ async def test_recovers_to_available_model_that_passes_json_validation(audit_and
     assert result.email_subject == valid_pitch["email_subject"]
     assert agent.model == "openai/gpt-oss-20b"
     assert agent.groq_client.chat.completions.calls == [
-        "retired-model",
+        "llama3-70b-8192",
         "openai/gpt-oss-20b",
     ]
 
@@ -102,15 +102,15 @@ async def test_recovers_to_available_model_that_passes_json_validation(audit_and
 async def test_does_not_switch_models_for_rate_limit(audit_and_contact):
     audit, contact = audit_and_contact
     agent = make_agent(
-        {"retired-model": GroqError("rate limit exceeded", 429)},
+        {"llama3-70b-8192": GroqError("rate limit exceeded", 429)},
         ["openai/gpt-oss-20b"],
     )
 
     with pytest.raises(GroqError, match="rate limit"):
         await agent.generate_pitch(audit, contact)
 
-    assert agent.model == "retired-model"
-    assert agent.groq_client.chat.completions.calls == ["retired-model"]
+    assert agent.model == "llama3-70b-8192"
+    assert agent.groq_client.chat.completions.calls == ["llama3-70b-8192"]
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_fails_explicitly_when_no_candidate_passes_validation(audit_and_co
     audit, contact = audit_and_contact
     agent = make_agent(
         {
-            "retired-model": GroqError("model not found", 404),
+            "llama3-70b-8192": GroqError("model not found", 404),
             "openai/gpt-oss-20b": ValueError("unsupported JSON response format"),
         },
         ["openai/gpt-oss-20b"],
