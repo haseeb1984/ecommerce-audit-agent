@@ -165,7 +165,11 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         final_url,
                     ))
 
-            robots_tokens = {token.strip().lower() for token in page_parser.meta_robots.replace(";", ",").split(",") if token.strip()}
+            robots_tokens = {
+                token.strip().lower()
+                for token in page_parser.meta_robots.replace(";", ",").replace(" ", ",").split(",")
+                if token.strip()
+            }
             if "noindex" in robots_tokens or "none" in robots_tokens:
                 findings.append(_finding(
                     "indexability", "Page contains a noindex directive",
