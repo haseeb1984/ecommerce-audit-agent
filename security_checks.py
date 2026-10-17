@@ -89,6 +89,7 @@ def inspect_exposure_response(path: str, status: int, body: str,
 async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[AuditFinding], list[str]]:
     """Probe a tiny fixed list of common exposure paths using the safe public fetcher."""
     findings: list[AuditFinding] = []
+    unverified_probes = 0
     limitations: list[str] = [
         f"Passive exposure probes checked only {len(EXPOSURE_PATHS)} common paths; this is not a penetration test or proof that other files are safe."
     ]
@@ -97,8 +98,9 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
         url = urljoin(origin + "/", path.lstrip("/"))
         try:
             status, body, headers, final_url = await _safe_get(client, url)
-        except Exception as exc:
+        except Exception:
             # A failed probe is not evidence that the path is secure or vulnerable.
+            unverified_probes += 1
             continue
         final_parts = urlsplit(final_url)
         base_parts = urlsplit(origin)
@@ -106,8 +108,13 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
         if (final_parts.scheme.lower(), final_parts.netloc.lower(), final_parts.path.lower()) != (
             base_parts.scheme.lower(), base_parts.netloc.lower(), path.lower()
         ):
+            unverified_probes += 1
             continue
         findings.extend(inspect_exposure_response(path, status, body, headers, final_url))
+    if unverified_probes:
+        limitations.append(
+            f"{unverified_probes} of {len(EXPOSURE_PATHS)} exposure probes could not be verified due to request failures or redirects."
+        )
     return findings, limitations
 
 
