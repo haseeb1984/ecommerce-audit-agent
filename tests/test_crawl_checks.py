@@ -341,3 +341,34 @@ async def test_category_page_detects_itemlist_jsonld(monkeypatch):
         f for f in findings if f.title == "Category/list structured data detected"
     )
     assert schema_finding.status == "verified"
+
+
+@pytest.mark.asyncio
+async def test_internal_page_missing_viewport_is_flagged_for_manual_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>'
+                '<body><a href="/collections/shoes">Shoes</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Shoes</title></head><body><h1>Shoes</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(
+        f for f in findings
+        if f.title == "Internal page has no viewport declaration in returned HTML"
+    )
+    assert finding.status == "manual_review_required"
+    assert "320 CSS px" in " ".join(finding.verification_steps)
