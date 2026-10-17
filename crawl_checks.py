@@ -16,7 +16,7 @@ import json
 from performance_checks import inspect_static_performance_signals
 from accessibility_checks import inspect_static_accessibility_signals
 
-from security_checks import probe_common_exposure_paths
+from security_checks import probe_common_exposure_paths, inspect_transport_security
 
 from audit_checks import (
     REQUEST_TIMEOUT_SECONDS,
@@ -148,6 +148,12 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         exposure_findings, exposure_limitations = await probe_common_exposure_paths(client, final_home)
         findings.extend(exposure_findings)
         limitations.extend(exposure_limitations)
+
+        transport_findings, transport_limitations = await inspect_transport_security(
+            client, homepage, final_home
+        )
+        findings.extend(transport_findings)
+        limitations.extend(transport_limitations)
 
         title_pages: dict[str, list[str]] = defaultdict(list)
         description_pages: dict[str, list[str]] = defaultdict(list)
