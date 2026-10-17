@@ -69,3 +69,33 @@ async def test_bounded_crawl_reports_internal_http_errors(monkeypatch):
 
     assert any(f.title == "Internal URL returned an error" for f in findings)
     assert "https://shop.example/broken" in checked
+
+
+
+@pytest.mark.asyncio
+async def test_crawl_flags_off_origin_canonical_and_noindex(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title>'
+                '<meta name="robots" content="noindex, follow">'
+                '<link rel="canonical" href="https://other.example/copy">'
+                '</head><body><a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title><meta name="description" content="A product"></head></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert any(f.title == "Canonical URL points outside this page origin" for f in findings)
+    assert any(f.title == "Page contains a noindex directive" for f in findings)
