@@ -188,5 +188,42 @@ async def test_probe_records_request_failures_as_unverified(monkeypatch):
         object(), "https://shop.example/"
     )
     assert findings == []
-    assert any("2 of 8 exposure probes could not be verified" in item for item in limitations)
+    assert any("2 of 14 exposure probes could not be verified" in item for item in limitations)
 
+
+@pytest.mark.parametrize("path,body", [
+    ("/server-status", "Server Version: Apache\\nServer Uptime: 10 minutes\\nScoreboard: _W"),
+    ("/actuator/env", '{"activeProfiles":[],"propertySources":[]}'),
+    ("/actuator/configprops", '{"contexts":{"application":{"beans":{}}}}'),
+    ("/debug/vars", '{"cmdline":["app"],"memstats":{},"goroutines":2}'),
+    ("/swagger-ui/index.html", '<html>swagger-ui swagger-ui-bundle</html>'),
+    ("/openapi.json", '{"openapi":"3.1.0","paths":{"/internal":{}}}'),
+])
+def test_admin_and_diagnostic_exposure_signatures_are_detected(path, body):
+    findings = inspect_exposure_response(
+        path, 200, body, {"content-type": "application/json"},
+        "https://shop.example" + path,
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "verified"
+
+
+@pytest.mark.parametrize("path", [
+    "/server-status", "/actuator/env", "/actuator/configprops",
+    "/debug/vars", "/swagger-ui/index.html", "/openapi.json",
+])
+def test_admin_and_diagnostic_probes_ignore_generic_spa_fallback(path):
+    findings = inspect_exposure_response(
+        path, 200, "<html><div id='app'>Storefront</div></html>",
+        {"content-type": "text/html"}, "https://shop.example" + path,
+    )
+    assert findings == []
+
+
+def test_actuator_environment_finding_never_copies_property_values():
+    body = '{"activeProfiles":[],"propertySources":[{"name":"systemEnvironment","properties":{"DB_PASSWORD":"secret-value"}}]}'
+    findings = inspect_exposure_response(
+        "/actuator/env", 200, body, {}, "https://shop.example/actuator/env"
+    )
+    assert len(findings) == 1
+    assert "secret-value" not in findings[0].evidence
