@@ -343,8 +343,6 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
         "content-security-policy": ("Content Security Policy", "medium"),
         "x-content-type-options": ("X-Content-Type-Options", "low"),
         "referrer-policy": ("Referrer-Policy", "low"),
-        "x-frame-options": ("X-Frame-Options", "medium"),
-        "permissions-policy": ("Permissions-Policy", "low"),
     }
     for header, (label, severity) in security_headers.items():
         value = headers.get(header)
@@ -358,8 +356,6 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             [f"Inspect the response headers with browser DevTools or a reputable header scanner.", "Review configuration and test critical site flows."],
             final_url,
         ))
-    from security_checks import inspect_security_header_quality
-    findings.extend(inspect_security_header_quality(headers, final_url))
     return findings
 
 
