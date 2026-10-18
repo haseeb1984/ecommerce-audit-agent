@@ -14,6 +14,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import (
     HRFlowable,
     Flowable,
+    KeepTogether,
     Image,
     Paragraph,
     SimpleDocTemplate,
@@ -431,7 +432,9 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
-    story.extend([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)])
+    # Keep the KPI labels and their values on the same page; otherwise ReportLab can
+    # split the two table rows across a page break and leave orphaned numbers.
+    story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
 
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
