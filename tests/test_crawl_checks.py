@@ -506,7 +506,7 @@ async def test_crawl_respects_page_budget_and_homepage_link_discovery_cap(monkey
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
     monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
     monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
-    monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 4)
+    monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 12)
     monkeypatch.setattr(crawl_checks, "MAX_LINKS_FROM_HOME", 5)
     homepage = "https://shop.example/"
     requested = []
@@ -522,8 +522,35 @@ async def test_crawl_respects_page_budget_and_homepage_link_discovery_cap(monkey
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
     _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
-    assert len(checked) == 4
-    assert len([url for url in checked if url != homepage]) == 3
-    assert all(f"https://shop.example/p{i}" in checked for i in range(3))
-    assert not any(f"https://shop.example/p{i}" in checked for i in range(3, 12))
+    assert len(checked) == 6
+    assert len([url for url in checked if url != homepage]) == 5
+    assert all(f"https://shop.example/p{i}" in checked for i in range(5))
+    assert not any(f"https://shop.example/p{i}" in checked for i in range(5, 12))
+
+@pytest.mark.asyncio
+async def test_crawl_caps_sitemap_url_discovery(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 12)
+    monkeypatch.setattr(crawl_checks, "MAX_URLS_FROM_SITEMAP", 3)
+    homepage = "https://shop.example/"
+    sitemap = '<urlset>' + ''.join(
+        f'<url><loc>https://shop.example/products/{i}</loc></url>' for i in range(10)
+    ) + '</urlset>'
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 200, sitemap, {"content-type": "application/xml"}, url
+        return 200, '<html><head><title>Product</title></head><body></body></html>', {"content-type": "text/html"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+    assert all(f"https://shop.example/products/{i}" in checked for i in range(3))
+    assert not any(f"https://shop.example/products/{i}" in checked for i in range(3, 10))
+    assert len([url for url in checked if "/products/" in url]) == 3
 
