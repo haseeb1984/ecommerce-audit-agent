@@ -154,3 +154,19 @@ def test_svg_title_names_icon_only_links_and_buttons():
     findings = inspect_static_accessibility_signals(html, "https://shop.example/")
     assert not any(f.title == "Links may have no accessible name" for f in findings)
     assert not any(f.title == "Buttons may have no accessible name" for f in findings)
+
+
+def test_svg_title_is_an_accessible_name_not_visible_control_text():
+    from accessibility_checks import _AccessibilityParser
+
+    parser = _AccessibilityParser()
+    parser.feed(
+        '<html lang="en"><body>'
+        '<a href="/cart"><svg><title>View cart</title></svg></a>'
+        '<button><svg><title>Open menu</title></svg></button>'
+        '</body></html>'
+    )
+    assert parser.links[0]["text"] == ""
+    assert parser.links[0]["has_svg_title"] is True
+    assert parser.buttons[0]["text"] == ""
+    assert parser.buttons[0]["has_svg_title"] is True
