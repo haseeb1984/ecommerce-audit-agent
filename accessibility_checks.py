@@ -105,9 +105,10 @@ class _AccessibilityParser(HTMLParser):
     def handle_data(self, data):
         if self._in_svg_title and self._active_svg_control is not None:
             self._active_svg_control["svg_title"] = str(self._active_svg_control.get("svg_title", "")) + data.strip()
-        if self._active_link is not None:
+        # SVG <title> names the SVG; do not misclassify its text as visible link/button text.
+        if self._active_link is not None and not self._in_svg_title:
             self._active_link["text"] = str(self._active_link["text"]) + data.strip()
-        if self._active_button is not None:
+        if self._active_button is not None and not self._in_svg_title:
             self._active_button["text"] = str(self._active_button["text"]) + data.strip()
 
 
