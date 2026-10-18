@@ -40,7 +40,10 @@ class _AccessibilityParser(HTMLParser):
             if values.get("for"):
                 self.label_for.add(values["for"])
             self._active_label_depth += 1
-        if tag == "input" and values.get("type", "text").lower() not in {"hidden", "submit", "button", "reset", "image"}:
+        if (
+            (tag == "input" and values.get("type", "text").lower() not in {"hidden", "submit", "button", "reset", "image"})
+            or tag in {"select", "textarea"}
+        ):
             self.inputs.append({
                 "id": values.get("id", ""),
                 "aria_label": values.get("aria-label", "").strip(),
