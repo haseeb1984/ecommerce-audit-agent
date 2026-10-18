@@ -1,9 +1,12 @@
 # Keep development-only files out of Vercel deployment uploads.
-# Runtime modules, requirements.txt, vercel.json, migrations, and certs are intentionally retained.
+# Keep runtime modules, requirements.txt, vercel.json, and the Supabase CA certificate.
+# SQL migrations remain tracked in Git for controlled database operations but are not needed in the runtime bundle.
 .git/
 .github/
 docs/
 tests/
+scripts/
+migrations/
 __pycache__/
 **/__pycache__/
 .pytest_cache/
