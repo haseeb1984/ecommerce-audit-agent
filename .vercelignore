@@ -1,0 +1,17 @@
+# Keep development-only files out of Vercel deployment uploads.
+# Runtime modules, requirements.txt, vercel.json, migrations, and certs are intentionally retained.
+.git/
+.github/
+docs/
+tests/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.py[cod]
+*.log
+requirements-dev.in
+requirements-dev.txt
+PRODUCTION_READINESS.md
+backend_context_spec.md
