@@ -21,6 +21,9 @@ class _AccessibilityParser(HTMLParser):
         self.images_missing_alt: int = 0
         self._active_link: dict[str, str | bool] | None = None
         self._active_button: dict[str, str | bool] | None = None
+        self._active_svg_control: dict[str, str | bool] | None = None
+        self._inside_svg = 0
+        self._in_svg_title = False
         self._active_label_depth = 0
 
     def handle_starttag(self, tag, attrs):
@@ -55,7 +58,8 @@ class _AccessibilityParser(HTMLParser):
             self._active_link = {
                 "text": "", "aria_label": values.get("aria-label", "").strip(),
                 "title": values.get("title", "").strip(), "has_image_alt": False,
-                "has_svg_title": False,
+                "has_svg_title": bool(values.get("aria-label", "").strip() or values.get("aria-labelledby", "").strip()),
+                "svg_title": "",
             }
             self.links.append(self._active_link)
         elif tag == "button":
@@ -73,9 +77,13 @@ class _AccessibilityParser(HTMLParser):
                 self._active_link["has_image_alt"] = True
             if self._active_button is not None and values.get("alt", "").strip():
                 self._active_button["has_image_alt"] = True
-        if tag == "svg" and self._active_link is not None:
-            # SVG title handling is approximate; rendered accessibility tree needs review.
-            self._active_link["has_svg_title"] = bool(values.get("aria-label", "").strip())
+        if tag == "svg":
+            self._inside_svg += 1
+            self._active_svg_control = self._active_link or self._active_button
+            if self._active_svg_control is not None and (values.get("aria-label", "").strip() or values.get("aria-labelledby", "").strip()):
+                self._active_svg_control["has_svg_title"] = True
+        elif tag == "title" and self._inside_svg and self._active_svg_control is not None:
+            self._in_svg_title = True
 
     def handle_endtag(self, tag):
         tag = tag.lower()
@@ -83,10 +91,20 @@ class _AccessibilityParser(HTMLParser):
             self._active_link = None
         elif tag == "button":
             self._active_button = None
+        elif tag == "title" and self._in_svg_title:
+            self._in_svg_title = False
+            if self._active_svg_control is not None and str(self._active_svg_control.get("svg_title", "")).strip():
+                self._active_svg_control["has_svg_title"] = True
+        elif tag == "svg":
+            self._inside_svg = max(0, self._inside_svg - 1)
+            if self._inside_svg == 0:
+                self._active_svg_control = None
         elif tag == "label" and self._active_label_depth:
             self._active_label_depth -= 1
 
     def handle_data(self, data):
+        if self._in_svg_title and self._active_svg_control is not None:
+            self._active_svg_control["svg_title"] = str(self._active_svg_control.get("svg_title", "")) + data.strip()
         if self._active_link is not None:
             self._active_link["text"] = str(self._active_link["text"]) + data.strip()
         if self._active_button is not None:
