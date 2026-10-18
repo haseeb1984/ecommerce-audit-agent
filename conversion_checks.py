@@ -21,10 +21,10 @@ import socket
 
 MAX_LINKS_TO_REVIEW = 500
 TRACKING_PATTERNS = {
-    "Google tag / Analytics": re.compile(r"(googletagmanager\\.com|google-analytics\\.com|gtag\\s*\\()", re.I),
-    "Meta Pixel": re.compile(r"(connect\\.facebook\\.net|fbq\\s*\\()", re.I),
-    "TikTok Pixel": re.compile(r"(analytics\\.tiktok\\.com|ttq\\.load)", re.I),
-    "Microsoft Clarity": re.compile(r"(clarity\\.ms|clarity\\s*\\()", re.I),
+    "Google tag / Analytics": re.compile(r"(googletagmanager\.com|google-analytics\.com|gtag\s*\()", re.I),
+    "Meta Pixel": re.compile(r"(connect\.facebook\.net|fbq\s*\()", re.I),
+    "TikTok Pixel": re.compile(r"(analytics\.tiktok\.com|ttq\.load)", re.I),
+    "Microsoft Clarity": re.compile(r"(clarity\.ms|clarity\s*\()", re.I),
 }
 
 
