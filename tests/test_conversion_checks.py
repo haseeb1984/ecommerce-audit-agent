@@ -33,8 +33,8 @@ def test_no_form_or_tracking_is_reported_as_unverified_not_proven_absent():
     by_title = {finding.title: finding for finding in findings}
     assert by_title["No HTML form detected on homepage"].status == "manual_review_required"
     assert by_title["Publicly detectable marketing tags"].status == "manual_review_required"
-    assert "does not prove" in by_title["No HTML form detected on homepage"].explanation
-    assert "does not prove" in by_title["Publicly detectable marketing tags"].explanation
+    assert "not proof" in by_title["No HTML form detected on homepage"].explanation
+    assert "do not prove" in by_title["Publicly detectable marketing tags"].explanation
 
 
 def test_detects_button_without_accessible_name():
