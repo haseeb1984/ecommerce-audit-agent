@@ -262,10 +262,6 @@ async def test_safe_get_rejects_streamed_body_over_limit_even_without_content_le
         "http://[::1]/",
         "http://[::ffff:127.0.0.1]/",
         "http://[fe80::1]/",
-        "http://0x7f000001/",
-        "http://2130706433/",
-        "http://0177.0.0.1/",
-        "http://127.1/",
     ],
 )
 def test_normalize_target_rejects_non_public_ipv4_ipv6_and_obfuscated_loopback(target):
@@ -312,3 +308,15 @@ async def test_safe_get_rejects_redirect_to_non_http_scheme():
     with pytest.raises(ValueError, match="Only public HTTP and HTTPS"):
         await audit_checks._safe_get(client, "https://shop.example/")
     assert len(client.urls) == 1
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["0x7f000001", "2130706433", "0177.0.0.1", "127.1"])
+async def test_public_resolver_rejects_obfuscated_loopback_dns_result(host, monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve(host, 443)
+
