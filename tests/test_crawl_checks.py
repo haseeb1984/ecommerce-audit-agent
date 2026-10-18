@@ -411,3 +411,31 @@ def test_hreflang_absence_is_not_assumed_to_be_a_problem():
         "<html><head><title>Single-language shop</title></head></html>",
         "https://shop.example/",
     ) == []
+
+
+
+@pytest.mark.asyncio
+async def test_crawl_detects_x_robots_tag_noindex_without_meta_robots(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>Home</body></html>',
+                {"content-type": "text/html", "x-robots-tag": "noindex"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body>Product</body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    noindex = [f for f in findings if f.title == "Page contains a noindex directive"]
+    assert len(noindex) == 1
+    assert "X-Robots-Tag='noindex'" in noindex[0].evidence
