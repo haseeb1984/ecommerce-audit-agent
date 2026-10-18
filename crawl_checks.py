@@ -463,19 +463,28 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         final_url,
                     ))
 
+            # Indexing directives may be delivered in HTML or the HTTP response.
+            # Record both sources, since an X-Robots-Tag can apply even without a meta tag.
+            meta_robots = page_parser.meta_robots.strip()
+            x_robots_tag = page_headers.get("x-robots-tag", "").strip()
             robots_tokens = {
                 token.strip().lower()
-                for token in page_parser.meta_robots.replace(";", ",").replace(" ", ",").split(",")
+                for token in (meta_robots + "," + x_robots_tag).replace(";", ",").replace(" ", ",").split(",")
                 if token.strip()
             }
             if "noindex" in robots_tokens or "none" in robots_tokens:
+                sources = []
+                if meta_robots:
+                    sources.append(f"meta robots={meta_robots!r}")
+                if x_robots_tag:
+                    sources.append(f"X-Robots-Tag={x_robots_tag!r}")
                 findings.append(_finding(
                     "indexability", "Page contains a noindex directive",
                     "verified", "medium",
-                    f"Page {final_url} has meta robots content={page_parser.meta_robots!r}.",
-                    "The directive asks compliant search crawlers not to index this page. That may be correct for private, duplicate, cart, or account pages, but can be a problem on product or category pages intended to appear in search.",
-                    "Confirm this page should be excluded from search. If it should be indexed, remove the unintended noindex directive and verify the response headers do not also send X-Robots-Tag: noindex.",
-                    ["Inspect the page source and response headers.", "Check the URL's indexing status in the site owner's search console."],
+                    f"Page {final_url} declares " + " and ".join(sources) + ".",
+                    "A noindex directive in HTML or an HTTP response header asks compliant search crawlers not to index this page. That may be correct for private, duplicate, cart, or account pages, but can be a problem on product or category pages intended to appear in search.",
+                    "Confirm this page should be excluded from search. If it should be indexed, remove the unintended noindex directive from the relevant HTML or response header and recheck the final response.",
+                    ["Inspect the page source and final response headers.", "Check the URL's indexing status in the site owner's search console."],
                     final_url,
                 ))
 
