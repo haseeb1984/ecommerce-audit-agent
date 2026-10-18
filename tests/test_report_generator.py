@@ -228,3 +228,30 @@ def test_different_remediation_is_not_merged_into_same_issue():
     ]
 
     assert len(_consolidate_findings(findings)) == 2
+
+
+
+def test_report_embeds_a_valid_page_speed_screenshot():
+    # Tiny PNG fixture encoded as a data URI; no external image is fetched.
+    data_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2ioAAAAASUVORK5CYII="
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-17T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        findings=[],
+    )
+    pdf = render_audit_pdf(result, screenshot_data_uri=data_uri)
+    assert pdf.startswith(b"%PDF-")
+    assert b"Actual PageSpeed browser capture" in pdf
+
+
+def test_report_gracefully_omits_invalid_page_speed_screenshot():
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-17T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        findings=[],
+    )
+    pdf = render_audit_pdf(result, screenshot_data_uri="data:image/png;base64,not-valid!")
+    assert pdf.startswith(b"%PDF-")
+    assert b"No usable actual-page screenshot" in pdf
