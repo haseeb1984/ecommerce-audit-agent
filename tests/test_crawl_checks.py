@@ -554,3 +554,28 @@ async def test_crawl_caps_sitemap_url_discovery(monkeypatch):
     assert not any(f"https://shop.example/products/{i}" in checked for i in range(3, 10))
     assert len([url for url in checked if "/products/" in url]) == 3
 
+@pytest.mark.asyncio
+async def test_crawl_fetch_failure_is_not_reported_as_verified_broken_link(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body><a href="/products/one">One</a></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        if url == "https://shop.example/products/one":
+            raise TimeoutError("simulated timeout")
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+    fetch_findings = [f for f in findings if f.title == "Internal page could not be checked"]
+    assert len(fetch_findings) == 1
+    assert fetch_findings[0].status == "not_tested"
+    assert not any(f.title == "Internal URL returned an error" for f in findings)
+    assert homepage in checked
+    assert "https://shop.example/products/one" not in checked
+
