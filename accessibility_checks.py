@@ -143,7 +143,7 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         findings.append(AuditFinding(
             category="accessibility", title="Form controls may lack accessible labels",
             status="manual_review_required", severity="medium",
-            evidence=f"Found {len(unlabeled_inputs)} input control(s) without a detectable associated label, aria-label, aria-labelledby, or title in returned HTML for {page_url}.",
+            evidence=f"Found {len(unlabeled_inputs)} form control(s) without a detectable associated label, aria-label, aria-labelledby, or title in returned HTML for {page_url}.",
             explanation="People using screen readers need each form control's purpose announced. This static check may miss labels or accessible names created by JavaScript and cannot assess whether a label is meaningful.",
             recommendation="Give each user-facing form control a visible, programmatically associated label where possible. Use aria-label or aria-labelledby only when a visible label is not practical, and verify the rendered accessibility tree.",
             verification_steps=["Inspect each flagged control in the rendered page and browser accessibility tree.", "Test keyboard navigation and screen-reader announcements; retest after template changes."],
