@@ -305,3 +305,32 @@ def test_prioritized_actions_include_only_actionable_review_statuses_in_severity
         "Medium needs review",
     ]
 
+
+def test_report_handles_long_findings_across_multiple_pages():
+    """A verbose finding must not make PDF generation fail at a page boundary."""
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-17T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        limitations=["The crawl is bounded to a small sample of public pages."],
+        findings=[
+            AuditFinding(
+                category="accessibility",
+                title="Long accessibility finding",
+                status="verified",
+                severity="high",
+                evidence=("Observed evidence from the inspected page. " * 90),
+                explanation=("Plain-language explanation of the observed issue. " * 90),
+                recommendation=("Recommended remediation for the site owner. " * 90),
+                verification_steps=[
+                    f"Verification step {index}: repeat the check in the affected context and record the result."
+                    for index in range(1, 46)
+                ],
+                source_url="https://shop.example/",
+            )
+        ],
+    )
+
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 2000
