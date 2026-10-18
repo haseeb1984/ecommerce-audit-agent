@@ -241,6 +241,34 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
     for finding in consolidated_findings:
         status = str(finding["status"])
         counts[status] = counts.get(status, 0) + 1
+    high_priority_count = sum(
+        1 for finding in consolidated_findings
+        if str(finding["severity"]).lower() in {"critical", "high"}
+    )
+    overview_cells = [
+        _p("CONSOLIDATED ISSUES", small_style),
+        _p("PAGES INSPECTED", small_style),
+        _p("HIGH / CRITICAL", small_style),
+    ]
+    overview_values = [
+        _p(str(len(consolidated_findings)), title_style),
+        _p(str(len(set(result.pages_checked))), title_style),
+        _p(str(high_priority_count), title_style),
+    ]
+    overview = Table(
+        [overview_cells, overview_values],
+        colWidths=[51 * mm, 51 * mm, 51 * mm],
+        hAlign="LEFT",
+    )
+    overview.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F5F9")),
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#C8D1DC")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D5DCE5")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
     summary_rows = [["Status", "Consolidated issues"]] + [[status.replace("_", " ").title(), str(count)] for status, count in sorted(counts.items())]
     summary = Table(summary_rows, colWidths=[100 * mm, 35 * mm], repeatRows=1, hAlign="LEFT")
     summary.setStyle(TableStyle([
@@ -255,7 +283,7 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
-    story.extend([summary, Spacer(1, 4 * mm)])
+    story.extend([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)])
 
     story.append(Paragraph("Findings and recommended actions", section_style))
     if not consolidated_findings:
@@ -318,6 +346,9 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         Paragraph("Optional implementation support", section_style),
         _p("If you would prefer a team to implement and retest the recommended changes, JunctionTools can discuss relevant remediation services. This offer is separate from the findings; no fix, ranking improvement, revenue uplift, or compliance outcome is guaranteed.", body_style),
         _p("Method note: checks are limited to the URLs and responses listed in this report. Results can differ by time, location, cache, user agent, rendering mode, and third-party data source. Independently repeat each verification step before making business decisions.", small_style),
+        Spacer(1, 2 * mm),
+        Paragraph("Disclaimer", section_style),
+        _p("This report presents observations from a bounded set of public website checks at the time shown. It is not a complete security assessment, penetration test, WCAG conformance audit, legal opinion, guarantee of search rankings, or forecast of conversions or revenue. Checks not performed or not verified must not be interpreted as passing. Confirm findings in the relevant production context before acting on them.", body_style),
     ])
 
     def footer(canvas, document):
@@ -326,7 +357,7 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         canvas.line(18 * mm, 13 * mm, A4[0] - 18 * mm, 13 * mm)
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#555555"))
-        canvas.drawString(18 * mm, 8 * mm, "Ecommerce Audit Agent — public checks, not a compliance certificate")
+        canvas.drawString(18 * mm, 8 * mm, "Ecommerce Audit Agent — client audit report")
         canvas.drawRightString(A4[0] - 18 * mm, 8 * mm, f"Page {document.page}")
         canvas.restoreState()
 
