@@ -11,6 +11,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import (
     HRFlowable,
+    Flowable,
     KeepTogether,
     Paragraph,
     SimpleDocTemplate,
@@ -164,6 +165,68 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
     return list(groups.values())
 
 
+
+class PhaseVisual(Flowable):
+    """Small vector illustration for the report's audit-phase overview.
+
+    These are explanatory graphics, not screenshots or evidence of a finding.
+    """
+    def __init__(self, title: str, subtitle: str, kind: str):
+        super().__init__()
+        self.title = title
+        self.subtitle = subtitle
+        self.kind = kind
+        self.width = 78 * mm
+        self.height = 29 * mm
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        c.setFillColor(colors.HexColor("#F2F6FB"))
+        c.setStrokeColor(colors.HexColor("#D5DFEA"))
+        c.roundRect(0, 0, self.width, self.height, 5, fill=1, stroke=1)
+        accent = colors.HexColor("#245B8F")
+        c.setFillColor(accent)
+        c.roundRect(5 * mm, 7 * mm, 16 * mm, 16 * mm, 3, fill=1, stroke=0)
+        c.setStrokeColor(colors.white)
+        c.setFillColor(colors.white)
+        if self.kind == "performance":
+            c.line(8 * mm, 11 * mm, 10 * mm, 15 * mm)
+            c.line(10 * mm, 15 * mm, 13 * mm, 13 * mm)
+            c.line(13 * mm, 13 * mm, 17 * mm, 19 * mm)
+            c.circle(17 * mm, 19 * mm, 1, fill=1, stroke=0)
+        elif self.kind == "accessibility":
+            c.circle(13 * mm, 18 * mm, 2, fill=0, stroke=1)
+            c.line(13 * mm, 16 * mm, 13 * mm, 11 * mm)
+            c.line(9 * mm, 15 * mm, 17 * mm, 15 * mm)
+            c.line(13 * mm, 11 * mm, 10 * mm, 8 * mm)
+            c.line(13 * mm, 11 * mm, 16 * mm, 8 * mm)
+        elif self.kind == "security":
+            p = c.beginPath()
+            p.moveTo(13 * mm, 20 * mm)
+            p.lineTo(18 * mm, 18 * mm)
+            p.lineTo(17 * mm, 12 * mm)
+            p.lineTo(13 * mm, 9 * mm)
+            p.lineTo(9 * mm, 12 * mm)
+            p.lineTo(8 * mm, 18 * mm)
+            p.close()
+            c.drawPath(p, fill=0, stroke=1)
+            c.line(10 * mm, 14 * mm, 12 * mm, 12 * mm)
+            c.line(12 * mm, 12 * mm, 16 * mm, 16 * mm)
+        else:
+            c.rect(9 * mm, 10 * mm, 8 * mm, 9 * mm, fill=0, stroke=1)
+            c.line(11 * mm, 16 * mm, 15 * mm, 16 * mm)
+            c.line(11 * mm, 13 * mm, 15 * mm, 13 * mm)
+        c.setFillColor(colors.HexColor("#17365D"))
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawString(25 * mm, 17 * mm, self.title[:30])
+        c.setFillColor(colors.HexColor("#46576A"))
+        c.setFont("Helvetica", 7)
+        # Keep this label deliberately descriptive, not a claim that the phase is complete.
+        c.drawString(25 * mm, 11 * mm, self.subtitle[:42])
+        c.restoreState()
+
+
 def render_audit_pdf(result: AuditCheckResult) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -215,7 +278,24 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         _p("Verified means the reported observation was directly seen in the response inspected; it does not automatically mean the business impact is proven. Manual review required means human/contextual review is needed. Not tested means the check could not be completed and must not be treated as a pass or failure.", body_style),
         _p("Severity is a triage aid, not a revenue-loss estimate. This report does not guarantee rankings, conversions, legal compliance, accessibility conformance, or security.", body_style),
         Paragraph("Summary", section_style),
+        _p("This report checks a bounded sample of publicly accessible pages. Each visual below is an explanatory illustration of an audit area, not a screenshot of your website.", small_style),
     ]
+
+    phase_cards = [
+        [PhaseVisual("Performance & experience", "Speed signals and page delivery", "performance"),
+         PhaseVisual("Accessibility & usability", "Labels, structure and mobile signals", "accessibility")],
+        [PhaseVisual("Security & trust signals", "Observable public-facing controls", "security"),
+         PhaseVisual("SEO & page structure", "Metadata and sampled page signals", "seo")],
+    ]
+    phase_table = Table(phase_cards, colWidths=[83 * mm, 83 * mm], hAlign="LEFT")
+    phase_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
+    ]))
+    story.extend([phase_table, Spacer(1, 3 * mm)])
 
     security = calculate_security_assessment(result.findings, result.limitations)
     story.extend([
