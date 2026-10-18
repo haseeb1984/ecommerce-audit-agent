@@ -15,6 +15,7 @@ from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
+from conversion_checks import run_conversion_paid_traffic_checks
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audit_service")
@@ -155,6 +156,10 @@ async def comprehensive_audit_pdf(
         result.findings.extend(crawl_findings)
         result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
         result.limitations.extend(crawl_limitations)
+        conversion_findings, conversion_pages, conversion_limitations = await run_conversion_paid_traffic_checks(target_url)
+        result.findings.extend(conversion_findings)
+        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
+        result.limitations.extend(conversion_limitations)
         result.findings.insert(0, AuditFinding(
             category="performance",
             title="Google PageSpeed mobile performance snapshot",
