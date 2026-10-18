@@ -184,7 +184,11 @@ async def comprehensive_audit_pdf(
                 "No usable actual-page screenshot was supplied by the Google PageSpeed response for this run; "
                 "the report uses explanatory vector illustrations only and does not fabricate website screenshots."
             )
-        pdf_bytes = render_audit_pdf(result, screenshot_data_uri=metrics.screenshot_data_uri)
+        pdf_bytes = (
+            render_audit_pdf(result, screenshot_data_uri=metrics.screenshot_data_uri)
+            if metrics.screenshot_data_uri
+            else render_audit_pdf(result)
+        )
 
         db.add(AuditLead(
             license_id=license_obj.id,
