@@ -233,7 +233,7 @@ def test_different_remediation_is_not_merged_into_same_issue():
 
 def test_report_embeds_a_valid_page_speed_screenshot():
     # Tiny PNG fixture encoded as a data URI; no external image is fetched.
-    data_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2ioAAAAASUVORK5CYII="
+    data_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
     result = AuditCheckResult(
         target_url="https://shop.example/",
         checked_at_utc="2026-10-17T00:00:00+00:00",
