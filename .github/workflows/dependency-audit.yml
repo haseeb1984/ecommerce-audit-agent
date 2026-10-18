@@ -1,0 +1,46 @@
+name: Dependency vulnerability audit
+
+on:
+  pull_request:
+    paths:
+      - "requirements.in"
+      - "requirements.txt"
+      - ".github/workflows/dependency-audit.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "requirements.in"
+      - "requirements.txt"
+      - ".github/workflows/dependency-audit.yml"
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pip-audit:
+    name: Audit pinned Python dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      - name: Audit locked dependencies
+        run: pip-audit --requirement requirements.txt
