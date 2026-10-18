@@ -439,3 +439,29 @@ async def test_crawl_detects_x_robots_tag_noindex_without_meta_robots(monkeypatc
     noindex = [f for f in findings if f.title == "Page contains a noindex directive"]
     assert len(noindex) == 1
     assert "X-Robots-Tag='noindex'" in noindex[0].evidence
+
+
+@pytest.mark.asyncio
+async def test_sitemap_entity_expansion_is_rejected_safely(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    requested = []
+    hostile_sitemap = (
+        '<!DOCTYPE urlset [<!ENTITY expansion "https://shop.example/products/hidden">]>'
+        '<urlset><url><loc>&expansion;</loc></url></urlset>'
+    )
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 200, hostile_sitemap, {"content-type": "application/xml"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert homepage in checked
+    assert "https://shop.example/products/hidden" not in requested
+    assert any("sitemap.xml" in item for item in limitations)
