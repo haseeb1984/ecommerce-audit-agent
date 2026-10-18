@@ -254,3 +254,61 @@ async def test_safe_get_rejects_streamed_body_over_limit_even_without_content_le
     client = FakeSession(lambda url: response)
     with pytest.raises(ValueError, match="1 MB size limit"):
         await audit_checks._safe_get(client, "https://shop.example/")
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[fe80::1]/",
+        "http://0x7f000001/",
+        "http://2130706433/",
+        "http://0177.0.0.1/",
+        "http://127.1/",
+    ],
+)
+def test_normalize_target_rejects_non_public_ipv4_ipv6_and_obfuscated_loopback(target):
+    with pytest.raises(ValueError):
+        audit_checks.normalize_target(target)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_dns_resolution_failure(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            raise audit_checks.socket.gaierror("temporary resolution failure")
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="Could not resolve target host"):
+        await audit_checks.PublicOnlyResolver().resolve("dns-failure.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_with_embedded_credentials():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "https://user:pass@public.example/private"}
+    ))
+    with pytest.raises(ValueError, match="embedded credentials"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_to_unsupported_port():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "https://public.example:8443/admin"}
+    ))
+    with pytest.raises(ValueError, match="Non-standard ports"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_to_non_http_scheme():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "file:///etc/passwd"}
+    ))
+    with pytest.raises(ValueError, match="Only public HTTP and HTTPS"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
