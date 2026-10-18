@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from html.parser import HTMLParser
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 import aiohttp
