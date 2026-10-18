@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
 import socket
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
@@ -68,6 +69,13 @@ def normalize_target(value: str) -> str:
         ip = None
     if ip is not None and (not ip.is_global):
         raise ValueError("Private, loopback, link-local, and reserved IP addresses are blocked.")
+    # Browsers and some URL parsers interpret shortened, integer, octal, or hex
+    # IPv4 spellings as IP addresses. Do not let those forms pass as DNS names.
+    if ip is None and (
+        re.fullmatch(r"[0-9.]+", host)
+        or re.fullmatch(r"0x[0-9a-f]+", host)
+    ):
+        raise ValueError("Ambiguous numeric IP hostnames are not supported.")
     netloc = host
     if ":" in host and not host.startswith("["):
         netloc = f"[{host}]"
