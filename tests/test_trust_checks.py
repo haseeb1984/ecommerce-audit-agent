@@ -20,3 +20,10 @@ def test_review_widget_name_does_not_prove_review_authenticity():
     review = next(f for f in findings if "Review/testimonial" in f.title)
     assert review.status == "verified"
     assert "does not prove" in review.explanation
+
+def test_script_and_style_text_are_not_treated_as_visible_trust_evidence():
+    html = """<html><head><style>.badge { content: 'Visa secure checkout'; }</style>
+    <script>const marketing = 'PayPal accepted, money back guarantee, customer reviews';</script>
+    </head><body><p>Welcome to our store</p></body></html>"""
+    findings = inspect_trust_signals(html, "https://shop.example/")
+    assert all(item.status == "manual_review_required" for item in findings)
