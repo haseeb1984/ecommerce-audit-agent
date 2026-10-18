@@ -179,6 +179,23 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
 
 
 
+def _prioritized_actions(findings: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return evidence-backed high/critical actions in a stable, conservative order."""
+    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    eligible = [
+        item for item in findings
+        if str(item.get("severity", "")).lower() in {"critical", "high", "medium"}
+        and str(item.get("status", "")) in {"verified", "manual_review_required"}
+    ]
+    return sorted(
+        eligible,
+        key=lambda item: (
+            rank.get(str(item.get("severity", "")).lower(), 9),
+            str(item.get("title", "")).casefold(),
+        ),
+    )
+
+
 class PhaseVisual(Flowable):
     """Small vector illustration for the report's audit-phase overview.
 
@@ -416,6 +433,37 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.extend([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)])
+
+    story.append(Paragraph("Recommended action plan", section_style))
+    story.append(_p(
+        "This short list orders observed high-, critical-, and medium-severity items for triage. "
+        "Severity is a technical review aid, not a measured estimate of lost sales, ranking changes, or security impact. "
+        "Items requiring manual review remain unconfirmed until a person validates them.",
+        body_style,
+    ))
+    priority_actions = _prioritized_actions(consolidated_findings)
+    if priority_actions:
+        for action in priority_actions[:8]:
+            story.append(Paragraph(
+                f"<b>{escape(str(action['severity']).title())} — {escape(str(action['title']))}</b>",
+                finding_style,
+            ))
+            story.append(_p(
+                f"Status: {str(action['status']).replace('_', ' ').title()}",
+                small_style,
+            ))
+            story.append(_p(str(action["recommendation"]), body_style))
+        if len(priority_actions) > 8:
+            story.append(_p(
+                f"{len(priority_actions) - 8} additional medium/high/critical action(s) are detailed in the findings section.",
+                small_style,
+            ))
+    else:
+        story.append(_p(
+            "No verified or manual-review high/critical/medium actions were recorded in this run. "
+            "This does not prove that no material issues exist; review coverage limitations and unverified checks.",
+            body_style,
+        ))
 
     story.append(Paragraph("Findings and recommended actions", section_style))
     if not consolidated_findings:
