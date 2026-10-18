@@ -287,3 +287,21 @@ def test_security_assessment_does_not_count_generic_success_exposure_responses_a
     assert score["unverified"] == 11
     assert score["score"] == 35
 
+def test_prioritized_actions_include_only_actionable_review_statuses_in_severity_order():
+    from report_generator import _prioritized_actions
+
+    actions = _prioritized_actions([
+        {"title": "Low informational note", "severity": "low", "status": "verified"},
+        {"title": "Medium needs review", "severity": "medium", "status": "manual_review_required"},
+        {"title": "High verified", "severity": "high", "status": "verified"},
+        {"title": "Critical not tested", "severity": "critical", "status": "not_tested"},
+        {"title": "Critical verified", "severity": "critical", "status": "verified"},
+        {"title": "Medium unknown", "severity": "medium", "status": "insufficient_data"},
+    ])
+
+    assert [item["title"] for item in actions] == [
+        "Critical verified",
+        "High verified",
+        "Medium needs review",
+    ]
+
