@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+# Executing a file under scripts/ sets sys.path[0] to that directory, not the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from audit_checks import AuditCheckResult, AuditFinding
 from report_generator import render_audit_pdf
