@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from io import BytesIO
+import base64
+import re
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -12,6 +14,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import (
     HRFlowable,
     Flowable,
+    Image,
     KeepTogether,
     Paragraph,
     SimpleDocTemplate,
@@ -227,7 +230,7 @@ class PhaseVisual(Flowable):
         c.restoreState()
 
 
-def render_audit_pdf(result: AuditCheckResult) -> bytes:
+def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None = None) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -296,6 +299,45 @@ def render_audit_pdf(result: AuditCheckResult) -> bytes:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
     ]))
     story.extend([phase_table, Spacer(1, 3 * mm)])
+
+    # Only embed a real image supplied by the PageSpeed response. Validate it again
+    # at the PDF boundary; invalid/unsupported data is omitted, never fabricated.
+    screenshot_flowable = None
+    if isinstance(screenshot_data_uri, str) and len(screenshot_data_uri) <= 1_400_000:
+        match = re.fullmatch(
+            r"data:(image/png|image/jpeg);base64,([A-Za-z0-9+/]*={0,2})",
+            screenshot_data_uri,
+        )
+        if match:
+            try:
+                image_bytes = base64.b64decode(match.group(2), validate=True)
+                valid_png = match.group(1) == "image/png" and image_bytes.startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+                valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(b"\\xff\\xd8\\xff")
+                if image_bytes and len(image_bytes) <= 1_000_000 and (valid_png or valid_jpeg):
+                    candidate = Image(BytesIO(image_bytes), width=150 * mm, height=84 * mm, kind="proportional")
+                    candidate.hAlign = "CENTER"
+                    screenshot_flowable = candidate
+            except (ValueError, TypeError, OSError):
+                screenshot_flowable = None
+
+    story.append(Paragraph("Actual PageSpeed browser capture", section_style))
+    if screenshot_flowable is not None:
+        story.extend([
+            _p(
+                "This is a rendered capture returned by Google PageSpeed Insights for the target page, "
+                "not an illustrative graphic. It may show only the viewport captured during the lab run.",
+                small_style,
+            ),
+            screenshot_flowable,
+            Spacer(1, 2 * mm),
+        ])
+    else:
+        story.append(_p(
+            "No usable actual-page screenshot was provided by the PageSpeed response for this run. "
+            "No website screenshot was fabricated. The phase illustrations above are explanatory graphics only.",
+            body_style,
+        ))
+
 
     security = calculate_security_assessment(result.findings, result.limitations)
     story.extend([
