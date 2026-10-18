@@ -372,3 +372,42 @@ async def test_internal_page_missing_viewport_is_flagged_for_manual_review(monke
     )
     assert finding.status == "manual_review_required"
     assert "320 CSS px" in " ".join(finding.verification_steps)
+
+
+
+def test_hreflang_valid_alternates_do_not_create_review_finding():
+    html = """
+    <html><head>
+      <link rel="alternate" hreflang="en" href="https://shop.example/en/product">
+      <link rel="alternate" hreflang="fr-CA" href="https://shop.example/fr-ca/product">
+      <link rel="alternate" hreflang="x-default" href="https://shop.example/product">
+    </head></html>
+    """
+    assert crawl_checks.inspect_hreflang(html, "https://shop.example/en/product") == []
+
+
+def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
+    html = """
+    <html><head>
+      <link rel="alternate" hreflang="english_US" href="javascript:alert(1)">
+      <link rel="alternate" hreflang="fr" href="https://shop.example/fr/product">
+      <link rel="alternate" hreflang="FR" href="https://shop.example/fr-ca/product">
+      <link rel="alternate" hreflang="de">
+    </head></html>
+    """
+    findings = crawl_checks.inspect_hreflang(html, "https://shop.example/en/product")
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.category == "international_seo"
+    assert finding.status == "manual_review_required"
+    assert "english_US" in finding.evidence
+    assert "javascript:alert(1)" in finding.evidence
+    assert "FR" in finding.evidence or "fr" in finding.evidence
+    assert "(missing href)" in finding.evidence
+
+
+def test_hreflang_absence_is_not_assumed_to_be_a_problem():
+    assert crawl_checks.inspect_hreflang(
+        "<html><head><title>Single-language shop</title></head></html>",
+        "https://shop.example/",
+    ) == []
