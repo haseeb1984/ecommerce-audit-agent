@@ -249,3 +249,23 @@ async def test_generic_success_responses_are_unverified_not_assumed_safe(monkeyp
         and "treated as unverified" in item
         for item in limitations
     )
+
+
+
+@pytest.mark.asyncio
+async def test_probe_records_server_errors_as_unverified(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        if url.endswith("/.env"):
+            return 503, "Service unavailable", {"content-type": "text/plain"}, url
+        return 404, "Not found", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.probe_common_exposure_paths(
+        object(), "https://shop.example/"
+    )
+
+    assert findings == []
+    assert any("1 of 14 exposure probes returned HTTP 5xx" in item for item in limitations)
+    assert any("treated as unverified, not safe" in item for item in limitations)
