@@ -142,3 +142,15 @@ def test_labeled_select_and_textarea_do_not_trigger_form_label_finding():
         "https://shop.example/contact",
     )
     assert not any(f.title == "Form controls may lack accessible labels" for f in findings)
+
+
+def test_svg_title_names_icon_only_links_and_buttons():
+    html = (
+        '<html lang="en"><body>'
+        '<a href="/cart"><svg><title>View cart</title><path d="M0 0"/></svg></a>'
+        '<button type="button"><svg><title>Open menu</title><path d="M0 0"/></svg></button>'
+        '</body></html>'
+    )
+    findings = inspect_static_accessibility_signals(html, "https://shop.example/")
+    assert not any(f.title == "Links may have no accessible name" for f in findings)
+    assert not any(f.title == "Buttons may have no accessible name" for f in findings)
