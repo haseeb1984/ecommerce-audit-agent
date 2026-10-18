@@ -120,3 +120,25 @@ def test_valid_aria_and_label_references_do_not_trigger_missing_id_finding():
         f.title == "Some label or ARIA references point to missing IDs"
         for f in findings
     )
+
+
+def test_unlabeled_select_and_textarea_are_reviewed():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><select name="country"><option>Choose</option></select>'
+        '<textarea name="message"></textarea></body></html>',
+        "https://shop.example/contact",
+    )
+    finding = next(f for f in findings if f.title == "Form controls may lack accessible labels")
+    assert "2 input control(s)" in finding.evidence
+    assert finding.status == "manual_review_required"
+
+
+def test_labeled_select_and_textarea_do_not_trigger_form_label_finding():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><label for="country">Country</label>'
+        '<select id="country"><option>Choose</option></select>'
+        '<label for="message">Message</label><textarea id="message"></textarea>'
+        '</body></html>',
+        "https://shop.example/contact",
+    )
+    assert not any(f.title == "Form controls may lack accessible labels" for f in findings)
