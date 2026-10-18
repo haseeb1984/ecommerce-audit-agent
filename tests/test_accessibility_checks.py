@@ -41,3 +41,23 @@ def test_wrapped_label_and_informative_image_link_are_recognized():
     assert not any(f.title == "Form controls may lack accessible labels" for f in findings)
     assert not any(f.title == "Links may have no accessible name" for f in findings)
     assert not any(f.title == "Document language is not declared in returned HTML" for f in findings)
+
+
+
+def test_missing_image_alt_is_flagged_but_explicit_empty_alt_is_not():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><img src="/product.jpg"><img src="/ornament.svg" alt=""></body></html>',
+        "https://shop.example/products/item",
+    )
+    image_finding = next(f for f in findings if f.title == "Images may be missing text alternatives")
+    assert image_finding.status == "manual_review_required"
+    assert "1 image(s)" in image_finding.evidence
+    assert "ornament.svg" not in image_finding.evidence
+
+
+def test_image_with_alt_attribute_does_not_trigger_missing_alt_finding():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><img src="/product.jpg" alt="Blue cotton shirt"></body></html>',
+        "https://shop.example/products/item",
+    )
+    assert not any(f.title == "Images may be missing text alternatives" for f in findings)
