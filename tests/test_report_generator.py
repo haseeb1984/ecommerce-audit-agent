@@ -231,18 +231,36 @@ def test_different_remediation_is_not_merged_into_same_issue():
 
 
 
+def _tiny_png_data_uri():
+    # Construct a valid 1x1 RGB PNG with the standard library; no external image is fetched.
+    import base64
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff"))
+        + chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
 def test_report_embeds_a_valid_page_speed_screenshot():
-    # Tiny PNG fixture encoded as a data URI; no external image is fetched.
-    data_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
     result = AuditCheckResult(
         target_url="https://shop.example/",
         checked_at_utc="2026-10-17T00:00:00+00:00",
         pages_checked=["https://shop.example/"],
         findings=[],
     )
-    pdf = render_audit_pdf(result, screenshot_data_uri=data_uri)
+    pdf = render_audit_pdf(result, screenshot_data_uri=_tiny_png_data_uri())
     assert pdf.startswith(b"%PDF-")
-    assert b"Actual PageSpeed browser capture" in pdf
+    # ReportLab stores the actual raster screenshot as an image XObject.
+    assert b"/Subtype /Image" in pdf
 
 
 def test_report_gracefully_omits_invalid_page_speed_screenshot():
@@ -254,4 +272,4 @@ def test_report_gracefully_omits_invalid_page_speed_screenshot():
     )
     pdf = render_audit_pdf(result, screenshot_data_uri="data:image/png;base64,not-valid!")
     assert pdf.startswith(b"%PDF-")
-    assert b"No usable actual-page screenshot" in pdf
+    assert b"/Subtype /Image" not in pdf
