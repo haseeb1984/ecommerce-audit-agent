@@ -23,9 +23,13 @@ class _TrustSignalParser(HTMLParser):
         self.text_parts = []
         self.asset_refs = []
         self.text_length = 0
+        self.ignored_depth = 0
     def handle_starttag(self, tag, attrs):
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
+        if tag in {"script", "style", "noscript", "svg"}:
+            self.ignored_depth += 1
+            return
         if tag in {"img", "iframe", "source"}:
             for key in ("src", "data-src", "alt", "title", "aria-label"):
                 value = values.get(key, "").strip()
@@ -36,8 +40,11 @@ class _TrustSignalParser(HTMLParser):
                 value = values.get(key, "").strip()
                 if value and len(self.asset_refs) < MAX_ASSET_REFERENCES:
                     self.asset_refs.append(value[:500])
+    def handle_endtag(self, tag):
+        if tag.lower() in {"script", "style", "noscript", "svg"} and self.ignored_depth:
+            self.ignored_depth -= 1
     def handle_data(self, data):
-        if self.text_length >= MAX_TEXT_CHARS:
+        if self.ignored_depth or self.text_length >= MAX_TEXT_CHARS:
             return
         clean = " ".join(data.split())
         if clean:
