@@ -195,8 +195,8 @@ class UniversalEcommerceAgent:
                     )
                     if match:
                         image_bytes = base64.b64decode(match.group(2), validate=True)
-                        valid_png = match.group(1) == "image/png" and image_bytes.startswith(b"\\x89PNG\\r\\n\\x1a\\n")
-                        valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(b"\\xff\\xd8\\xff")
+                        valid_png = match.group(1) == "image/png" and image_bytes.startswith(bytes.fromhex("89504e470d0a1a0a"))
+                        valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(bytes.fromhex("ffd8ff"))
                         if image_bytes and len(image_bytes) <= 1_000_000 and (valid_png or valid_jpeg):
                             screenshot_data_uri = screenshot
             except (ValueError, TypeError, AttributeError):
