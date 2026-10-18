@@ -15,6 +15,8 @@ class StoreAuditMetrics(BaseModel):
     mobile_score: int
     speed_index_sec: float
     is_slow: bool
+    # Transient PageSpeed screenshot data URI; never persisted in the lead database.
+    screenshot_data_uri: str | None = None
 
 
 class ContactInfo(BaseModel):
@@ -171,11 +173,41 @@ class UniversalEcommerceAgent:
 
             score = round(performance_score * 100)
             speed_index = speed_index_ms / 1000.0
+
+            # Lighthouse may provide a real rendered final screenshot as a data URI.
+            # Treat it as optional, strictly bound its size/type, and never fail the audit
+            # merely because the screenshot is absent or malformed.
+            screenshot_data_uri = None
+            try:
+                import base64
+                import re
+
+                screenshot = (
+                    lighthouse.get("audits", {})
+                    .get("final-screenshot", {})
+                    .get("details", {})
+                    .get("data")
+                )
+                if isinstance(screenshot, str) and len(screenshot) <= 1_400_000:
+                    match = re.fullmatch(
+                        r"data:(image/png|image/jpeg);base64,([A-Za-z0-9+/]*={0,2})",
+                        screenshot,
+                    )
+                    if match:
+                        image_bytes = base64.b64decode(match.group(2), validate=True)
+                        valid_png = match.group(1) == "image/png" and image_bytes.startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+                        valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(b"\\xff\\xd8\\xff")
+                        if image_bytes and len(image_bytes) <= 1_000_000 and (valid_png or valid_jpeg):
+                            screenshot_data_uri = screenshot
+            except (ValueError, TypeError, AttributeError):
+                logger.info("PageSpeed screenshot was absent or invalid for %s", clean_domain)
+
             return StoreAuditMetrics(
                 domain=clean_domain,
                 mobile_score=score,
                 speed_index_sec=round(speed_index, 2),
                 is_slow=score < 60,
+                screenshot_data_uri=screenshot_data_uri,
             )
         except RuntimeError:
             raise
