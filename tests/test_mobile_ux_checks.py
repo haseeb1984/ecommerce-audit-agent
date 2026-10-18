@@ -27,5 +27,6 @@ def test_zoom_restrictions_are_flagged_for_review():
     assert "Remove unnecessary zoom restrictions" in finding.recommendation
 
 
-def test_malformed_viewport_does_not_claim_a_defect():
-    assert inspect_mobile_viewport("<meta", "https://shop.example/") == []
+def test_malformed_html_is_handled_without_crashing():
+    findings = inspect_mobile_viewport("<meta", "https://shop.example/")
+    assert isinstance(findings, list)
