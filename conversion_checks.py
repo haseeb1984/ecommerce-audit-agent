@@ -128,7 +128,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             internal_checkout.append(absolute)
         if any(token in path for token in ("contact", "support", "help")):
             internal_contact.append(absolute)
-        if not label and not href.strip():
+        if not label:
             unlabeled_links += 1
 
     if parser.forms:
@@ -175,6 +175,16 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         ["Test in the browser with official tag debugging tools.", "Verify the intended conversion event appears once in the correct account.", "Check consent choices and network requests."],
         final_url,
     ))
+
+    if unlabeled_links:
+        findings.append(_finding(
+            "accessibility", "Links may lack an accessible name", "manual_review_required", "medium",
+            f"{unlabeled_links} same-origin link(s) had no readable text or aria-label in the returned HTML.",
+            "Links without an accessible name can make navigation difficult for screen-reader users. Source HTML alone cannot determine whether an image or another rendered technique supplies an accessible name.",
+            "Review each flagged link in the rendered page and provide a concise accessible name that describes its destination or action.",
+            ["Inspect flagged links in the browser accessibility tree.", "Confirm icon-only links expose an appropriate computed accessible name."],
+            final_url,
+        ))
 
     if parser.buttons_without_name:
         findings.append(_finding(
