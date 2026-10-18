@@ -15,7 +15,6 @@ from reportlab.platypus import (
     HRFlowable,
     Flowable,
     Image,
-    KeepTogether,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -507,7 +506,9 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         for step in finding["verification_steps"]:
             blocks.append(_p("• " + step, body_style))
         blocks.append(Spacer(1, 3 * mm))
-        story.append(KeepTogether(blocks))
+        # Let ReportLab split long findings across pages. Keeping every paragraph
+        # in one indivisible group can raise LayoutError for a verbose finding.
+        story.extend(blocks)
 
     if evidence_urls:
         story.append(Paragraph("Evidence & References", section_style))
