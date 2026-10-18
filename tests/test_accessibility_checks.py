@@ -129,7 +129,7 @@ def test_unlabeled_select_and_textarea_are_reviewed():
         "https://shop.example/contact",
     )
     finding = next(f for f in findings if f.title == "Form controls may lack accessible labels")
-    assert "2 input control(s)" in finding.evidence
+    assert "2 form control(s)" in finding.evidence
     assert finding.status == "manual_review_required"
 
 
