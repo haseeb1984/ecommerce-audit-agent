@@ -368,7 +368,7 @@ async def test_internal_page_missing_viewport_is_flagged_for_manual_review(monke
 
     finding = next(
         f for f in findings
-        if f.title == "Internal page has no viewport declaration in returned HTML"
+        if f.title == "Viewport declaration not detected"
     )
     assert finding.status == "manual_review_required"
     assert "320 CSS px" in " ".join(finding.verification_steps)
