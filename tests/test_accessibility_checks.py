@@ -61,3 +61,31 @@ def test_image_with_alt_attribute_does_not_trigger_missing_alt_finding():
         "https://shop.example/products/item",
     )
     assert not any(f.title == "Images may be missing text alternatives" for f in findings)
+
+
+def test_duplicate_ids_are_flagged_for_relationship_review():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><label for="email">Email</label>'
+        '<input id="email"><span id="status">Ready</span><span id="status">Updated</span>'
+        '</body></html>',
+        "https://shop.example/account",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "Duplicate HTML IDs may affect accessible relationships"
+    )
+    assert finding.status == "manual_review_required"
+    assert "status" in finding.evidence
+    assert "email" not in finding.evidence
+
+
+def test_unique_ids_do_not_trigger_duplicate_id_finding():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><label for="email">Email</label>'
+        '<input id="email"><span id="status">Ready</span></body></html>',
+        "https://shop.example/account",
+    )
+    assert not any(
+        f.title == "Duplicate HTML IDs may affect accessible relationships"
+        for f in findings
+    )
