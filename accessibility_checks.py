@@ -11,6 +11,7 @@ class _AccessibilityParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.html_lang = ""
         self.ids: set[str] = set()
+        self.id_counts: dict[str, int] = {}
         self.label_for: set[str] = set()
         self.wrapped_label_depth = 0
         self.inputs: list[dict[str, str]] = []
@@ -28,6 +29,7 @@ class _AccessibilityParser(HTMLParser):
             self.html_lang = values.get("lang", "").strip()
         if values.get("id"):
             self.ids.add(values["id"])
+            self.id_counts[values["id"]] = self.id_counts.get(values["id"], 0) + 1
         if tag == "label":
             if values.get("for"):
                 self.label_for.add(values["for"])
@@ -91,6 +93,17 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         return []
 
     findings: list[AuditFinding] = []
+    duplicate_ids = sorted(identifier for identifier, count in parser.id_counts.items() if count > 1)
+    if duplicate_ids:
+        findings.append(AuditFinding(
+            category="accessibility", title="Duplicate HTML IDs may affect accessible relationships",
+            status="manual_review_required", severity="medium",
+            evidence=f"Found {len(duplicate_ids)} duplicate ID value(s) in returned HTML for {page_url}: {', '.join(duplicate_ids[:10])}.",
+            explanation="IDs are expected to be unique within a document. Duplicates can make labels, fragment links, and ARIA references point to an unintended element. This source check identifies repeated values but cannot confirm the impact in the rendered accessibility tree.",
+            recommendation="Make each ID unique and update any associated label-for, fragment link, and ARIA references consistently.",
+            verification_steps=["Inspect each repeated ID and its references in the rendered DOM.", "Check form labels and aria-labelledby / aria-describedby relationships with a browser accessibility tree."],
+            source_url=page_url,
+        ))
     if parser.images_missing_alt:
         findings.append(AuditFinding(
             category="accessibility", title="Images may be missing text alternatives",
