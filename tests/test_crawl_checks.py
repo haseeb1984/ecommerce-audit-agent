@@ -465,3 +465,65 @@ async def test_sitemap_entity_expansion_is_rejected_safely(monkeypatch):
     assert homepage in checked
     assert "https://shop.example/products/hidden" not in requested
     assert any("sitemap.xml" in item for item in limitations)
+
+@pytest.mark.asyncio
+async def test_crawl_deduplicates_query_variants_and_fragments(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, ('<html><head><title>Shop</title></head><body>'
+                         '<a href="/products/one?utm_source=a">one</a>'
+                         '<a href="/products/one?utm_source=b#details">one duplicate</a>'
+                         '<a href="/collections/sale#top">sale</a></body></html>'), {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        return 200, '<html><head><title>Page</title></head><body></body></html>', {"content-type": "text/html"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+    assert "https://shop.example/products/one" in checked
+    assert "https://shop.example/collections/sale" in checked
+    assert requested.count("https://shop.example/products/one") == 1
+    assert not any("utm_source" in url or "#" in url for url in requested)
+
+
+async def _empty_exposure(*args, **kwargs):
+    return [], []
+
+
+async def _empty_transport(*args, **kwargs):
+    return [], []
+
+
+@pytest.mark.asyncio
+async def test_crawl_respects_page_budget_and_homepage_link_discovery_cap(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 4)
+    monkeypatch.setattr(crawl_checks, "MAX_LINKS_FROM_HOME", 5)
+    homepage = "https://shop.example/"
+    requested = []
+    links = "".join(f'<a href="/p{i}">P{i}</a>' for i in range(12))
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, f'<html><head><title>Shop</title></head><body>{links}</body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        return 200, '<html><head><title>Page</title></head><body></body></html>', {"content-type": "text/html"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+    assert len(checked) == 4
+    assert len([url for url in checked if url != homepage]) == 3
+    assert all(f"https://shop.example/p{i}" in checked for i in range(3))
+    assert not any(f"https://shop.example/p{i}" in checked for i in range(3, 12))
+
