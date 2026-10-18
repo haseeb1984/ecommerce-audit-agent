@@ -89,3 +89,34 @@ def test_unique_ids_do_not_trigger_duplicate_id_finding():
         f.title == "Duplicate HTML IDs may affect accessible relationships"
         for f in findings
     )
+
+
+def test_broken_aria_and_label_references_are_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><label for="missing-input">Email</label>'
+        '<button aria-describedby="missing-help" aria-controls="missing-panel">Open</button>'
+        '</body></html>',
+        "https://shop.example/account",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "Some label or ARIA references point to missing IDs"
+    )
+    assert finding.status == "manual_review_required"
+    assert "missing-input" in finding.evidence
+    assert "missing-help" in finding.evidence
+    assert "missing-panel" in finding.evidence
+
+
+def test_valid_aria_and_label_references_do_not_trigger_missing_id_finding():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><label for="email">Email</label>'
+        '<input id="email" aria-describedby="email-help">'
+        '<span id="email-help">Required</span><button aria-controls="panel">Open</button>'
+        '<div id="panel"></div></body></html>',
+        "https://shop.example/account",
+    )
+    assert not any(
+        f.title == "Some label or ARIA references point to missing IDs"
+        for f in findings
+    )
