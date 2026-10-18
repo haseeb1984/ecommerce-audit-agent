@@ -334,3 +334,7 @@ def test_report_handles_long_findings_across_multiple_pages():
     pdf = render_audit_pdf(result)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 2000
+    # Confirm the long content was paginated, not merely accepted into a PDF.
+    import re
+    page_objects = re.findall(rb"/Type\s*/Page\b", pdf)
+    assert len(page_objects) >= 2
