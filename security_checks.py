@@ -137,6 +137,7 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
     findings: list[AuditFinding] = []
     unverified_probes = 0
     inconclusive_success_probes = 0
+    server_error_probes = 0
     limitations: list[str] = [
         f"Passive exposure probes checked only {len(EXPOSURE_PATHS)} common paths; this is not a penetration test or proof that other files are safe."
     ]
@@ -159,6 +160,9 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
             continue
         path_findings = inspect_exposure_response(path, status, body, headers, final_url)
         findings.extend(path_findings)
+        if status >= 500:
+            # A server-side failure does not establish that the requested path is safe.
+            server_error_probes += 1
         # A successful response without a recognizable sensitive-content signature
         # is inconclusive (for example, an SPA may return its homepage for every path).
         # Do not count that response as proof the probed path is safe.
@@ -173,6 +177,10 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
     if inconclusive_success_probes:
         limitations.append(
             f"{inconclusive_success_probes} of {len(EXPOSURE_PATHS)} exposure probes returned successful responses without a recognizable sensitive-content signature; treated as unverified."
+        )
+    if server_error_probes:
+        limitations.append(
+            f"{server_error_probes} of {len(EXPOSURE_PATHS)} exposure probes returned HTTP 5xx server errors; treated as unverified, not safe."
         )
     return findings, limitations
 
