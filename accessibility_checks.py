@@ -66,6 +66,8 @@ class _AccessibilityParser(HTMLParser):
             self._active_button = {
                 "text": "", "aria_label": values.get("aria-label", "").strip(),
                 "title": values.get("title", "").strip(), "has_image_alt": False,
+                "has_svg_title": bool(values.get("aria-label", "").strip() or values.get("aria-labelledby", "").strip()),
+                "svg_title": "",
             }
             self.buttons.append(self._active_button)
         if tag == "img":
@@ -185,7 +187,7 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         ))
 
     unnamed_buttons = [item for item in parser.buttons if not (
-        str(item["text"]).strip() or item["aria_label"] or item["title"] or item["has_image_alt"]
+        str(item["text"]).strip() or item["aria_label"] or item["title"] or item["has_image_alt"] or item["has_svg_title"]
     )]
     if unnamed_buttons:
         findings.append(AuditFinding(
