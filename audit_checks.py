@@ -144,13 +144,17 @@ async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, 
                 current = normalize_target(urljoin(current, location))
                 continue
             content_length = headers.get("content-length")
-            if content_length:
+            if content_length is not None:
+                # Reject malformed or negative lengths instead of silently ignoring them.
+                # The streamed byte counter below remains authoritative if the header lies.
                 try:
-                    if int(content_length) > MAX_RESPONSE_BYTES:
-                        raise ValueError("Response exceeded the audit's 1 MB size limit.")
-                except ValueError as exc:
-                    if "size limit" in str(exc):
-                        raise
+                    declared_length = int(content_length.strip())
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Response included an invalid Content-Length header.") from exc
+                if declared_length < 0:
+                    raise ValueError("Response included an invalid Content-Length header.")
+                if declared_length > MAX_RESPONSE_BYTES:
+                    raise ValueError("Response exceeded the audit's 1 MB size limit.")
             chunks: list[bytes] = []
             size = 0
             async for chunk in response.content.iter_chunked(65536):
