@@ -16,6 +16,7 @@ class _AccessibilityParser(HTMLParser):
         self.inputs: list[dict[str, str]] = []
         self.links: list[dict[str, str | bool]] = []
         self.buttons: list[dict[str, str | bool]] = []
+        self.images_missing_alt: int = 0
         self._active_link: dict[str, str | bool] | None = None
         self._active_button: dict[str, str | bool] | None = None
         self._active_label_depth = 0
@@ -53,6 +54,10 @@ class _AccessibilityParser(HTMLParser):
             }
             self.buttons.append(self._active_button)
         if tag == "img":
+            # Missing alt is a clear source-level review signal. An explicit empty
+            # alt may be correct for decorative imagery, so it is not flagged here.
+            if "alt" not in values and values.get("role", "").lower() not in {"presentation", "none"}:
+                self.images_missing_alt += 1
             if self._active_link is not None and values.get("alt", "").strip():
                 self._active_link["has_image_alt"] = True
             if self._active_button is not None and values.get("alt", "").strip():
@@ -86,6 +91,16 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         return []
 
     findings: list[AuditFinding] = []
+    if parser.images_missing_alt:
+        findings.append(AuditFinding(
+            category="accessibility", title="Images may be missing text alternatives",
+            status="manual_review_required", severity="medium",
+            evidence=f"Found {parser.images_missing_alt} image(s) without an alt attribute in returned HTML for {page_url}.",
+            explanation="People who cannot see an image may miss information conveyed by it. A missing alt attribute differs from an intentionally empty alt used for decorative images; this source check cannot determine the right alternative for each image.",
+            recommendation="Review each image in context. Give informative product, category, and functional images concise text alternatives; use alt=\"\" for purely decorative images when appropriate.",
+            verification_steps=["Inspect each flagged image in the rendered page and decide whether it conveys information or performs an action.", "Check product images, linked logos, and image-based controls with a browser accessibility tree or scanner."],
+            source_url=page_url,
+        ))
     unlabeled_inputs = [item for item in parser.inputs if not (
         item["aria_label"] or item["aria_labelledby"] or item["title"] or
         item["inside_label"] == "true" or (item["id"] and item["id"] in parser.label_for)
