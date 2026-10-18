@@ -273,3 +273,17 @@ def test_report_gracefully_omits_invalid_page_speed_screenshot():
     pdf = render_audit_pdf(result, screenshot_data_uri="data:image/png;base64,not-valid!")
     assert pdf.startswith(b"%PDF-")
     assert b"/Subtype /Image" not in pdf
+def test_security_assessment_does_not_count_generic_success_exposure_responses_as_passes():
+    from report_generator import calculate_security_assessment
+
+    limitations = [
+        "Passive exposure probes checked only 8 common paths; this is not a penetration test.",
+        "2 of 8 exposure probes returned successful responses without a recognizable sensitive-content signature; treated as unverified.",
+    ]
+    score = calculate_security_assessment([], limitations)
+    assert score["checked_exposure_paths"] == 8
+    assert score["passed"] == 6
+    assert score["issues"] == 0
+    assert score["unverified"] == 11
+    assert score["score"] == 35
+

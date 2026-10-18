@@ -136,6 +136,7 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
     """Probe a tiny fixed list of common exposure paths using the safe public fetcher."""
     findings: list[AuditFinding] = []
     unverified_probes = 0
+    inconclusive_success_probes = 0
     limitations: list[str] = [
         f"Passive exposure probes checked only {len(EXPOSURE_PATHS)} common paths; this is not a penetration test or proof that other files are safe."
     ]
@@ -156,10 +157,22 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
         ):
             unverified_probes += 1
             continue
-        findings.extend(inspect_exposure_response(path, status, body, headers, final_url))
+        path_findings = inspect_exposure_response(path, status, body, headers, final_url)
+        findings.extend(path_findings)
+        # A successful response without a recognizable sensitive-content signature
+        # is inconclusive (for example, an SPA may return its homepage for every path).
+        # Do not count that response as proof the probed path is safe.
+        if 200 <= status < 300 and not any(
+            finding.category == "security_exposure" for finding in path_findings
+        ):
+            inconclusive_success_probes += 1
     if unverified_probes:
         limitations.append(
             f"{unverified_probes} of {len(EXPOSURE_PATHS)} exposure probes could not be verified due to request failures or redirects."
+        )
+    if inconclusive_success_probes:
+        limitations.append(
+            f"{inconclusive_success_probes} of {len(EXPOSURE_PATHS)} exposure probes returned successful responses without a recognizable sensitive-content signature; treated as unverified."
         )
     return findings, limitations
 

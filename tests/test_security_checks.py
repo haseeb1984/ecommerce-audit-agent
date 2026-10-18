@@ -231,3 +231,21 @@ def test_actuator_environment_finding_never_copies_property_values():
     )
     assert len(findings) == 1
     assert "secret-value" not in findings[0].evidence
+
+@pytest.mark.asyncio
+async def test_generic_success_responses_are_unverified_not_assumed_safe(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        return 200, "<html><h1>Storefront</h1></html>", {"content-type": "text/html"}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.probe_common_exposure_paths(
+        object(), "https://shop.example/"
+    )
+    assert findings == []
+    assert any(
+        "14 of 14 exposure probes returned successful responses" in item
+        and "treated as unverified" in item
+        for item in limitations
+    )

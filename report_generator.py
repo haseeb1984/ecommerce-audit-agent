@@ -84,7 +84,17 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
             None,
         )
         unverified_probes = int(unverified_match.group(1)) if unverified_match else 0
-        unverified_probes = min(unverified_probes, max(0, checked_paths - len(exposure_findings)))
+        inconclusive_match = next(
+            (re.search(r"(\d+) of \d+ exposure probes returned successful responses without a recognizable sensitive-content signature", item)
+             for item in limitations
+             if "returned successful responses without a recognizable sensitive-content signature" in item),
+            None,
+        )
+        inconclusive_probes = int(inconclusive_match.group(1)) if inconclusive_match else 0
+        unverified_probes = min(
+            unverified_probes + inconclusive_probes,
+            max(0, checked_paths - len(exposure_findings)),
+        )
         unverified += unverified_probes
         passed += max(0, checked_paths - len(exposure_findings) - unverified_probes)
     else:
