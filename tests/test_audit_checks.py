@@ -194,3 +194,20 @@ def test_sitemap_parser_accepts_basic_urlset():
     assert finding.status == "verified"
     assert "Root element: urlset" in finding.evidence
     assert "loc entries: 1" in finding.evidence
+
+
+@pytest.mark.asyncio
+async def test_safe_get_stops_after_redirect_limit():
+    client = FakeSession(lambda url: FakeResponse(302, {"Location": "/again"}))
+    with pytest.raises(ValueError, match="redirect limit"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == audit_checks.MAX_REDIRECTS + 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_oversized_content_length_before_reading_body():
+    client = FakeSession(lambda url: FakeResponse(
+        200, {"Content-Length": str(audit_checks.MAX_RESPONSE_BYTES + 1)}, ""
+    ))
+    with pytest.raises(ValueError, match="1 MB size limit"):
+        await audit_checks._safe_get(client, "https://shop.example/")
