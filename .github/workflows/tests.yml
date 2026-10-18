@@ -52,6 +52,17 @@ jobs:
         run: python -m pip freeze > resolved-dependencies.txt
       - name: Run tests
         run: python -m pytest -q
+      - name: Generate synthetic PDF report for layout review
+        if: success()
+        run: python scripts/generate_sample_audit_pdf.py --output audit-report-sample.pdf
+      - name: Upload synthetic PDF layout artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-audit-report-pdf
+          path: audit-report-sample.pdf
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload dependency audit evidence
         if: always()
         uses: actions/upload-artifact@v4
