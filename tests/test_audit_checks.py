@@ -1,0 +1,196 @@
+from urllib.parse import urlsplit
+
+import pytest
+
+import audit_checks
+
+
+def test_normalize_target_adds_https_and_drops_fragment():
+    assert audit_checks.normalize_target("Example.COM/path#section") == "https://example.com/path"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://127.0.0.1",
+        "http://10.0.0.1",
+        "http://169.254.169.254/latest/meta-data",
+        "http://localhost",
+        "http://service.local",
+        "file:///etc/passwd",
+        "https://user:pass@example.com",
+        "https://example.com:8443",
+        "https://example.com\\\\@127.0.0.1",
+    ],
+)
+def test_normalize_target_rejects_unsafe_or_unsupported_targets(target):
+    with pytest.raises(ValueError):
+        audit_checks.normalize_target(target)
+
+
+def test_parser_detects_viewport_and_missing_alt():
+    html = """
+    <html><head><title>Shop home</title>
+    <meta name="description" content="A shop">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head><body><h1>Shop</h1><img src="/hero.jpg"><img src="/decorative.png" alt=""></body></html>
+    """
+    parser = audit_checks._PageParser()
+    parser.feed(html)
+    assert parser.title_text == "Shop home"
+    assert parser.meta_description == "A shop"
+    assert parser.viewport == "width=device-width, initial-scale=1"
+    assert parser.h1_count == 1
+    assert parser.images == 2
+    assert parser.images_missing_alt == 1
+
+
+def test_homepage_findings_include_evidence_and_verification_steps():
+    findings = audit_checks.inspect_homepage(
+        "<html><head></head><body><img src='x'></body></html>",
+        "https://shop.example/",
+        {},
+    )
+    assert findings
+    assert all(item.evidence and item.explanation and item.recommendation for item in findings)
+    assert all(item.verification_steps for item in findings)
+    assert any(item.title == "Mobile viewport" for item in findings)
+    assert any(item.title == "Images missing an alt attribute" for item in findings)
+
+
+class FakeContent:
+    def __init__(self, body):
+        self.body = body.encode()
+
+    async def iter_chunked(self, size):
+        yield self.body
+
+
+class FakeResponse:
+    def __init__(self, status, headers=None, body=""):
+        self.status = status
+        self.headers = headers or {}
+        self.charset = "utf-8"
+        self.content = FakeContent(body)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class FakeSession:
+    def __init__(self, handler):
+        self.handler = handler
+        self.urls = []
+
+    def get(self, url, allow_redirects=False):
+        self.urls.append(url)
+        return self.handler(url)
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_to_localhost():
+    client = FakeSession(lambda url: FakeResponse(302, {"Location": "http://127.0.0.1/admin"}))
+    with pytest.raises(ValueError):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_follows_relative_redirect():
+    def handler(url):
+        if urlsplit(url).path == "/":
+            return FakeResponse(301, {"Location": "/home"})
+        return FakeResponse(200, {"Content-Type": "text/html"}, "<h1>Store</h1>")
+
+    client = FakeSession(handler)
+    status, body, headers, final_url = await audit_checks._safe_get(client, "https://shop.example/")
+    assert status == 200
+    assert "<h1>Store</h1>" in body
+    assert urlsplit(final_url).path == "/home"
+    assert len(client.urls) == 2
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_private_dns_answer(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve("test.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_pins_public_ip(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    result = await audit_checks.PublicOnlyResolver().resolve("public.example", 443)
+    assert result[0]["host"] == "8.8.8.8"
+    assert result[0]["hostname"] == "public.example"
+
+@pytest.mark.parametrize(
+    "viewport,expected_title",
+    [
+        ("", "Mobile viewport"),
+        ("width=980", "Viewport may use a fixed layout width"),
+        ("width=device-width, initial-scale=1, user-scalable=no", "Viewport may restrict zoom"),
+        ("width=device-width, initial-scale=1, maximum-scale=1.0", "Viewport may restrict zoom"),
+        ("width=device-width, initial-scale=1", "Mobile viewport declaration"),
+    ],
+)
+def test_viewport_checks_identify_common_mobile_misconfigurations(viewport, expected_title):
+    meta = f'<meta name="viewport" content="{viewport}">' if viewport else ""
+    findings = audit_checks.inspect_homepage(
+        f"<html><head>{meta}</head><body><h1>Shop</h1></body></html>",
+        "https://shop.example/",
+        {},
+    )
+    assert any(f.title == expected_title for f in findings)
+
+def test_robots_directive_summary_counts_rules_without_claiming_full_validation():
+    findings = audit_checks.inspect_discovery_contents(
+        "robots_txt",
+        """User-agent: *
+Disallow: /admin/
+Allow: /products/
+Sitemap: https://shop.example/sitemap.xml
+""",
+        "https://shop.example/robots.txt",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "verified"
+    assert "1 User-agent" in findings[0].evidence
+    assert "1 Allow" in findings[0].evidence
+    assert "1 Disallow" in findings[0].evidence
+def test_sitemap_parser_flags_malformed_xml_and_invalid_locations():
+    malformed = audit_checks.inspect_discovery_contents(
+        "sitemap_xml", "<urlset><url>", "https://shop.example/sitemap.xml"
+    )[0]
+    assert malformed.status == "verified"
+    assert "not well-formed XML" in malformed.evidence
+
+    invalid = audit_checks.inspect_discovery_contents(
+        "sitemap_xml",
+        "<urlset><url><loc>/relative-path</loc></url></urlset>",
+        "https://shop.example/sitemap.xml",
+    )[0]
+    assert invalid.status == "manual_review_required"
+    assert "without an absolute HTTP(S) URL: 1" in invalid.evidence
+
+
+def test_sitemap_parser_accepts_basic_urlset():
+    finding = audit_checks.inspect_discovery_contents(
+        "sitemap_xml",
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://shop.example/product/1</loc></url></urlset>',
+        "https://shop.example/sitemap.xml",
+    )[0]
+    assert finding.status == "verified"
+    assert "Root element: urlset" in finding.evidence
+    assert "loc entries: 1" in finding.evidence
