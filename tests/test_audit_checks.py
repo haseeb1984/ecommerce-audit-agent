@@ -211,3 +211,46 @@ async def test_safe_get_rejects_oversized_content_length_before_reading_body():
     ))
     with pytest.raises(ValueError, match="1 MB size limit"):
         await audit_checks._safe_get(client, "https://shop.example/")
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_mixed_public_and_private_dns_answers(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)),
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("127.0.0.1", port)),
+            ]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve("mixed.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_empty_dns_answer(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return []
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve("empty.example", 443)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_length", ["unknown", "-1", "1.5"])
+async def test_safe_get_rejects_malformed_or_negative_content_length(content_length):
+    client = FakeSession(lambda url: FakeResponse(
+        200, {"Content-Length": content_length}, "small body"
+    ))
+    with pytest.raises(ValueError, match="invalid Content-Length"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_streamed_body_over_limit_even_without_content_length():
+    response = FakeResponse(200, {}, "x" * (audit_checks.MAX_RESPONSE_BYTES + 1))
+    client = FakeSession(lambda url: response)
+    with pytest.raises(ValueError, match="1 MB size limit"):
+        await audit_checks._safe_get(client, "https://shop.example/")
