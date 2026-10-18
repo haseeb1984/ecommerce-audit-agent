@@ -263,6 +263,10 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             page_parser = _PageParser()
             page_parser.feed(body)
 
+            # Source-level trust cues are not proof of authenticity or usability.
+            from trust_checks import inspect_trust_signals
+            findings.extend(inspect_trust_signals(body, final_url))
+
             # Hreflang is checked only when the site declares localized alternates.
             findings.extend(inspect_hreflang(body, final_url))
 
