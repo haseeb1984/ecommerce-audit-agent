@@ -12,6 +12,7 @@ class _AccessibilityParser(HTMLParser):
         self.html_lang = ""
         self.ids: set[str] = set()
         self.id_counts: dict[str, int] = {}
+        self.aria_references: list[tuple[str, str, str]] = []
         self.label_for: set[str] = set()
         self.wrapped_label_depth = 0
         self.inputs: list[dict[str, str]] = []
@@ -30,6 +31,11 @@ class _AccessibilityParser(HTMLParser):
         if values.get("id"):
             self.ids.add(values["id"])
             self.id_counts[values["id"]] = self.id_counts.get(values["id"], 0) + 1
+        for attribute in ("aria-labelledby", "aria-describedby", "aria-controls", "aria-owns", "aria-errormessage"):
+            for referenced_id in values.get(attribute, "").split():
+                self.aria_references.append((attribute, referenced_id, tag))
+        if tag == "label" and values.get("for", "").strip():
+            self.aria_references.append(("label for", values["for"].strip(), tag))
         if tag == "label":
             if values.get("for"):
                 self.label_for.add(values["for"])
@@ -93,6 +99,18 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         return []
 
     findings: list[AuditFinding] = []
+    unresolved_refs = sorted({(attribute, identifier) for attribute, identifier, _tag in parser.aria_references if identifier not in parser.ids})
+    if unresolved_refs:
+        details = ", ".join(f"{attribute}='{identifier}'" for attribute, identifier in unresolved_refs[:10])
+        findings.append(AuditFinding(
+            category="accessibility", title="Some label or ARIA references point to missing IDs",
+            status="manual_review_required", severity="medium",
+            evidence=f"Found {len(unresolved_refs)} unique reference(s) to IDs not present in returned HTML for {page_url}: {details}.",
+            explanation="A label or ARIA relationship that points to a missing element may not provide the intended name, description, control relationship, or error message. This source check cannot assess JavaScript-created elements or the final accessibility tree.",
+            recommendation="Correct each reference to an existing, unique ID or remove the relationship if it is not needed. Verify the relationship in the rendered page.",
+            verification_steps=["Inspect each listed attribute and confirm its target exists in the rendered DOM.", "Check accessible names, descriptions, controls, and validation messages using the browser accessibility tree."],
+            source_url=page_url,
+        ))
     duplicate_ids = sorted(identifier for identifier, count in parser.id_counts.items() if count > 1)
     if duplicate_ids:
         findings.append(AuditFinding(
