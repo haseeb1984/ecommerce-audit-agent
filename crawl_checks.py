@@ -12,6 +12,7 @@ from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 import aiohttp
 import json
+import re
 
 from performance_checks import inspect_static_performance_signals
 from accessibility_checks import inspect_static_accessibility_signals
@@ -33,6 +34,74 @@ from audit_checks import (
 MAX_CRAWL_PAGES = 12
 MAX_LINKS_FROM_HOME = 100
 MAX_URLS_FROM_SITEMAP = 100
+
+
+class _HreflangParser(HTMLParser):
+    """Collect declared hreflang alternate links from the returned HTML only."""
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "link":
+            return
+        values = {key.lower(): value or "" for key, value in attrs}
+        rel_tokens = values.get("rel", "").lower().split()
+        language = values.get("hreflang", "").strip()
+        if "alternate" in rel_tokens and language:
+            self.links.append((language, values.get("href", "").strip()))
+
+
+def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
+    """Report source-level hreflang consistency signals, not full international SEO validity."""
+    parser = _HreflangParser()
+    parser.feed(html)
+    if not parser.links:
+        return []
+
+    findings: list[AuditFinding] = []
+    seen_languages: set[str] = set()
+    duplicate_languages: set[str] = set()
+    invalid_targets: list[str] = []
+    invalid_language_tags: list[str] = []
+
+    for language, href in parser.links:
+        normalized_language = language.lower()
+        if normalized_language in seen_languages:
+            duplicate_languages.add(language)
+        seen_languages.add(normalized_language)
+
+        # Accept common BCP 47-like subtags and the special x-default token.
+        if normalized_language != "x-default" and not re.fullmatch(
+            r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", normalized_language
+        ):
+            invalid_language_tags.append(language)
+
+        resolved = urljoin(final_url, href) if href else ""
+        parts = urlsplit(resolved)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            invalid_targets.append(href or "(missing href)")
+
+    if invalid_language_tags or invalid_targets or duplicate_languages:
+        details = []
+        if invalid_language_tags:
+            details.append("language tag(s): " + ", ".join(sorted(set(invalid_language_tags))[:8]))
+        if invalid_targets:
+            details.append("target URL issue(s): " + ", ".join(sorted(set(invalid_targets))[:8]))
+        if duplicate_languages:
+            details.append("duplicate language tag(s): " + ", ".join(sorted(duplicate_languages)[:8]))
+        findings.append(_finding(
+            "international_seo",
+            "Hreflang declarations need review",
+            "manual_review_required",
+            "medium",
+            f"Found {len(parser.links)} alternate hreflang declaration(s) on {final_url}; " + "; ".join(details) + ".",
+            "Hreflang annotations can help search engines understand language or regional variants. This source check only catches common declaration inconsistencies; it does not verify reciprocal references, language targeting, or whether destination pages are suitable.",
+            "Review each language/region code and destination, then confirm that each localized page links back to its alternate versions where required. Do not add hreflang unless the site actually serves distinct localized versions.",
+            ["Inspect alternate link elements in the page source.", "Compare the declared URLs and language/region codes across the localized page set.", "Use a search-engine international targeting/debugging workflow where available."],
+            final_url,
+        ))
+    return findings
 
 
 class _LinkParser(HTMLParser):
@@ -193,6 +262,9 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # Hreflang is checked only when the site declares localized alternates.
+            findings.extend(inspect_hreflang(body, final_url))
 
             # Check mobile viewport on sampled internal pages too; presence alone
             # cannot establish that the rendered layout is responsive.
