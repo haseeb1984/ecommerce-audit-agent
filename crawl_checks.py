@@ -173,7 +173,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
     limitations = [
         f"First-hop crawl is capped at {MAX_CRAWL_PAGES} URLs and does not recursively crawl all site pages.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        "Only the conventional /sitemap.xml URL set is sampled for discovery; sitemap indexes and alternate sitemap locations are not expanded.",
+        "Discovery starts at the conventional /sitemap.xml entry point; sitemap indexes expand one level into at most 3 same-origin child sitemaps and at most 100 page URLs. Alternate sitemap locations and deeper sitemap-index nesting are not discovered.",
     ]
 
     async with aiohttp.ClientSession(
