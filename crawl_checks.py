@@ -142,8 +142,10 @@ def _same_origin(left_url: str, right_url: str) -> bool:
     left = urlsplit(left_url)
     right = urlsplit(right_url)
     try:
-        left_port = left.port or (443 if left.scheme.lower() == "https" else 80)
-        right_port = right.port or (443 if right.scheme.lower() == "https" else 80)
+        left_explicit_port = left.port
+        right_explicit_port = right.port
+        left_port = left_explicit_port if left_explicit_port is not None else (443 if left.scheme.lower() == "https" else 80)
+        right_port = right_explicit_port if right_explicit_port is not None else (443 if right.scheme.lower() == "https" else 80)
     except ValueError:
         return False
     return (
@@ -478,7 +480,6 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             if page_parser.canonical_href:
                 canonical_url = urljoin(final_url, page_parser.canonical_href)
                 canonical_parts = urlsplit(canonical_url)
-                final_parts = urlsplit(final_url)
                 if (
                     canonical_parts.scheme.lower() not in {"http", "https"}
                     or not canonical_parts.hostname
