@@ -19,6 +19,7 @@ from accessibility_checks import inspect_static_accessibility_signals
 from mobile_ux_checks import inspect_mobile_viewport
 
 from security_checks import probe_common_exposure_paths, inspect_transport_security
+from dependency_checks import inspect_client_dependency_versions
 
 from audit_checks import (
     REQUEST_TIMEOUT_SECONDS,
@@ -188,6 +189,11 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 return findings, pages_checked, limitations
             if "text/html" not in headers.get("content-type", "").lower():
                 return findings, pages_checked, limitations
+            dependency_findings, dependency_limitations = await inspect_client_dependency_versions(
+                homepage, final_home
+            )
+            findings.extend(dependency_findings)
+            limitations.extend(dependency_limitations)
         except Exception as exc:
             return findings, pages_checked, limitations + [
                 f"Bounded crawl could not fetch the homepage: {type(exc).__name__}."
