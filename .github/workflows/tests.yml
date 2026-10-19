@@ -2,7 +2,7 @@ name: Backend tests
 
 on:
   push:
-    branches: ["main", "fix/**"]
+    branches: ["main", "fix/**", "audit-engine-consolidated"]
   pull_request:
     branches: ["main"]
 
