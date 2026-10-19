@@ -394,6 +394,7 @@ def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
       <link rel="alternate" hreflang="FR" href="https://shop.example/fr-ca/product">
       <link rel="alternate" hreflang="de">
       <link rel="alternate" hreflang="es" href="https://shop.example:not-a-port/es/product">
+      <link rel="alternate" hreflang="it" href="https://[broken-ipv6/it/product">
     </head></html>
     """
     findings = crawl_checks.inspect_hreflang(html, "https://shop.example/en/product")
@@ -406,6 +407,7 @@ def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
     assert "FR" in finding.evidence or "fr" in finding.evidence
     assert "(missing href)" in finding.evidence
     assert "https://shop.example:not-a-port/es/product" in finding.evidence
+    assert "https://[broken-ipv6/it/product" in finding.evidence
 
 
 def test_hreflang_absence_is_not_assumed_to_be_a_problem():
