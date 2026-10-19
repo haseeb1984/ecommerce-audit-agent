@@ -560,17 +560,26 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     ))
                     findings.extend(inspect_discovery_contents(category, body, final_url))
                 else:
+                    # Only a clear 404 supports a finding that the conventional file is
+                    # absent. Access-denied, rate-limit, and server-error responses do
+                    # not prove absence and must not trigger a publish-file recommendation.
+                    is_not_found = status == 404
                     findings.append(_finding(
                         category, f"{description} availability",
-                        "verified", "low" if status == 404 else "medium",
+                        "verified" if is_not_found else "not_tested",
+                        "low" if is_not_found else "info",
                         f"GET {final_url} returned HTTP {status}.",
-                        (f"{description} was not served successfully at the conventional root path. "
-                         "Whether that is an issue depends on the site's setup and intended use."),
-                        ("Publish and validate this file if the site needs explicit crawl rules."
-                         if category == "robots_txt" else
-                         "Publish a valid sitemap and reference it from robots.txt if appropriate."
-                         if category == "sitemap_xml" else
-                         "No action is required solely for missing llms.txt; it is optional and has no guaranteed ranking benefit."),
+                        (f"{description} was not found at the conventional root path. "
+                         "Whether that matters depends on the site's setup and intended use."
+                         if is_not_found else
+                         f"The server returned HTTP {status}; this does not establish whether {description} exists or is configured correctly."),
+                        (("Publish and validate this file if the site needs explicit crawl rules."
+                          if category == "robots_txt" else
+                          "Publish a valid sitemap and reference it from robots.txt if appropriate."
+                          if category == "sitemap_xml" else
+                          "No action is required solely for missing llms.txt; it is optional and has no guaranteed ranking benefit.")
+                         if is_not_found else
+                         "Resolve the access, rate-limit, or server response and rerun this check before drawing conclusions."),
                         [f"Open {file_url} directly and check whether an alternative location is intentionally used."],
                         final_url,
                     ))
