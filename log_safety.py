@@ -13,17 +13,16 @@ import traceback
 
 _PATTERNS = [
     # Authorization header values and bearer tokens.
-    re.compile(r"(?i)(authorization\\s*[:=]\\s*)(?:bearer\\s+)?[^\\s,;]+"),
-    re.compile(r"(?i)(\\bbearer\\s+)[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+"),
+    re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+"),
     # Credential-like assignments in URLs, JSON, headers, and plain log text.
     re.compile(
-        r"(?i)([?&;\\s\\\"']?(?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|"
-        r"client[_-]?secret|secret|password|passwd|license[_-]?key|"
-        r"groq_api_key|google_pagespeed_api_key|database_url|authorization)"
-        r"[\\\"']?\\s*[:=]\\s*[\\\"']?)[^\\\"'&#\\s,;]+"
+        r"""(?i)([?&;\s"']?(?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|"""
+        r"""client[_-]?secret|secret|password|passwd|license[_-]?key|"""
+        r"""groq_api_key|google_pagespeed_api_key|database_url|authorization)["']?\s*[:=]\s*["']?)[^"'&#\s,;]+"""
     ),
     # Database connection URLs with embedded user/password.
-    re.compile(r"(?i)(://[^:/\\s]+:)[^@/\\s]+(@)"),
+    re.compile(r"(?i)(://[^:/\s]+:)[^@/\s]+(@)"),
 ]
 
 
@@ -31,7 +30,7 @@ def redact_secrets(value: str) -> str:
     """Redact common credential patterns from a string."""
     result = value
     for pattern in _PATTERNS:
-        result = pattern.sub(r"\\1[REDACTED]\\2" if pattern.groups == 2 else r"\\1[REDACTED]", result)
+        result = pattern.sub(r"\1[REDACTED]\2" if pattern.groups == 2 else r"\1[REDACTED]", result)
     return result
 
 
