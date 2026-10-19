@@ -484,6 +484,17 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                             final_url,
                         ))
 
+            if page_parser.canonical_missing_href_count:
+                findings.append(_finding(
+                    "technical_seo", "Canonical declaration is missing href",
+                    "manual_review_required", "medium",
+                    f"Page {final_url} contains {page_parser.canonical_missing_href_count} canonical link element(s) without a non-empty href.",
+                    "A canonical link without a destination does not identify the preferred URL. This source-level signal does not determine the correct canonical destination.",
+                    "Review the page template and ensure each canonical link has the intended valid URL; remove empty canonical elements.",
+                    ["Inspect canonical link elements in the page source.", "Confirm the remaining canonical points to the intended preferred URL."],
+                    final_url,
+                ))
+
             # Multiple canonical declarations can send conflicting signals.
             # This detects duplication but does not decide which target is correct.
             if page_parser.canonical_count > 1:
