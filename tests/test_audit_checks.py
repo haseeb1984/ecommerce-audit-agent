@@ -352,3 +352,27 @@ async def test_safe_get_preserves_multiple_x_robots_tag_headers():
 
     assert status == 200
     assert headers["x-robots-tag"] == "index, follow, noindex"
+
+
+@pytest.mark.asyncio
+async def test_safe_get_preserves_multiple_set_cookie_headers():
+    class MultiValueHeaders(dict):
+        def getall(self, name, default=None):
+            if name.lower() == "set-cookie":
+                return [
+                    "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax",
+                    "analytics=redacted; Path=/; SameSite=Lax",
+                ]
+            return default or []
+
+    client = FakeSession(lambda url: FakeResponse(
+        200, MultiValueHeaders({
+            "Content-Type": "text/html",
+            "Set-Cookie": "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax",
+        }), "<html></html>",
+    ))
+    status, _, headers, _ = await audit_checks._safe_get(client, "https://shop.example/")
+
+    assert status == 200
+    assert "analytics=redacted" in headers["set-cookie"]
+    assert "session=redacted" in headers["set-cookie"]
