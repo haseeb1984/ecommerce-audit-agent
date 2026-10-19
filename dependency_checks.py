@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 
@@ -40,7 +40,7 @@ def extract_versioned_dependencies(html: str, page_url: str) -> list[dict[str, s
     found: dict[tuple[str, str], dict[str, str]] = {}
     for source in parser.sources:
         try:
-            parsed = urlsplit(source if "://" in source else __import__("urllib.parse").parse.urljoin(page_url, source))
+            parsed = urlsplit(urljoin(page_url, source))
             host = (parsed.hostname or "").lower()
             path = parsed.path
         except (ValueError, UnicodeError):
