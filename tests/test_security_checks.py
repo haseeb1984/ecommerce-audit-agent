@@ -320,3 +320,45 @@ async def test_tls_dns_timeout_is_unverified_not_a_certificate_pass(monkeypatch)
     )
     assert not any(item.title == "TLS certificate validity and expiry" for item in findings)
     assert any("TLS certificate expiry inspection could not be completed" in item for item in limitations)
+
+@pytest.mark.asyncio
+async def test_expired_tls_certificate_is_reported_as_expired_not_currently_valid(monkeypatch):
+    import security_checks
+
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(security_checks.socket.AF_INET, security_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+
+    class FakeSSLObject:
+        def getpeercert(self):
+            return {"notAfter": "Jan 01 00:00:00 2020 GMT"}
+
+    class FakeWriter:
+        def get_extra_info(self, name):
+            return FakeSSLObject() if name == "ssl_object" else None
+
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    async def fake_open_connection(*args, **kwargs):
+        return object(), FakeWriter()
+
+    async def fake_safe_get(client, url):
+        return 200, "", {}, "https://shop.example/"
+
+    monkeypatch.setattr(security_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(security_checks.ssl, "create_default_context", lambda: object())
+    monkeypatch.setattr(security_checks.asyncio, "open_connection", fake_open_connection)
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+
+    findings, _ = await security_checks.inspect_transport_security(
+        object(), "<html></html>", "https://shop.example/"
+    )
+    cert = next(item for item in findings if item.title == "TLS certificate validity and expiry")
+    assert cert.status == "verified"
+    assert cert.severity == "high"
+    assert "expiry date has passed (2020-01-01)" in cert.evidence
+    assert "valid at check time" not in cert.evidence
