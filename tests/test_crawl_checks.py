@@ -857,3 +857,58 @@ async def test_crawl_skips_malformed_link_urls_and_accepts_default_port_same_ori
     assert valid in checked or "https://shop.example:443/products/valid" in checked
     assert not any("broken-ipv6" in url for url in requested)
     assert not any(f.title == "Internal page could not be checked" for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_crawl_expands_limited_same_origin_sitemap_index(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 12)
+    monkeypatch.setattr(crawl_checks, "MAX_URLS_FROM_SITEMAP", 5)
+    monkeypatch.setattr(crawl_checks, "MAX_CHILD_SITEMAPS", 2)
+    homepage = "https://shop.example/"
+    index = (
+        "<sitemapindex>"
+        "<sitemap><loc>https://shop.example/products-sitemap.xml</loc></sitemap>"
+        "<sitemap><loc>https://outside.example/evil.xml</loc></sitemap>"
+        "<sitemap><loc>https://shop.example/categories-sitemap.xml</loc></sitemap>"
+        "<sitemap><loc>https://shop.example/ignored-sitemap.xml</loc></sitemap>"
+        "</sitemapindex>"
+    )
+    product_sitemap = (
+        "<urlset>" + "".join(
+            f"<url><loc>https://shop.example/products/{i}</loc></url>" for i in range(4)
+        ) + "</urlset>"
+    )
+    category_sitemap = (
+        "<urlset>" + "".join(
+            f"<url><loc>https://shop.example/categories/{i}</loc></url>" for i in range(4)
+        ) + "</urlset>"
+    )
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 200, index, {"content-type": "application/xml"}, url
+        if url == "https://shop.example/products-sitemap.xml":
+            return 200, product_sitemap, {"content-type": "application/xml"}, url
+        if url == "https://shop.example/categories-sitemap.xml":
+            return 200, category_sitemap, {"content-type": "application/xml"}, url
+        if url == "https://shop.example/ignored-sitemap.xml":
+            raise AssertionError("Child sitemap cap should prevent this request")
+        if url.startswith("https://shop.example/products/") or url.startswith("https://shop.example/categories/"):
+            return 200, '<html><head><title>Item</title></head><body><h1>Item</h1></body></html>', {"content-type": "text/html"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert "https://shop.example/products/0" in checked
+    assert "https://shop.example/categories/0" in checked
+    assert not any("outside.example" in url or "evil.xml" in url for url in requested)
+    assert "https://shop.example/ignored-sitemap.xml" not in requested
+    assert len([url for url in checked if "/products/" in url or "/categories/" in url]) <= 5
