@@ -85,9 +85,44 @@ class FakeSession:
         self.handler = handler
         self.urls = []
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
     def get(self, url, allow_redirects=False):
         self.urls.append(url)
         return self.handler(url)
+
+
+@pytest.mark.asyncio
+async def test_discovery_file_server_errors_are_inconclusive_not_missing(monkeypatch):
+    def handler(url):
+        path = urlsplit(url).path
+        if path == "/":
+            return FakeResponse(200, {"Content-Type": "text/html"}, "<html><h1>Shop</h1></html>")
+        if path == "/robots.txt":
+            return FakeResponse(403, {}, "Forbidden")
+        if path == "/sitemap.xml":
+            return FakeResponse(503, {}, "Unavailable")
+        if path == "/llms.txt":
+            return FakeResponse(404, {}, "Not found")
+        raise AssertionError(f"Unexpected request: {url}")
+
+    session = FakeSession(handler)
+    monkeypatch.setattr(audit_checks.aiohttp, "ClientSession", lambda **kwargs: session)
+    monkeypatch.setattr(audit_checks.aiohttp, "TCPConnector", lambda **kwargs: object())
+    monkeypatch.setattr(audit_checks.aiohttp, "ClientTimeout", lambda **kwargs: object())
+
+    result = await audit_checks.run_phase_one_checks("https://shop.example/")
+    by_title = {finding.title: finding for finding in result.findings}
+    assert by_title["robots.txt availability"].status == "not_tested"
+    assert "does not establish whether robots.txt exists" in by_title["robots.txt availability"].explanation
+    assert by_title["sitemap.xml availability"].status == "not_tested"
+    assert "does not establish whether sitemap.xml exists" in by_title["sitemap.xml availability"].explanation
+    assert by_title["llms.txt availability"].status == "verified"
+    assert "not found" in by_title["llms.txt availability"].explanation
 
 
 @pytest.mark.asyncio
