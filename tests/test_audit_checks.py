@@ -333,3 +333,22 @@ async def test_public_resolver_rejects_obfuscated_loopback_dns_result(host, monk
     with pytest.raises(OSError, match="private or non-public"):
         await audit_checks.PublicOnlyResolver().resolve(host, 443)
 
+
+
+
+@pytest.mark.asyncio
+async def test_safe_get_preserves_multiple_x_robots_tag_headers():
+    class MultiValueHeaders(dict):
+        def getall(self, name, default=None):
+            if name.lower() == "x-robots-tag":
+                return ["index, follow", "noindex"]
+            return default or []
+
+    client = FakeSession(lambda url: FakeResponse(
+        200, MultiValueHeaders({"Content-Type": "text/html", "X-Robots-Tag": "index, follow"}),
+        "<html></html>",
+    ))
+    status, _, headers, _ = await audit_checks._safe_get(client, "https://shop.example/")
+
+    assert status == 200
+    assert headers["x-robots-tag"] == "index, follow, noindex"
