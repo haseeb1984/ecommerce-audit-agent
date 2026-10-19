@@ -226,18 +226,28 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             *sitemap_urls,
         ]
         for href in discovery_hrefs:
-            absolute = urljoin(final_home, href)
-            parts = urlsplit(absolute)
-            if parts.scheme not in {"http", "https"} or not parts.hostname:
+            # Sitemap entries and page links are untrusted input. A malformed
+            # authority (for example, an unmatched IPv6 bracket) must not abort
+            # discovery for the remaining valid URLs.
+            try:
+                absolute = urljoin(final_home, href)
+                parts = urlsplit(absolute)
+                if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+                    continue
+                # Accessing port validates malformed and out-of-range explicit ports.
+                _ = parts.port
+                if parts.username is not None or parts.password is not None:
+                    continue
+                # Compare parsed origins rather than netloc strings so :443 and
+                # the implicit HTTPS port (or :80 and implicit HTTP) are equivalent.
+                if not _same_origin(absolute, final_home):
+                    continue
+                candidate = _canonical_page_url(absolute)
+                if candidate in seen or candidate == _canonical_page_url(final_home):
+                    continue
+                suffix = urlsplit(candidate).path.lower()
+            except (ValueError, UnicodeError):
                 continue
-            if parts.username or parts.password:
-                continue
-            if parts.scheme.lower() != final_origin.scheme.lower() or parts.netloc.lower() != final_origin.netloc.lower():
-                continue
-            candidate = _canonical_page_url(absolute)
-            if candidate in seen or candidate == _canonical_page_url(final_home):
-                continue
-            suffix = urlsplit(candidate).path.lower()
             if suffix.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
                                  ".css", ".js", ".woff", ".woff2", ".zip", ".xml")):
                 continue
