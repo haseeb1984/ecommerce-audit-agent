@@ -551,6 +551,44 @@ def test_hreflang_absence_is_not_assumed_to_be_a_problem():
 
 
 @pytest.mark.asyncio
+async def test_crawl_preserves_noindex_across_duplicate_meta_robots_tags(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title>'
+                '<meta name="robots" content="noindex">'
+                '<meta name="robots" content="index, follow">'
+                '</head><body><a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert any(
+        f.title == "Multiple meta robots declarations detected"
+        and f.status == "manual_review_required"
+        for f in findings
+    )
+    assert any(
+        f.title == "Page contains a noindex directive"
+        and f.status == "verified"
+        and "noindex" in f.evidence
+        for f in findings
+    )
+
+
+@pytest.mark.asyncio
 async def test_crawl_detects_x_robots_tag_noindex_without_meta_robots(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
