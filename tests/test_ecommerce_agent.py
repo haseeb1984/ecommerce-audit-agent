@@ -46,7 +46,7 @@ def make_agent(monkeypatch, response):
 
 
 @pytest.mark.asyncio
-async def test_pagespeed_http_error_is_reported_without_using_invalid_metrics(monkeypatch):
+async def test_pagespeed_http_error_is_reported_without_logging_target_or_provider_body(monkeypatch, caplog):
     agent = make_agent(
         monkeypatch,
         FakeResponse(
@@ -56,7 +56,11 @@ async def test_pagespeed_http_error_is_reported_without_using_invalid_metrics(mo
     )
 
     with pytest.raises(RuntimeError, match="HTTP 403"):
-        await agent.run_audit("shop.example")
+        await agent.run_audit("shop.example?token=synthetic-secret")
+
+    assert "synthetic-secret" not in caplog.text
+    assert "shop.example" not in caplog.text
+    assert "API key is invalid" not in caplog.text
 
 
 @pytest.mark.asyncio
