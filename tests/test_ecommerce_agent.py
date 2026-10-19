@@ -1,6 +1,12 @@
 import pytest
 
 import ecommerce_agent
+
+
+def test_httpx_request_logging_does_not_emit_info_level_urls():
+    # PageSpeed credentials are query parameters, so HTTPX INFO request logs are unsafe.
+    assert ecommerce_agent.logging.getLogger("httpx").getEffectiveLevel() >= ecommerce_agent.logging.WARNING
+
 from ecommerce_agent import UniversalEcommerceAgent
 
 
