@@ -280,6 +280,10 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             *sitemap_urls,
         ]
         for href in discovery_hrefs:
+            # Reserve one slot for the homepage; a one-page budget must not
+            # accidentally admit one additional discovered URL.
+            if len(candidates) >= max(0, MAX_CRAWL_PAGES - 1):
+                break
             # Sitemap entries and page links are untrusted input. A malformed
             # authority (for example, an unmatched IPv6 bracket) must not abort
             # discovery for the remaining valid URLs.
