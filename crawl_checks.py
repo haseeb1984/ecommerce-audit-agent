@@ -548,6 +548,18 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         final_url,
                     ))
 
+            # Duplicate meta robots tags can conflict; preserve all directives and request review.
+            if page_parser.meta_robots_count > 1:
+                findings.append(_finding(
+                    "indexability", "Multiple meta robots declarations detected",
+                    "manual_review_required", "medium",
+                    f"Page {final_url} contains {page_parser.meta_robots_count} meta name=robots declarations.",
+                    "Multiple robots meta elements may communicate conflicting indexing instructions. This source check reports the duplication but does not determine how each crawler will resolve conflicting directives.",
+                    "Review the page template and consolidate intended robots directives into one clear meta element, while checking any X-Robots-Tag response header.",
+                    ["Inspect every robots meta element in the raw HTML.", "Confirm the final intended index/follow behavior for this page."],
+                    final_url,
+                ))
+
             # Indexing directives may be delivered in HTML or the HTTP response.
             # Record both sources, since an X-Robots-Tag can apply even without a meta tag.
             meta_robots = page_parser.meta_robots.strip()
