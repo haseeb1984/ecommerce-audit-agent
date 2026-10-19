@@ -13,3 +13,4 @@ greenlet
 psycopg2-binary
 reportlab>=5.0.1,<6.0
 aiohttp>=3.10,<4.0
+defusedxml==0.7.1
