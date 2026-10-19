@@ -422,12 +422,18 @@ def test_pdf_renders_optional_business_context_only_when_provided(monkeypatch):
 
     rendered_text = []
     original_p = report_generator._p
+    original_paragraph = report_generator.Paragraph
 
     def capture_paragraph(value, style):
         rendered_text.append(str(value))
         return original_p(value, style)
 
+    def capture_reportlab_paragraph(value, style, *args, **kwargs):
+        rendered_text.append(str(value))
+        return original_paragraph(value, style, *args, **kwargs)
+
     monkeypatch.setattr(report_generator, "_p", capture_paragraph)
+    monkeypatch.setattr(report_generator, "Paragraph", capture_reportlab_paragraph)
     result = AuditCheckResult(
         target_url="https://shop.example/",
         checked_at_utc="2026-10-17T00:00:00+00:00",
