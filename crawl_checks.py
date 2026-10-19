@@ -80,7 +80,19 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
 
         resolved = urljoin(final_url, href) if href else ""
         parts = urlsplit(resolved)
-        if parts.scheme not in {"http", "https"} or not parts.hostname:
+        try:
+            # Accessing .port validates that an explicit port is numeric and in range.
+            _ = parts.port
+            valid_port = True
+        except ValueError:
+            valid_port = False
+        if (
+            parts.scheme.lower() not in {"http", "https"}
+            or not parts.hostname
+            or not valid_port
+            or parts.username is not None
+            or parts.password is not None
+        ):
             invalid_targets.append(href or "(missing href)")
 
     if invalid_language_tags or invalid_targets or duplicate_languages:
@@ -123,6 +135,24 @@ def _canonical_page_url(url: str) -> str:
     parts = urlsplit(urldefrag(url)[0])
     # Avoid multiplying the crawl through tracking and filter query parameters.
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", "", ""))
+
+
+def _same_origin(left_url: str, right_url: str) -> bool:
+    """Compare origins while treating explicit default ports as their defaults."""
+    left = urlsplit(left_url)
+    right = urlsplit(right_url)
+    try:
+        left_port = left.port or (443 if left.scheme.lower() == "https" else 80)
+        right_port = right.port or (443 if right.scheme.lower() == "https" else 80)
+    except ValueError:
+        return False
+    return (
+        left.scheme.lower() == right.scheme.lower()
+        and (left.hostname or "").lower() == (right.hostname or "").lower()
+        and left_port == right_port
+        and left.username is None and left.password is None
+        and right.username is None and right.password is None
+    )
 
 
 async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[str], list[str]]:
@@ -449,10 +479,11 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 canonical_url = urljoin(final_url, page_parser.canonical_href)
                 canonical_parts = urlsplit(canonical_url)
                 final_parts = urlsplit(final_url)
-                if (canonical_parts.scheme.lower() not in {"http", "https"}
-                        or not canonical_parts.hostname
-                        or canonical_parts.scheme.lower() != final_parts.scheme.lower()
-                        or canonical_parts.netloc.lower() != final_parts.netloc.lower()):
+                if (
+                    canonical_parts.scheme.lower() not in {"http", "https"}
+                    or not canonical_parts.hostname
+                    or not _same_origin(canonical_url, final_url)
+                ):
                     findings.append(_finding(
                         "technical_seo", "Canonical URL points outside this page origin",
                         "manual_review_required", "medium",
