@@ -9,6 +9,10 @@ from groq import AsyncGroq
 
 logger = logging.getLogger(__name__)
 
+# HTTPX logs full request URLs at INFO; PageSpeed puts its API key in the query string.
+# Keep HTTP request logs at WARNING+ so credentials cannot be emitted by request logging.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 class StoreAuditMetrics(BaseModel):
     domain: str
