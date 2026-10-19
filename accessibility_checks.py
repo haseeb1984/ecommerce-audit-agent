@@ -16,6 +16,7 @@ class _AccessibilityParser(HTMLParser):
         self.label_for: set[str] = set()
         self.wrapped_label_depth = 0
         self.inputs: list[dict[str, str]] = []
+        self.image_submit_inputs: list[dict[str, str]] = []
         self.links: list[dict[str, str | bool]] = []
         self.buttons: list[dict[str, str | bool]] = []
         self.images_missing_alt: int = 0
@@ -43,6 +44,15 @@ class _AccessibilityParser(HTMLParser):
             if values.get("for"):
                 self.label_for.add(values["for"])
             self._active_label_depth += 1
+        if tag == "input" and values.get("type", "text").lower() == "image":
+            # Image submit controls need an accessible name; alt text is the usual
+            # source-level mechanism. Do not silently exclude them as ordinary buttons.
+            self.image_submit_inputs.append({
+                "alt": values.get("alt", "").strip(),
+                "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+                "title": values.get("title", "").strip(),
+            })
         if (
             (tag == "input" and values.get("type", "text").lower() not in {"hidden", "submit", "button", "reset", "image"})
             or tag in {"select", "textarea"}
@@ -160,6 +170,34 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         item["aria_label"] or item["aria_labelledby"] or item["title"] or
         item["inside_label"] == "true" or (item["id"] and item["id"] in parser.label_for)
     )]
+    unlabeled_image_submit_inputs = [
+        item for item in parser.image_submit_inputs
+        if not (item["alt"] or item["aria_label"] or item["aria_labelledby"] or item["title"])
+    ]
+    if unlabeled_image_submit_inputs:
+        findings.append(AuditFinding(
+            category="accessibility", title="Image submit controls may lack accessible names",
+            status="manual_review_required", severity="medium",
+            evidence=(
+                f"Found {len(unlabeled_image_submit_inputs)} image submit control(s) without detectable "
+                f"alt text, aria-label, aria-labelledby, or title in returned HTML for {page_url}."
+            ),
+            explanation=(
+                "An input with type=image acts as a submit control and needs an accessible name that "
+                "communicates its action. This static check cannot determine whether JavaScript adds a "
+                "name or whether a detected name is meaningful."
+            ),
+            recommendation=(
+                "Give each image submit control a concise accessible name, usually with meaningful alt text, "
+                "and verify the computed name in the rendered accessibility tree."
+            ),
+            verification_steps=[
+                "Inspect each image submit control in the rendered DOM and accessibility tree.",
+                "Test keyboard submission and confirm the control's purpose is announced clearly.",
+            ],
+            source_url=page_url,
+        ))
+
     if unlabeled_inputs:
         findings.append(AuditFinding(
             category="accessibility", title="Form controls may lack accessible labels",
