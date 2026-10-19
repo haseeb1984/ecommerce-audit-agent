@@ -338,3 +338,79 @@ def test_report_handles_long_findings_across_multiple_pages():
     import re
     page_objects = re.findall(rb"/Type\s*/Page\b", pdf)
     assert len(page_objects) >= 2
+
+
+
+def test_optional_business_context_is_consolidated_only_when_identical():
+    from report_generator import _consolidate_findings
+
+    base = dict(
+        category="performance",
+        title="Large page payload",
+        status="verified",
+        severity="medium",
+        evidence="Observed transfer size exceeded the configured threshold.",
+        explanation="The page transfers more data than the check's threshold.",
+        recommendation="Review and reduce unnecessary resources.",
+        verification_steps=["Repeat the transfer-size measurement."],
+        source_url="https://shop.example/",
+    )
+    findings = [
+        AuditFinding(**base, potential_benefit="A smaller payload may reduce transfer work.", risk_if_unresolved=None),
+        AuditFinding(**{**base, "evidence": "A second page also exceeded the threshold."},
+                     potential_benefit="A smaller payload may reduce transfer work.", risk_if_unresolved=None),
+        AuditFinding(**base, potential_benefit="A smaller payload may reduce transfer work.", risk_if_unresolved="The transfer cost remains elevated."),
+    ]
+
+    consolidated = _consolidate_findings(findings)
+    assert len(consolidated) == 2
+    assert consolidated[0]["potential_benefit"] == "A smaller payload may reduce transfer work."
+    assert consolidated[0]["risk_if_unresolved"] is None
+    assert consolidated[0]["instances"] == 2
+    assert consolidated[1]["risk_if_unresolved"] == "The transfer cost remains elevated."
+
+
+def test_absent_business_context_stays_absent_in_consolidated_finding():
+    from report_generator import _consolidate_findings
+
+    finding = AuditFinding(
+        category="seo",
+        title="Missing title",
+        status="verified",
+        severity="low",
+        evidence="No title element was found.",
+        explanation="The returned HTML has no title element.",
+        recommendation="Add a descriptive title.",
+        verification_steps=[],
+    )
+
+    item = _consolidate_findings([finding])[0]
+    assert item["potential_benefit"] is None
+    assert item["risk_if_unresolved"] is None
+
+
+def test_unverified_findings_are_not_promoted_to_confirmed_priority_actions():
+    from report_generator import _prioritized_actions
+
+    items = _consolidate_findings_for_status_test()
+    actions = _prioritized_actions(items)
+    assert actions == []
+
+
+def _consolidate_findings_for_status_test():
+    from report_generator import _consolidate_findings
+
+    findings = [
+        AuditFinding(
+            category="security",
+            title=f"Unverified case {status}",
+            status=status,
+            severity="high",
+            evidence="The check did not confirm an outcome.",
+            explanation="The result is inconclusive.",
+            recommendation="Repeat the check before making a decision.",
+            verification_steps=[],
+        )
+        for status in ("not_tested", "insufficient_data")
+    ]
+    return _consolidate_findings(findings)
