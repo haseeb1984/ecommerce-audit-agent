@@ -21,6 +21,8 @@ def test_detects_forms_checkout_paths_and_tracking_without_claiming_success():
     assert "1 same-origin cart/checkout/payment-like link(s)" in by_title["Primary conversion path signals"].evidence
     assert "Google tag / Analytics" in by_title["Publicly detectable marketing tags"].evidence
     assert "Meta Pixel" in by_title["Publicly detectable marketing tags"].evidence
+    assert "script host: www.googletagmanager.com" in by_title["Publicly detectable marketing tags"].evidence
+    assert "inline signature: fbq(" in by_title["Publicly detectable marketing tags"].evidence
     assert "do not prove" in by_title["Publicly detectable marketing tags"].explanation
     assert all(f.evidence and f.explanation and f.recommendation and f.verification_steps for f in findings)
 
