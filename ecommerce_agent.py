@@ -127,17 +127,12 @@ class UniversalEcommerceAgent:
                 res = await client.get(endpoint, params=params)
 
             if res.is_error:
-                try:
-                    error_data = res.json().get("error", {})
-                    error_message = error_data.get("message", "No error message provided")
-                except (ValueError, AttributeError):
-                    error_message = "Google returned a non-JSON error response"
-
+                # Do not log provider response bodies: they are external input and may
+                # contain request details or other sensitive values.
                 logger.error(
-                    "PageSpeed API returned HTTP %s for %s: %s",
+                    "PageSpeed API returned HTTP %s for target host %s",
                     res.status_code,
                     clean_domain,
-                    error_message,
                 )
                 raise RuntimeError(
                     f"Google PageSpeed API returned HTTP {res.status_code}. "
@@ -262,8 +257,10 @@ class UniversalEcommerceAgent:
 
         try:
             candidates = await self._compatible_model_candidates(current_model)
-        except Exception:
-            logger.exception("Unable to retrieve the current Groq model list")
+        except Exception as exc:
+            # SDK exception text/tracebacks can contain request metadata. Log only
+            # the exception class; never provider bodies, headers, or full URLs.
+            logger.error("Unable to retrieve current Groq model list (error_type=%s)", type(exc).__name__)
             raise
 
         last_error = None
@@ -281,7 +278,11 @@ class UniversalEcommerceAgent:
                     )
                     raise
                 last_error = exc
-                logger.info("Groq candidate model %s failed compatibility check: %s", candidate, exc)
+                logger.info(
+                    "Groq candidate model failed compatibility check (model=%s, error_type=%s)",
+                    candidate,
+                    type(exc).__name__,
+                )
                 continue
 
             self.model = candidate
