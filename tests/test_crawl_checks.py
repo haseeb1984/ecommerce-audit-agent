@@ -312,6 +312,41 @@ async def test_product_jsonld_reports_missing_common_properties_for_review(monke
 
 
 @pytest.mark.asyncio
+async def test_product_jsonld_rejects_nonempty_but_wrong_shaped_properties(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title>'
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"Product",'
+            '"name":{"@type":"Thing"},"image":{"@type":"ImageObject"},'
+            '"offers":{"@type":"Offer","price":{"amount":"12"},'
+            '"priceCurrency":[],"availability":{"@type":"Thing"}}}'
+            '</script></head><body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(f for f in findings if f.title == "Product JSON-LD needs property review")
+    assert finding.status == "manual_review_required"
+    for property_name in ("name", "image", "offers.price", "offers.priceCurrency", "offers.availability"):
+        assert property_name in finding.evidence
+
+
+@pytest.mark.asyncio
 async def test_product_jsonld_with_common_properties_has_no_property_gap_finding(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
