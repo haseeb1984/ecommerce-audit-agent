@@ -479,17 +479,37 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             # A canonical tag is a search-engine hint. Flag an off-origin target
             # for human review rather than assuming it is wrong in every setup.
             if page_parser.canonical_href:
-                canonical_url = urljoin(final_url, page_parser.canonical_href)
-                canonical_parts = urlsplit(canonical_url)
-                if (
-                    canonical_parts.scheme.lower() not in {"http", "https"}
-                    or not canonical_parts.hostname
-                    or not _same_origin(canonical_url, final_url)
-                ):
+                canonical_href = page_parser.canonical_href
+                try:
+                    canonical_url = urljoin(final_url, canonical_href)
+                    canonical_parts = urlsplit(canonical_url)
+                    canonical_host = canonical_parts.hostname
+                    # Accessing .port validates numeric range and malformed authority syntax.
+                    _ = canonical_parts.port
+                    malformed_canonical = (
+                        canonical_parts.scheme.lower() not in {"http", "https"}
+                        or not canonical_host
+                        or canonical_parts.username is not None
+                        or canonical_parts.password is not None
+                    )
+                except (ValueError, UnicodeError):
+                    canonical_url = "(could not safely resolve malformed canonical URL)"
+                    malformed_canonical = True
+                if malformed_canonical:
+                    findings.append(_finding(
+                        "technical_seo", "Canonical URL is malformed",
+                        "manual_review_required", "medium",
+                        f"Page {final_url} declares canonical href={canonical_href!r}; the target is not a valid absolute HTTP(S) URL after resolution.",
+                        "A malformed canonical declaration may prevent search engines from using the intended preferred URL. The automated check cannot determine which URL the store should canonicalize to.",
+                        "Review the canonical element and replace it only with the intended, valid preferred URL after checking platform routing and duplicate-page behavior.",
+                        ["Inspect the canonical element in the raw HTML.", "Confirm the preferred URL loads successfully and is the intended canonical destination."],
+                        final_url,
+                    ))
+                elif not _same_origin(canonical_url, final_url):
                     findings.append(_finding(
                         "technical_seo", "Canonical URL points outside this page origin",
                         "manual_review_required", "medium",
-                        f"Page {final_url} declares canonical href={page_parser.canonical_href!r}, resolving to {canonical_url}.",
+                        f"Page {final_url} declares canonical href={canonical_href!r}, resolving to {canonical_url}.",
                         "A canonical tag tells search engines which URL should represent similar or duplicate content. An off-origin canonical may be intentional for syndicated content, but can also divert indexing signals away from this store.",
                         "Confirm that the canonical destination is intentional, controlled, indexable, and the preferred version of this page. Do not change it without checking duplicate and platform routing behavior.",
                         ["Inspect the canonical element in page source.", "Compare the declared canonical with the preferred URL and the destination response."],
