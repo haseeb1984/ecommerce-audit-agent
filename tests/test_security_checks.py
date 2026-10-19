@@ -362,3 +362,42 @@ async def test_expired_tls_certificate_is_reported_as_expired_not_currently_vali
     assert cert.severity == "high"
     assert "expiry date has passed (2020-01-01)" in cert.evidence
     assert "valid at check time" not in cert.evidence
+
+
+@pytest.mark.asyncio
+async def test_http_server_error_does_not_confirm_missing_https_redirect(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        assert url == "http://shop.example/"
+        return 503, "Service unavailable", {}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, limitations = await security_checks.inspect_transport_security(
+        object(), "<html></html>", "http://shop.example/"
+    )
+
+    assert not any(item.title == "HTTP does not redirect to HTTPS" for item in findings)
+    assert not any(item.title == "HTTP redirects to HTTPS" for item in findings)
+    assert any(
+        "returned status 503" in item and "not treated as a pass" in item
+        for item in limitations
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_success_response_that_stays_http_is_a_redirect_finding(monkeypatch):
+    import security_checks
+
+    async def fake_safe_get(client, url):
+        assert url == "http://shop.example/"
+        return 200, "<html></html>", {}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    findings, _ = await security_checks.inspect_transport_security(
+        object(), "<html></html>", "http://shop.example/"
+    )
+
+    finding = next(item for item in findings if item.title == "HTTP does not redirect to HTTPS")
+    assert finding.status == "verified"
+    assert finding.severity == "high"
