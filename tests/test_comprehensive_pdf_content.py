@@ -73,11 +73,11 @@ def test_real_pdf_render_contains_findings_evidence_limitations_and_final_discla
 
     text = "\n".join(rendered_paragraphs)
     assert "Google indexing status not verified" in text
-    assert "Status: Not tested" in text
+    assert "Status: Not Tested" in text
     assert "A sitemap entry does not prove that Google has indexed a URL." in text
     assert "Check the exact URL in the authorized Google Search Console property." in text
     assert "Product form control may lack an accessible name" in text
-    assert "Status: Manual review required" in text
+    assert "Status: Manual Review Required" in text
     assert "Potential benefit if addressed" in text
     assert "A verified accessible name can help people identify the control." in text
     assert "Risk if left unresolved" in text
