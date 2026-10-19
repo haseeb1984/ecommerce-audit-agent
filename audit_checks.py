@@ -34,6 +34,9 @@ class AuditFinding(BaseModel):
     recommendation: str
     verification_steps: list[str] = Field(default_factory=list)
     source_url: str | None = None
+    # Optional, evidence-backed business context. Never inferred by the renderer.
+    potential_benefit: str | None = None
+    risk_if_unresolved: str | None = None
 
 
 class AuditCheckResult(BaseModel):
