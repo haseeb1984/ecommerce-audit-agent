@@ -816,3 +816,44 @@ async def test_same_origin_canonical_is_not_flagged_as_off_origin(monkeypatch):
         f.title == "Canonical URL points outside this page origin"
         for f in findings
     )
+
+
+@pytest.mark.asyncio
+async def test_crawl_skips_malformed_link_urls_and_accepts_default_port_same_origin(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+    final_home = "https://shop.example:443/"
+    valid = "https://shop.example/products/valid"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="https://[broken-ipv6/products/bad">Malformed</a>'
+                '<a href="https://shop.example/products/valid">Valid</a>'
+                '</body></html>',
+                {"content-type": "text/html"},
+                final_home,
+            )
+        if url == "https://shop.example:443/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        if url in {valid, "https://shop.example:443/products/valid"}:
+            return (
+                200,
+                '<html><head><title>Valid product</title></head><body><h1>Valid</h1></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert valid in checked or "https://shop.example:443/products/valid" in checked
+    assert not any("broken-ipv6" in url for url in requested)
+    assert not any(f.title == "Internal page could not be checked" for f in findings)
