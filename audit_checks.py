@@ -183,6 +183,7 @@ class _PageParser(HTMLParser):
         self.meta_description = ""
         self.viewport = ""
         self.meta_robots = ""
+        self.meta_robots_count = 0
         self.canonical_href = ""
         self.canonical_count = 0
         self.canonical_missing_href_count = 0
@@ -215,7 +216,13 @@ class _PageParser(HTMLParser):
             elif name == "viewport":
                 self.viewport = values.get("content", "").strip()
             elif name == "robots":
-                self.meta_robots = values.get("content", "").strip()
+                robots_content = values.get("content", "").strip()
+                self.meta_robots_count += 1
+                if robots_content:
+                    self.meta_robots = (
+                        f"{self.meta_robots}, {robots_content}"
+                        if self.meta_robots else robots_content
+                    )
         elif tag == "link":
             rel_tokens = values.get("rel", "").strip().lower().split()
             if "canonical" in rel_tokens:
