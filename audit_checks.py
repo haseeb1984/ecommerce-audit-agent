@@ -184,6 +184,7 @@ class _PageParser(HTMLParser):
         self.viewport = ""
         self.meta_robots = ""
         self.canonical_href = ""
+        self.canonical_count = 0
         self.h1_count = 0
         self.h1_text = ""
         self._in_h1 = False
@@ -216,8 +217,10 @@ class _PageParser(HTMLParser):
                 self.meta_robots = values.get("content", "").strip()
         elif tag == "link":
             rel_tokens = values.get("rel", "").strip().lower().split()
-            if "canonical" in rel_tokens and values.get("href") and not self.canonical_href:
-                self.canonical_href = values.get("href", "").strip()
+            if "canonical" in rel_tokens:
+                self.canonical_count += 1
+                if values.get("href") and not self.canonical_href:
+                    self.canonical_href = values.get("href", "").strip()
         elif tag == "h1":
             self.h1_count += 1
             self._in_h1 = True
