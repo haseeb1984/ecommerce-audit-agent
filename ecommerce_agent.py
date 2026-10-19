@@ -130,9 +130,8 @@ class UniversalEcommerceAgent:
                 # Do not log provider response bodies: they are external input and may
                 # contain request details or other sensitive values.
                 logger.error(
-                    "PageSpeed API returned HTTP %s for target host %s",
+                    "PageSpeed API returned HTTP %s (target host omitted from logs)",
                     res.status_code,
-                    clean_domain,
                 )
                 raise RuntimeError(
                     f"Google PageSpeed API returned HTTP {res.status_code}. "
@@ -199,7 +198,7 @@ class UniversalEcommerceAgent:
                         if image_bytes and len(image_bytes) <= 1_000_000 and (valid_png or valid_jpeg):
                             screenshot_data_uri = screenshot
             except (ValueError, TypeError, AttributeError):
-                logger.info("PageSpeed screenshot was absent or invalid for %s", clean_domain)
+                logger.info("PageSpeed screenshot was absent or invalid")
 
             return StoreAuditMetrics(
                 domain=clean_domain,
@@ -211,7 +210,7 @@ class UniversalEcommerceAgent:
         except RuntimeError:
             raise
         except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
-            logger.exception("PageSpeed audit failed for %s", clean_domain)
+            logger.error("PageSpeed audit failed (error_type=%s)", type(exc).__name__)
             raise RuntimeError(
                 "Google PageSpeed audit failed. Check server logs for diagnostic details."
             ) from exc
