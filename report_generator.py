@@ -146,11 +146,12 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
 
 def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object]]:
     """Merge repeated instances of the same actionable issue across inspected pages."""
-    groups: dict[tuple[str, str, str, str, str, str], dict[str, object]] = {}
+    groups: dict[tuple[str, str, str, str, str, str, str, str], dict[str, object]] = {}
     for finding in findings:
         key = (
             finding.category, finding.title, finding.status, finding.severity,
             finding.explanation, finding.recommendation,
+            finding.potential_benefit or "", finding.risk_if_unresolved or "",
         )
         if key not in groups:
             groups[key] = {
@@ -160,6 +161,8 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
                 "severity": finding.severity,
                 "explanation": finding.explanation,
                 "recommendation": finding.recommendation,
+                "potential_benefit": finding.potential_benefit,
+                "risk_if_unresolved": finding.risk_if_unresolved,
                 "evidence": [],
                 "verification_steps": [],
                 "source_urls": [],
@@ -504,6 +507,19 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             _p(finding["explanation"], body_style),
             Paragraph("<b>Recommended solution</b>", body_style),
             _p(finding["recommendation"], body_style),
+        ])
+        # Optional business context is only shown when supplied by an evidence-backed check.
+        if finding.get("potential_benefit"):
+            blocks.extend([
+                Paragraph("<b>Potential benefit if addressed</b>", body_style),
+                _p(finding["potential_benefit"], body_style),
+            ])
+        if finding.get("risk_if_unresolved"):
+            blocks.extend([
+                Paragraph("<b>Risk if left unresolved</b>", body_style),
+                _p(finding["risk_if_unresolved"], body_style),
+            ])
+        blocks.extend([
             Paragraph("<b>How to verify</b>", body_style),
         ])
         for step in finding["verification_steps"]:
