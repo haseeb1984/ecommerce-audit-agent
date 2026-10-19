@@ -331,7 +331,11 @@ async def inspect_transport_security(client, homepage_html: str, final_url: str)
     if http_url:
         try:
             status_code, _, _, http_final = await _safe_get(client, http_url)
-            if urlsplit(http_final).scheme.lower() == "https":
+            if 500 <= status_code < 600:
+                limitations.append(
+                    f"HTTP-to-HTTPS redirect behavior could not be verified because the HTTP request returned status {status_code}; this is not treated as a pass or a confirmed redirect defect."
+                )
+            elif urlsplit(http_final).scheme.lower() == "https":
                 findings.append(_finding(
                     "security_transport", "HTTP redirects to HTTPS", "verified", "info",
                     f"The HTTP homepage request ended on HTTPS (HTTP response status at final URL: {status_code}).",
