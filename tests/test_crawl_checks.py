@@ -393,6 +393,7 @@ def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
       <link rel="alternate" hreflang="fr" href="https://shop.example/fr/product">
       <link rel="alternate" hreflang="FR" href="https://shop.example/fr-ca/product">
       <link rel="alternate" hreflang="de">
+      <link rel="alternate" hreflang="es" href="https://shop.example:not-a-port/es/product">
     </head></html>
     """
     findings = crawl_checks.inspect_hreflang(html, "https://shop.example/en/product")
@@ -404,6 +405,7 @@ def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
     assert "javascript:alert(1)" in finding.evidence
     assert "FR" in finding.evidence or "fr" in finding.evidence
     assert "(missing href)" in finding.evidence
+    assert "https://shop.example:not-a-port/es/product" in finding.evidence
 
 
 def test_hreflang_absence_is_not_assumed_to_be_a_problem():
@@ -623,7 +625,7 @@ async def test_same_origin_canonical_is_not_flagged_as_off_origin(monkeypatch):
             return (
                 200,
                 '<html><head><title>Store</title>'
-                '<link rel="canonical" href="/"></head><body>'
+                '<link rel="canonical" href="https://shop.example:443/"></head><body>'
                 '<a href="/products/one">Product</a></body></html>',
                 {"content-type": "text/html"},
                 url,
