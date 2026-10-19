@@ -185,6 +185,19 @@ def test_sitemap_parser_flags_malformed_xml_and_invalid_locations():
     assert "without an absolute HTTP(S) URL: 1" in invalid.evidence
 
 
+def test_sitemap_parser_handles_malformed_authorities_and_invalid_ports():
+    finding = audit_checks.inspect_discovery_contents(
+        "sitemap_xml",
+        "<urlset>"
+        "<url><loc>https://shop.example:99999/products/one</loc></url>"
+        "<url><loc>https://[broken-ipv6/products/two</loc></url>"
+        "</urlset>",
+        "https://shop.example/sitemap.xml",
+    )[0]
+    assert finding.status == "manual_review_required"
+    assert "entries without an absolute HTTP(S) URL: 2" in finding.evidence
+
+
 def test_sitemap_parser_accepts_basic_urlset():
     finding = audit_checks.inspect_discovery_contents(
         "sitemap_xml",
