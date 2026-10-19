@@ -78,21 +78,22 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
         ):
             invalid_language_tags.append(language)
 
-        resolved = urljoin(final_url, href) if href else ""
-        parts = urlsplit(resolved)
         try:
+            resolved = urljoin(final_url, href) if href else ""
+            parts = urlsplit(resolved)
             # Accessing .port validates that an explicit port is numeric and in range.
             _ = parts.port
-            valid_port = True
-        except ValueError:
-            valid_port = False
-        if (
-            parts.scheme.lower() not in {"http", "https"}
-            or not parts.hostname
-            or not valid_port
-            or parts.username is not None
-            or parts.password is not None
-        ):
+            valid_target = (
+                parts.scheme.lower() in {"http", "https"}
+                and bool(parts.hostname)
+                and parts.username is None
+                and parts.password is None
+            )
+        except (ValueError, UnicodeError):
+            # Malformed IPv6 brackets, invalid ports, and malformed URL text
+            # are reviewable input, not reasons for the whole audit to fail.
+            valid_target = False
+        if not valid_target:
             invalid_targets.append(href or "(missing href)")
 
     if invalid_language_tags or invalid_targets or duplicate_languages:
