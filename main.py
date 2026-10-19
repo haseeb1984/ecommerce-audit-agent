@@ -24,8 +24,17 @@ logging.basicConfig(level=logging.INFO)
 # logging raw URLs, headers, or response bodies in the first place.
 from log_safety import CredentialRedactionFilter
 
-for _handler in logging.getLogger().handlers:
-    _handler.addFilter(CredentialRedactionFilter())
+# Cover already-configured named logger handlers as well as the root handler.
+_redaction_filter = CredentialRedactionFilter()
+_seen_handlers = set()
+for _logger in [logging.getLogger(), *[
+    item for item in logging.Logger.manager.loggerDict.values()
+    if isinstance(item, logging.Logger)
+]]:
+    for _handler in _logger.handlers:
+        if id(_handler) not in _seen_handlers:
+            _handler.addFilter(_redaction_filter)
+            _seen_handlers.add(id(_handler))
 
 logger = logging.getLogger("audit_service")
 
@@ -127,7 +136,7 @@ async def audit_lead(
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         raise
-    except Exception:
+    except Exception as exc:
         await db.rollback()
         if reservation_id is not None:
             try:
