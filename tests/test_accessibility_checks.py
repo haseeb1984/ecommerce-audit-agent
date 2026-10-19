@@ -170,3 +170,28 @@ def test_svg_title_is_an_accessible_name_not_visible_control_text():
     assert parser.links[0]["has_svg_title"] is True
     assert parser.buttons[0]["text"] == ""
     assert parser.buttons[0]["has_svg_title"] is True
+
+
+
+def test_image_submit_control_without_name_is_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><form><input type="image" src="/submit.png"></form></body></html>',
+        "https://shop.example/checkout",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "Image submit controls may lack accessible names"
+    )
+    assert finding.status == "manual_review_required"
+    assert "1 image submit control(s)" in finding.evidence
+
+
+def test_named_image_submit_control_is_not_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><form><input type="image" src="/submit.png" alt="Place order"></form></body></html>',
+        "https://shop.example/checkout",
+    )
+    assert not any(
+        f.title == "Image submit controls may lack accessible names"
+        for f in findings
+    )
