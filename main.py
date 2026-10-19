@@ -124,17 +124,17 @@ async def audit_lead(
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.error("Failed to release quota reservation (error_type=%s)", type(__import__("sys").exc_info()[1]).__name__)
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         raise
     except Exception:
         await db.rollback()
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
-        logger.error("Audit execution failed (error_type=%s)", type(__import__("sys").exc_info()[1]).__name__)
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        logger.error("Audit execution failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
             detail="Audit execution failed. Check server logs for diagnostic details."
@@ -234,17 +234,17 @@ async def comprehensive_audit_pdf(
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         raise
     except Exception as exc:
         await db.rollback()
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
-        logger.error("Comprehensive audit report generation failed (error_type=%s)", type(__import__("sys").exc_info()[1]).__name__)
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        logger.error("Comprehensive audit report generation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
             detail="Comprehensive audit report generation failed. Check server logs for diagnostics.",
