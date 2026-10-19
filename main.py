@@ -78,8 +78,8 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
     try:
         result = await db.execute(text("SELECT 1"))
         return {"status": "success", "db_connected": True, "result": result.scalar()}
-    except Exception:
-        logger.exception("Health check failed")
+    except Exception as exc:
+        logger.error("Health check failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Database connection error")
 
 
@@ -125,7 +125,7 @@ async def audit_lead(
             try:
                 await release_audit_reservation(db, reservation_id)
             except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
+                logger.error("Failed to release quota reservation (error_type=%s)", type(__import__("sys").exc_info()[1]).__name__)
         raise
     except Exception:
         await db.rollback()
@@ -134,7 +134,7 @@ async def audit_lead(
                 await release_audit_reservation(db, reservation_id)
             except Exception:
                 logger.exception("Failed to release quota reservation %s", reservation_id)
-        logger.exception("Audit execution failed")
+        logger.error("Audit execution failed (error_type=%s)", type(__import__("sys").exc_info()[1]).__name__)
         raise HTTPException(
             status_code=500,
             detail="Audit execution failed. Check server logs for diagnostic details."
@@ -244,7 +244,7 @@ async def comprehensive_audit_pdf(
                 await release_audit_reservation(db, reservation_id)
             except Exception:
                 logger.exception("Failed to release quota reservation %s", reservation_id)
-        logger.exception("Comprehensive audit report generation failed")
+        logger.error("Comprehensive audit report generation failed (error_type=%s)", type(__import__("sys").exc_info()[1]).__name__)
         raise HTTPException(
             status_code=500,
             detail="Comprehensive audit report generation failed. Check server logs for diagnostics.",
