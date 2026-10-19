@@ -35,6 +35,7 @@ from audit_checks import (
 MAX_CRAWL_PAGES = 12
 MAX_LINKS_FROM_HOME = 100
 MAX_URLS_FROM_SITEMAP = 100
+MAX_CHILD_SITEMAPS = 3
 
 
 class _HreflangParser(HTMLParser):
@@ -198,25 +199,78 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         seen: set[str] = set()
         final_origin = urlsplit(final_home)
 
-        # Use a conventional sitemap as a secondary discovery source. Parsing is
-        # bounded and only same-origin URLs are considered below; sitemap-index
-        # expansion is deliberately excluded to keep the request budget predictable.
+        # Use the conventional sitemap as a secondary discovery source. A sitemap
+        # index is expanded only one level, with a strict child-sitemap and URL cap.
+        # Every child sitemap must remain on the audited origin before it is fetched.
         sitemap_urls: list[str] = []
         sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
+
+        def _loc_values(root):
+            return [
+                element.text.strip()
+                for element in root.iter()
+                if element.tag.rsplit("}", 1)[-1].lower() == "loc" and element.text and element.text.strip()
+            ]
+
+        def _same_origin_http_url(value: str, base: str) -> bool:
+            try:
+                parts = urlsplit(urljoin(base, value))
+                _ = parts.port
+                return (
+                    parts.scheme.lower() in {"http", "https"}
+                    and bool(parts.hostname)
+                    and parts.username is None
+                    and parts.password is None
+                    and _same_origin(parts.geturl(), final_home)
+                )
+            except (ValueError, UnicodeError):
+                return False
+
         try:
-            sitemap_status, sitemap_body, sitemap_headers, _ = await _safe_get(client, sitemap_url)
+            sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url)
             if 200 <= sitemap_status < 300 and (
                 "xml" in sitemap_headers.get("content-type", "").lower()
                 or sitemap_body.lstrip().startswith("<")
             ):
                 root = ET.fromstring(sitemap_body)
-                if root.tag.rsplit("}", 1)[-1].lower() == "urlset":
-                    for element in root.iter():
-                        if element.tag.rsplit("}", 1)[-1].lower() == "loc" and element.text:
-                            sitemap_urls.append(element.text.strip())
-                            if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
+                root_type = root.tag.rsplit("}", 1)[-1].lower()
+                if root_type == "urlset":
+                    sitemap_urls.extend(_loc_values(root)[:MAX_URLS_FROM_SITEMAP])
+                elif root_type == "sitemapindex":
+                    child_sitemaps = []
+                    for child in root:
+                        if child.tag.rsplit("}", 1)[-1].lower() != "sitemap":
+                            continue
+                        for loc in child:
+                            if loc.tag.rsplit("}", 1)[-1].lower() == "loc" and loc.text:
+                                value = loc.text.strip()
+                                if value and _same_origin_http_url(value, sitemap_final_url):
+                                    child_sitemaps.append(urljoin(sitemap_final_url, value))
                                 break
-        except (Exception):
+                        if len(child_sitemaps) >= MAX_CHILD_SITEMAPS:
+                            break
+
+                    for child_sitemap_url in child_sitemaps:
+                        if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
+                            break
+                        try:
+                            child_status, child_body, child_headers, _ = await _safe_get(client, child_sitemap_url)
+                            if child_status < 200 or child_status >= 300:
+                                continue
+                            if not (
+                                "xml" in child_headers.get("content-type", "").lower()
+                                or child_body.lstrip().startswith("<")
+                            ):
+                                continue
+                            child_root = ET.fromstring(child_body)
+                            if child_root.tag.rsplit("}", 1)[-1].lower() != "urlset":
+                                continue
+                            remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
+                            sitemap_urls.extend(_loc_values(child_root)[:remaining])
+                        except Exception:
+                            # One unavailable child sitemap must not abort other discovery.
+                            continue
+        except Exception:
             # The main audit reports sitemap availability/format separately.
             # Failure here only means sitemap-based URL discovery is unavailable.
             pass
