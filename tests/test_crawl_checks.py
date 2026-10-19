@@ -105,6 +105,69 @@ async def test_crawl_flags_off_origin_canonical_and_noindex(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_malformed_canonical_is_reviewed_without_crashing(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title>'
+                '<link rel="canonical" href="https://[broken-ipv6/copy">'
+                '</head><body><a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(f for f in findings if f.title == "Canonical URL is malformed")
+    assert finding.status == "manual_review_required"
+    assert "broken-ipv6" in finding.evidence
+    assert "https://shop.example/" in checked
+
+
+@pytest.mark.asyncio
+async def test_productgroup_nested_in_graph_is_detected(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title>'
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@graph":[{"@type":"ProductGroup",'
+            '"name":"Shirt","hasVariant":[{"@type":"Product","name":"Blue Shirt",'
+            '"image":["https://shop.example/blue.jpg"],"offers":{"@type":"Offer",'
+            '"price":"12.00","priceCurrency":"USD","availability":"https://schema.org/InStock"}}]}]}'
+            '</script></head><body><h1>Shirt</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert not any(f.title == "Product structured data not detected" for f in findings)
+    assert not any(f.title == "Product JSON-LD needs property review" for f in findings)
+
+
+@pytest.mark.asyncio
 async def test_product_page_detects_product_jsonld(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
