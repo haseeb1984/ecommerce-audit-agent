@@ -14,6 +14,8 @@ from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
+from crawl_checks import run_bounded_site_crawl
+from conversion_checks import run_conversion_paid_traffic_checks
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audit_service")
@@ -150,6 +152,14 @@ async def comprehensive_audit_pdf(
         # Keep this call strict rather than writing fabricated placeholder metrics.
         metrics = await agent.run_audit(target_url)
         result = await run_phase_one_checks(target_url)
+        crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
+        result.findings.extend(crawl_findings)
+        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
+        result.limitations.extend(crawl_limitations)
+        conversion_findings, conversion_pages, conversion_limitations = await run_conversion_paid_traffic_checks(target_url)
+        result.findings.extend(conversion_findings)
+        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
+        result.limitations.extend(conversion_limitations)
         result.findings.insert(0, AuditFinding(
             category="performance",
             title="Google PageSpeed mobile performance snapshot",
@@ -174,7 +184,16 @@ async def comprehensive_audit_pdf(
             ],
             source_url=target_url,
         ))
-        pdf_bytes = render_audit_pdf(result)
+        if not metrics.screenshot_data_uri:
+            result.limitations.append(
+                "No usable actual-page screenshot was supplied by the Google PageSpeed response for this run; "
+                "the report uses explanatory vector illustrations only and does not fabricate website screenshots."
+            )
+        pdf_bytes = (
+            render_audit_pdf(result, screenshot_data_uri=metrics.screenshot_data_uri)
+            if metrics.screenshot_data_uri
+            else render_audit_pdf(result)
+        )
 
         db.add(AuditLead(
             license_id=license_obj.id,

@@ -1,12 +1,14 @@
 name: Live Groq model recovery smoke test
 
 on:
-  pull_request:
-    branches: ["main"]
+  # A push event compares only the latest commit's changed paths. A PR path
+  # filter compares the entire PR diff, which can rerun this live API test on
+  # every unrelated update once a Groq file exists anywhere in the PR.
+  push:
+    branches: ["feature/**", "fix/**"]
     paths:
       - "ecommerce_agent.py"
       - "scripts/test_live_groq_recovery.py"
-      - ".github/workflows/live-groq-recovery.yml"
   workflow_dispatch:
 
 jobs:

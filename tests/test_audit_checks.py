@@ -85,9 +85,47 @@ class FakeSession:
         self.handler = handler
         self.urls = []
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
     def get(self, url, allow_redirects=False):
         self.urls.append(url)
         return self.handler(url)
+
+
+@pytest.mark.asyncio
+async def test_discovery_file_server_errors_are_inconclusive_not_missing(monkeypatch):
+    def handler(url):
+        path = urlsplit(url).path
+        if path == "/":
+            return FakeResponse(200, {"Content-Type": "text/html"}, "<html><h1>Shop</h1></html>")
+        if path == "/robots.txt":
+            return FakeResponse(403, {}, "Forbidden")
+        if path == "/sitemap.xml":
+            return FakeResponse(503, {}, "Unavailable")
+        if path == "/llms.txt":
+            return FakeResponse(404, {}, "Not found")
+        raise AssertionError(f"Unexpected request: {url}")
+
+    session = FakeSession(handler)
+    monkeypatch.setattr(audit_checks.aiohttp, "ClientSession", lambda **kwargs: session)
+    monkeypatch.setattr(audit_checks.aiohttp, "TCPConnector", lambda **kwargs: object())
+    monkeypatch.setattr(audit_checks.aiohttp, "ClientTimeout", lambda **kwargs: object())
+
+    result = await audit_checks.run_phase_one_checks("https://shop.example/")
+    by_title = {finding.title: finding for finding in result.findings}
+    assert by_title["robots.txt availability"].status == "not_tested"
+    assert "does not establish whether robots.txt exists" in by_title["robots.txt availability"].explanation
+    assert by_title["sitemap.xml availability"].status == "not_tested"
+    assert "does not establish whether sitemap.xml exists" in by_title["sitemap.xml availability"].explanation
+    assert by_title["llms.txt availability"].status == "verified"
+    assert "not found" in by_title["llms.txt availability"].explanation
+    assert by_title["Google indexing status not verified"].status == "not_tested"
+    assert "does not prove that Google has indexed" in by_title["Google indexing status not verified"].explanation
+    assert any("Google index status is not queried" in item for item in result.limitations)
 
 
 @pytest.mark.asyncio
@@ -185,6 +223,19 @@ def test_sitemap_parser_flags_malformed_xml_and_invalid_locations():
     assert "without an absolute HTTP(S) URL: 1" in invalid.evidence
 
 
+def test_sitemap_parser_handles_malformed_authorities_and_invalid_ports():
+    finding = audit_checks.inspect_discovery_contents(
+        "sitemap_xml",
+        "<urlset>"
+        "<url><loc>https://shop.example:99999/products/one</loc></url>"
+        "<url><loc>https://[broken-ipv6/products/two</loc></url>"
+        "</urlset>",
+        "https://shop.example/sitemap.xml",
+    )[0]
+    assert finding.status == "manual_review_required"
+    assert "entries without an absolute HTTP(S) URL: 2" in finding.evidence
+
+
 def test_sitemap_parser_accepts_basic_urlset():
     finding = audit_checks.inspect_discovery_contents(
         "sitemap_xml",
@@ -194,3 +245,172 @@ def test_sitemap_parser_accepts_basic_urlset():
     assert finding.status == "verified"
     assert "Root element: urlset" in finding.evidence
     assert "loc entries: 1" in finding.evidence
+
+
+@pytest.mark.asyncio
+async def test_safe_get_stops_after_redirect_limit():
+    client = FakeSession(lambda url: FakeResponse(302, {"Location": "/again"}))
+    with pytest.raises(ValueError, match="redirect limit"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == audit_checks.MAX_REDIRECTS + 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_oversized_content_length_before_reading_body():
+    client = FakeSession(lambda url: FakeResponse(
+        200, {"Content-Length": str(audit_checks.MAX_RESPONSE_BYTES + 1)}, ""
+    ))
+    with pytest.raises(ValueError, match="1 MB size limit"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_mixed_public_and_private_dns_answers(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)),
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("127.0.0.1", port)),
+            ]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve("mixed.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_empty_dns_answer(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return []
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve("empty.example", 443)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_length", ["unknown", "-1", "1.5"])
+async def test_safe_get_rejects_malformed_or_negative_content_length(content_length):
+    client = FakeSession(lambda url: FakeResponse(
+        200, {"Content-Length": content_length}, "small body"
+    ))
+    with pytest.raises(ValueError, match="invalid Content-Length"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_streamed_body_over_limit_even_without_content_length():
+    response = FakeResponse(200, {}, "x" * (audit_checks.MAX_RESPONSE_BYTES + 1))
+    client = FakeSession(lambda url: response)
+    with pytest.raises(ValueError, match="1 MB size limit"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[fe80::1]/",
+    ],
+)
+def test_normalize_target_rejects_non_public_ipv4_ipv6_and_obfuscated_loopback(target):
+    with pytest.raises(ValueError):
+        audit_checks.normalize_target(target)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_dns_resolution_failure(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            raise audit_checks.socket.gaierror("temporary resolution failure")
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="Could not resolve target host"):
+        await audit_checks.PublicOnlyResolver().resolve("dns-failure.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_with_embedded_credentials():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "https://user:pass@public.example/private"}
+    ))
+    with pytest.raises(ValueError, match="embedded credentials"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_to_unsupported_port():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "https://public.example:8443/admin"}
+    ))
+    with pytest.raises(ValueError, match="Non-standard ports"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
+
+
+@pytest.mark.asyncio
+async def test_safe_get_rejects_redirect_to_non_http_scheme():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "file:///etc/passwd"}
+    ))
+    with pytest.raises(ValueError, match="Only public HTTP and HTTPS"):
+        await audit_checks._safe_get(client, "https://shop.example/")
+    assert len(client.urls) == 1
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["0x7f000001", "2130706433", "0177.0.0.1", "127.1"])
+async def test_public_resolver_rejects_obfuscated_loopback_dns_result(host, monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="private or non-public"):
+        await audit_checks.PublicOnlyResolver().resolve(host, 443)
+
+
+
+
+@pytest.mark.asyncio
+async def test_safe_get_preserves_multiple_x_robots_tag_headers():
+    class MultiValueHeaders(dict):
+        def getall(self, name, default=None):
+            if name.lower() == "x-robots-tag":
+                return ["index, follow", "noindex"]
+            return default or []
+
+    client = FakeSession(lambda url: FakeResponse(
+        200, MultiValueHeaders({"Content-Type": "text/html", "X-Robots-Tag": "index, follow"}),
+        "<html></html>",
+    ))
+    status, _, headers, _ = await audit_checks._safe_get(client, "https://shop.example/")
+
+    assert status == 200
+    assert headers["x-robots-tag"] == "index, follow, noindex"
+
+
+@pytest.mark.asyncio
+async def test_safe_get_preserves_multiple_set_cookie_headers():
+    class MultiValueHeaders(dict):
+        def getall(self, name, default=None):
+            if name.lower() == "set-cookie":
+                return [
+                    "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax",
+                    "analytics=redacted; Path=/; SameSite=Lax",
+                ]
+            return default or []
+
+    client = FakeSession(lambda url: FakeResponse(
+        200, MultiValueHeaders({
+            "Content-Type": "text/html",
+            "Set-Cookie": "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax",
+        }), "<html></html>",
+    ))
+    status, _, headers, _ = await audit_checks._safe_get(client, "https://shop.example/")
+
+    assert status == 200
+    assert "analytics=redacted" in headers["set-cookie"]
+    assert "session=redacted" in headers["set-cookie"]

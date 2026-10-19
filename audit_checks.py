@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
 import socket
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
@@ -33,6 +34,9 @@ class AuditFinding(BaseModel):
     recommendation: str
     verification_steps: list[str] = Field(default_factory=list)
     source_url: str | None = None
+    # Optional, evidence-backed business context. Never inferred by the renderer.
+    potential_benefit: str | None = None
+    risk_if_unresolved: str | None = None
 
 
 class AuditCheckResult(BaseModel):
@@ -68,6 +72,13 @@ def normalize_target(value: str) -> str:
         ip = None
     if ip is not None and (not ip.is_global):
         raise ValueError("Private, loopback, link-local, and reserved IP addresses are blocked.")
+    # Browsers and some URL parsers interpret shortened, integer, octal, or hex
+    # IPv4 spellings as IP addresses. Do not let those forms pass as DNS names.
+    if ip is None and (
+        re.fullmatch(r"[0-9.]+", host)
+        or re.fullmatch(r"0x[0-9a-f]+", host)
+    ):
+        raise ValueError("Ambiguous numeric IP hostnames are not supported.")
     netloc = host
     if ":" in host and not host.startswith("["):
         netloc = f"[{host}]"
@@ -135,6 +146,18 @@ async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, 
     for redirect_count in range(MAX_REDIRECTS + 1):
         async with client.get(current, allow_redirects=False) as response:
             headers = {key.lower(): value for key, value in response.headers.items()}
+            # X-Robots-Tag may be sent in multiple header fields. A dict
+            # comprehension keeps only one duplicate key, which could discard a
+            # noindex directive and incorrectly imply that the page is indexable.
+            # Preserve duplicate directive/cookie headers that are meaningful
+            # to downstream checks; a plain dict comprehension collapses duplicates.
+            for header_name in ("X-Robots-Tag", "Set-Cookie"):
+                try:
+                    values = response.headers.getall(header_name, [])
+                except (AttributeError, KeyError):
+                    values = []
+                if values:
+                    headers[header_name.lower()] = ", ".join(str(value) for value in values)
             if response.status in {301, 302, 303, 307, 308}:
                 location = headers.get("location")
                 if not location:
@@ -144,13 +167,17 @@ async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, 
                 current = normalize_target(urljoin(current, location))
                 continue
             content_length = headers.get("content-length")
-            if content_length:
+            if content_length is not None:
+                # Reject malformed or negative lengths instead of silently ignoring them.
+                # The streamed byte counter below remains authoritative if the header lies.
                 try:
-                    if int(content_length) > MAX_RESPONSE_BYTES:
-                        raise ValueError("Response exceeded the audit's 1 MB size limit.")
-                except ValueError as exc:
-                    if "size limit" in str(exc):
-                        raise
+                    declared_length = int(content_length.strip())
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Response included an invalid Content-Length header.") from exc
+                if declared_length < 0:
+                    raise ValueError("Response included an invalid Content-Length header.")
+                if declared_length > MAX_RESPONSE_BYTES:
+                    raise ValueError("Response exceeded the audit's 1 MB size limit.")
             chunks: list[bytes] = []
             size = 0
             async for chunk in response.content.iter_chunked(65536):
@@ -170,6 +197,11 @@ class _PageParser(HTMLParser):
         self._in_title = False
         self.meta_description = ""
         self.viewport = ""
+        self.meta_robots = ""
+        self.meta_robots_count = 0
+        self.canonical_href = ""
+        self.canonical_count = 0
+        self.canonical_missing_href_count = 0
         self.h1_count = 0
         self.h1_text = ""
         self._in_h1 = False
@@ -178,18 +210,43 @@ class _PageParser(HTMLParser):
         self.links = 0
         self._title_parts: list[str] = []
         self._h1_parts: list[str] = []
+        self.jsonld_scripts: list[str] = []
+        self._in_jsonld_script = False
+        self._jsonld_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
         if tag == "title":
             self._in_title = True
+        elif tag == "script":
+            script_type = values.get("type", "").split(";", 1)[0].strip().lower()
+            if script_type == "application/ld+json":
+                self._in_jsonld_script = True
+                self._jsonld_parts = []
         elif tag == "meta":
             name = values.get("name", "").strip().lower()
             if name == "description":
                 self.meta_description = values.get("content", "").strip()
             elif name == "viewport":
                 self.viewport = values.get("content", "").strip()
+            elif name == "robots":
+                robots_content = values.get("content", "").strip()
+                self.meta_robots_count += 1
+                if robots_content:
+                    self.meta_robots = (
+                        f"{self.meta_robots}, {robots_content}"
+                        if self.meta_robots else robots_content
+                    )
+        elif tag == "link":
+            rel_tokens = values.get("rel", "").strip().lower().split()
+            if "canonical" in rel_tokens:
+                self.canonical_count += 1
+                href = values.get("href", "").strip()
+                if not href:
+                    self.canonical_missing_href_count += 1
+                elif not self.canonical_href:
+                    self.canonical_href = href
         elif tag == "h1":
             self.h1_count += 1
             self._in_h1 = True
@@ -204,6 +261,12 @@ class _PageParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
             self._in_title = False
+        elif tag.lower() == "script" and self._in_jsonld_script:
+            value = "".join(self._jsonld_parts).strip()
+            if value:
+                self.jsonld_scripts.append(value)
+            self._jsonld_parts = []
+            self._in_jsonld_script = False
         elif tag.lower() == "h1":
             if self._in_h1:
                 text = " ".join("".join(self._h1_parts).split())
@@ -212,6 +275,8 @@ class _PageParser(HTMLParser):
             self._in_h1 = False
 
     def handle_data(self, data: str) -> None:
+        if self._in_jsonld_script:
+            self._jsonld_parts.append(data)
         if self._in_title:
             self._title_parts.append(data)
             self.title_text = " ".join("".join(self._title_parts).split())
@@ -387,8 +452,19 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
         ]
         invalid_locations = 0
         for value in loc_values:
-            parsed = urlsplit(value)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            try:
+                parsed = urlsplit(value)
+                # Validate explicit ports as well as the absolute HTTP(S) URL shape.
+                _ = parsed.port
+                valid_location = (
+                    parsed.scheme.lower() in {"http", "https"}
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                )
+            except (ValueError, UnicodeError):
+                valid_location = False
+            if not valid_location:
                 invalid_locations += 1
         valid_root = root_name in {"urlset", "sitemapindex"}
         if not valid_root or not loc_values or invalid_locations:
@@ -484,17 +560,26 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     ))
                     findings.extend(inspect_discovery_contents(category, body, final_url))
                 else:
+                    # Only a clear 404 supports a finding that the conventional file is
+                    # absent. Access-denied, rate-limit, and server-error responses do
+                    # not prove absence and must not trigger a publish-file recommendation.
+                    is_not_found = status == 404
                     findings.append(_finding(
                         category, f"{description} availability",
-                        "verified", "low" if status == 404 else "medium",
+                        "verified" if is_not_found else "not_tested",
+                        "low" if is_not_found else "info",
                         f"GET {final_url} returned HTTP {status}.",
-                        (f"{description} was not served successfully at the conventional root path. "
-                         "Whether that is an issue depends on the site's setup and intended use."),
-                        ("Publish and validate this file if the site needs explicit crawl rules."
-                         if category == "robots_txt" else
-                         "Publish a valid sitemap and reference it from robots.txt if appropriate."
-                         if category == "sitemap_xml" else
-                         "No action is required solely for missing llms.txt; it is optional and has no guaranteed ranking benefit."),
+                        (f"{description} was not found at the conventional root path. "
+                         "Whether that matters depends on the site's setup and intended use."
+                         if is_not_found else
+                         f"The server returned HTTP {status}; this does not establish whether {description} exists or is configured correctly."),
+                        (("Publish and validate this file if the site needs explicit crawl rules."
+                          if category == "robots_txt" else
+                          "Publish a valid sitemap and reference it from robots.txt if appropriate."
+                          if category == "sitemap_xml" else
+                          "No action is required solely for missing llms.txt; it is optional and has no guaranteed ranking benefit.")
+                         if is_not_found else
+                         "Resolve the access, rate-limit, or server response and rerun this check before drawing conclusions."),
                         [f"Open {file_url} directly and check whether an alternative location is intentionally used."],
                         final_url,
                     ))
@@ -506,6 +591,27 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     "Confirm public reachability and rerun; do not treat this result as proof the file is missing.",
                     ["Open the URL directly and check server/network logs."], file_url,
                 ))
+    # Public HTML directives are useful diagnostics, but they are not an authoritative
+    # record of whether Google has indexed a URL. No Search Console property/API
+    # authorization is configured in this public audit path, so report that gap plainly.
+    findings.append(_finding(
+        "technical_seo",
+        "Google indexing status not verified",
+        "not_tested",
+        "info",
+        "This audit checks public page and discovery-file signals only; it does not query Google Search Console URL Inspection or an authoritative index-status source.",
+        "A reachable page, sitemap entry, or absence of a noindex directive does not prove that Google has indexed the URL. Likewise, this audit cannot prove that a URL is absent from Google's index.",
+        "If index status matters, inspect the exact URL in the site's authorized Google Search Console property and review the reason reported there. Treat public source checks as diagnostic signals, not index-status confirmation.",
+        [
+            "Open Google Search Console for the verified site property.",
+            "Use URL Inspection for the exact canonical URL and review the reported indexing state and last crawl.",
+            "Compare any reported issue with the page's canonical, robots directives, response status, and sitemap entry.",
+        ],
+        normalized,
+    ))
+    limitations.append(
+        "Google index status is not queried: Search Console authorization and URL Inspection data are not part of this public audit."
+    )
     return AuditCheckResult(
         target_url=normalized,
         checked_at_utc=datetime.now(timezone.utc).isoformat(),
