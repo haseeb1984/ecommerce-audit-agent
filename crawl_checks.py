@@ -484,6 +484,19 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                             final_url,
                         ))
 
+            # Multiple canonical declarations can send conflicting signals.
+            # This detects duplication but does not decide which target is correct.
+            if page_parser.canonical_count > 1:
+                findings.append(_finding(
+                    "technical_seo", "Multiple canonical declarations detected",
+                    "manual_review_required", "medium",
+                    f"Page {final_url} contains {page_parser.canonical_count} link elements declaring rel=canonical.",
+                    "More than one canonical declaration can create ambiguity about the preferred URL. This source check does not determine which declaration a search engine will select.",
+                    "Review the page template and ensure it emits one intentional canonical declaration for the page, then check the rendered source and final URL.",
+                    ["Inspect all canonical link elements in the page source.", "Confirm the remaining canonical points to the intended preferred URL."],
+                    final_url,
+                ))
+
             # A canonical tag is a search-engine hint. Flag an off-origin target
             # for human review rather than assuming it is wrong in every setup.
             if page_parser.canonical_href:
