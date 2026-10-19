@@ -115,6 +115,7 @@ async def test_multiple_canonical_declarations_require_review(monkeypatch):
                 '<html><head><title>Store</title>'
                 '<link rel="canonical" href="/">'
                 '<link rel="canonical" href="https://other.example/copy">'
+                '<link rel="canonical">'
                 '</head><body><a href="/products/one">Product</a></body></html>',
                 {"content-type": "text/html"},
                 url,
@@ -131,7 +132,10 @@ async def test_multiple_canonical_declarations_require_review(monkeypatch):
 
     finding = next(f for f in findings if f.title == "Multiple canonical declarations detected")
     assert finding.status == "manual_review_required"
-    assert "2 link elements" in finding.evidence
+    assert "3 link elements" in finding.evidence
+    missing_href = next(f for f in findings if f.title == "Canonical declaration is missing href")
+    assert missing_href.status == "manual_review_required"
+    assert "1 canonical link element" in missing_href.evidence
 
 
 @pytest.mark.asyncio
