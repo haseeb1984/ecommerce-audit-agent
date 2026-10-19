@@ -430,8 +430,19 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
         ]
         invalid_locations = 0
         for value in loc_values:
-            parsed = urlsplit(value)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            try:
+                parsed = urlsplit(value)
+                # Validate explicit ports as well as the absolute HTTP(S) URL shape.
+                _ = parsed.port
+                valid_location = (
+                    parsed.scheme.lower() in {"http", "https"}
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                )
+            except (ValueError, UnicodeError):
+                valid_location = False
+            if not valid_location:
                 invalid_locations += 1
         valid_root = root_name in {"urlset", "sitemapindex"}
         if not valid_root or not loc_values or invalid_locations:
