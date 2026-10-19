@@ -105,6 +105,36 @@ async def test_crawl_flags_off_origin_canonical_and_noindex(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_multiple_canonical_declarations_require_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title>'
+                '<link rel="canonical" href="/">'
+                '<link rel="canonical" href="https://other.example/copy">'
+                '</head><body><a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(f for f in findings if f.title == "Multiple canonical declarations detected")
+    assert finding.status == "manual_review_required"
+    assert "2 link elements" in finding.evidence
+
+
+@pytest.mark.asyncio
 async def test_malformed_canonical_is_reviewed_without_crashing(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
