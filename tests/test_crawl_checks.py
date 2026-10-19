@@ -913,3 +913,24 @@ async def test_crawl_expands_limited_same_origin_sitemap_index(monkeypatch):
     assert not any("outside.example" in url or "evil.xml" in url for url in requested)
     assert "https://shop.example/ignored-sitemap.xml" not in requested
     assert len([url for url in checked if "/products/" in url or "/categories/" in url]) <= 5
+
+
+@pytest.mark.asyncio
+async def test_crawl_page_budget_of_one_checks_only_homepage(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 1)
+    homepage = "https://shop.example/"
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body><a href="/product">Product</a></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert checked == [homepage]
