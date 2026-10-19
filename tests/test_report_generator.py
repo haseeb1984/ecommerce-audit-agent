@@ -414,3 +414,59 @@ def _consolidate_findings_for_status_test():
         for status in ("not_tested", "insufficient_data")
     ]
     return _consolidate_findings(findings)
+
+
+
+def test_pdf_renders_optional_business_context_only_when_provided(monkeypatch):
+    import report_generator
+
+    rendered_text = []
+    original_p = report_generator._p
+
+    def capture_paragraph(value, style):
+        rendered_text.append(str(value))
+        return original_p(value, style)
+
+    monkeypatch.setattr(report_generator, "_p", capture_paragraph)
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-17T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        limitations=[],
+        findings=[
+            AuditFinding(
+                category="performance",
+                title="Large page payload",
+                status="verified",
+                severity="medium",
+                evidence="Observed transfer size exceeded the configured threshold.",
+                explanation="The page transfers more data than the check's threshold.",
+                recommendation="Review and reduce unnecessary resources.",
+                verification_steps=["Repeat the transfer-size measurement."],
+                potential_benefit="A smaller payload may reduce transfer work.",
+                risk_if_unresolved="The transfer cost remains elevated.",
+                source_url="https://shop.example/",
+            ),
+            AuditFinding(
+                category="seo",
+                title="Missing title",
+                status="verified",
+                severity="low",
+                evidence="No title element was found.",
+                explanation="The returned HTML has no title element.",
+                recommendation="Add a descriptive title.",
+                verification_steps=[],
+                source_url="https://shop.example/about",
+            ),
+        ],
+    )
+
+    pdf = report_generator.render_audit_pdf(result)
+
+    assert pdf.startswith(b"%PDF-")
+    assert "Potential benefit if addressed" in rendered_text
+    assert "A smaller payload may reduce transfer work." in rendered_text
+    assert "Risk if left unresolved" in rendered_text
+    assert "The transfer cost remains elevated." in rendered_text
+    # The second finding has no supplied business context; no generic impact is invented.
+    assert all("Potential benefit" not in item for item in rendered_text[rendered_text.index("Add a descriptive title.") + 1:])
