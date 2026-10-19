@@ -162,17 +162,41 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         final_url,
     ))
 
-    combined_sources = "\n".join(parser.script_sources)
-    detected = [name for name, pattern in TRACKING_PATTERNS.items() if pattern.search(combined_sources)]
+    # Keep concrete, bounded match context so a reviewer can tell why each tag was flagged.
+    # Do not print full inline scripts, query-string IDs, or arbitrary page source into the report.
+    source_matches: dict[str, list[str]] = {name: [] for name in TRACKING_PATTERNS}
+    for source in parser.script_sources:
+        parsed_source = urlsplit(source)
+        if parsed_source.scheme in {"http", "https"} and parsed_source.netloc:
+            host = (parsed_source.hostname or "").lower()
+            for name, pattern in TRACKING_PATTERNS.items():
+                if pattern.search(host):
+                    source_matches[name].append(f"script host: {host}")
+        else:
+            compact = " ".join(source.split())
+            for name, pattern in TRACKING_PATTERNS.items():
+                match = pattern.search(compact)
+                if match:
+                    # Report only the short matching token, not the surrounding script or identifiers.
+                    source_matches[name].append(f"inline signature: {match.group(0)[:60]}")
+    detected = [name for name, matches in source_matches.items() if matches]
+    if detected:
+        match_details = []
+        for name in detected:
+            unique_details = list(dict.fromkeys(source_matches[name]))[:3]
+            match_details.append(f"{name} ({'; '.join(unique_details)})")
+        tracking_evidence = "Static HTML signals detected: " + "; ".join(match_details) + "."
+    else:
+        tracking_evidence = (
+            "No known Google tag/Analytics, Meta Pixel, TikTok Pixel, or Microsoft Clarity signature "
+            "was detected in the parsed static HTML."
+        )
     findings.append(_finding(
         "conversion_paid_traffic", "Publicly detectable marketing tags", "verified" if detected else "manual_review_required",
-        "info",
-        ("Static HTML contained signals matching: " + ", ".join(detected) + ".")
-        if detected else
-        "No known Google tag/Analytics, Meta Pixel, TikTok Pixel, or Microsoft Clarity signature was detected in the parsed static HTML.",
-        "Tag signatures are only presence signals. They do not prove the tag fires correctly, consent is handled properly, events are configured, or ad platforms attribute conversions. Absence from initial HTML does not prove tracking is absent.",
-        "Use the relevant browser tag debugger and analytics/ad-platform diagnostics to verify page-view and intended conversion events, consent behavior, and duplicate firing. Never infer conversion performance from tag presence alone.",
-        ["Test in the browser with official tag debugging tools.", "Verify the intended conversion event appears once in the correct account.", "Check consent choices and network requests."],
+        "info", tracking_evidence,
+        "Tag signatures are only presence signals. They do not prove the tag fires correctly, consent is handled properly, events are configured, or ad platforms attribute conversions. A generic matching word or a tag loaded only after interaction can be missed or misclassified by static inspection. Absence from initial HTML does not prove tracking is absent.",
+        "Review each reported host/signature, then use the relevant browser tag debugger and analytics/ad-platform diagnostics to verify page-view and intended conversion events, consent behavior, and duplicate firing. Never infer conversion performance from tag presence alone.",
+        ["Check the reported host/signature against the expected vendor integration.", "Test in the browser with official tag debugging tools.", "Verify the intended conversion event appears once in the correct account.", "Check consent choices and network requests."],
         final_url,
     ))
 
