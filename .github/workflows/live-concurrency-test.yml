@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout test branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Run two simultaneous requests against live API
         env:
           AUDIT_TEST_LICENSE_KEY: CONCURRENCY-TEST-2026-10-17
