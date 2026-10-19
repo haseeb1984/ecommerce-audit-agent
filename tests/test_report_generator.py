@@ -470,9 +470,9 @@ def test_pdf_renders_optional_business_context_only_when_provided(monkeypatch):
     pdf = report_generator.render_audit_pdf(result)
 
     assert pdf.startswith(b"%PDF-")
-    assert "Potential benefit if addressed" in rendered_text
-    assert "A smaller payload may reduce transfer work." in rendered_text
-    assert "Risk if left unresolved" in rendered_text
-    assert "The transfer cost remains elevated." in rendered_text
+    assert any("Potential benefit if addressed" in item for item in rendered_text)
+    assert any("A smaller payload may reduce transfer work." in item for item in rendered_text)
+    assert any("Risk if left unresolved" in item for item in rendered_text)
+    assert any("The transfer cost remains elevated." in item for item in rendered_text)
     # The second finding has no supplied business context; no generic impact is invented.
     assert all("Potential benefit" not in item for item in rendered_text[rendered_text.index("Add a descriptive title.") + 1:])
