@@ -591,6 +591,27 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     "Confirm public reachability and rerun; do not treat this result as proof the file is missing.",
                     ["Open the URL directly and check server/network logs."], file_url,
                 ))
+    # Public HTML directives are useful diagnostics, but they are not an authoritative
+    # record of whether Google has indexed a URL. No Search Console property/API
+    # authorization is configured in this public audit path, so report that gap plainly.
+    findings.append(_finding(
+        "technical_seo",
+        "Google indexing status not verified",
+        "not_tested",
+        "info",
+        "This audit checks public page and discovery-file signals only; it does not query Google Search Console URL Inspection or an authoritative index-status source.",
+        "A reachable page, sitemap entry, or absence of a noindex directive does not prove that Google has indexed the URL. Likewise, this audit cannot prove that a URL is absent from Google's index.",
+        "If index status matters, inspect the exact URL in the site's authorized Google Search Console property and review the reason reported there. Treat public source checks as diagnostic signals, not index-status confirmation.",
+        [
+            "Open Google Search Console for the verified site property.",
+            "Use URL Inspection for the exact canonical URL and review the reported indexing state and last crawl.",
+            "Compare any reported issue with the page's canonical, robots directives, response status, and sitemap entry.",
+        ],
+        normalized,
+    ))
+    limitations.append(
+        "Google index status is not queried: Search Console authorization and URL Inspection data are not part of this public audit."
+    )
     return AuditCheckResult(
         target_url=normalized,
         checked_at_utc=datetime.now(timezone.utc).isoformat(),
