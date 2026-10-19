@@ -77,7 +77,7 @@ async def test_osv_match_is_reported_as_manual_review_not_exploitability(monkeyp
     assert findings[0].title == "Versioned frontend dependency has matching OSV advisories"
     assert findings[0].status == "manual_review_required"
     assert "GHSA-test-1234" in findings[0].evidence
-    assert "not independently verified" in findings[0].evidence
+    assert "not downloaded or independently verified" in findings[0].evidence
     assert "does not inventory server-side packages" in limitations[0]
     assert fake.request[0] == dependency_checks.OSV_QUERY_URL
     assert fake.request[1]["json"]["queries"][0]["package"] == {"name": "jquery", "ecosystem": "npm"}
