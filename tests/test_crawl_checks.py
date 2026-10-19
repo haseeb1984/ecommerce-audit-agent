@@ -579,3 +579,66 @@ async def test_crawl_fetch_failure_is_not_reported_as_verified_broken_link(monke
     assert homepage in checked
     assert "https://shop.example/products/one" not in checked
 
+
+
+@pytest.mark.asyncio
+async def test_product_jsonld_malformed_block_is_reviewed_without_crashing(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product One</title>'
+            '<script type="application/ld+json">{"@type":"Product",</script>'
+            '</head><body><h1>Product One</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    schema_finding = next(
+        f for f in findings
+        if f.category == "structured_data" and "Product structured data" in f.title
+    )
+    assert schema_finding.title == "Product structured data not detected"
+    assert schema_finding.status == "manual_review_required"
+
+
+@pytest.mark.asyncio
+async def test_same_origin_canonical_is_not_flagged_as_off_origin(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title>'
+                '<link rel="canonical" href="/"></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert not any(
+        f.title == "Canonical URL points outside this page origin"
+        for f in findings
+    )
