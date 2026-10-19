@@ -143,6 +143,15 @@ async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, 
     for redirect_count in range(MAX_REDIRECTS + 1):
         async with client.get(current, allow_redirects=False) as response:
             headers = {key.lower(): value for key, value in response.headers.items()}
+            # X-Robots-Tag may be sent in multiple header fields. A dict
+            # comprehension keeps only one duplicate key, which could discard a
+            # noindex directive and incorrectly imply that the page is indexable.
+            try:
+                x_robots_values = response.headers.getall("X-Robots-Tag", [])
+            except (AttributeError, KeyError):
+                x_robots_values = []
+            if x_robots_values:
+                headers["x-robots-tag"] = ", ".join(str(value) for value in x_robots_values)
             if response.status in {301, 302, 303, 307, 308}:
                 location = headers.get("location")
                 if not location:
