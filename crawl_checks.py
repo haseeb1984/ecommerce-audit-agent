@@ -430,21 +430,30 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 ))
 
                 if product_nodes:
-                    def has_value(value):
-                        if isinstance(value, str):
-                            return bool(value.strip())
-                        if isinstance(value, (int, float)):
+                    def nonempty_string(value):
+                        return isinstance(value, str) and bool(value.strip())
+
+                    def has_image(value):
+                        if nonempty_string(value):
                             return True
                         if isinstance(value, list):
-                            return any(has_value(entry) for entry in value)
+                            return any(has_image(entry) for entry in value)
                         if isinstance(value, dict):
-                            return bool(value)
+                            return nonempty_string(value.get("url")) or nonempty_string(value.get("contentUrl"))
                         return False
 
+                    def has_price(value):
+                        if isinstance(value, bool):
+                            return False
+                        if isinstance(value, (int, float)):
+                            return True
+                        return nonempty_string(value)
+
                     missing_properties: list[str] = []
-                    for property_name in ("name", "image"):
-                        if not any(has_value(node.get(property_name)) for node in product_nodes):
-                            missing_properties.append(property_name)
+                    if not any(nonempty_string(node.get("name")) for node in product_nodes):
+                        missing_properties.append("name")
+                    if not any(has_image(node.get("image")) for node in product_nodes):
+                        missing_properties.append("image")
 
                     offer_nodes = []
                     for node in product_nodes:
@@ -456,13 +465,12 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     if not offer_nodes:
                         missing_properties.append("offers (price and availability details)")
                     else:
-                        for offer_property in ("price", "priceCurrency"):
-                            if not any(has_value(offer.get(offer_property)) for offer in offer_nodes):
-                                missing_properties.append(f"offers.{offer_property}")
-                    if not any(
-                        has_value(offer.get("availability")) for offer in offer_nodes
-                    ) and offer_nodes:
-                        missing_properties.append("offers.availability")
+                        if not any(has_price(offer.get("price")) for offer in offer_nodes):
+                            missing_properties.append("offers.price")
+                        if not any(nonempty_string(offer.get("priceCurrency")) for offer in offer_nodes):
+                            missing_properties.append("offers.priceCurrency")
+                        if not any(nonempty_string(offer.get("availability")) for offer in offer_nodes):
+                            missing_properties.append("offers.availability")
 
                     if missing_properties:
                         findings.append(_finding(
