@@ -401,3 +401,19 @@ async def test_http_success_response_that_stays_http_is_a_redirect_finding(monke
     finding = next(item for item in findings if item.title == "HTTP does not redirect to HTTPS")
     assert finding.status == "verified"
     assert finding.severity == "high"
+
+
+def test_cookie_review_checks_all_combined_set_cookie_values():
+    findings = inspect_security_header_quality(
+        {
+            "set-cookie": (
+                "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax, "
+                "analytics=redacted; Path=/; SameSite=Lax"
+            )
+        },
+        "https://shop.example/",
+    )
+    cookie_finding = next(item for item in findings if item.title == "Cookie security attributes need review")
+    assert "analytics" in cookie_finding.evidence
+    assert "Secure" in cookie_finding.evidence
+    assert "redacted" not in cookie_finding.evidence
