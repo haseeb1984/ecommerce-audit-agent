@@ -18,6 +18,15 @@ from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 
 logging.basicConfig(level=logging.INFO)
+
+# Defense in depth: scrub credentials from messages and exception traces before
+# they reach any root logging handler. Provider/request logging must still avoid
+# logging raw URLs, headers, or response bodies in the first place.
+from log_safety import CredentialRedactionFilter
+
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(CredentialRedactionFilter())
+
 logger = logging.getLogger("audit_service")
 
 app = FastAPI(
