@@ -2,7 +2,7 @@ name: Backend tests
 
 on:
   push:
-    branches: ["main", "fix/**"]
+    branches: ["main", "fix/**", "audit-engine-consolidated"]
   pull_request:
     branches: ["main"]
 
@@ -32,9 +32,9 @@ jobs:
       GROQ_API_KEY: test-only-key
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -57,7 +57,7 @@ jobs:
         run: python scripts/generate_sample_audit_pdf.py --output audit-report-sample.pdf
       - name: Upload synthetic PDF layout artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: synthetic-audit-report-pdf
           path: audit-report-sample.pdf
@@ -65,7 +65,7 @@ jobs:
           retention-days: 14
       - name: Upload dependency audit evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-dependency-audit
           path: |
