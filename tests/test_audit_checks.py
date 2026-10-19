@@ -123,6 +123,9 @@ async def test_discovery_file_server_errors_are_inconclusive_not_missing(monkeyp
     assert "does not establish whether sitemap.xml exists" in by_title["sitemap.xml availability"].explanation
     assert by_title["llms.txt availability"].status == "verified"
     assert "not found" in by_title["llms.txt availability"].explanation
+    assert by_title["Google indexing status not verified"].status == "not_tested"
+    assert "does not prove that Google has indexed" in by_title["Google indexing status not verified"].explanation
+    assert any("Google index status is not queried" in item for item in result.limitations)
 
 
 @pytest.mark.asyncio
