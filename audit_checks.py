@@ -146,12 +146,15 @@ async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, 
             # X-Robots-Tag may be sent in multiple header fields. A dict
             # comprehension keeps only one duplicate key, which could discard a
             # noindex directive and incorrectly imply that the page is indexable.
-            try:
-                x_robots_values = response.headers.getall("X-Robots-Tag", [])
-            except (AttributeError, KeyError):
-                x_robots_values = []
-            if x_robots_values:
-                headers["x-robots-tag"] = ", ".join(str(value) for value in x_robots_values)
+            # Preserve duplicate directive/cookie headers that are meaningful
+            # to downstream checks; a plain dict comprehension collapses duplicates.
+            for header_name in ("X-Robots-Tag", "Set-Cookie"):
+                try:
+                    values = response.headers.getall(header_name, [])
+                except (AttributeError, KeyError):
+                    values = []
+                if values:
+                    headers[header_name.lower()] = ", ".join(str(value) for value in values)
             if response.status in {301, 302, 303, 307, 308}:
                 location = headers.get("location")
                 if not location:
