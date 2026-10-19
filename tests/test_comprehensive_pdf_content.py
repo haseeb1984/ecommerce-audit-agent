@@ -50,6 +50,17 @@ def test_real_pdf_render_contains_findings_evidence_limitations_and_final_discla
                 source_url="https://shop.example/",
             ),
             AuditFinding(
+                category="security_dependency",
+                title="Versioned frontend dependency has matching OSV advisories",
+                status="manual_review_required",
+                severity="medium",
+                evidence="Detected jquery 1.2.3 in a public script URL; OSV returned advisory ID GHSA-test-1234. The asset contents were not downloaded or independently verified.",
+                explanation="The advisory service associates this declared package/version with a known vulnerability record. Confirm the served asset and advisory conditions before treating it as exploitable.",
+                recommendation="Verify the deployed asset, review the advisory, update through the normal release process, and rerun the scan.",
+                verification_steps=["Verify the script URL and deployed asset provenance.", "Review the advisory affected-version conditions."],
+                source_url="https://shop.example/",
+            ),
+            AuditFinding(
                 category="accessibility",
                 title="Product form control may lack an accessible name",
                 status="manual_review_required",
@@ -76,6 +87,10 @@ def test_real_pdf_render_contains_findings_evidence_limitations_and_final_discla
     assert "Status: Not Tested" in text
     assert "A sitemap entry does not prove that Google has indexed a URL." in text
     assert "Check the exact URL in the authorized Google Search Console property." in text
+    assert "Versioned frontend dependency has matching OSV advisories" in text
+    assert "Status: Manual Review Required" in text
+    assert "GHSA-test-1234" in text
+    assert "before treating it as exploitable" in text
     assert "Product form control may lack an accessible name" in text
     assert "Status: Manual Review Required" in text
     assert "Potential benefit if addressed" in text
