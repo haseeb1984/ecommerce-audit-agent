@@ -269,3 +269,54 @@ async def test_probe_records_server_errors_as_unverified(monkeypatch):
     assert findings == []
     assert any("1 of 14 exposure probes returned HTTP 5xx" in item for item in limitations)
     assert any("treated as unverified, not safe" in item for item in limitations)
+
+@pytest.mark.asyncio
+async def test_tls_certificate_validation_error_is_reported_as_untrusted_not_pass(monkeypatch):
+    import asyncio
+    import ssl
+    import security_checks
+
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [(security_checks.socket.AF_INET, security_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+
+    async def invalid_certificate(*args, **kwargs):
+        raise ssl.SSLCertVerificationError("certificate verify failed")
+
+    async def fake_safe_get(client, url):
+        return 200, "", {}, "https://shop.example/"
+
+    monkeypatch.setattr(security_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(security_checks.asyncio, "open_connection", invalid_certificate)
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+
+    findings, limitations = await security_checks.inspect_transport_security(
+        object(), "<html></html>", "https://shop.example/"
+    )
+    cert = next(item for item in findings if item.title == "TLS certificate validation failed")
+    assert cert.status == "verified"
+    assert cert.severity == "high"
+    assert "not trusted" in cert.evidence
+    assert not any("TLS certificate chain and hostname validation succeeded" in item.evidence for item in findings)
+    assert not any("could not be completed" in item for item in limitations)
+
+
+@pytest.mark.asyncio
+async def test_tls_dns_timeout_is_unverified_not_a_certificate_pass(monkeypatch):
+    import security_checks
+
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            raise TimeoutError("simulated DNS timeout")
+
+    async def fake_safe_get(client, url):
+        return 200, "", {}, "https://shop.example/"
+
+    monkeypatch.setattr(security_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+
+    findings, limitations = await security_checks.inspect_transport_security(
+        object(), "<html></html>", "https://shop.example/"
+    )
+    assert not any(item.title == "TLS certificate validity and expiry" for item in findings)
+    assert any("TLS certificate expiry inspection could not be completed" in item for item in limitations)
