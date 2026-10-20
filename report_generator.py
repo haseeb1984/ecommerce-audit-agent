@@ -260,6 +260,57 @@ class PhaseVisual(Flowable):
         c.restoreState()
 
 
+
+class FindingMixInfographic(Flowable):
+    """Evidence-derived severity infographic; counts are not severity scores."""
+    def __init__(self, findings: list[dict[str, object]]):
+        super().__init__()
+        self.width = 174 * mm
+        self.height = 38 * mm
+        self.counts = {
+            level: sum(1 for item in findings if str(item.get("severity", "")).lower() == level)
+            for level in ("critical", "high", "medium", "low", "info")
+        }
+        self.total = sum(self.counts.values())
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        c.setFillColor(colors.HexColor("#F4F7FB"))
+        c.setStrokeColor(colors.HexColor("#D8E1EC"))
+        c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=1)
+        c.setFillColor(colors.HexColor("#17365D"))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(5 * mm, self.height - 7 * mm, "FINDING SEVERITY SNAPSHOT")
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica", 7)
+        c.drawRightString(self.width - 5 * mm, self.height - 7 * mm, f"{self.total} consolidated findings")
+        palette = {
+            "critical": "#8E2430", "high": "#D3543C", "medium": "#E3A12F",
+            "low": "#2E83A6", "info": "#6D7C91",
+        }
+        labels = [("critical", "CRITICAL"), ("high", "HIGH"), ("medium", "MEDIUM"), ("low", "LOW"), ("info", "INFO")]
+        usable_width = self.width - 10 * mm
+        gap = 2 * mm
+        card_width = (usable_width - gap * 4) / 5
+        for index, (level, label) in enumerate(labels):
+            x = 5 * mm + index * (card_width + gap)
+            c.setFillColor(colors.white)
+            c.setStrokeColor(colors.HexColor("#D8E1EC"))
+            c.roundRect(x, 5 * mm, card_width, 20 * mm, 3, fill=1, stroke=1)
+            c.setFillColor(colors.HexColor(palette[level]))
+            c.roundRect(x, 5 * mm, 2 * mm, 20 * mm, 1, fill=1, stroke=0)
+            c.setFillColor(colors.HexColor("#17365D"))
+            c.setFont("Helvetica-Bold", 15)
+            c.drawCentredString(x + card_width / 2, 15 * mm, str(self.counts[level]))
+            c.setFillColor(colors.HexColor(palette[level]))
+            c.setFont("Helvetica-Bold", 6.5)
+            c.drawCentredString(x + card_width / 2, 9 * mm, label)
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica-Oblique", 6.5)
+        c.drawString(5 * mm, 2.5 * mm, "Counts are grouped by recorded severity; they are not business-impact or revenue-loss estimates.")
+        c.restoreState()
+
 def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None = None) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -439,6 +490,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     # Keep the KPI labels and their values on the same page; otherwise ReportLab can
     # split the two table rows across a page break and leave orphaned numbers.
     story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
+    story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 4 * mm)])
 
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
