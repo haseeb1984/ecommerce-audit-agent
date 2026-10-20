@@ -255,3 +255,38 @@ def test_valid_regional_document_language_tag_is_not_flagged():
     assert not any(
         f.title == "Document language tag needs review" for f in findings
     )
+
+
+
+def test_missing_main_landmark_is_a_conservative_review_signal():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><header>Header</header><section>Product details</section></body></html>',
+        "https://shop.example/products/item",
+    )
+    finding = next(f for f in findings if f.title == "Primary page landmark was not detected")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+
+
+def test_native_main_and_role_main_are_not_double_counted_on_same_element():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main role="main"><h1>Product</h1></main></body></html>',
+        "https://shop.example/products/item",
+    )
+    assert not any(
+        f.title in {
+            "Primary page landmark was not detected",
+            "Multiple primary page landmarks need review",
+        }
+        for f in findings
+    )
+
+
+def test_multiple_main_landmarks_are_flagged_for_contextual_review():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main>Product</main><div role="main">Dialog content</div></body></html>',
+        "https://shop.example/products/item",
+    )
+    finding = next(f for f in findings if f.title == "Multiple primary page landmarks need review")
+    assert finding.status == "manual_review_required"
+    assert "2" in finding.evidence
