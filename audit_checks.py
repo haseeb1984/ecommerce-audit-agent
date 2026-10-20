@@ -502,6 +502,32 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
                 "Verify the resolved destination is the preferred indexable URL.",
             ], final_url,
         ))
+    if parser.canonical_href:
+        canonical_target = urljoin(final_url, parser.canonical_href)
+        try:
+            canonical_parts = urlsplit(canonical_target)
+            _ = canonical_parts.port
+            canonical_is_valid = (
+                canonical_parts.scheme.lower() in {"http", "https"}
+                and bool(canonical_parts.hostname)
+                and canonical_parts.username is None
+                and canonical_parts.password is None
+                and not canonical_parts.fragment
+            )
+        except (ValueError, UnicodeError):
+            canonical_is_valid = False
+        if not canonical_is_valid:
+            findings.append(_finding(
+                "technical_seo", "Canonical URL is malformed", "verified", "medium",
+                f"Canonical href {parser.canonical_href[:200]!r} does not resolve to a clean absolute HTTP(S) URL without credentials or a fragment. Page URL: {final_url}",
+                "A malformed canonical destination may be ignored or interpreted inconsistently by crawlers. Relative canonical URLs are allowed when they resolve to a valid absolute URL.",
+                "Replace the canonical href with a valid absolute HTTP(S) URL, without embedded credentials or a fragment, and confirm it identifies the intended preferred page.",
+                [
+                    "Resolve the canonical href against the final page URL.",
+                    "Confirm the destination uses HTTP or HTTPS, has a valid hostname, and contains no credentials or fragment.",
+                    "Verify the destination is the intended canonical page and returns an appropriate response.",
+                ], final_url,
+            ))
     viewport = parser.viewport.lower().replace(" ", "")
     viewport_steps = [
         "Inspect the page source for meta name=\"viewport\".",
