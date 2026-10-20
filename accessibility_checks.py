@@ -348,13 +348,14 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             status="manual_review_required",
             severity="medium",
             evidence=(
-                f"Found {len(parser.aria_hidden_focusables)} focusable element(s) with aria-hidden=\"true\" "
+                f"Found {len(hidden_focusables)} focusable element(s) on or inside aria-hidden=\"true\" content "
                 f"in returned HTML for {page_url}: {examples}."
             ),
             explanation=(
                 "A keyboard-focusable control hidden from the accessibility tree can leave screen-reader "
-                "users focused on an element they cannot perceive. This source check only flags aria-hidden "
-                "on the focusable element itself; it does not evaluate ancestor states or runtime changes."
+                "users focused on an element they cannot perceive. This source check flags controls "
+                "on the element itself or within a detected aria-hidden ancestor; JavaScript-driven state "
+                "and the final accessibility tree still require review."
             ),
             recommendation=(
                 "Do not apply aria-hidden=\"true\" to interactive controls that remain keyboard-focusable. "
