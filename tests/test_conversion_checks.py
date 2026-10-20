@@ -180,3 +180,24 @@ def test_https_form_action_is_not_flagged_as_http_downgrade():
         "https://shop.example/",
     )
     assert not any(f.title == "Form submission may downgrade to unencrypted HTTP" for f in findings)
+
+
+def test_flags_get_form_with_personal_fields_as_manual_security_review():
+    findings = inspect_conversion_html(
+        '<html><body><form method="get" action="/search"><input name="email" type="email">'
+        '<input name="password" type="password"><button type="submit">Continue</button></form></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "GET form may place personal or sensitive fields in the URL")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "high"
+    assert "1 GET form(s)" in finding.evidence
+
+
+def test_post_form_with_personal_fields_is_not_flagged_for_get_url_exposure():
+    findings = inspect_conversion_html(
+        '<html><body><form method="post" action="/login"><input name="email" type="email">'
+        '<input name="password" type="password"><button type="submit">Sign in</button></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "GET form may place personal or sensitive fields in the URL" for f in findings)
