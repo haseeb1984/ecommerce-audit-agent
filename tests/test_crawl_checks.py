@@ -1194,3 +1194,38 @@ def test_meta_refresh_same_origin_and_missing_url_do_not_claim_external_redirect
     assert same_origin[0].severity == "low"
     assert "External destination" not in same_origin[0].evidence
     assert missing == []
+
+
+def test_meta_refresh_redacts_userinfo_query_and_fragment_from_external_destination():
+    findings = crawl_checks.inspect_meta_refresh(
+        '<meta http-equiv="refresh" content="0; url=\'https://alice:password@outside.example/next?token=secret#account\'">',
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    evidence = findings[0].evidence
+    assert "outside.example/next" in evidence
+    assert "alice" not in evidence
+    assert "password" not in evidence
+    assert "secret" not in evidence
+    assert "account" not in evidence
+
+
+def test_meta_refresh_default_ports_are_same_origin():
+    findings = crawl_checks.inspect_meta_refresh(
+        '<meta http-equiv="refresh" content="0; url=https://shop.example:443/next">',
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == "low"
+    assert "External destination" not in findings[0].evidence
+
+
+def test_meta_refresh_directive_limit_is_disclosed():
+    html = "".join(
+        '<meta http-equiv="refresh" content="0; url=/page">'
+        for _ in range(22)
+    )
+    findings = crawl_checks.inspect_meta_refresh(html, "https://shop.example/")
+    assert len(findings) == 1
+    assert "Detected 22 meta-refresh directive(s)" in findings[0].evidence
+    assert "Only the first 20 directives were inspected" in findings[0].evidence
