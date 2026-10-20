@@ -325,4 +325,35 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             verification_steps=["Check the page's primary language and the exact html lang value.", "Verify the tag against a BCP 47 language-tag validator when regional or script subtags are used."],
             source_url=page_url,
         ))
+    if parser.aria_hidden_focusables:
+        examples = ", ".join(
+            tag + (f"[type={kind}]" if kind else "")
+            for tag, kind in parser.aria_hidden_focusables[:8]
+        )
+        findings.append(AuditFinding(
+            category="accessibility",
+            title="Focusable controls may be hidden from assistive technology",
+            status="manual_review_required",
+            severity="medium",
+            evidence=(
+                f"Found {len(parser.aria_hidden_focusables)} focusable element(s) with aria-hidden=\"true\" "
+                f"in returned HTML for {page_url}: {examples}."
+            ),
+            explanation=(
+                "A keyboard-focusable control hidden from the accessibility tree can leave screen-reader "
+                "users focused on an element they cannot perceive. This source check only flags aria-hidden "
+                "on the focusable element itself; it does not evaluate ancestor states or runtime changes."
+            ),
+            recommendation=(
+                "Do not apply aria-hidden=\"true\" to interactive controls that remain keyboard-focusable. "
+                "If a control should be unavailable, manage its interaction and focus state consistently, "
+                "then verify the rendered accessibility tree."
+            ),
+            verification_steps=[
+                "Inspect each flagged element's computed accessibility-tree state and keyboard focus behavior.",
+                "Check hidden menus, dialogs, responsive navigation, and duplicated desktop/mobile controls.",
+            ],
+            source_url=page_url,
+        ))
+
     return findings
