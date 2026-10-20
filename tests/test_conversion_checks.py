@@ -294,3 +294,32 @@ def test_new_tab_link_with_malformed_url_does_not_abort_conversion_audit():
     assert any(f.title == "New-tab links need opener-protection review" for f in findings)
     assert any(f.title == "Primary conversion path signals" for f in findings)
     assert any("omitted" in f.evidence for f in findings if f.title == "New-tab links need opener-protection review")
+
+
+
+def test_default_https_port_is_same_origin_for_conversion_path_signals():
+    findings = inspect_conversion_html(
+        '<html><body><a href="https://shop.example:443/checkout">Checkout</a>'
+        '<a href="https://shop.example:443/contact">Contact</a></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "Primary conversion path signals")
+    assert "1 same-origin cart/checkout/payment-like link(s)" in finding.evidence
+    assert "1 contact/support/help-like link(s)" in finding.evidence
+
+
+def test_non_default_port_is_a_distinct_origin_for_conversion_path_signals():
+    findings = inspect_conversion_html(
+        '<html><body><a href="https://shop.example:8443/checkout">Checkout</a></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "Primary conversion path signals")
+    assert "0 same-origin cart/checkout/payment-like link(s)" in finding.evidence
+
+
+def test_malformed_homepage_origin_does_not_abort_conversion_scan():
+    findings = inspect_conversion_html(
+        '<html><body><a href="/checkout">Checkout</a></body></html>',
+        "not a valid URL",
+    )
+    assert any(f.title == "Primary conversion path signals" for f in findings)
