@@ -191,6 +191,25 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             "No known Google tag/Analytics, Meta Pixel, TikTok Pixel, or Microsoft Clarity signature "
             "was detected in the parsed static HTML."
         )
+    repeated_tags = {
+        name: list(dict.fromkeys(matches))
+        for name, matches in source_matches.items()
+        if len(matches) > 1
+    }
+    if repeated_tags:
+        repeated_evidence = "; ".join(
+            f"{name}: {len(matches)} distinct signatures" for name, matches in repeated_tags.items()
+        )
+        findings.append(_finding(
+            "conversion_paid_traffic", "Repeated marketing tag signatures need review",
+            "manual_review_required", "medium",
+            f"Multiple static signatures were detected for the same vendor: {repeated_evidence}.",
+            "Repeated tag snippets or hosts can indicate duplicate analytics installation and duplicate event counting, but multiple containers or intentional integrations may be legitimate. Static HTML cannot confirm that events fire more than once.",
+            "Compare the detected snippets with the intended tag-manager and analytics setup. Use browser network inspection and the official vendor debugger to verify page-view and conversion events fire the expected number of times.",
+            ["Inspect each vendor snippet and its container/account configuration.", "Use browser network tools and official tag debuggers.", "Trigger a test conversion and confirm the event is recorded once."],
+            final_url,
+        ))
+
     findings.append(_finding(
         "conversion_paid_traffic", "Publicly detectable marketing tags", "verified" if detected else "manual_review_required",
         "info", tracking_evidence,
