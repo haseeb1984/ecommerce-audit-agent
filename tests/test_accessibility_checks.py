@@ -290,3 +290,33 @@ def test_multiple_main_landmarks_are_flagged_for_contextual_review():
     finding = next(f for f in findings if f.title == "Multiple primary page landmarks need review")
     assert finding.status == "manual_review_required"
     assert "2" in finding.evidence
+
+
+def test_focusable_control_hidden_from_accessibility_tree_is_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<button aria-hidden="true">Add to cart</button>'
+        '<a href="/checkout" aria-hidden="true">Checkout</a>'
+        '<div tabindex="0" aria-hidden="true">Focusable widget</div>'
+        '</body></html>',
+        "https://shop.example/checkout",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "Focusable controls may be hidden from assistive technology"
+    )
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "medium"
+    assert "3 focusable element(s)" in finding.evidence
+
+
+def test_aria_hidden_nonfocusable_content_does_not_trigger_focus_conflict():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><div aria-hidden="true"><span>Decorative icon</span></div></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        f.title == "Focusable controls may be hidden from assistive technology"
+        for f in findings
+    )
+
