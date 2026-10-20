@@ -707,7 +707,28 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     "Review the rendered page and add a meaningful main heading where appropriate. Avoid adding an H1 solely to satisfy a tool if the page already has an accessible, equivalent structure.",
                     ["Inspect the page source and rendered heading outline.", "Retest after the template change."], url,
                 ))
-            if not page_parser.title_text:
+            if page_parser.title_count > 1:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page has multiple title elements",
+                    "manual_review_required", "medium",
+                    f"Found {page_parser.title_count} title elements in the returned HTML for {final_url}.",
+                    "A document should have one clear, descriptive title. Multiple title elements can create ambiguity, although browsers and search engines may interpret malformed markup differently.",
+                    "Review the page template and ensure it emits one intentional title element that accurately describes this page.",
+                    ["Inspect all title elements in the raw HTML.", "Check the rendered document title after template changes."],
+                    final_url,
+                ))
+
+            if not page_parser.title_text and page_parser.title_count > 0:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page has an empty title element",
+                    "verified", "low",
+                    f"Found {page_parser.title_count} title element(s) but no readable title text in the returned HTML for {final_url}.",
+                    "An empty title provides no useful document label for browser tabs, assistive technology, or search result title generation.",
+                    "Add one concise, descriptive title that matches the page content and intent.",
+                    ["Inspect the title element in the source.", "Confirm the final rendered document title is meaningful."],
+                    final_url,
+                ))
+            elif not page_parser.title_text and page_parser.title_count == 0:
                 findings.append(_finding(
                     "on_page_seo", "Internal page missing a title",
                     "verified", "low",
