@@ -390,6 +390,13 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     products_with_offers = 0
     offers_missing_price = 0
     offers_missing_currency = 0
+    offers_invalid_availability = 0
+    valid_availability = {
+        "backorder", "discontinued", "in-store-only", "instoreonly",
+        "limitedavailability", "made-to-order", "madetoorder",
+        "online-only", "onlineonly", "outofstock", "presale",
+        "preorder", "instock", "soldout",
+    }
     for product in product_entities:
         raw_offers = product.get("offers")
         offers = raw_offers if isinstance(raw_offers, list) else [raw_offers]
@@ -413,6 +420,15 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             currency = offer.get("priceCurrency")
             if not (isinstance(currency, str) and re.fullmatch(r"[A-Za-z]{3}", currency.strip())):
                 offers_missing_currency += 1
+            availability = offer.get("availability")
+            if availability is not None:
+                if isinstance(availability, str):
+                    token = availability.strip().rstrip("/").rsplit("/", 1)[-1]
+                    token = re.sub(r"[^A-Za-z-]", "", token).lower()
+                    if token not in valid_availability:
+                        offers_invalid_availability += 1
+                else:
+                    offers_invalid_availability += 1
 
     if offers_missing_price:
         findings.append(_finding(
@@ -421,6 +437,19 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             "A price is important for product offer information. This check verifies only the source property and does not assess sale-price consistency, availability, or rich-result eligibility.",
             "Provide the current, accurate price in each affected Offer and ensure it matches the visible product page and currency formatting.",
             ["Inspect each Product Offer in JSON-LD.", "Compare structured prices with the visible price and variant selection.", "Validate the page with a structured-data testing tool."],
+            final_url,
+        ))
+
+    if offers_invalid_availability:
+        findings.append(_finding(
+            "structured_data", "Product offers have invalid availability",
+            "verified", "low",
+            f"Found {offers_invalid_availability} Product Offer object(s) with an unrecognized availability value. URL: {final_url}",
+            "Availability should use a recognized Schema.org item-availability value so consumers can interpret the offer consistently. This check validates only the value's shape, not real inventory or fulfillment.",
+            "Use the correct Schema.org availability value for the current offer, such as https://schema.org/InStock or https://schema.org/OutOfStock, and keep it synchronized with actual stock status.",
+            ["Inspect availability on each Product Offer in JSON-LD.",
+             "Compare the structured value with the visible stock status and actual inventory.",
+             "Validate the updated structured data."],
             final_url,
         ))
 
