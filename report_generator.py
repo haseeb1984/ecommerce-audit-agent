@@ -31,9 +31,32 @@ def _p(value: object, style: ParagraphStyle) -> Paragraph:
 
 
 def _link(url: str, style: ParagraphStyle) -> Paragraph:
-    safe_url = escape(url, {'"': "&quot;"})
-    label = escape(url)
-    return Paragraph(f'<link href="{safe_url}" color="#1759a8">{label}</link>', style)
+    """Render only validated public HTTP(S) links and redact URL secrets in the PDF."""
+    try:
+        parts = urlsplit(str(url or "").strip())
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        port = parts.port  # Access validates malformed and out-of-range ports.
+        if (
+            scheme not in {"http", "https"}
+            or not host
+            or parts.username is not None
+            or parts.password is not None
+        ):
+            return _p("Link omitted (unsupported or unsafe URL)", style)
+        display_host = f"[{host.lower()}]" if ":" in host else host.lower()
+        default_port = 443 if scheme == "https" else 80
+        if port is not None and port != default_port:
+            display_host = f"{display_host}:{port}"
+        safe_url = urlunsplit((scheme, display_host, parts.path or "/", "", ""))
+        # Query strings and fragments can contain session IDs, email addresses,
+        # tracking values, or reset tokens. Keep evidence links useful without
+        # embedding those values in a downloadable customer report.
+        safe_url = escape(safe_url, {'"': "&quot;"})
+        label = escape(safe_url)
+        return Paragraph(f'<link href="{safe_url}" color="#1759a8">{label}</link>', style)
+    except (ValueError, UnicodeError):
+        return _p("Link omitted (malformed URL)", style)
 
 
 SECURITY_HEADER_LABELS = {
