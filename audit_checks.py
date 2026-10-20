@@ -428,6 +428,7 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     offers_missing_price = 0
     offers_missing_currency = 0
     offers_invalid_availability = 0
+    offers_missing_availability = 0
     valid_availability = {
         "backorder", "discontinued", "in-store-only", "instoreonly",
         "limitedavailability", "made-to-order", "madetoorder",
@@ -458,7 +459,9 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             if not (isinstance(currency, str) and re.fullmatch(r"[A-Za-z]{3}", currency.strip())):
                 offers_missing_currency += 1
             availability = offer.get("availability")
-            if availability is not None:
+            if availability is None or (isinstance(availability, str) and not availability.strip()):
+                offers_missing_availability += 1
+            else:
                 if isinstance(availability, str):
                     token = availability.strip().rstrip("/").rsplit("/", 1)[-1]
                     token = re.sub(r"[^A-Za-z-]", "", token).lower()
@@ -474,6 +477,19 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             "A price is important for product offer information. This check verifies only the source property and does not assess sale-price consistency, availability, or rich-result eligibility.",
             "Provide the current, accurate price in each affected Offer and ensure it matches the visible product page and currency formatting.",
             ["Inspect each Product Offer in JSON-LD.", "Compare structured prices with the visible price and variant selection.", "Validate the page with a structured-data testing tool."],
+            final_url,
+        ))
+
+    if offers_missing_availability:
+        findings.append(_finding(
+            "structured_data", "Product offers missing availability",
+            "verified", "low",
+            f"Found {offers_missing_availability} Product Offer object(s) without an availability property. URL: {final_url}",
+            "Availability helps communicate whether a product can currently be purchased. This check detects a missing source property only; it does not verify real-time inventory or fulfillment.",
+            "If the offer is purchasable, set availability to the accurate current Schema.org item-availability value, such as https://schema.org/InStock or https://schema.org/OutOfStock, and keep it synchronized with inventory.",
+            ["Inspect availability on each Product Offer in JSON-LD.",
+             "Compare the structured value with the visible stock status and actual inventory.",
+             "Validate the updated structured data."],
             final_url,
         ))
 
