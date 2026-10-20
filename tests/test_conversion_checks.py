@@ -53,3 +53,17 @@ def test_detects_anchor_without_readable_name():
     finding = next(f for f in findings if f.title == "Links may lack an accessible name")
     assert finding.status == "manual_review_required"
     assert "1 same-origin link(s)" in finding.evidence
+
+def test_repeated_marketing_tag_signatures_need_review_not_confirmed_duplicate_firing():
+    html = """
+    <html><body>
+      <script src="https://www.googletagmanager.com/gtag/js?id=G-ONE"></script>
+      <script src="https://www.googletagmanager.com/gtag/js?id=G-TWO"></script>
+    </body></html>
+    """
+    findings = inspect_conversion_html(html, "https://shop.example/")
+    finding = next(f for f in findings if f.title == "Repeated marketing tag signatures need review")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "medium"
+    assert "Google tag / Analytics" in finding.evidence
+    assert "cannot confirm" in finding.explanation
