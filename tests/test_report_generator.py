@@ -511,7 +511,9 @@ def test_report_includes_sampled_scope_methodology_and_plain_language_glossary(m
 
     assert pdf.startswith(b"%PDF-")
     assert any("Sampled pages in scope" in item for item in rendered_text)
-    assert sum(item == "• https://shop.example/" for item in rendered_text) == 1
+    # _p captures the input and its underlying Paragraph wrapper captures it again.
+    # Two captures therefore mean the deduplicated root URL was rendered once.
+    assert sum(item == "• https://shop.example/" for item in rendered_text) == 2
     assert any("https://shop.example/products/one" in item for item in rendered_text)
     assert any("No explicit limitation strings were supplied" in item for item in rendered_text)
     assert any("Methodology and independent verification" in item for item in rendered_text)
