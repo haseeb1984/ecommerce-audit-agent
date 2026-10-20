@@ -697,3 +697,34 @@ def test_robots_txt_detects_wildcard_full_site_block(robots, should_flag):
         assert matches[0].source_url == "https://shop.example/robots.txt"
         assert "may be intentional" in matches[0].explanation
         assert matches[0].verification_steps
+
+
+def test_sitemap_reports_duplicate_exact_loc_entries():
+    sitemap = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://shop.example/products/widget</loc></url>'
+        '<url><loc>https://shop.example/products/widget</loc></url>'
+        '<url><loc>https://shop.example/products/other</loc></url>'
+        '</urlset>'
+    )
+    findings = audit_checks.inspect_discovery_contents(
+        "sitemap_xml", sitemap, "https://shop.example/sitemap.xml"
+    )
+    duplicate = next(item for item in findings if item.title == "Duplicate URLs in sitemap")
+    assert duplicate.status == "verified"
+    assert duplicate.severity == "low"
+    assert "Found 1 duplicate" in duplicate.evidence
+    assert duplicate.source_url == "https://shop.example/sitemap.xml"
+    assert duplicate.verification_steps
+
+
+def test_sitemap_does_not_report_unique_loc_entries_as_duplicates():
+    sitemap = (
+        '<urlset><url><loc>https://shop.example/a</loc></url>'
+        '<url><loc>https://shop.example/b</loc></url></urlset>'
+    )
+    findings = audit_checks.inspect_discovery_contents(
+        "sitemap_xml", sitemap, "https://shop.example/sitemap.xml"
+    )
+    assert not any(item.title == "Duplicate URLs in sitemap" for item in findings)
