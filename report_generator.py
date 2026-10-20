@@ -600,7 +600,13 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             body_style,
         ))
         for url, reference_id in evidence_ids.items():
-            story.append(_p(f"{reference_id}: {url}", small_style))
+            safe_url = escape(url, {'"': "&quot;"})
+            safe_label = escape(url)
+            story.append(Paragraph(
+                f'<b>{escape(reference_id)}:</b> '
+                f'<link href="{safe_url}" color="#1759a8">{safe_label}</link>',
+                small_style,
+            ))
 
     story.append(Paragraph("Sampled pages in scope", section_style))
     if result.pages_checked:
