@@ -65,6 +65,11 @@ class _ConversionParser(HTMLParser):
                 self.form_fields += 1
             if input_type == "email" or values.get("autocomplete", "").lower() == "email":
                 self.form_has_email = True
+            # Handle submit inputs here: the broader input/select/textarea branch
+            # otherwise makes the dedicated input[type=submit] branch unreachable.
+            if tag == "input" and input_type in {"submit", "image"}:
+                self.form_has_submit = True
+                self._current_form_has_submit = True
         elif tag == "button":
             self.buttons += 1
             self._active_button = True
