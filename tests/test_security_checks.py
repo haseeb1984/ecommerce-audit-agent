@@ -417,3 +417,41 @@ def test_cookie_review_checks_all_combined_set_cookie_values():
     assert "analytics" in cookie_finding.evidence
     assert "Secure" in cookie_finding.evidence
     assert "redacted" not in cookie_finding.evidence
+
+
+def test_csp_missing_base_uri_and_frame_ancestors_are_hardening_review_signals():
+    findings = inspect_security_header_quality(
+        {"content-security-policy": "default-src 'self'; script-src 'self'"},
+        "https://shop.example/",
+    )
+    hardening = next(
+        item for item in findings
+        if item.title == "Content Security Policy has hardening opportunities"
+    )
+    assert hardening.status == "manual_review_required"
+    assert hardening.severity == "low"
+    assert "base-uri is not explicitly set" in hardening.evidence
+    assert "frame-ancestors is not explicitly set" in hardening.evidence
+
+
+def test_csp_with_explicit_embedding_and_base_restrictions_has_no_gap_finding():
+    findings = inspect_security_header_quality(
+        {"content-security-policy": "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"},
+        "https://shop.example/",
+    )
+    assert not any(
+        item.title == "Content Security Policy has hardening opportunities"
+        for item in findings
+    )
+
+
+def test_csp_without_default_or_object_source_flags_plugin_content_gap():
+    findings = inspect_security_header_quality(
+        {"content-security-policy": "script-src 'self'; base-uri 'self'; frame-ancestors 'none'"},
+        "https://shop.example/",
+    )
+    hardening = next(
+        item for item in findings
+        if item.title == "Content Security Policy has hardening opportunities"
+    )
+    assert "neither object-src nor default-src limits plugin content" in hardening.evidence
