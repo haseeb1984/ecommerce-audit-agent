@@ -997,3 +997,37 @@ async def test_crawl_flags_empty_alt_on_internal_page_for_contextual_review(monk
     assert finding.severity == "low"
     assert "2 of 2 image element(s)" in finding.evidence
     assert "appropriate for decorative images" in finding.explanation
+
+@pytest.mark.asyncio
+async def test_crawl_reports_empty_and_duplicate_meta_descriptions_separately(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title>'
+            '<meta name="description" content="">'
+            '<meta name="description" content="Product details">'
+            '</head><body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    empty = next(f for f in findings if f.title == "Internal page has an empty meta description")
+    duplicate = next(f for f in findings if f.title == "Internal page has multiple meta descriptions")
+    assert empty.status == "manual_review_required"
+    assert "1 empty meta description" in empty.evidence
+    assert duplicate.status == "manual_review_required"
+    assert "2 meta description elements" in duplicate.evidence
+    assert not any(f.title == "Internal page missing meta description" for f in findings)
