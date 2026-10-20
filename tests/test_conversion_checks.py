@@ -231,3 +231,38 @@ def test_get_form_with_non_sensitive_search_fields_is_not_flagged_as_personal_da
         f.title == "GET form may place personal or sensitive fields in the URL"
         for f in findings
     )
+
+
+
+def test_external_form_destination_is_reported_for_trust_review_without_query_data():
+    findings = inspect_conversion_html(
+        '<html><body><form action="https://forms.vendor.example/submit?token=secret">'
+        '<input name="email" type="email"><button type="submit">Request info</button></form></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "External form destination needs trust review")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "medium"
+    assert "https://forms.vendor.example/submit" in finding.evidence
+    assert "secret" not in finding.evidence
+
+
+def test_same_origin_form_destination_is_not_reported_as_external():
+    findings = inspect_conversion_html(
+        '<html><body><form action="/contact"><input name="email"><button>Send</button></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "External form destination needs trust review" for f in findings)
+
+
+def test_http_external_form_destination_is_reported_and_query_is_redacted():
+    findings = inspect_conversion_html(
+        '<html><body><form action="http://forms.vendor.example/submit?api_key=secret">'
+        '<button>Send</button></form></body></html>',
+        "https://shop.example/",
+    )
+    external = next(f for f in findings if f.title == "External form destination needs trust review")
+    insecure = next(f for f in findings if f.title == "Form submission may downgrade to unencrypted HTTP")
+    assert "http://forms.vendor.example/submit" in external.evidence
+    assert "secret" not in external.evidence
+    assert insecure.severity == "high"
