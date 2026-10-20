@@ -22,22 +22,22 @@ from report_generator import render_audit_pdf
 
 
 async def capture_real_website_screenshot(url: str) -> str | None:
-    \"\"\"Capture a real browser viewport screenshot; return a PNG data URI or None.\"\"\"
+    """Capture a real browser viewport screenshot; return a PNG data URI or None."""
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch()
-            page = await browser.new_page(viewport={\"width\": 1440, \"height\": 1000}, device_scale_factor=1)
-            await page.goto(url, wait_until=\"domcontentloaded\", timeout=25000)
+            page = await browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             await page.wait_for_timeout(1200)
-            image_bytes = await page.screenshot(type=\"jpeg\", quality=72, full_page=False)
+            image_bytes = await page.screenshot(type="jpeg", quality=72, full_page=False)
             await browser.close()
         if not image_bytes or len(image_bytes) > 900_000:
             return None
-        return \"data:image/jpeg;base64,\" + base64.b64encode(image_bytes).decode(\"ascii\")
+        return "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode("ascii")
     except Exception as exc:
         # Never log raw browser errors; they may contain target URLs or request details.
-        print(f\"browser_screenshot=unavailable failure_class={type(exc).__name__}\")
+        print(f"browser_screenshot=unavailable failure_class={type(exc).__name__}")
         return None
 
 DEFAULT_TARGETS = [
@@ -75,7 +75,7 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
         "no mobile score or Speed Index is claimed."
     )
     screenshot_data_uri = await capture_real_website_screenshot(normalized)
-    print(f\"target={normalized} browser_screenshot={'captured' if screenshot_data_uri else 'unavailable'}\")
+    print(f"target={normalized} browser_screenshot={'captured' if screenshot_data_uri else 'unavailable'}")
     pdf_bytes = render_audit_pdf(result, screenshot_data_uri=screenshot_data_uri)
     hostname = urlsplit(normalized).hostname or "website"
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:100]
