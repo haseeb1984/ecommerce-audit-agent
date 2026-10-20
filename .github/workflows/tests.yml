@@ -2,9 +2,10 @@ name: Backend tests
 
 on:
   push:
-    branches: ["main", "fix/**", "audit-engine-consolidated"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -64,15 +65,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Install browser for real website screenshots
-        if: success()
+        if: github.event_name == 'workflow_dispatch' && success()
         run: |
           python -m pip install playwright
           python -m playwright install --with-deps chromium
-      - name: Generate PDF reports from real public websites (no license quota)
-        if: success()
+      - name: Generate PDF reports from real public websites (manual QA only)
+        if: github.event_name == 'workflow_dispatch' && success()
         run: python scripts/generate_live_audit_pdfs.py --output-dir live-audit-pdfs
       - name: Upload real-site PDF smoke-test artifacts
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
           name: live-site-audit-pdfs
