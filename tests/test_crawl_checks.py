@@ -1245,3 +1245,28 @@ def test_hreflang_malformed_destination_redacts_credentials_query_and_fragment()
     assert "section" not in finding.evidence
     assert "javascript:alert" not in finding.evidence
     assert "malformed or unsupported target URL omitted" in finding.evidence
+
+
+
+def test_canonical_page_url_normalizes_default_ports_and_tracking_queries():
+    assert crawl_checks._canonical_page_url(
+        "https://SHOP.example:443/products/one?utm_source=email#details"
+    ) == "https://shop.example/products/one"
+    assert crawl_checks._canonical_page_url(
+        "http://shop.example:80/products/one?sort=price"
+    ) == "http://shop.example/products/one"
+
+
+def test_canonical_page_url_preserves_non_default_ports_and_ipv6_authorities():
+    assert crawl_checks._canonical_page_url(
+        "https://shop.example:8443/products/one"
+    ) == "https://shop.example:8443/products/one"
+    assert crawl_checks._canonical_page_url(
+        "https://[2001:db8::1]:443/products/one"
+    ) == "https://[2001:db8::1]/products/one"
+
+
+def test_canonical_page_url_does_not_preserve_userinfo_in_normalized_authority():
+    assert crawl_checks._canonical_page_url(
+        "https://user:secret@shop.example/products/one?token=private"
+    ) == "https://shop.example/products/one"
