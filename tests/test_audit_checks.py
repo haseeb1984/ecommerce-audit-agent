@@ -100,6 +100,27 @@ def test_homepage_accepts_relative_canonical_destination():
 
 
 @pytest.mark.parametrize(
+    ("page_url", "canonical_href", "should_flag"),
+    [
+        ("https://shop.example/product", "https://shop.example/product", False),
+        ("https://shop.example/product", "/product", False),
+        ("https://shop.example/product", "https://other.example/product", True),
+        ("https://shop.example/product", "http://shop.example/product", True),
+    ],
+)
+def test_homepage_reviews_cross_origin_canonical_targets(page_url, canonical_href, should_flag):
+    html = f'<html><head><link rel="canonical" href="{canonical_href}"></head><body><h1>Product</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, page_url, {})
+    matches = [item for item in findings if item.title == "Canonical points to a different origin"]
+    assert bool(matches) is should_flag
+    if matches:
+        assert matches[0].status == "manual_review_required"
+        assert matches[0].severity == "medium"
+        assert matches[0].source_url == page_url
+        assert matches[0].verification_steps
+
+
+@pytest.mark.parametrize(
     ("jsonld", "expected_title"),
     [
         ('{"@context":"https://schema.org","@type":"Product"}', "Product structured data missing name"),
