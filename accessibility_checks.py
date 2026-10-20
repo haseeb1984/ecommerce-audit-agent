@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
+import re
 
 from audit_checks import AuditFinding
 
@@ -271,6 +272,16 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             explanation="A declared page language helps assistive technology pronounce content correctly. This check examines only the returned source and does not validate language tags or language changes within the page.",
             recommendation="Set an appropriate BCP 47 language tag on the html element, such as lang=\"en\", matching the page's primary language. Mark meaningful language changes on individual elements when needed.",
             verification_steps=["Inspect the rendered html element and confirm its lang value matches the primary page language.", "Run an accessibility scanner and manually review language changes."],
+            source_url=page_url,
+        ))
+    elif not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", parser.html_lang):
+        findings.append(AuditFinding(
+            category="accessibility", title="Document language tag needs review",
+            status="manual_review_required", severity="low",
+            evidence=f"The html lang value {parser.html_lang[:40]!r} does not match the basic language-tag pattern checked in returned HTML for {page_url}.",
+            explanation="An invalid or nonstandard language tag may prevent assistive technology from selecting the intended pronunciation rules. This conservative pattern catches common syntax issues but is not a complete BCP 47 validator.",
+            recommendation="Confirm the primary language and use a valid BCP 47 language tag, such as lang=\"en\" or lang=\"en-GB\", then verify the rendered html element.",
+            verification_steps=["Check the page's primary language and the exact html lang value.", "Verify the tag against a BCP 47 language-tag validator when regional or script subtags are used."],
             source_url=page_url,
         ))
     return findings
