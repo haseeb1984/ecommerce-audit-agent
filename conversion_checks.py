@@ -192,13 +192,13 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             "was detected in the parsed static HTML."
         )
     repeated_tags = {
-        name: list(dict.fromkeys(matches))
+        name: matches
         for name, matches in source_matches.items()
         if len(matches) > 1
     }
     if repeated_tags:
         repeated_evidence = "; ".join(
-            f"{name}: {len(matches)} distinct signatures" for name, matches in repeated_tags.items()
+            f"{name}: {len(matches)} matching occurrences" for name, matches in repeated_tags.items()
         )
         findings.append(_finding(
             "conversion_paid_traffic", "Repeated marketing tag signatures need review",
