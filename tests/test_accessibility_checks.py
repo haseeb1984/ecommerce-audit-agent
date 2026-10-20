@@ -200,6 +200,7 @@ def test_unresolved_aria_labelledby_does_not_count_as_accessible_name():
     findings = inspect_static_accessibility_signals(
         '<html lang="en"><body>'
         '<input aria-labelledby="missing-input-label">'
+        '<span id="empty-label"></span><input aria-labelledby="empty-label">'
         '<a href="/cart" aria-labelledby="missing-link-label"><svg></svg></a>'
         '<button aria-labelledby="missing-button-label"><svg></svg></button>'
         '</body></html>',
