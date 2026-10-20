@@ -45,6 +45,11 @@ class CredentialRedactionFilter(logging.Filter):
         record.msg = redact_secrets(message)
         record.args = ()
 
+        # Formatters may append stack_info independently of the main message.
+        # Redact it too, rather than assuming the message filter covers it.
+        if record.stack_info:
+            record.stack_info = redact_secrets(record.stack_info)
+
         if record.exc_info:
             try:
                 formatted = "".join(traceback.format_exception(*record.exc_info))
