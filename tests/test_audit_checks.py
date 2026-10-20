@@ -129,6 +129,47 @@ async def test_discovery_file_server_errors_are_inconclusive_not_missing(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_homepage_audit_includes_bounded_dependency_findings(monkeypatch):
+    import dependency_checks
+
+    html = '<html><head><script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script></head></html>'
+
+    def handler(url):
+        path = urlsplit(url).path
+        if path == "/":
+            return FakeResponse(200, {"Content-Type": "text/html"}, html)
+        if path in {"/robots.txt", "/sitemap.xml", "/llms.txt"}:
+            return FakeResponse(404, {}, "Not found")
+        raise AssertionError(f"Unexpected request: {url}")
+
+    session = FakeSession(handler)
+    monkeypatch.setattr(audit_checks.aiohttp, "ClientSession", lambda **kwargs: session)
+    monkeypatch.setattr(audit_checks.aiohttp, "TCPConnector", lambda **kwargs: object())
+    monkeypatch.setattr(audit_checks.aiohttp, "ClientTimeout", lambda **kwargs: object())
+
+    async def fake_dependency_check(observed_html, page_url):
+        assert observed_html == html
+        assert page_url == "https://shop.example/"
+        return ([audit_checks.AuditFinding(
+            category="security_dependency",
+            title="Dependency integration fixture",
+            status="manual_review_required",
+            severity="medium",
+            evidence="Fixture advisory reference only.",
+            explanation="This test verifies that dependency findings are included.",
+            recommendation="Review the dependency in a package-aware scanner.",
+            verification_steps=["Confirm the package and version."],
+            source_url=page_url,
+        )], ["Dependency integration limitation fixture."])
+
+    monkeypatch.setattr(dependency_checks, "inspect_client_dependency_versions", fake_dependency_check)
+    result = await audit_checks.run_phase_one_checks("https://shop.example/")
+
+    assert any(item.title == "Dependency integration fixture" for item in result.findings)
+    assert "Dependency integration limitation fixture." in result.limitations
+
+
+@pytest.mark.asyncio
 async def test_safe_get_rejects_redirect_to_localhost():
     client = FakeSession(lambda url: FakeResponse(302, {"Location": "http://127.0.0.1/admin"}))
     with pytest.raises(ValueError):
