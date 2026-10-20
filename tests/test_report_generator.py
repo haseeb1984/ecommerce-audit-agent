@@ -505,7 +505,7 @@ def test_report_includes_sampled_scope_methodology_and_plain_language_glossary(m
 
     assert pdf.startswith(b"%PDF-")
     assert any("Sampled pages in scope" in item for item in rendered_text)
-    assert sum("https://shop.example/" in item for item in rendered_text) == 1
+    assert sum(item == "• https://shop.example/" for item in rendered_text) == 1
     assert any("https://shop.example/products/one" in item for item in rendered_text)
     assert any("No explicit limitation strings were supplied" in item for item in rendered_text)
     assert any("Methodology and independent verification" in item for item in rendered_text)
