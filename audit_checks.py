@@ -311,10 +311,16 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
          ["Inspect the rendered page and heading outline; confirm the main heading is meaningful."]),
     ]
     for passed, title, evidence, recommendation, steps in checks:
+        if passed:
+            recommendation = {
+                "Page title": "Keep the title accurate and specific to this page; review uniqueness and search intent separately because this presence check does not assess title quality.",
+                "Meta description": "Keep the description accurate and page-specific; review its usefulness and search snippet separately because this check only confirms presence.",
+                "Primary heading (H1)": "Keep a clear primary heading and verify that it accurately describes the page; this check confirms presence, not semantic quality.",
+            }.get(title, "Keep this element present and review its quality in context; this check confirms presence only.")
         findings.append(_finding(
             "on_page_seo" if title != "Mobile viewport" else "mobile_ux",
             title,
-            "verified" if not passed else "verified",
+            "verified",
             "low" if not passed else "info",
             f"{evidence} Final URL: {final_url}" if not passed else
             (f"Found: {parser.title_text[:160]}" if title == "Page title" else
@@ -324,6 +330,32 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ("This is a basic source-HTML check, not a complete SEO or responsive-layout assessment."
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
+        ))
+    # Canonical declarations are easy to misconfigure and were parsed above but
+    # previously did not produce a finding. Report only source-verifiable problems.
+    if parser.canonical_count > 1:
+        findings.append(_finding(
+            "technical_seo", "Multiple canonical link elements", "verified", "medium",
+            f"Found {parser.canonical_count} canonical link elements in the returned HTML. URL: {final_url}",
+            "Multiple canonical declarations can send conflicting canonicalization signals. This source check does not determine which URL search engines will select.",
+            "Keep one intentional canonical link element in the document head and ensure its absolute destination matches the preferred indexable URL.",
+            [
+                "Inspect the raw HTML and confirm there is exactly one canonical link element.",
+                "Resolve its href against the final page URL and confirm it points to the intended indexable URL.",
+                "Check that redirects, robots directives, and sitemap URLs are consistent with the canonical destination.",
+            ], final_url,
+        ))
+    if parser.canonical_missing_href_count:
+        findings.append(_finding(
+            "technical_seo", "Canonical link missing href", "verified", "medium",
+            f"{parser.canonical_missing_href_count} canonical link element(s) have no usable href attribute. URL: {final_url}",
+            "A canonical element without a destination cannot reliably declare the preferred URL.",
+            "Add a valid canonical href to the intended indexable URL, or remove the empty canonical element.",
+            [
+                "Inspect each canonical link element in the raw HTML.",
+                "Confirm every retained canonical element has a non-empty href.",
+                "Verify the resolved destination is the preferred indexable URL.",
+            ], final_url,
         ))
     viewport = parser.viewport.lower().replace(" ", "")
     viewport_steps = [

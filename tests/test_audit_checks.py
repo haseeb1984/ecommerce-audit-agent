@@ -45,6 +45,34 @@ def test_parser_detects_viewport_and_missing_alt():
     assert parser.images_missing_alt == 1
 
 
+
+@pytest.mark.parametrize(
+    ("head", "expected_title", "expected_evidence"),
+    [
+        (
+            '<link rel="canonical" href="https://shop.example/one">'
+            '<link rel="canonical" href="https://shop.example/two">',
+            "Multiple canonical link elements",
+            "Found 2 canonical link elements",
+        ),
+        (
+            '<link rel="canonical">',
+            "Canonical link missing href",
+            "1 canonical link element(s) have no usable href",
+        ),
+    ],
+)
+def test_homepage_reports_malformed_canonical_declarations(head, expected_title, expected_evidence):
+    html = f"<html><head>{head}</head><body><h1>Shop</h1></body></html>"
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    finding = next(item for item in findings if item.title == expected_title)
+    assert finding.status == "verified"
+    assert finding.severity == "medium"
+    assert expected_evidence in finding.evidence
+    assert finding.recommendation
+    assert finding.verification_steps
+
+
 def test_homepage_findings_include_evidence_and_verification_steps():
     findings = audit_checks.inspect_homepage(
         "<html><head></head><body><img src='x'></body></html>",
@@ -414,3 +442,21 @@ async def test_safe_get_preserves_multiple_set_cookie_headers():
     assert status == 200
     assert "analytics=redacted" in headers["set-cookie"]
     assert "session=redacted" in headers["set-cookie"]
+
+
+def test_present_homepage_elements_do_not_recommend_adding_them_again():
+    html = (
+        '<html><head><title>Example Store</title>'
+        '<meta name="description" content="A useful store description">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '</head><body><h1>Example Store</h1></body></html>'
+    )
+    findings = audit_checks.inspect_homepage(
+        html, "https://shop.example/", {"content-type": "text/html"}
+    )
+    by_title = {finding.title: finding for finding in findings}
+
+    assert "Add a unique, descriptive title" not in by_title["Page title"].recommendation
+    assert "Add a concise, page-specific meta description" not in by_title["Meta description"].recommendation
+    assert "Keep the title accurate" in by_title["Page title"].recommendation
+    assert "Keep the description accurate" in by_title["Meta description"].recommendation

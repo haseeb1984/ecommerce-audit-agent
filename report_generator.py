@@ -260,6 +260,57 @@ class PhaseVisual(Flowable):
         c.restoreState()
 
 
+
+class FindingMixInfographic(Flowable):
+    """Evidence-derived severity infographic; counts are not severity scores."""
+    def __init__(self, findings: list[dict[str, object]]):
+        super().__init__()
+        self.width = 174 * mm
+        self.height = 38 * mm
+        self.counts = {
+            level: sum(1 for item in findings if str(item.get("severity", "")).lower() == level)
+            for level in ("critical", "high", "medium", "low", "info")
+        }
+        self.total = sum(self.counts.values())
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        c.setFillColor(colors.HexColor("#F4F7FB"))
+        c.setStrokeColor(colors.HexColor("#D8E1EC"))
+        c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=1)
+        c.setFillColor(colors.HexColor("#17365D"))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(5 * mm, self.height - 7 * mm, "FINDING SEVERITY SNAPSHOT")
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica", 7)
+        c.drawRightString(self.width - 5 * mm, self.height - 7 * mm, f"{self.total} consolidated findings")
+        palette = {
+            "critical": "#8E2430", "high": "#D3543C", "medium": "#E3A12F",
+            "low": "#2E83A6", "info": "#6D7C91",
+        }
+        labels = [("critical", "CRITICAL"), ("high", "HIGH"), ("medium", "MEDIUM"), ("low", "LOW"), ("info", "INFO")]
+        usable_width = self.width - 10 * mm
+        gap = 2 * mm
+        card_width = (usable_width - gap * 4) / 5
+        for index, (level, label) in enumerate(labels):
+            x = 5 * mm + index * (card_width + gap)
+            c.setFillColor(colors.white)
+            c.setStrokeColor(colors.HexColor("#D8E1EC"))
+            c.roundRect(x, 5 * mm, card_width, 20 * mm, 3, fill=1, stroke=1)
+            c.setFillColor(colors.HexColor(palette[level]))
+            c.roundRect(x, 5 * mm, 2 * mm, 20 * mm, 1, fill=1, stroke=0)
+            c.setFillColor(colors.HexColor("#17365D"))
+            c.setFont("Helvetica-Bold", 15)
+            c.drawCentredString(x + card_width / 2, 15 * mm, str(self.counts[level]))
+            c.setFillColor(colors.HexColor(palette[level]))
+            c.setFont("Helvetica-Bold", 6.5)
+            c.drawCentredString(x + card_width / 2, 9 * mm, label)
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica-Oblique", 6.5)
+        c.drawString(5 * mm, 2.5 * mm, "Counts are grouped by recorded severity; they are not business-impact or revenue-loss estimates.")
+        c.restoreState()
+
 def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None = None) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -304,7 +355,8 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         Spacer(1, 4 * mm),
         _p("Website: " + result.target_url, body_style),
         _p("Report generated (UTC): " + result.checked_at_utc, body_style),
-        _p(f"Pages successfully inspected: {len(result.pages_checked)}", body_style),
+        _p(f"Pages successfully inspected: {len(set(result.pages_checked))}", body_style),
+        _p("Assessment scope: publicly accessible pages and responses only; the sample and exclusions are listed below.", body_style),
         Spacer(1, 3 * mm),
         HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#AAB7C4")),
         Paragraph("How to read this report", section_style),
@@ -330,8 +382,8 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     ]))
     story.extend([phase_table, Spacer(1, 3 * mm)])
 
-    # Only embed a real image supplied by the PageSpeed response. Validate it again
-    # at the PDF boundary; invalid/unsupported data is omitted, never fabricated.
+    # Embed only a real, explicitly supplied browser/PageSpeed image. Validate it
+    # again at the PDF boundary; invalid/unsupported data is omitted, never fabricated.
     screenshot_flowable = None
     if isinstance(screenshot_data_uri, str) and len(screenshot_data_uri) <= 1_400_000:
         match = re.fullmatch(
@@ -350,23 +402,26 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             except (ValueError, TypeError, OSError):
                 screenshot_flowable = None
 
-    story.append(Paragraph("Actual PageSpeed browser capture", section_style))
     if screenshot_flowable is not None:
-        story.extend([
+        story.append(KeepTogether([
+            Paragraph("Actual website screenshot", section_style),
             _p(
-                "This is a rendered capture returned by Google PageSpeed Insights for the target page, "
-                "not an illustrative graphic. It may show only the viewport captured during the lab run.",
+                "This is a real browser screenshot captured from the target website during this audit run, "
+                "not an illustrative graphic. It shows the captured viewport and may not represent every page or device.",
                 small_style,
             ),
             screenshot_flowable,
             Spacer(1, 2 * mm),
-        ])
+        ]))
     else:
-        story.append(_p(
-            "No usable actual-page screenshot was provided by the PageSpeed response for this run. "
-            "No website screenshot was fabricated. The phase illustrations above are explanatory graphics only.",
-            body_style,
-        ))
+        story.extend([
+            Paragraph("Actual website screenshot", section_style),
+            _p(
+                "A real browser screenshot could not be captured for this run. No website screenshot was fabricated. "
+                "The phase illustrations below are explanatory graphics only.",
+                body_style,
+            ),
+        ])
 
 
     security = calculate_security_assessment(result.findings, result.limitations)
@@ -438,6 +493,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     # Keep the KPI labels and their values on the same page; otherwise ReportLab can
     # split the two table rows across a page break and leave orphaned numbers.
     story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
+    story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 4 * mm)])
 
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
@@ -538,10 +594,42 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         for url, reference_id in evidence_ids.items():
             story.append(_p(f"{reference_id}: {url}", small_style))
 
+    story.append(Paragraph("Sampled pages in scope", section_style))
+    if result.pages_checked:
+        story.append(_p(
+            "The following URLs were successfully inspected during this run. This list is the observed sample, not a claim that every site URL was crawled.",
+            body_style,
+        ))
+        for page_url in dict.fromkeys(result.pages_checked):
+            story.append(_p("• " + page_url, small_style))
+    else:
+        story.append(_p(
+            "No page was recorded as successfully inspected. Findings and coverage should be interpreted accordingly.",
+            body_style,
+        ))
+
     story.append(Paragraph("Coverage and limitations", section_style))
-    for limitation in result.limitations:
-        story.append(_p("• " + limitation, body_style))
+    if result.limitations:
+        for limitation in dict.fromkeys(result.limitations):
+            story.append(_p("• " + limitation, body_style))
+    else:
+        story.append(_p(
+            "No explicit limitation strings were supplied by the audit engine. This absence does not mean the checks were comprehensive; use the sampled-page list and findings to understand scope.",
+            body_style,
+        ))
+
     story.extend([
+        Spacer(1, 3 * mm),
+        Paragraph("Methodology and independent verification", section_style),
+        _p(
+            "The audit evaluates bounded public HTTP responses and source-level signals. It does not automatically prove how a page behaves after JavaScript execution, after login, in every browser or region, or in Google Search. Recheck each finding using the listed verification steps and an independent tool appropriate to the issue; record the date, tested URL, environment and outcome. For example, performance observations can be compared with Google PageSpeed Insights, structured data with Google's Rich Results Test where applicable, and accessibility signals with a manual keyboard/screen-reader review plus an accessibility checker. Tool output can differ by run and does not replace expert review.",
+            body_style,
+        ),
+        Paragraph("Plain-language glossary", section_style),
+        _p(
+            "Verified: the stated observation was seen in the sampled response. Manual review required: context or a person is needed before confirming a defect. Not tested / insufficient data: no conclusion can be drawn. Evidence reference: a URL recorded for an observation. Source-level check: inspection of returned HTML or headers, not a full browser interaction. Severity: a triage label, not a measured financial impact.",
+            body_style,
+        ),
         Spacer(1, 3 * mm),
         Paragraph("Optional implementation support", section_style),
         _p("If you would prefer a team to implement and retest the recommended changes, JunctionTools can discuss relevant remediation services. This offer is separate from the findings; no fix, ranking improvement, revenue uplift, or compliance outcome is guaranteed.", body_style),
