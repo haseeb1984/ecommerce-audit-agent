@@ -78,3 +78,21 @@ def test_repeated_same_host_tag_occurrences_are_counted():
     findings = inspect_conversion_html(html, "https://shop.example/")
     finding = next(f for f in findings if f.title == "Repeated marketing tag signatures need review")
     assert "2 matching occurrences" in finding.evidence
+
+def test_form_without_explicit_submit_control_needs_manual_review():
+    findings = inspect_conversion_html(
+        '<html><body><form><input name="email" type="email"></form></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "HTML form has no explicit submit control")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "1 form(s)" in finding.evidence
+
+
+def test_button_without_type_counts_as_default_submit_control():
+    findings = inspect_conversion_html(
+        '<html><body><form><input name="email"><button>Send request</button></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "HTML form has no explicit submit control" for f in findings)
