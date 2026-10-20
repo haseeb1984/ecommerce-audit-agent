@@ -95,10 +95,18 @@ class _ConversionParser(HTMLParser):
         self._active_form_method = "get"
         self._active_get_form_has_sensitive_field = False
         self.get_forms_with_sensitive_fields = 0
+        self.label_for_ids: set[str] = set()
+        self.form_controls: list[tuple[str, str, str, str, bool]] = []
+        self._active_label = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
+        if tag == "label":
+            self._active_label = True
+            label_for = values.get("for", "").strip()
+            if label_for:
+                self.label_for_ids.add(label_for)
         if tag == "form":
             self.forms += 1
             self._active_form = True
@@ -106,8 +114,18 @@ class _ConversionParser(HTMLParser):
             self._active_form_method = values.get("method", "get").strip().lower() or "get"
             self._active_get_form_has_sensitive_field = False
             self.form_actions.append(values.get("action", ""))
-        elif tag in {"input", "select", "textarea"} and self._active_form:
+        elif tag in {"input", "select", "textarea"}:
             input_type = values.get("type", "text").lower()
+            if input_type not in {"hidden", "submit", "button", "reset", "image"}:
+                self.form_controls.append((
+                    values.get("id", "").strip(),
+                    values.get("aria-label", "").strip(),
+                    values.get("aria-labelledby", "").strip(),
+                    values.get("title", "").strip(),
+                    self._active_label,
+                ))
+            if not self._active_form:
+                return
             field_identity = " ".join((
                 values.get("name", ""), values.get("id", ""),
                 values.get("autocomplete", ""), input_type,
@@ -158,7 +176,9 @@ class _ConversionParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        if tag == "form":
+        if tag == "label":
+            self._active_label = False
+        elif tag == "form":
             if self._active_form and not self._current_form_has_submit:
                 self.forms_without_submit += 1
             if self._active_form and self._active_get_form_has_sensitive_field:
@@ -196,6 +216,10 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     parser.feed(html)
     findings: list[AuditFinding] = []
     homepage_origin = _normalized_http_origin(final_url)
+    unlabeled_form_controls = sum(
+        1 for control_id, aria_label, aria_labelledby, title, wrapped in parser.form_controls
+        if not (aria_label or aria_labelledby or title or wrapped or (control_id and control_id in parser.label_for_ids))
+    )
     internal_checkout = []
     internal_contact = []
     policy_links: dict[str, list[str]] = {
@@ -259,6 +283,17 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             "Explicit opener protection is a useful compatibility and defense-in-depth measure for links that open a new tab. Modern browsers generally apply implicit noopener behavior to target=_blank, so this source signal alone does not establish an exploitable vulnerability.",
             "For links that open a new tab, add rel=\"noopener\" or rel=\"noreferrer\" where appropriate, then verify expected referrer behavior and the rendered link attributes.",
             ["Inspect the affected links in the rendered page.", "Confirm the destination cannot control the opener in supported browsers.", "Keep referrer information only where the business and privacy requirements call for it."],
+            final_url,
+        ))
+
+    if unlabeled_form_controls:
+        findings.append(_finding(
+            "accessibility", "Form controls may lack accessible labels",
+            "manual_review_required", "medium",
+            f"Found {unlabeled_form_controls} input, select, or textarea control(s) without a detectable associated label, aria-label, aria-labelledby, or title in the returned HTML.",
+            "Unlabeled form controls can make checkout, search, and contact tasks harder for screen-reader users. This static check cannot fully resolve labels supplied by JavaScript or every browser accessibility-name rule, so each control needs rendered-page verification.",
+            "Associate each control with a visible label where possible, or provide a concise programmatic label for controls whose purpose is clear from context. Do not rely on placeholder text alone as the only label.",
+            ["Inspect each flagged control in the browser accessibility tree.", "Confirm its computed accessible name describes the field purpose.", "Test the form with a screen reader and keyboard before release."],
             final_url,
         ))
 
