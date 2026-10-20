@@ -35,6 +35,8 @@ class _ConversionParser(HTMLParser):
         self.form_fields = 0
         self.form_has_email = False
         self.form_has_submit = False
+        self.forms_without_submit = 0
+        self._current_form_has_submit = False
         self.buttons = 0
         self.buttons_without_name = 0
         self.links: list[tuple[str, str, str]] = []
@@ -55,6 +57,7 @@ class _ConversionParser(HTMLParser):
         if tag == "form":
             self.forms += 1
             self._active_form = True
+            self._current_form_has_submit = False
             self.form_actions.append(values.get("action", ""))
         elif tag in {"input", "select", "textarea"} and self._active_form:
             input_type = values.get("type", "text").lower()
@@ -67,10 +70,12 @@ class _ConversionParser(HTMLParser):
             self._active_button = True
             self._button_text = []
             self._button_has_name = bool(values.get("aria-label", "").strip() or values.get("title", "").strip())
-            if values.get("type", "").lower() == "submit" and self._active_form:
+            if values.get("type", "submit").lower() in {"", "submit"} and self._active_form:
                 self.form_has_submit = True
+                self._current_form_has_submit = True
         elif tag == "input" and values.get("type", "").lower() == "submit" and self._active_form:
             self.form_has_submit = True
+            self._current_form_has_submit = True
         elif tag == "a" and values.get("href") and len(self.links) < MAX_LINKS_TO_REVIEW:
             self._active_link = (values["href"].strip(), values.get("aria-label", "").strip())
             self._link_text = []
@@ -84,6 +89,8 @@ class _ConversionParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
         if tag == "form":
+            if self._active_form and not self._current_form_has_submit:
+                self.forms_without_submit += 1
             self._active_form = False
         elif tag == "button" and self._active_button:
             if not self._button_has_name and not " ".join("".join(self._button_text).split()):
@@ -130,6 +137,17 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             internal_contact.append(absolute)
         if not label:
             unlabeled_links += 1
+
+    if parser.forms_without_submit:
+        findings.append(_finding(
+            "conversion_paid_traffic", "HTML form has no explicit submit control",
+            "manual_review_required", "low",
+            f"Found {parser.forms_without_submit} form(s) without a detected submit button or submit input in the returned HTML.",
+            "A form may submit through Enter, JavaScript, or an external widget, so a missing explicit submit control is not proof that submission is impossible. It can nevertheless make the next step unclear to some users.",
+            "Test each affected form with keyboard-only navigation and on mobile. Add a clearly named submit control where it improves discoverability, and verify that validation and success/error feedback are available.",
+            ["Inspect the rendered form and accessible controls.", "Test submission using keyboard and touch.", "Confirm valid and invalid submissions produce clear feedback."],
+            final_url,
+        ))
 
     if parser.forms:
         findings.append(_finding(
