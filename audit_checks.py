@@ -372,11 +372,17 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
                 continue
             products_with_offers += 1
             price = offer.get("price")
-            price_valid = (
-                isinstance(price, (str, int, float))
-                and not isinstance(price, bool)
-                and bool(str(price).strip())
-            )
+            # Treat a price as usable only when it is a finite, non-negative
+            # decimal value. A non-empty string such as "contact us", NaN,
+            # infinity, or a negative amount is not a valid numeric offer price.
+            price_valid = False
+            if isinstance(price, (str, int, float)) and not isinstance(price, bool):
+                try:
+                    from decimal import Decimal, InvalidOperation
+                    parsed_price = Decimal(str(price).strip())
+                    price_valid = parsed_price.is_finite() and parsed_price >= 0
+                except (InvalidOperation, ValueError):
+                    price_valid = False
             if not price_valid:
                 offers_missing_price += 1
             currency = offer.get("priceCurrency")
