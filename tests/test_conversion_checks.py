@@ -96,3 +96,22 @@ def test_button_without_type_counts_as_default_submit_control():
         "https://shop.example/",
     )
     assert not any(f.title == "HTML form has no explicit submit control" for f in findings)
+
+
+def test_submit_input_is_recognized_as_explicit_form_submit_control():
+    findings = inspect_conversion_html(
+        '<html><body><form><input name="email" type="email"><input type="submit" value="Send"></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "HTML form has no explicit submit control" for f in findings)
+    assert "submit control detected: yes" in next(
+        f.evidence for f in findings if f.title == "Homepage contains HTML form(s)"
+    )
+
+
+def test_image_submit_input_is_recognized_as_explicit_form_submit_control():
+    findings = inspect_conversion_html(
+        '<html><body><form><input type="image" alt="Submit order"></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "HTML form has no explicit submit control" for f in findings)
