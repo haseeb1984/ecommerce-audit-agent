@@ -45,6 +45,34 @@ def test_parser_detects_viewport_and_missing_alt():
     assert parser.images_missing_alt == 1
 
 
+
+@pytest.mark.parametrize(
+    ("head", "expected_title", "expected_evidence"),
+    [
+        (
+            '<link rel="canonical" href="https://shop.example/one">'
+            '<link rel="canonical" href="https://shop.example/two">',
+            "Multiple canonical link elements",
+            "Found 2 canonical link elements",
+        ),
+        (
+            '<link rel="canonical">',
+            "Canonical link missing href",
+            "1 canonical link element(s) have no usable href",
+        ),
+    ],
+)
+def test_homepage_reports_malformed_canonical_declarations(head, expected_title, expected_evidence):
+    html = f"<html><head>{head}</head><body><h1>Shop</h1></body></html>"
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    finding = next(item for item in findings if item.title == expected_title)
+    assert finding.status == "verified"
+    assert finding.severity == "medium"
+    assert expected_evidence in finding.evidence
+    assert finding.recommendation
+    assert finding.verification_steps
+
+
 def test_homepage_findings_include_evidence_and_verification_steps():
     findings = audit_checks.inspect_homepage(
         "<html><head></head><body><img src='x'></body></html>",
