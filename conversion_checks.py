@@ -72,7 +72,7 @@ class _ConversionParser(HTMLParser):
             )).lower()
             if self._active_form_method == "get" and any(
                 marker in field_identity
-                for marker in ("password", "passwd", "secret", "token", "credit-card", "cc-", "cvv", "cvc", "email", "phone", "telephone")
+                for marker in ("password", "passwd", "secret", "token", "credit-card", "cc-", "cvv", "cvc", "email", "phone", "telephone", "address", "street", "postal", "postcode", "zip-code", "birth", "date-of-birth", "dob", "national-id", "ssn")
             ):
                 self._active_get_form_has_sensitive_field = True
             if input_type not in {"hidden", "submit", "button", "reset", "image"}:
