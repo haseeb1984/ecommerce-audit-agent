@@ -340,6 +340,22 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
         ))
+    robots_header = headers.get("x-robots-tag", "")
+    robots_directives = f"{parser.meta_robots}, {robots_header}".lower()
+    if re.search(r"(?<![a-z0-9_-])noindex(?![a-z0-9_-])", robots_directives):
+        sources = []
+        if re.search(r"(?<![a-z0-9_-])noindex(?![a-z0-9_-])", parser.meta_robots.lower()):
+            sources.append("meta name=robots")
+        if re.search(r"(?<![a-z0-9_-])noindex(?![a-z0-9_-])", robots_header.lower()):
+            sources.append("X-Robots-Tag response header")
+        findings.append(_finding(
+            "technical_seo", "Homepage has a noindex directive", "verified", "medium",
+            f"Detected noindex in {', '.join(sources)} for {final_url}.",
+            "The observed directive asks compliant search engines not to index this URL. It may be intentional for a private, campaign, or staging page, so the source signal alone does not establish a defect.",
+            "Confirm that excluding the public homepage from search results is intentional. If the page should be indexed, remove the unintended noindex directive and verify the rendered response and canonical URL.",
+            ["Inspect all meta robots elements in the raw HTML.", "Check every X-Robots-Tag response header.", "Confirm the intended indexing policy with the site owner and validate the exact URL in Search Console."],
+            final_url,
+        ))
     # Duplicate metadata declarations can create conflicting or ambiguous signals.
     if parser.title_count > 1:
         findings.append(_finding(
