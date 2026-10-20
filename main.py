@@ -2,6 +2,22 @@ import logging
 import re
 from urllib.parse import urlsplit
 
+# Configure credential redaction before importing application or framework modules,
+# because imports can emit logs as a side effect.
+logging.basicConfig(level=logging.INFO)
+from log_safety import CredentialRedactionFilter
+
+_redaction_filter = CredentialRedactionFilter()
+_seen_handlers = set()
+for _logger in [logging.getLogger(), *[
+    item for item in logging.Logger.manager.loggerDict.values()
+    if isinstance(item, logging.Logger)
+]]:
+    for _handler in _logger.handlers:
+        if id(_handler) not in _seen_handlers:
+            _handler.addFilter(_redaction_filter)
+            _seen_handlers.add(id(_handler))
+
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import delete, text
@@ -17,7 +33,6 @@ from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audit_service")
 
 app = FastAPI(
@@ -69,8 +84,8 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
     try:
         result = await db.execute(text("SELECT 1"))
         return {"status": "success", "db_connected": True, "result": result.scalar()}
-    except Exception:
-        logger.exception("Health check failed")
+    except Exception as exc:
+        logger.error("Health check failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Database connection error")
 
 
@@ -115,17 +130,17 @@ async def audit_lead(
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         raise
-    except Exception:
+    except Exception as exc:
         await db.rollback()
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
-        logger.exception("Audit execution failed")
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        logger.error("Audit execution failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
             detail="Audit execution failed. Check server logs for diagnostic details."
@@ -225,17 +240,17 @@ async def comprehensive_audit_pdf(
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         raise
     except Exception as exc:
         await db.rollback()
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
-            except Exception:
-                logger.exception("Failed to release quota reservation %s", reservation_id)
-        logger.exception("Comprehensive audit report generation failed")
+            except Exception as release_exc:
+                logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        logger.error("Comprehensive audit report generation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
             detail="Comprehensive audit report generation failed. Check server logs for diagnostics.",
