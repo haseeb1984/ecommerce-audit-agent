@@ -402,9 +402,9 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             except (ValueError, TypeError, OSError):
                 screenshot_flowable = None
 
-    story.append(Paragraph("Actual website screenshot", section_style))
     if screenshot_flowable is not None:
-        story.extend([
+        story.append(KeepTogether([
+            Paragraph("Actual website screenshot", section_style),
             _p(
                 "This is a real browser screenshot captured from the target website during this audit run, "
                 "not an illustrative graphic. It shows the captured viewport and may not represent every page or device.",
@@ -412,13 +412,16 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             ),
             screenshot_flowable,
             Spacer(1, 2 * mm),
-        ])
+        ]))
     else:
-        story.append(_p(
-            "A real browser screenshot could not be captured for this run. No website screenshot was fabricated. "
-            "The phase illustrations below are explanatory graphics only.",
-            body_style,
-        ))
+        story.extend([
+            Paragraph("Actual website screenshot", section_style),
+            _p(
+                "A real browser screenshot could not be captured for this run. No website screenshot was fabricated. "
+                "The phase illustrations below are explanatory graphics only.",
+                body_style,
+            ),
+        ])
 
 
     security = calculate_security_assessment(result.findings, result.limitations)
