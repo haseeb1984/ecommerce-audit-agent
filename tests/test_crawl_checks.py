@@ -1229,3 +1229,19 @@ def test_meta_refresh_directive_limit_is_disclosed():
     assert len(findings) == 1
     assert "Detected 22 meta-refresh directive(s)" in findings[0].evidence
     assert "Only the first 20 directives were inspected" in findings[0].evidence
+
+
+def test_hreflang_malformed_destination_redacts_credentials_query_and_fragment():
+    findings = crawl_checks.inspect_hreflang(
+        '<link rel="alternate" hreflang="en" href="https://user:password@outside.example/page?token=secret#section">'
+        '<link rel="alternate" hreflang="en" href="javascript:alert(1)">',
+        "https://shop.example/",
+    )
+    finding = next(item for item in findings if item.title == "Hreflang declarations need review")
+    assert "outside.example/page" in finding.evidence
+    assert "user" not in finding.evidence
+    assert "password" not in finding.evidence
+    assert "secret" not in finding.evidence
+    assert "section" not in finding.evidence
+    assert "javascript:alert" not in finding.evidence
+    assert "malformed or unsupported target URL omitted" in finding.evidence
