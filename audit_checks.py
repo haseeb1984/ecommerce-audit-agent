@@ -385,6 +385,27 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
              "Validate the structured data after updating it."],
             final_url,
         ))
+    products_without_offers = sum(
+        1 for product in product_entities
+        if not (
+            isinstance(product.get("offers"), dict)
+            or (isinstance(product.get("offers"), list) and any(
+                isinstance(offer, dict) for offer in product["offers"]
+            ))
+        )
+    )
+    if products_without_offers:
+        findings.append(_finding(
+            "structured_data", "Product structured data has no offer information",
+            "verified", "low",
+            f"Found {products_without_offers} Product entity/entities without an Offer or AggregateOffer object. URL: {final_url}",
+            "Offer data can be important for product merchant listings and price-related search features. A Product entity may still be valid for other uses without offers, so this check does not claim that all Product markup requires pricing.",
+            "If the page represents a purchasable item and merchant-listing visibility is intended, add an accurate Offer or AggregateOffer with current price and currency. Do not invent prices for products that are not directly offered on the page.",
+            ["Inspect each Product entity and determine whether the page offers the item for purchase.",
+             "For purchasable products, add accurate Offer or AggregateOffer properties that match the visible page.",
+             "Validate the complete structured-data graph after updating it."],
+            final_url,
+        ))
     # Check price/currency signals only when Product JSON-LD is present. This is
     # a targeted source check, not a full Google rich-result eligibility validator.
     products_with_offers = 0
