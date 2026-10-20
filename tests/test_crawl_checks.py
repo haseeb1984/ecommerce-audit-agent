@@ -965,3 +965,35 @@ async def test_crawl_flags_multiple_h1_as_review_not_automatic_error(monkeypatch
     assert finding.severity == "low"
     assert "2 H1 elements" in finding.evidence
     assert "not automatically an SEO error" in finding.explanation
+
+@pytest.mark.asyncio
+async def test_crawl_flags_empty_alt_on_internal_page_for_contextual_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body>'
+            '<img src="/decorative.svg" alt="">'
+            '<img src="/product-detail.jpg" alt="">'
+            '</body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(f for f in findings if f.title == "Internal page images have empty alt text")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "2 of 2 image element(s)" in finding.evidence
+    assert "appropriate for decorative images" in finding.explanation
