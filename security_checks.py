@@ -213,6 +213,26 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
                 source_url,
             ))
 
+        # These directives do not all inherit the same fallback. Missing directives
+        # are hardening opportunities, not proof that the site is exploitable.
+        missing_protections = []
+        if "base-uri" not in directives:
+            missing_protections.append("base-uri is not explicitly set")
+        if "frame-ancestors" not in directives:
+            missing_protections.append("frame-ancestors is not explicitly set")
+        if "object-src" not in directives and "default-src" not in directives:
+            missing_protections.append("neither object-src nor default-src limits plugin content")
+        if missing_protections:
+            findings.append(_finding(
+                "security_headers", "Content Security Policy has hardening opportunities",
+                "manual_review_required", "low",
+                "Observed policy gaps: " + "; ".join(missing_protections) + ". The full policy is not reproduced.",
+                "Explicit base-uri and frame-ancestors directives can reduce exposure to base-tag injection and unwanted framing. A restrictive object-src/default-src can limit legacy plugin content. Missing directives alone do not establish an exploitable vulnerability.",
+                "Review whether base-uri 'self' (or a narrower value), frame-ancestors appropriate to the site's embedding needs, and object-src 'none' fit the storefront. Test checkout, identity, and embedded widgets before enforcing changes.",
+                ["Review the effective CSP and any Content-Security-Policy-Report-Only header.", "Confirm whether the site must be embedded by trusted partners before setting frame-ancestors."],
+                source_url,
+            ))
+
     hsts = headers.get("strict-transport-security", "").lower()
     max_age = re.search(r"(?:^|;)\s*max-age\s*=\s*(\d+)", hsts)
     if hsts and (not max_age or int(max_age.group(1)) < 15552000):
