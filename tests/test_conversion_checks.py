@@ -115,3 +115,15 @@ def test_image_submit_input_is_recognized_as_explicit_form_submit_control():
         "https://shop.example/",
     )
     assert not any(f.title == "HTML form has no explicit submit control" for f in findings)
+
+
+
+def test_conversion_paths_include_mailto_and_telephone_links():
+    findings = inspect_conversion_html(
+        '<html><body><a href="mailto:sales@example.com">Email sales</a>'
+        '<a href="tel:+15551234567">Call us</a></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "Primary conversion path signals")
+    assert "1 mailto link(s)" in finding.evidence
+    assert "1 telephone link(s)" in finding.evidence
