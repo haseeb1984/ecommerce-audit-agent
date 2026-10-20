@@ -650,3 +650,27 @@ def test_homepage_noindex_detection_uses_explicit_directives(html, headers, expe
         assert "may be intentional" in noindex[0].explanation
         assert noindex[0].verification_steps
 
+
+
+def test_homepage_reports_duplicate_meta_robots_elements():
+    html = (
+        '<html><head><meta name="robots" content="index, follow">'
+        '<meta name="robots" content="noindex"></head><body><h1>Shop</h1></body></html>'
+    )
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    duplicate = next(item for item in findings if item.title == "Multiple meta robots elements")
+    noindex = next(item for item in findings if item.title == "Homepage has a noindex directive")
+    assert duplicate.status == "verified"
+    assert duplicate.severity == "medium"
+    assert "Found 2 meta name=robots elements" in duplicate.evidence
+    assert duplicate.verification_steps
+    assert "may be intentional" in noindex.explanation
+
+
+def test_single_meta_robots_element_does_not_trigger_duplicate_finding():
+    findings = audit_checks.inspect_homepage(
+        '<html><head><meta name="robots" content="index, follow"></head><body><h1>Shop</h1></body></html>',
+        "https://shop.example/",
+        {},
+    )
+    assert not any(item.title == "Multiple meta robots elements" for item in findings)
