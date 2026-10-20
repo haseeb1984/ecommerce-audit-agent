@@ -211,6 +211,44 @@ def test_homepage_checks_product_offer_presence(offers, should_flag):
 
 
 @pytest.mark.parametrize(
+    ("availability", "expected_title"),
+    [
+        (None, "Product offers missing availability"),
+        ("", "Product offers missing availability"),
+        ("https://schema.org/InStock", None),
+        ("https://schema.org/UnknownState", "Product offers have invalid availability"),
+    ],
+)
+def test_homepage_checks_offer_availability_presence_and_value(availability, expected_title):
+    import json
+    offer = {"price": "19.99", "priceCurrency": "USD"}
+    if availability is not None:
+        offer["availability"] = availability
+    product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Example",
+        "image": "https://shop.example/item.jpg",
+        "offers": offer,
+    }
+    html = f'<html><head><script type="application/ld+json">{json.dumps(product)}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    availability_findings = [
+        item for item in findings
+        if item.title in {
+            "Product offers missing availability",
+            "Product offers have invalid availability",
+        }
+    ]
+    if expected_title is None:
+        assert availability_findings == []
+    else:
+        assert len(availability_findings) == 1
+        assert availability_findings[0].title == expected_title
+        assert availability_findings[0].source_url == "https://shop.example/"
+
+
+@pytest.mark.parametrize(
     ("availability", "should_flag"),
     [
         ("https://schema.org/InStock", False),
