@@ -194,8 +194,11 @@ class _PageParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title_text = ""
+        self.title_count = 0
         self._in_title = False
         self.meta_description = ""
+        self.meta_description_count = 0
+        self.meta_description_empty_count = 0
         self.viewport = ""
         self.meta_robots = ""
         self.meta_robots_count = 0
@@ -218,6 +221,7 @@ class _PageParser(HTMLParser):
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
         if tag == "title":
+            self.title_count += 1
             self._in_title = True
         elif tag == "script":
             script_type = values.get("type", "").split(";", 1)[0].strip().lower()
@@ -227,7 +231,12 @@ class _PageParser(HTMLParser):
         elif tag == "meta":
             name = values.get("name", "").strip().lower()
             if name == "description":
-                self.meta_description = values.get("content", "").strip()
+                self.meta_description_count += 1
+                description = values.get("content", "").strip()
+                if not description:
+                    self.meta_description_empty_count += 1
+                elif not self.meta_description:
+                    self.meta_description = description
             elif name == "viewport":
                 self.viewport = values.get("content", "").strip()
             elif name == "robots":
@@ -330,6 +339,25 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ("This is a basic source-HTML check, not a complete SEO or responsive-layout assessment."
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
+        ))
+    # Duplicate metadata declarations can create conflicting or ambiguous signals.
+    if parser.title_count > 1:
+        findings.append(_finding(
+            "on_page_seo", "Multiple title elements", "verified", "medium",
+            f"Found {parser.title_count} title elements in the returned HTML. URL: {final_url}",
+            "A document should expose one clear page title. Multiple title elements can make source interpretation and debugging ambiguous; this check does not determine which title a search engine displays.",
+            "Keep one intentional title element in the document head and make it specific to this page.",
+            ["Inspect the raw HTML and confirm there is exactly one title element.", "Check the browser tab title and compare it with the intended page title."],
+            final_url,
+        ))
+    if parser.meta_description_count > 1:
+        findings.append(_finding(
+            "on_page_seo", "Multiple meta description elements", "verified", "low",
+            f"Found {parser.meta_description_count} meta description elements, including {parser.meta_description_empty_count} empty element(s). URL: {final_url}",
+            "Multiple meta descriptions provide conflicting page-summary signals. Search engines may choose a different snippet; this source check does not predict the displayed snippet.",
+            "Keep one accurate, page-specific meta description and remove duplicate or empty declarations.",
+            ["Inspect the raw HTML and confirm one non-empty meta name=description element remains.", "Review the resulting snippet separately in search-engine tools when available."],
+            final_url,
         ))
     # Canonical declarations are easy to misconfigure and were parsed above but
     # previously did not produce a finding. Report only source-verifiable problems.
