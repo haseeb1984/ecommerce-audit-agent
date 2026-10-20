@@ -2,6 +2,22 @@ import logging
 import re
 from urllib.parse import urlsplit
 
+# Configure credential redaction before importing application or framework modules,
+# because imports can emit logs as a side effect.
+logging.basicConfig(level=logging.INFO)
+from log_safety import CredentialRedactionFilter
+
+_redaction_filter = CredentialRedactionFilter()
+_seen_handlers = set()
+for _logger in [logging.getLogger(), *[
+    item for item in logging.Logger.manager.loggerDict.values()
+    if isinstance(item, logging.Logger)
+]]:
+    for _handler in _logger.handlers:
+        if id(_handler) not in _seen_handlers:
+            _handler.addFilter(_redaction_filter)
+            _seen_handlers.add(id(_handler))
+
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import delete, text
@@ -16,25 +32,6 @@ from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
-
-logging.basicConfig(level=logging.INFO)
-
-# Defense in depth: scrub credentials from messages and exception traces before
-# they reach any root logging handler. Provider/request logging must still avoid
-# logging raw URLs, headers, or response bodies in the first place.
-from log_safety import CredentialRedactionFilter
-
-# Cover already-configured named logger handlers as well as the root handler.
-_redaction_filter = CredentialRedactionFilter()
-_seen_handlers = set()
-for _logger in [logging.getLogger(), *[
-    item for item in logging.Logger.manager.loggerDict.values()
-    if isinstance(item, logging.Logger)
-]]:
-    for _handler in _logger.handlers:
-        if id(_handler) not in _seen_handlers:
-            _handler.addFilter(_redaction_filter)
-            _seen_handlers.add(id(_handler))
 
 logger = logging.getLogger("audit_service")
 
