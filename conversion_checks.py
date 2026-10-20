@@ -96,7 +96,16 @@ class _ConversionParser(HTMLParser):
             self.form_has_submit = True
             self._current_form_has_submit = True
         elif tag == "a" and values.get("href") and len(self.links) < MAX_LINKS_TO_REVIEW:
-            self._active_link = (values["href"].strip(), values.get("aria-label", "").strip())
+            target_blank = values.get("target", "").strip().lower() == "_blank"
+            rel_tokens = set(values.get("rel", "").strip().lower().split())
+            missing_opener_protection = target_blank and not (
+                {"noopener", "noreferrer"} & rel_tokens
+            )
+            self._active_link = (
+                values["href"].strip(),
+                values.get("aria-label", "").strip(),
+                "true" if missing_opener_protection else "",
+            )
             self._link_text = []
         elif tag == "script":
             src = values.get("src", "").strip()
@@ -120,9 +129,9 @@ class _ConversionParser(HTMLParser):
                 self.buttons_without_name += 1
             self._active_button = False
         elif tag == "a" and self._active_link:
-            href, aria = self._active_link
+            href, aria, missing_opener_protection = self._active_link
             label = aria or " ".join("".join(self._link_text).split())
-            self.links.append((href, label, ""))
+            self.links.append((href, label, missing_opener_protection))
             self._active_link = None
         elif tag == "script" and self._in_script:
             text = "".join(self._script_parts)
@@ -153,7 +162,17 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     direct_contact_links = {"mailto": 0, "tel": 0}
     unlabeled_links = 0
     malformed_links = 0
-    for href, label, _ in parser.links:
+    new_tab_links_without_opener_protection: list[str] = []
+    for href, label, missing_opener_protection in parser.links:
+        if missing_opener_protection == "true":
+            # Exclude query strings so tokens and campaign identifiers are not copied into evidence.
+            try:
+                link_parts = urlsplit(urljoin(final_url, href))
+                new_tab_links_without_opener_protection.append(
+                    f"{link_parts.scheme}://{link_parts.netloc}{link_parts.path or '/'}"
+                )
+            except (ValueError, UnicodeError):
+                new_tab_links_without_opener_protection.append("(malformed target=_blank link)")
         # Public HTML is untrusted input: malformed authorities (for example,
         # unmatched IPv6 brackets or invalid ports) must not abort the whole audit.
         try:
@@ -190,6 +209,19 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
                     policy_links[category].append(absolute)
         if not label:
             unlabeled_links += 1
+
+    if new_tab_links_without_opener_protection:
+        examples = list(dict.fromkeys(new_tab_links_without_opener_protection))[:5]
+        findings.append(_finding(
+            "security", "New-tab links need opener-protection review",
+            "manual_review_required", "low",
+            f"Found {len(new_tab_links_without_opener_protection)} link(s) with target=\"_blank\" and no explicit rel=\"noopener\" or rel=\"noreferrer\". Examples: "
+            + ", ".join(examples),
+            "Explicit opener protection is a useful compatibility and defense-in-depth measure for links that open a new tab. Modern browsers generally apply implicit noopener behavior to target=_blank, so this source signal alone does not establish an exploitable vulnerability.",
+            "For links that open a new tab, add rel=\"noopener\" or rel=\"noreferrer\" where appropriate, then verify expected referrer behavior and the rendered link attributes.",
+            ["Inspect the affected links in the rendered page.", "Confirm the destination cannot control the opener in supported browsers.", "Keep referrer information only where the business and privacy requirements call for it."],
+            final_url,
+        ))
 
     if parser.forms_without_submit:
         findings.append(_finding(
