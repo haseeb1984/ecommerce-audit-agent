@@ -20,6 +20,30 @@ import socket
 
 
 MAX_LINKS_TO_REVIEW = 500
+
+
+def _safe_url_evidence(value: str, base_url: str) -> str:
+    """Produce bounded public URL evidence without credentials, queries, or fragments."""
+    try:
+        parts = urlsplit(urljoin(base_url, value))
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        port = parts.port
+        if (
+            scheme not in {"http", "https"}
+            or not host
+            or parts.username is not None
+            or parts.password is not None
+        ):
+            return "(unsupported or malformed destination omitted)"
+        display_host = f"[{host.lower()}]" if ":" in host else host.lower()
+        default_port = 443 if scheme == "https" else 80
+        if port is not None and port != default_port:
+            display_host = f"{display_host}:{port}"
+        path = (parts.path or "/")[:160]
+        return f"{scheme}://{display_host}{path}"
+    except (ValueError, UnicodeError):
+        return "(unsupported or malformed destination omitted)"
 TRACKING_PATTERNS = {
     "Google tag / Analytics": re.compile(r"(googletagmanager\.com|google-analytics\.com|gtag\s*\()", re.I),
     "Meta Pixel": re.compile(r"(connect\.facebook\.net|fbq\s*\()", re.I),
@@ -166,13 +190,9 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     for href, label, missing_opener_protection in parser.links:
         if missing_opener_protection == "true":
             # Exclude query strings so tokens and campaign identifiers are not copied into evidence.
-            try:
-                link_parts = urlsplit(urljoin(final_url, href))
-                new_tab_links_without_opener_protection.append(
-                    f"{link_parts.scheme}://{link_parts.netloc}{link_parts.path or '/'}"
-                )
-            except (ValueError, UnicodeError):
-                new_tab_links_without_opener_protection.append("(malformed target=_blank link)")
+            new_tab_links_without_opener_protection.append(
+                _safe_url_evidence(href, final_url)
+            )
         # Public HTML is untrusted input: malformed authorities (for example,
         # unmatched IPv6 brackets or invalid ports) must not abort the whole audit.
         try:
