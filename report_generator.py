@@ -382,8 +382,8 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     ]))
     story.extend([phase_table, Spacer(1, 3 * mm)])
 
-    # Only embed a real image supplied by the PageSpeed response. Validate it again
-    # at the PDF boundary; invalid/unsupported data is omitted, never fabricated.
+    # Embed only a real, explicitly supplied browser/PageSpeed image. Validate it
+    # again at the PDF boundary; invalid/unsupported data is omitted, never fabricated.
     screenshot_flowable = None
     if isinstance(screenshot_data_uri, str) and len(screenshot_data_uri) <= 1_400_000:
         match = re.fullmatch(
