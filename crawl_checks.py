@@ -253,9 +253,22 @@ class _LinkParser(HTMLParser):
 
 
 def _canonical_page_url(url: str) -> str:
+    """Normalize crawl keys so equivalent default-port URLs do not consume extra page slots."""
     parts = urlsplit(urldefrag(url)[0])
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").rstrip(".").lower()
+    try:
+        port = parts.port
+    except ValueError:
+        # Keep malformed values distinct and query-free; URL validation happens before fetch.
+        return urlunsplit((scheme, parts.netloc.lower(), parts.path or "/", "", ""))
+    if not host or scheme not in {"http", "https"} or parts.username is not None or parts.password is not None:
+        return urlunsplit((scheme, parts.netloc.lower(), parts.path or "/", "", ""))
+    default_port = 443 if scheme == "https" else 80
+    display_host = f"[{host}]" if ":" in host else host
+    authority = display_host if port is None or port == default_port else f"{display_host}:{port}"
     # Avoid multiplying the crawl through tracking and filter query parameters.
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", "", ""))
+    return urlunsplit((scheme, authority, parts.path or "/", "", ""))
 
 
 def _same_origin(left_url: str, right_url: str) -> bool:
