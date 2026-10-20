@@ -705,7 +705,29 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     "Add a unique, descriptive title that matches the page's purpose.",
                     ["Inspect the page source for the title element.", "Retest with a crawler."], url,
                 ))
-            if not page_parser.meta_description:
+            if page_parser.meta_description_count > 1:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page has multiple meta descriptions",
+                    "manual_review_required", "low",
+                    f"Found {page_parser.meta_description_count} meta description elements in the returned HTML for {final_url}.",
+                    "Multiple description elements can make it unclear which snippet is intended. Search engines may choose other page text regardless of the declared description.",
+                    "Review the page template and keep one useful, page-specific meta description where it adds value.",
+                    ["Inspect all meta name=description elements in the page source.", "Confirm the final template emits the intended description once."],
+                    final_url,
+                ))
+
+            if page_parser.meta_description_empty_count:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page has an empty meta description",
+                    "manual_review_required", "info",
+                    f"Found {page_parser.meta_description_empty_count} empty meta description element(s) on {final_url}.",
+                    "An empty description provides no authored summary, though search engines may generate a snippet from page content. A separate non-empty description may still exist on the same page.",
+                    "Remove empty duplicate elements or replace the intended description with a useful, page-specific summary; avoid keyword stuffing.",
+                    ["Inspect each meta description element in the source.", "Check the final rendered HTML after template changes."],
+                    final_url,
+                ))
+
+            if not page_parser.meta_description and page_parser.meta_description_count == 0:
                 findings.append(_finding(
                     "on_page_seo", "Internal page missing meta description",
                     "verified", "info",
