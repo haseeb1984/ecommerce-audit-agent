@@ -99,8 +99,10 @@ class _AccessibilityParser(HTMLParser):
         if tag == "svg":
             self._inside_svg += 1
             self._active_svg_control = self._active_link or self._active_button
-            if self._active_svg_control is not None and (values.get("aria-label", "").strip() or values.get("aria-labelledby", "").strip()):
+            if self._active_svg_control is not None and values.get("aria-label", "").strip():
                 self._active_svg_control["has_svg_title"] = True
+            if self._active_svg_control is not None and values.get("aria-labelledby", "").strip():
+                self._active_svg_control["svg_labelledby"] = values.get("aria-labelledby", "").strip()
         elif tag == "title" and self._inside_svg and self._active_svg_control is not None:
             self._in_svg_title = True
 
@@ -182,7 +184,7 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         ))
     def has_resolvable_labelledby(item: dict[str, str]) -> bool:
         """Count aria-labelledby only when every referenced ID exists in returned HTML."""
-        identifiers = item.get("aria_labelledby", "").split()
+        identifiers = (item.get("aria_labelledby", "") + " " + item.get("svg_labelledby", "")).split()
         return bool(identifiers) and all(
             identifier in parser.ids and parser.id_text.get(identifier, "").strip()
             for identifier in identifiers
