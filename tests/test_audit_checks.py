@@ -414,3 +414,21 @@ async def test_safe_get_preserves_multiple_set_cookie_headers():
     assert status == 200
     assert "analytics=redacted" in headers["set-cookie"]
     assert "session=redacted" in headers["set-cookie"]
+
+
+def test_present_homepage_elements_do_not_recommend_adding_them_again():
+    html = (
+        '<html><head><title>Example Store</title>'
+        '<meta name="description" content="A useful store description">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '</head><body><h1>Example Store</h1></body></html>'
+    )
+    findings = audit_checks.inspect_homepage(
+        html, "https://shop.example/", {"content-type": "text/html"}
+    )
+    by_title = {finding.title: finding for finding in findings}
+
+    assert "Add a unique, descriptive title" not in by_title["Page title"].recommendation
+    assert "Add a concise, page-specific meta description" not in by_title["Meta description"].recommendation
+    assert "Keep the title accurate" in by_title["Page title"].recommendation
+    assert "Keep the description accurate" in by_title["Meta description"].recommendation
