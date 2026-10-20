@@ -903,3 +903,38 @@ def test_aggregate_offer_flags_low_price_above_high_price():
     assert finding.severity == "medium"
     assert finding.verification_steps
 
+@pytest.mark.parametrize(
+    ("image_html", "expected_title"),
+    [
+        ('<img src="/product.jpg">', "Images missing alt attributes"),
+        ('<img src="/product.jpg" alt="">', "Images have empty alt text"),
+    ],
+)
+def test_homepage_reports_image_alt_issues_with_distinct_findings(image_html, expected_title):
+    findings = audit_checks.inspect_homepage(
+        f"<html><head><title>Shop</title></head><body>{image_html}</body></html>",
+        "https://shop.example/",
+        {},
+    )
+    matching = [item for item in findings if item.title == expected_title]
+    assert len(matching) == 1
+    assert matching[0].status == "verified"
+    assert matching[0].verification_steps
+    other_title = (
+        "Images have empty alt text"
+        if expected_title == "Images missing alt attributes"
+        else "Images missing alt attributes"
+    )
+    assert not any(item.title == other_title for item in findings)
+
+
+def test_homepage_does_not_flag_images_with_descriptive_alt_text():
+    findings = audit_checks.inspect_homepage(
+        '<html><head><title>Shop</title></head><body><img src="/product.jpg" alt="Blue cotton shirt"></body></html>',
+        "https://shop.example/",
+        {},
+    )
+    assert not any(item.title in {
+        "Images missing alt attributes", "Images have empty alt text"
+    } for item in findings)
+
