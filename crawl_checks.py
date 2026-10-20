@@ -675,6 +675,17 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             if page_parser.title_text:
                 title_pages[page_parser.title_text.strip().casefold()].append(url)
+                title_length = len(page_parser.title_text.strip())
+                if title_length < 15 or title_length > 60:
+                    findings.append(_finding(
+                        "on_page_seo", "Internal page title length needs review",
+                        "manual_review_required", "info",
+                        f"Page title on {final_url} contains {title_length} characters.",
+                        "Title display is not governed by a fixed character limit: search engines may truncate or rewrite titles based on pixel width, device, and query. Very short or long titles are a review signal, not proof of an SEO error.",
+                        "Check that the title is descriptive, distinct, and useful to shoppers. Shorten or expand it only when doing so improves clarity; do not target a character count at the expense of meaning.",
+                        ["Review the title as it appears in search previews on mobile and desktop.", "Confirm that the title accurately describes the page and is not duplicated across distinct pages."],
+                        final_url,
+                    ))
             if page_parser.meta_description:
                 description_pages[page_parser.meta_description.strip().casefold()].append(url)
             if page_parser.h1_count > 1:
@@ -705,6 +716,19 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     "Add a unique, descriptive title that matches the page's purpose.",
                     ["Inspect the page source for the title element.", "Retest with a crawler."], url,
                 ))
+            if page_parser.meta_description:
+                description_length = len(page_parser.meta_description.strip())
+                if description_length < 50 or description_length > 160:
+                    findings.append(_finding(
+                        "on_page_seo", "Internal page meta description length needs review",
+                        "manual_review_required", "info",
+                        f"Meta description on {final_url} contains {description_length} characters.",
+                        "There is no guaranteed character limit for search snippets, and search engines may generate a different snippet. Length alone does not prove that a description is poor.",
+                        "Check whether the description clearly summarizes this specific page and puts useful information first. Adjust its length only when it improves usefulness and readability.",
+                        ["Review the description in search-preview tools for common mobile and desktop layouts.", "Confirm that the description is page-specific and matches visible page content."],
+                        final_url,
+                    ))
+
             if page_parser.meta_description_count > 1:
                 findings.append(_finding(
                     "on_page_seo", "Internal page has multiple meta descriptions",
