@@ -50,6 +50,9 @@ class _ConversionParser(HTMLParser):
         self._in_script = False
         self._script_parts: list[str] = []
         self.form_actions: list[str] = []
+        self._active_form_method = "get"
+        self._active_get_form_has_sensitive_field = False
+        self.get_forms_with_sensitive_fields = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
@@ -58,9 +61,20 @@ class _ConversionParser(HTMLParser):
             self.forms += 1
             self._active_form = True
             self._current_form_has_submit = False
+            self._active_form_method = values.get("method", "get").strip().lower() or "get"
+            self._active_get_form_has_sensitive_field = False
             self.form_actions.append(values.get("action", ""))
         elif tag in {"input", "select", "textarea"} and self._active_form:
             input_type = values.get("type", "text").lower()
+            field_identity = " ".join((
+                values.get("name", ""), values.get("id", ""),
+                values.get("autocomplete", ""), input_type,
+            )).lower()
+            if self._active_form_method == "get" and any(
+                marker in field_identity
+                for marker in ("password", "passwd", "secret", "token", "credit-card", "cc-", "cvv", "cvc", "email", "phone", "telephone")
+            ):
+                self._active_get_form_has_sensitive_field = True
             if input_type not in {"hidden", "submit", "button", "reset", "image"}:
                 self.form_fields += 1
             if input_type == "email" or values.get("autocomplete", "").lower() == "email":
@@ -96,7 +110,11 @@ class _ConversionParser(HTMLParser):
         if tag == "form":
             if self._active_form and not self._current_form_has_submit:
                 self.forms_without_submit += 1
+            if self._active_form and self._active_get_form_has_sensitive_field:
+                self.get_forms_with_sensitive_fields += 1
             self._active_form = False
+            self._active_form_method = "get"
+            self._active_get_form_has_sensitive_field = False
         elif tag == "button" and self._active_button:
             if not self._button_has_name and not " ".join("".join(self._button_text).split()):
                 self.buttons_without_name += 1
@@ -180,6 +198,17 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
                 safe_destination = f"http://{action_parts.netloc}{action_parts.path or '/'}"
                 if safe_destination not in insecure_form_actions:
                     insecure_form_actions.append(safe_destination)
+
+    if parser.get_forms_with_sensitive_fields:
+        findings.append(_finding(
+            "security", "GET form may place personal or sensitive fields in the URL",
+            "manual_review_required", "high",
+            f"Detected {parser.get_forms_with_sensitive_fields} GET form(s) containing fields whose names or types suggest passwords, tokens, payment data, email, or phone information.",
+            "GET form values are normally encoded into the request URL, where they may be retained in browser history, server logs, analytics systems, and referrer data. Field names are only heuristic evidence; this check does not submit the form or inspect runtime behavior.",
+            "Use POST for forms that collect personal, authentication, or payment-related data, transmit it only over HTTPS, and review logging, analytics, and referrer policies for accidental exposure.",
+            ["Inspect the method and fields of each flagged form in the rendered page.", "Confirm personal or authentication values are not placed in query strings.", "Use non-sensitive test data and inspect the final request URL and server handling."],
+            final_url,
+        ))
 
     if insecure_form_actions:
         findings.append(_finding(
