@@ -674,3 +674,26 @@ def test_single_meta_robots_element_does_not_trigger_duplicate_finding():
         {},
     )
     assert not any(item.title == "Multiple meta robots elements" for item in findings)
+
+
+@pytest.mark.parametrize(
+    ("robots", "should_flag"),
+    [
+        ("User-agent: *\\nDisallow: /\\n", True),
+        ("User-agent: *\\nDisallow: /private/\\n", False),
+        ("User-agent: ExampleBot\\nDisallow: /\\n", False),
+        ("User-agent: *\\nAllow: /\\nDisallow: /private/\\n", False),
+        ("User-agent: Googlebot\\nDisallow: /tmp/\\nUser-agent: *\\nDisallow: /\\n", True),
+    ],
+)
+def test_robots_txt_detects_wildcard_full_site_block(robots, should_flag):
+    findings = audit_checks.inspect_discovery_contents(
+        "robots_txt", robots, "https://shop.example/robots.txt"
+    )
+    matches = [item for item in findings if item.title == "robots.txt may block the entire site"]
+    assert bool(matches) is should_flag
+    if should_flag:
+        assert matches[0].severity == "high"
+        assert matches[0].source_url == "https://shop.example/robots.txt"
+        assert "may be intentional" in matches[0].explanation
+        assert matches[0].verification_steps
