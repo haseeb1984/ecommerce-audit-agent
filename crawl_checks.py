@@ -68,6 +68,24 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
     invalid_targets: list[str] = []
     invalid_language_tags: list[str] = []
 
+    def safe_target_label(href: str) -> str:
+        """Return a bounded URL label without credentials, query, or fragment data."""
+        try:
+            resolved = urljoin(final_url, href) if href else ""
+            parts = urlsplit(resolved)
+            _ = parts.port
+            if parts.scheme.lower() in {"http", "https"} and parts.hostname:
+                host = parts.hostname.lower()
+                display_host = f"[{host}]" if ":" in host else host
+                port = parts.port
+                default_port = 443 if parts.scheme.lower() == "https" else 80
+                if port is not None and port != default_port:
+                    display_host = f"{display_host}:{port}"
+                return f"{parts.scheme.lower()}://{display_host}{(parts.path or '/')[:120]}"
+        except (ValueError, UnicodeError):
+            pass
+        return "(malformed or unsupported target URL omitted)"
+
     for language, href in parser.links:
         normalized_language = language.lower()
         if normalized_language in seen_languages:
@@ -96,12 +114,12 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
             # are reviewable input, not reasons for the whole audit to fail.
             valid_target = False
         if not valid_target:
-            invalid_targets.append(href or "(missing href)")
+            invalid_targets.append(safe_target_label(href))
 
     if invalid_language_tags or invalid_targets or duplicate_languages:
         details = []
         if invalid_language_tags:
-            details.append("language tag(s): " + ", ".join(sorted(set(invalid_language_tags))[:8]))
+            details.append("language tag(s): " + ", ".join(value[:40] for value in sorted(set(invalid_language_tags))[:8]))
         if invalid_targets:
             details.append("target URL issue(s): " + ", ".join(sorted(set(invalid_targets))[:8]))
         if duplicate_languages:
