@@ -399,6 +399,20 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     final_url,
                 ))
 
+            # Empty alt is valid for decorative images, but may be an accessibility
+            # problem when the image conveys information. Keep this distinct from
+            # missing attributes and avoid treating every empty alt as a definite bug.
+            if page_parser.images_empty_alt and url != _canonical_page_url(final_home):
+                findings.append(_finding(
+                    "aria_alt_text", "Internal page images have empty alt text",
+                    "manual_review_required", "low",
+                    f"{page_parser.images_empty_alt} of {page_parser.images} image element(s) on {final_url} have an empty alt attribute in the returned HTML.",
+                    "An empty alt attribute is appropriate for decorative images. If an image communicates product details, product variants, or other information not available nearby, empty alt text may leave that information inaccessible.",
+                    "Review each empty-alt image in context. Keep alt=\"\" for decorative images and add concise descriptive alternatives only when the image conveys meaningful information.",
+                    ["Inspect each empty-alt image on the rendered page.", "Check whether its information is available in adjacent text or another accessible control."],
+                    final_url,
+                ))
+
             # Product structured data is inspected only on product-detail-like paths.
             # Static JSON-LD property checks are evidence, not a guarantee of Google
             # rich-result eligibility; variants and platform-specific output need review.
