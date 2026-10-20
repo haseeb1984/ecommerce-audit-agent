@@ -133,7 +133,7 @@ class _MetaRefreshParser(HTMLParser):
         if values.get("http-equiv", "").strip().lower() != "refresh":
             return
         content = values.get("content", "").strip()
-        match = re.search(r"(?:^|;)\\s*url\\s*=\\s*(['\\\"]?)(.*?)\\1\\s*$", content, re.I)
+        match = re.search(r"(?:^|;)\s*url\s*=\s*(['\"]?)(.*?)\1\s*$", content, re.I)
         if match:
             self.targets.append(match.group(2).strip())
 
