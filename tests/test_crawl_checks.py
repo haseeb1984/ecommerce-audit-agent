@@ -1163,3 +1163,34 @@ def test_hreflang_inspection_accepts_distinct_valid_language_targets():
     </head></html>
     """
     assert crawl_checks.inspect_hreflang(html, "https://shop.example/") == []
+
+
+def test_meta_refresh_parses_quoted_and_unquoted_urls():
+    quoted = crawl_checks.inspect_meta_refresh(
+        '<html><head><meta http-equiv="refresh" content="0; url=\'https://outside.example/next?token=secret\'"></head></html>',
+        "https://shop.example/",
+    )
+    unquoted = crawl_checks.inspect_meta_refresh(
+        '<html><head><meta http-equiv="refresh" content="5; URL=https://outside.example/next"></head></html>',
+        "https://shop.example/",
+    )
+    assert len(quoted) == 1
+    assert "outside.example" in quoted[0].evidence
+    assert "secret" not in quoted[0].evidence
+    assert len(unquoted) == 1
+    assert "outside.example" in unquoted[0].evidence
+
+
+def test_meta_refresh_same_origin_and_missing_url_do_not_claim_external_redirect():
+    same_origin = crawl_checks.inspect_meta_refresh(
+        '<meta http-equiv="refresh" content="0; url=/next">',
+        "https://shop.example/",
+    )
+    missing = crawl_checks.inspect_meta_refresh(
+        '<meta http-equiv="refresh" content="5">',
+        "https://shop.example/",
+    )
+    assert len(same_origin) == 1
+    assert same_origin[0].severity == "low"
+    assert "External destination" not in same_origin[0].evidence
+    assert missing == []
