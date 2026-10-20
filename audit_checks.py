@@ -441,6 +441,18 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
         ))
+    if parser.meta_robots_count > 1:
+        findings.append(_finding(
+            "technical_seo", "Multiple meta robots elements", "verified", "medium",
+            f"Found {parser.meta_robots_count} meta name=robots elements in the returned HTML. URL: {final_url}",
+            "Multiple robots declarations can make indexing directives harder to maintain and may combine restrictive instructions unexpectedly. This source check reports duplication; it does not infer the site's intended indexing policy.",
+            "Review all robots meta elements, consolidate the intended directives into one clear declaration, and confirm no unintended noindex or nofollow instruction remains.",
+            [
+                "Inspect every meta name=robots element in the raw HTML.",
+                "Compare the combined directives with the intended indexing policy.",
+                "Check X-Robots-Tag response headers separately because they can also affect indexing.",
+            ], final_url,
+        ))
     robots_header = headers.get("x-robots-tag", "")
     robots_directives = f"{parser.meta_robots}, {robots_header}".lower()
     if re.search(r"(?<![a-z0-9_-])noindex(?![a-z0-9_-])", robots_directives):
