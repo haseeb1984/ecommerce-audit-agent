@@ -1096,3 +1096,33 @@ async def test_crawl_distinguishes_empty_and_duplicate_title_elements(monkeypatc
     assert duplicate.status == "manual_review_required"
     assert "2 title elements" in duplicate.evidence
     assert not any(f.title == "Internal page missing a title" for f in findings)
+
+@pytest.mark.asyncio
+async def test_crawl_flags_empty_h1_heading_for_contextual_review(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title></head><body>'
+            '<h1></h1><h1> </h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(f for f in findings if f.title == "Internal page has empty H1 headings")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "2 empty H1 element(s) among 2 H1 element(s)" in finding.evidence
+    assert "source-only crawler does not execute" in finding.explanation
