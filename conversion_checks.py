@@ -147,6 +147,9 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     origin = f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}"
     internal_checkout = []
     internal_contact = []
+    policy_links: dict[str, list[str]] = {
+        "privacy": [], "terms": [], "returns": [], "shipping": [], "payment": [],
+    }
     direct_contact_links = {"mailto": 0, "tel": 0}
     unlabeled_links = 0
     malformed_links = 0
@@ -166,10 +169,25 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         if parsed.scheme.lower() not in {"http", "https"} or parsed.netloc.lower() != urlsplit(origin).netloc.lower():
             continue
         path = parsed.path.lower()
-        if any(token in path for token in ("checkout", "cart", "basket", "payment")):
+        searchable = f"{path} {label.lower()}"
+        if any(token in searchable for token in ("checkout", "cart", "basket", "payment")):
             internal_checkout.append(absolute)
-        if any(token in path for token in ("contact", "support", "help")):
+        if any(token in searchable for token in ("contact", "support", "help")):
             internal_contact.append(absolute)
+        # Policy and fulfilment links help shoppers evaluate trust and total cost.
+        # Treat these as visibility signals only: links may be in menus/footer,
+        # and absence from static homepage HTML is not proof the policy is missing.
+        policy_patterns = {
+            "privacy": ("privacy", "data protection"),
+            "terms": ("terms", "conditions", "legal"),
+            "returns": ("return", "refund", "exchange"),
+            "shipping": ("shipping", "delivery", "dispatch"),
+            "payment": ("payment", "accepted cards", "billing"),
+        }
+        for category, tokens in policy_patterns.items():
+            if any(token in searchable for token in tokens):
+                if absolute not in policy_links[category]:
+                    policy_links[category].append(absolute)
         if not label:
             unlabeled_links += 1
 
@@ -242,6 +260,24 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             ["Inspect rendered UI and JavaScript-loaded components.", "Complete a test journey where permitted without placing a real order."],
             final_url,
         ))
+
+    missing_policy_signals = [name for name, urls in policy_links.items() if not urls]
+    visible_policy_signals = [name for name, urls in policy_links.items() if urls]
+    findings.append(_finding(
+        "conversion_paid_traffic", "Homepage policy and fulfilment-link visibility",
+        "manual_review_required", "low" if missing_policy_signals else "info",
+        "Static homepage link scan found visible signals for: "
+        + (", ".join(visible_policy_signals) if visible_policy_signals else "none of the checked policy/fulfilment categories")
+        + ". No visible link signal was found for: "
+        + (", ".join(missing_policy_signals) if missing_policy_signals else "none; all checked categories had a signal")
+        + ".",
+        "Privacy, terms, returns/refunds, shipping/delivery, and payment information can help shoppers understand data use, fulfilment, and purchase conditions. This check searches static same-origin link URLs and labels only; links may be in JavaScript-rendered menus, footer widgets, or differently named pages.",
+        "Review the homepage, navigation, footer, product pages, and checkout in a browser. Make relevant privacy/terms links easy to find and show returns, delivery costs/timing, and accepted payment information before customers commit where applicable.",
+        ["Inspect the rendered header, footer, product pages, and checkout for the relevant policies.",
+         "Open each available policy and confirm it is current, readable, and consistent with the checkout.",
+         "Do not add irrelevant policy links solely to satisfy this heuristic."],
+        final_url,
+    ))
 
     findings.append(_finding(
         "conversion_paid_traffic", "Primary conversion path signals", "manual_review_required", "info",
