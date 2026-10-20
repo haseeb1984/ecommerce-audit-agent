@@ -1137,3 +1137,29 @@ def test_anchor_name_parser_flags_links_without_text_or_accessible_label():
         '<a href="/title" title="Help"></a>'
     )
     assert parser.empty_name_hrefs == ["/empty"]
+
+
+def test_hreflang_inspection_flags_duplicate_language_and_malformed_target():
+    html = """
+    <html><head>
+      <link rel="alternate" hreflang="en" href="https://shop.example/en/">
+      <link rel="alternate" hreflang="en" href="https://shop.example/en-us/">
+      <link rel="alternate" hreflang="fr" href="http://[broken">
+    </head></html>
+    """
+    findings = crawl_checks.inspect_hreflang(html, "https://shop.example/")
+    finding = next(f for f in findings if f.title == "Hreflang declarations need review")
+    assert finding.status == "manual_review_required"
+    assert "duplicate language tag(s): en" in finding.evidence
+    assert "target URL issue(s)" in finding.evidence
+
+
+def test_hreflang_inspection_accepts_distinct_valid_language_targets():
+    html = """
+    <html><head>
+      <link rel="alternate" hreflang="en-US" href="https://shop.example/us/">
+      <link rel="alternate" hreflang="fr-FR" href="https://shop.example/fr/">
+      <link rel="alternate" hreflang="x-default" href="https://shop.example/">
+    </head></html>
+    """
+    assert crawl_checks.inspect_hreflang(html, "https://shop.example/") == []
