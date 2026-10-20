@@ -266,3 +266,31 @@ def test_http_external_form_destination_is_reported_and_query_is_redacted():
     assert "http://forms.vendor.example/submit" in external.evidence
     assert "secret" not in external.evidence
     assert insecure.severity == "high"
+
+
+
+def test_new_tab_link_evidence_redacts_credentials_query_and_fragment():
+    findings = inspect_conversion_html(
+        '<html><body><a target="_blank" href="https://user:pass@vendor.example/offer?token=secret&email=a%40b.example#session">Open offer</a></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(
+        f for f in findings if f.title == "New-tab links need opener-protection review"
+    )
+    assert "https://vendor.example/offer" in finding.evidence
+    assert "user" not in finding.evidence
+    assert "pass" not in finding.evidence
+    assert "token=secret" not in finding.evidence
+    assert "email=" not in finding.evidence
+    assert "#session" not in finding.evidence
+
+
+def test_new_tab_link_with_malformed_url_does_not_abort_conversion_audit():
+    findings = inspect_conversion_html(
+        '<html><body><a target="_blank" href="https://[broken">Broken</a>'
+        '<a href="/checkout">Checkout</a></body></html>',
+        "https://shop.example/",
+    )
+    assert any(f.title == "New-tab links need opener-protection review" for f in findings)
+    assert any(f.title == "Primary conversion path signals" for f in findings)
+    assert any("omitted" in f.evidence for f in findings if f.title == "New-tab links need opener-protection review")
