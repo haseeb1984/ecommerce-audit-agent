@@ -212,6 +212,7 @@ class _PageParser(HTMLParser):
         self._in_h1 = False
         self.images = 0
         self.images_missing_alt = 0
+        self.images_empty_alt = 0
         self.links = 0
         self._title_parts: list[str] = []
         self._h1_parts: list[str] = []
@@ -266,6 +267,8 @@ class _PageParser(HTMLParser):
             self.images += 1
             if "alt" not in values:
                 self.images_missing_alt += 1
+            elif not values.get("alt", "").strip():
+                self.images_empty_alt += 1
         elif tag == "a" and values.get("href"):
             self.links += 1
 
@@ -572,6 +575,24 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ("This is a basic source-HTML check, not a complete SEO or responsive-layout assessment."
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
+        ))
+    if parser.images_missing_alt:
+        findings.append(_finding(
+            "accessibility", "Images missing alt attributes", "verified", "medium",
+            f"Found {parser.images_missing_alt} image(s) without an alt attribute among {parser.images} image(s). URL: {final_url}",
+            "Images without alt attributes lack a text alternative in the HTML source. This can reduce accessibility for people using screen readers; decorative images should instead use an explicit empty alt attribute.",
+            "Add concise, context-appropriate alt text to informative images and use alt=\"\" for purely decorative images.",
+            ["Inspect each image reported in the page source.", "Decide whether each image conveys information or is decorative.", "Recheck the page with an accessibility checker and manual review."],
+            final_url,
+        ))
+    if parser.images_empty_alt:
+        findings.append(_finding(
+            "accessibility", "Images have empty alt text", "verified", "low",
+            f"Found {parser.images_empty_alt} image(s) with an explicitly empty alt attribute among {parser.images} image(s). URL: {final_url}",
+            "An empty alt attribute is appropriate for decorative images but can hide meaningful product imagery from assistive technology if used incorrectly. Source inspection alone cannot determine image purpose.",
+            "Review each affected image in context. Keep empty alt text for decorative images; provide descriptive alt text for product photos and other informative images.",
+            ["Inspect each image with empty alt text in its visual context.", "Confirm product images have meaningful descriptions where needed.", "Recheck with an accessibility tool and manual review."],
+            final_url,
         ))
     if parser.meta_robots_count > 1:
         findings.append(_finding(
