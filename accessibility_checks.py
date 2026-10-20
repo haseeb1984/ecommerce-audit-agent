@@ -11,6 +11,7 @@ class _AccessibilityParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.html_lang = ""
+        self.main_landmarks = 0
         self.ids: set[str] = set()
         self.id_counts: dict[str, int] = {}
         self.id_text: dict[str, str] = {}
@@ -38,6 +39,10 @@ class _AccessibilityParser(HTMLParser):
             self._text_id_stack.append((tag, values.get("id", "")))
         if tag == "html":
             self.html_lang = values.get("lang", "").strip()
+        # Count a native <main> or a non-main element with role=main once.
+        # Do not double-count <main role=main> as two landmarks.
+        if tag == "main" or values.get("role", "").strip().lower() == "main":
+            self.main_landmarks += 1
         if values.get("id"):
             self.ids.add(values["id"])
             self.id_counts[values["id"]] = self.id_counts.get(values["id"], 0) + 1
@@ -261,6 +266,37 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             explanation="Buttons need an accessible name that describes the action. Icon-only controls and names added by JavaScript require rendered-page review.",
             recommendation="Add meaningful visible button text where possible. For icon-only buttons, provide a concise accessible name and check it in the rendered accessibility tree.",
             verification_steps=["Inspect flagged buttons in the rendered DOM and accessibility tree.", "Test keyboard activation and screen-reader announcements."],
+            source_url=page_url,
+        ))
+
+    if parser.main_landmarks == 0:
+        findings.append(AuditFinding(
+            category="accessibility",
+            title="Primary page landmark was not detected",
+            status="manual_review_required",
+            severity="low",
+            evidence=f"No native main element or role=main landmark was detected in returned HTML for {page_url}.",
+            explanation="A main landmark can help assistive-technology users jump to the page's primary content. Some applications add landmarks after JavaScript runs, so absence in the initial HTML is a review signal rather than proof the rendered page lacks one.",
+            recommendation="Inspect the rendered accessibility tree. Where appropriate, identify the page's primary content with one main landmark, without wrapping repeated site-wide navigation or footer content inside it.",
+            verification_steps=[
+                "Inspect the rendered accessibility tree for a main landmark.",
+                "Confirm the landmark contains the page's primary content and is not duplicated by application templates.",
+            ],
+            source_url=page_url,
+        ))
+    elif parser.main_landmarks > 1:
+        findings.append(AuditFinding(
+            category="accessibility",
+            title="Multiple primary page landmarks need review",
+            status="manual_review_required",
+            severity="medium",
+            evidence=f"Found {parser.main_landmarks} native main element(s) or role=main landmark(s) in returned HTML for {page_url}.",
+            explanation="Multiple main landmarks in the same document can make the primary content boundary unclear. Hidden templates or runtime-rendered content can affect the final accessibility tree, so inspect the rendered page before changing it.",
+            recommendation="Review the rendered page and ensure only the intended primary content is exposed as the main landmark at a time. Keep secondary regions in appropriately named navigation, complementary, or contentinfo landmarks.",
+            verification_steps=[
+                "Inspect each main element and role=main in the rendered DOM and accessibility tree.",
+                "Check responsive and application templates for duplicate or hidden primary-content containers.",
+            ],
             source_url=page_url,
         ))
 
