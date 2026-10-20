@@ -519,3 +519,31 @@ def test_report_includes_sampled_scope_methodology_and_plain_language_glossary(m
     assert any("Methodology and independent verification" in item for item in rendered_text)
     assert any("Plain-language glossary" in item for item in rendered_text)
     assert any("not a measured financial impact" in item for item in rendered_text)
+
+
+
+def test_pdf_evidence_links_redact_query_fragment_and_credentials():
+    from report_generator import _link
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    paragraph = _link(
+        "https://user:password@shop.example/account?token=secret&email=a%40b.example#private",
+        getSampleStyleSheet()["BodyText"],
+    )
+
+    assert "shop.example/account" in paragraph.text
+    assert "password" not in paragraph.text
+    assert "token=secret" not in paragraph.text
+    assert "email=" not in paragraph.text
+    assert "#private" not in paragraph.text
+
+
+def test_pdf_evidence_links_omit_unsupported_or_malformed_urls():
+    from report_generator import _link
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    style = getSampleStyleSheet()["BodyText"]
+    for value in ("javascript:alert(1)", "file:///etc/passwd", "https://[broken"):
+        paragraph = _link(value, style)
+        assert "omitted" in paragraph.getPlainText().lower()
+        assert "<link" not in paragraph.text
