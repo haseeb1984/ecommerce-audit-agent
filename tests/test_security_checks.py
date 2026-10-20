@@ -455,3 +455,36 @@ def test_csp_without_default_or_object_source_flags_plugin_content_gap():
         if item.title == "Content Security Policy has hardening opportunities"
     )
     assert "neither object-src nor default-src limits plugin content" in hardening.evidence
+
+
+@pytest.mark.parametrize("body", [
+    '[{"id":7,"name":"Private Example Name","slug":"private-example"}]',
+    '[{"id":12,"slug":"author-profile"}]',
+])
+def test_wordpress_user_endpoint_is_low_severity_review_and_redacts_profile_data(body):
+    findings = inspect_exposure_response(
+        "/wp-json/wp/v2/users", 200, body,
+        {"content-type": "application/json"},
+        "https://shop.example/wp-json/wp/v2/users",
+    )
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.title == "WordPress user-profile endpoint returns public records"
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "Private Example Name" not in finding.evidence
+    assert "private-example" not in finding.evidence
+    assert "id" not in finding.evidence.lower()
+
+
+@pytest.mark.parametrize("status,body", [
+    (404, '[{"id":1,"name":"Author"}]'),
+    (200, '<html><div id="app">Storefront</div></html>'),
+    (200, '{"message":"rest_no_route"}'),
+    (200, '[{"error":"not a profile record"}]'),
+])
+def test_wordpress_user_endpoint_ignores_non_profile_or_unsuccessful_responses(status, body):
+    assert inspect_exposure_response(
+        "/wp-json/wp/v2/users", status, body, {},
+        "https://shop.example/wp-json/wp/v2/users",
+    ) == []
