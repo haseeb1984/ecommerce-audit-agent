@@ -546,3 +546,36 @@ def test_single_meta_description_does_not_trigger_duplicate_finding():
     )
     assert not any(item.title == "Multiple meta description elements" for item in findings)
 
+
+@pytest.mark.parametrize(
+    ("html", "headers", "expected_source"),
+    [
+        (
+            '<html><head><meta name="robots" content="index, noindex"></head><body><h1>Shop</h1></body></html>',
+            {},
+            "meta name=robots",
+        ),
+        (
+            '<html><head></head><body><h1>Shop</h1></body></html>',
+            {"x-robots-tag": "index, follow, noindex"},
+            "X-Robots-Tag response header",
+        ),
+        (
+            '<html><head><meta name="robots" content="index, follow"></head><body><h1>Shop</h1></body></html>',
+            {"x-robots-tag": "index, follow"},
+            None,
+        ),
+    ],
+)
+def test_homepage_noindex_detection_uses_explicit_directives(html, headers, expected_source):
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", headers)
+    noindex = [item for item in findings if item.title == "Homepage has a noindex directive"]
+    if expected_source is None:
+        assert noindex == []
+    else:
+        assert len(noindex) == 1
+        assert noindex[0].status == "verified"
+        assert expected_source in noindex[0].evidence
+        assert "may be intentional" in noindex[0].explanation
+        assert noindex[0].verification_steps
+
