@@ -1064,3 +1064,35 @@ async def test_crawl_reports_title_and_description_length_as_review_signals(monk
     assert description.status == "manual_review_required"
     assert "17 characters" in description.evidence
     assert "not proof of an SEO error" in title.explanation
+
+@pytest.mark.asyncio
+async def test_crawl_distinguishes_empty_and_duplicate_title_elements(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title></title><title> </title></head>'
+            '<body><h1>Product</h1></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    empty = next(f for f in findings if f.title == "Internal page has an empty title element")
+    duplicate = next(f for f in findings if f.title == "Internal page has multiple title elements")
+    assert empty.status == "verified"
+    assert "2 title element(s)" in empty.evidence
+    assert duplicate.status == "manual_review_required"
+    assert "2 title elements" in duplicate.evidence
+    assert not any(f.title == "Internal page missing a title" for f in findings)
