@@ -43,3 +43,19 @@ def test_filter_redacts_exception_trace(caplog):
         assert "[REDACTED]" in caplog.text
     finally:
         logger.removeFilter(redaction_filter)
+
+
+def test_filter_redacts_stack_info_field():
+    record = logging.LogRecord(
+        name="test.credentials.stack",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="request failed",
+        args=(),
+        exc_info=None,
+    )
+    record.stack_info = 'Stack (most recent call last): URL had ?token="stack-secret-value"'
+    assert CredentialRedactionFilter().filter(record)
+    assert "stack-secret-value" not in record.stack_info
+    assert "[REDACTED]" in record.stack_info
