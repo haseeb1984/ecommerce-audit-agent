@@ -693,6 +693,30 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
                     "Verify the destination is the intended canonical page and returns an appropriate response.",
                 ], final_url,
             ))
+    # A syntactically valid canonical URL can still point at a different host.
+    # Cross-domain canonicals can be intentional, so report this as a review signal.
+    if canonical_is_valid and parser.canonical_href:
+        try:
+            canonical_host = (canonical_parts.hostname or "").lower().rstrip(".")
+            page_parts = urlsplit(final_url)
+            page_host = (page_parts.hostname or "").lower().rstrip(".")
+            canonical_port = canonical_parts.port or (443 if canonical_parts.scheme.lower() == "https" else 80)
+            page_port = page_parts.port or (443 if page_parts.scheme.lower() == "https" else 80)
+            canonical_is_cross_origin = canonical_host != page_host or canonical_port != page_port
+        except (ValueError, UnicodeError):
+            canonical_is_cross_origin = False
+        if canonical_is_cross_origin:
+            findings.append(_finding(
+                "technical_seo", "Canonical points to a different origin", "manual_review_required", "medium",
+                f"Page host is {page_host or '(unknown)'!r}, while canonical host is {canonical_host or '(unknown)'!r}. Page URL: {final_url}",
+                "A cross-origin canonical can be valid for intentionally syndicated or duplicate content, but an accidental host mismatch may consolidate search signals to the wrong site. This source check cannot determine the site's intended canonical strategy.",
+                "Confirm that cross-domain canonicalization is intentional. If this page should be canonical to itself or to another page on the same site, correct the href and verify redirects, sitemap entries, and internal links agree.",
+                [
+                    "Compare the canonical destination with the preferred URL for this page.",
+                    "Open the canonical target and confirm it represents the same or intentionally preferred content.",
+                    "Check whether cross-domain canonicalization is part of an approved migration or syndication setup.",
+                ], final_url,
+            ))
     viewport = parser.viewport.lower().replace(" ", "")
     viewport_steps = [
         "Inspect the page source for meta name=\"viewport\".",
