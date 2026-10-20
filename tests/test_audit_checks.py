@@ -153,6 +153,36 @@ def test_homepage_checks_product_image_property(image, should_flag):
     ],
 )
 @pytest.mark.parametrize(
+    ("offers", "should_flag"),
+    [
+        (None, True),
+        ({}, True),
+        ({"price": "19.99", "priceCurrency": "USD"}, False),
+        ([{"price": "19.99", "priceCurrency": "USD"}], False),
+        ({"@type": "AggregateOffer", "lowPrice": "10", "priceCurrency": "USD"}, False),
+        ("not-an-offer", True),
+    ],
+)
+def test_homepage_checks_product_offer_presence(offers, should_flag):
+    import json
+    product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Example",
+        "image": "https://shop.example/item.jpg",
+    }
+    if offers is not None:
+        product["offers"] = offers
+    html = f'<html><head><script type="application/ld+json">{json.dumps(product)}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    matches = [item for item in findings if item.title == "Product structured data has no offer information"]
+    assert bool(matches) is should_flag
+    if matches:
+        assert matches[0].severity == "low"
+        assert matches[0].source_url == "https://shop.example/"
+
+
+@pytest.mark.parametrize(
     ("availability", "should_flag"),
     [
         ("https://schema.org/InStock", False),
