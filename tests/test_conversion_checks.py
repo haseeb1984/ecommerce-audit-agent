@@ -67,3 +67,14 @@ def test_repeated_marketing_tag_signatures_need_review_not_confirmed_duplicate_f
     assert finding.severity == "medium"
     assert "Google tag / Analytics" in finding.evidence
     assert "cannot confirm" in finding.explanation
+
+def test_repeated_same_host_tag_occurrences_are_counted():
+    html = """
+    <html><body>
+      <script src="https://www.googletagmanager.com/gtag/js?id=G-ONE"></script>
+      <script src="https://www.googletagmanager.com/gtag/js?id=G-TWO"></script>
+    </body></html>
+    """
+    findings = inspect_conversion_html(html, "https://shop.example/")
+    finding = next(f for f in findings if f.title == "Repeated marketing tag signatures need review")
+    assert "2 matching occurrences" in finding.evidence
