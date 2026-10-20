@@ -63,6 +63,11 @@ jobs:
           path: audit-report-sample.pdf
           if-no-files-found: warn
           retention-days: 14
+      - name: Install browser for real website screenshots
+        if: success()
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
       - name: Generate PDF reports from real public websites (no license quota)
         if: success()
         run: python scripts/generate_live_audit_pdfs.py --output-dir live-audit-pdfs
