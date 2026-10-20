@@ -159,3 +159,24 @@ def test_fetch_failure_does_not_leak_exception_details(monkeypatch):
     assert "secret-token-123" not in finding.evidence
     assert "private host detail" not in finding.evidence
     assert pages_checked == []
+
+
+def test_flags_http_form_action_on_https_homepage():
+    findings = inspect_conversion_html(
+        '<html><body><form action="http://payments.example/submit?token=private"><input name="email">'
+        '<button type="submit">Continue</button></form></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "Form submission may downgrade to unencrypted HTTP")
+    assert finding.status == "verified"
+    assert finding.severity == "high"
+    assert "http://payments.example/submit" in finding.evidence
+    assert "private" not in finding.evidence
+
+
+def test_https_form_action_is_not_flagged_as_http_downgrade():
+    findings = inspect_conversion_html(
+        '<html><body><form action="https://payments.example/submit"><button>Continue</button></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "Form submission may downgrade to unencrypted HTTP" for f in findings)
