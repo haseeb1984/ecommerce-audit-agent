@@ -555,6 +555,14 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                 ))
             else:
                 findings.extend(inspect_homepage(html, final_url, headers))
+                # Reuse the safely fetched homepage HTML; do not make a second request to the target.
+                from dependency_checks import inspect_client_dependency_versions
+
+                dependency_findings, dependency_limitations = await inspect_client_dependency_versions(
+                    html, final_url
+                )
+                findings.extend(dependency_findings)
+                limitations.extend(dependency_limitations)
         except Exception as exc:
             findings.append(_finding(
                 "crawl", "Homepage could not be inspected", "not_tested", "info",
