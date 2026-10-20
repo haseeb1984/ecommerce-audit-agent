@@ -93,6 +93,31 @@ def test_homepage_checks_jsonld_syntax_and_product_name(jsonld, expected_title):
         assert finding.evidence and finding.recommendation and finding.verification_steps
 
 
+@pytest.mark.parametrize(
+    ("offer", "expected_title"),
+    [
+        ({}, "Product offers missing price"),
+        ({"price": "19.99"}, "Product offers missing or invalid currency"),
+        ({"price": "19.99", "priceCurrency": "USD"}, None),
+        ({"price": "19.99", "priceCurrency": "US"}, "Product offers missing or invalid currency"),
+    ],
+)
+def test_homepage_checks_product_offer_price_and_currency(offer, expected_title):
+    product = {"@context": "https://schema.org", "@type": "Product", "name": "Example"}
+    product["offers"] = offer
+    import json
+    jsonld = json.dumps(product)
+    html = f'<html><head><script type="application/ld+json">{jsonld}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    offer_findings = [item for item in findings if item.category == "structured_data" and "Product offers" in item.title]
+    if expected_title is None:
+        assert offer_findings == []
+    else:
+        finding = next(item for item in offer_findings if item.title == expected_title)
+        assert finding.status == "verified"
+        assert finding.evidence and finding.recommendation and finding.verification_steps
+
+
 def test_homepage_findings_include_evidence_and_verification_steps():
     findings = audit_checks.inspect_homepage(
         "<html><head></head><body><img src='x'></body></html>",
