@@ -320,3 +320,31 @@ def test_aria_hidden_nonfocusable_content_does_not_trigger_focus_conflict():
         for f in findings
     )
 
+
+def test_focusable_descendant_of_aria_hidden_container_is_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<div aria-hidden="true"><div><button type="button">Add to cart</button></div></div>'
+        '</body></html>',
+        "https://shop.example/products/item",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "Focusable controls may be hidden from assistive technology"
+    )
+    assert finding.status == "manual_review_required"
+    assert "button" in finding.evidence
+    assert "1 focusable element(s)" in finding.evidence
+
+
+def test_focusable_control_outside_aria_hidden_container_is_not_counted_by_that_container():
+    from accessibility_checks import _AccessibilityParser
+
+    parser = _AccessibilityParser()
+    parser.feed(
+        '<html lang="en"><body>'
+        '<div aria-hidden="true"><span>Decorative</span></div>'
+        '<button>Visible action</button></body></html>'
+    )
+    assert parser.aria_hidden_descendant_focusables == []
+
