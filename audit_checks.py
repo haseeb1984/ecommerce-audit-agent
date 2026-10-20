@@ -331,6 +331,32 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
              if not passed else "The expected element is present in the returned HTML; its quality and rendered behavior were not fully assessed."),
             recommendation, steps, final_url,
         ))
+    # Canonical declarations are easy to misconfigure and were parsed above but
+    # previously did not produce a finding. Report only source-verifiable problems.
+    if parser.canonical_count > 1:
+        findings.append(_finding(
+            "technical_seo", "Multiple canonical link elements", "verified", "medium",
+            f"Found {parser.canonical_count} canonical link elements in the returned HTML. URL: {final_url}",
+            "Multiple canonical declarations can send conflicting canonicalization signals. This source check does not determine which URL search engines will select.",
+            "Keep one intentional canonical link element in the document head and ensure its absolute destination matches the preferred indexable URL.",
+            [
+                "Inspect the raw HTML and confirm there is exactly one canonical link element.",
+                "Resolve its href against the final page URL and confirm it points to the intended indexable URL.",
+                "Check that redirects, robots directives, and sitemap URLs are consistent with the canonical destination.",
+            ], final_url,
+        ))
+    if parser.canonical_missing_href_count:
+        findings.append(_finding(
+            "technical_seo", "Canonical link missing href", "verified", "medium",
+            f"{parser.canonical_missing_href_count} canonical link element(s) have no usable href attribute. URL: {final_url}",
+            "A canonical element without a destination cannot reliably declare the preferred URL.",
+            "Add a valid canonical href to the intended indexable URL, or remove the empty canonical element.",
+            [
+                "Inspect each canonical link element in the raw HTML.",
+                "Confirm every retained canonical element has a non-empty href.",
+                "Verify the resolved destination is the preferred indexable URL.",
+            ], final_url,
+        ))
     viewport = parser.viewport.lower().replace(" ", "")
     viewport_steps = [
         "Inspect the page source for meta name=\"viewport\".",
