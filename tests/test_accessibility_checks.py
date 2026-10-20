@@ -232,3 +232,26 @@ def test_resolved_aria_labelledby_is_recognized_as_name():
         for finding in findings
     )
 
+
+
+
+def test_invalid_document_language_tag_is_flagged_for_review():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="english_US"><body><h1>Store</h1></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(
+        f for f in findings if f.title == "Document language tag needs review"
+    )
+    assert finding.status == "manual_review_required"
+    assert "english_US" in finding.evidence
+
+
+def test_valid_regional_document_language_tag_is_not_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en-GB"><body><h1>Store</h1></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        f.title == "Document language tag needs review" for f in findings
+    )
