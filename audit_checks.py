@@ -743,7 +743,7 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
         else:
             status = "verified"
             severity = "info"
-        return [_finding(
+        findings = [_finding(
             category, "Sitemap XML structure", status, severity,
             f"Root element: {root_name or 'missing'}; loc entries: {len(loc_values)}; "
             f"entries without an absolute HTTP(S) URL: {invalid_locations}.",
@@ -752,6 +752,22 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
             ["Validate the XML with a sitemap validator.", "Inspect search-engine sitemap status and sample listed URLs."],
             source_url,
         )]
+        normalized_locations = [value for value in loc_values if value]
+        duplicate_locations = len(normalized_locations) - len(set(normalized_locations))
+        if duplicate_locations:
+            findings.append(_finding(
+                category, "Duplicate URLs in sitemap",
+                "verified", "low",
+                f"Found {duplicate_locations} duplicate loc entr(y/ies) among {len(normalized_locations)} non-empty sitemap loc entries. Source: {source_url}",
+                "Repeated URLs add unnecessary sitemap entries and can obscure the quality of the submitted URL set. Duplicate detection is exact-string based; it does not treat redirects, URL parameters, or canonical equivalents as duplicates.",
+                "Remove exact duplicate loc entries and retain the intended canonical URL for each page. Then validate and resubmit the sitemap if appropriate.",
+                [
+                    "Compare repeated loc values in the published XML.",
+                    "Check that each retained URL is canonical and intended for indexing.",
+                    "Validate the updated sitemap and review its search-engine processing status.",
+                ], source_url,
+            ))
+        return findings
     return []
 
 
