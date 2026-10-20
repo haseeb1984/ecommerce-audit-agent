@@ -103,7 +103,7 @@ def test_homepage_accepts_relative_canonical_destination():
     ("jsonld", "expected_title"),
     [
         ('{"@context":"https://schema.org","@type":"Product"}', "Product structured data missing name"),
-        ('{"@context":"https://schema.org","@type":"Product","name":"Example item"}', None),
+        ('{"@context":"https://schema.org","@type":"Product","name":"Example item","image":"https://shop.example/item.jpg"}', None),
         ('{"@context":"https://schema.org","@type":"Product"', "Malformed JSON-LD structured data"),
     ],
 )
@@ -120,6 +120,30 @@ def test_homepage_checks_jsonld_syntax_and_product_name(jsonld, expected_title):
 
 
 @pytest.mark.parametrize(
+    ("image", "should_flag"),
+    [
+        (None, True),
+        ("", True),
+        ("https://shop.example/item.jpg", False),
+        (["", "https://shop.example/item-2.jpg"], False),
+        ([{"@type": "ImageObject", "contentUrl": "https://shop.example/item.jpg"}], False),
+    ],
+)
+def test_homepage_checks_product_image_property(image, should_flag):
+    import json
+    product = {"@context": "https://schema.org", "@type": "Product", "name": "Example"}
+    if image is not None:
+        product["image"] = image
+    html = f'<html><head><script type="application/ld+json">{json.dumps(product)}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    image_findings = [item for item in findings if item.title == "Product structured data missing image"]
+    assert bool(image_findings) is should_flag
+    if image_findings:
+        assert image_findings[0].status == "verified"
+        assert image_findings[0].source_url == "https://shop.example/"
+
+
+@pytest.mark.parametrize(
     ("offer", "expected_title"),
     [
         ({}, "Product offers missing price"),
@@ -129,7 +153,7 @@ def test_homepage_checks_jsonld_syntax_and_product_name(jsonld, expected_title):
     ],
 )
 def test_homepage_checks_product_offer_price_and_currency(offer, expected_title):
-    product = {"@context": "https://schema.org", "@type": "Product", "name": "Example"}
+    product = {"@context": "https://schema.org", "@type": "Product", "name": "Example", "image": "https://shop.example/item.jpg"}
     product["offers"] = offer
     import json
     jsonld = json.dumps(product)
