@@ -12,6 +12,8 @@ class _AccessibilityParser(HTMLParser):
         self.html_lang = ""
         self.ids: set[str] = set()
         self.id_counts: dict[str, int] = {}
+        self.id_text: dict[str, str] = {}
+        self._text_id_stack: list[tuple[str, str]] = []
         self.aria_references: list[tuple[str, str, str]] = []
         self.label_for: set[str] = set()
         self.wrapped_label_depth = 0
@@ -31,6 +33,8 @@ class _AccessibilityParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self._text_id_stack.append((tag, values.get("id", "")))
         if tag == "html":
             self.html_lang = values.get("lang", "").strip()
         if values.get("id"):
@@ -102,6 +106,10 @@ class _AccessibilityParser(HTMLParser):
 
     def handle_endtag(self, tag):
         tag = tag.lower()
+        for index in range(len(self._text_id_stack) - 1, -1, -1):
+            if self._text_id_stack[index][0] == tag:
+                del self._text_id_stack[index:]
+                break
         if tag == "a":
             self._active_link = None
         elif tag == "button":
@@ -118,6 +126,9 @@ class _AccessibilityParser(HTMLParser):
             self._active_label_depth -= 1
 
     def handle_data(self, data):
+        for _tag, identifier in self._text_id_stack:
+            if identifier:
+                self.id_text[identifier] = self.id_text.get(identifier, "") + data
         if self._in_svg_title and self._active_svg_control is not None:
             self._active_svg_control["svg_title"] = str(self._active_svg_control.get("svg_title", "")) + data.strip()
         # SVG <title> names the SVG; do not misclassify its text as visible link/button text.
@@ -172,7 +183,10 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
     def has_resolvable_labelledby(item: dict[str, str]) -> bool:
         """Count aria-labelledby only when every referenced ID exists in returned HTML."""
         identifiers = item.get("aria_labelledby", "").split()
-        return bool(identifiers) and all(identifier in parser.ids for identifier in identifiers)
+        return bool(identifiers) and all(
+            identifier in parser.ids and parser.id_text.get(identifier, "").strip()
+            for identifier in identifiers
+        )
 
     unlabeled_inputs = [item for item in parser.inputs if not (
         item["aria_label"] or has_resolvable_labelledby(item) or item["title"] or
