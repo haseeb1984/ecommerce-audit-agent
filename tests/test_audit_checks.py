@@ -73,6 +73,26 @@ def test_homepage_reports_malformed_canonical_declarations(head, expected_title,
     assert finding.verification_steps
 
 
+@pytest.mark.parametrize(
+    ("jsonld", "expected_title"),
+    [
+        ('{"@context":"https://schema.org","@type":"Product"}', "Product structured data missing name"),
+        ('{"@context":"https://schema.org","@type":"Product","name":"Example item"}', None),
+        ('{"@context":"https://schema.org","@type":"Product"', "Malformed JSON-LD structured data"),
+    ],
+)
+def test_homepage_checks_jsonld_syntax_and_product_name(jsonld, expected_title):
+    html = f'<html><head><script type="application/ld+json">{jsonld}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    structured_findings = [item for item in findings if item.category == "structured_data"]
+    if expected_title is None:
+        assert structured_findings == []
+    else:
+        finding = next(item for item in structured_findings if item.title == expected_title)
+        assert finding.status == "verified"
+        assert finding.evidence and finding.recommendation and finding.verification_steps
+
+
 def test_homepage_findings_include_evidence_and_verification_steps():
     findings = audit_checks.inspect_homepage(
         "<html><head></head><body><img src='x'></body></html>",
