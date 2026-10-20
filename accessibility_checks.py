@@ -25,6 +25,7 @@ class _AccessibilityParser(HTMLParser):
         self.links: list[dict[str, str | bool]] = []
         self.buttons: list[dict[str, str | bool]] = []
         self.images_missing_alt: int = 0
+        self.aria_hidden_focusables: list[tuple[str, str]] = []
         self._active_link: dict[str, str | bool] | None = None
         self._active_button: dict[str, str | bool] | None = None
         self._active_svg_control: dict[str, str | bool] | None = None
@@ -39,6 +40,10 @@ class _AccessibilityParser(HTMLParser):
             self._text_id_stack.append((tag, values.get("id", "")))
         if tag == "html":
             self.html_lang = values.get("lang", "").strip()
+        tabindex = values.get("tabindex", "").strip()
+        is_focusable = tag in {"a", "button", "input", "select", "textarea"} and (tag != "a" or "href" in values)
+        if values.get("aria-hidden", "").strip().lower() == "true" and (is_focusable or (tabindex.lstrip("+-").isdigit() and int(tabindex) >= 0)):
+            self.aria_hidden_focusables.append((tag, values.get("type", "").strip().lower()))
         # Count a native <main> or a non-main element with role=main once.
         # Do not double-count <main role=main> as two landmarks.
         if tag == "main" or values.get("role", "").strip().lower() == "main":
