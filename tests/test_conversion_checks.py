@@ -201,3 +201,33 @@ def test_post_form_with_personal_fields_is_not_flagged_for_get_url_exposure():
         "https://shop.example/",
     )
     assert not any(f.title == "GET form may place personal or sensitive fields in the URL" for f in findings)
+
+
+def test_flags_get_form_with_address_and_date_of_birth_fields_for_review():
+    findings = inspect_conversion_html(
+        '<html><body><form method="get" action="/lookup">'
+        '<input name="shipping_address" autocomplete="street-address">'
+        '<input name="date_of_birth" type="date">'
+        '<button type="submit">Continue</button></form></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "GET form may place personal or sensitive fields in the URL"
+    )
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "high"
+    assert "1 GET form(s)" in finding.evidence
+
+
+def test_get_form_with_non_sensitive_search_fields_is_not_flagged_as_personal_data():
+    findings = inspect_conversion_html(
+        '<html><body><form method="get" action="/search">'
+        '<input name="q" type="search"><input name="page" type="number">'
+        '<button type="submit">Search</button></form></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        f.title == "GET form may place personal or sensitive fields in the URL"
+        for f in findings
+    )
