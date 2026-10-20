@@ -878,3 +878,28 @@ def test_sitemap_does_not_report_unique_loc_entries_as_duplicates():
         "sitemap_xml", sitemap, "https://shop.example/sitemap.xml"
     )
     assert not any(item.title == "Duplicate URLs in sitemap" for item in findings)
+
+
+def test_aggregate_offer_price_range_is_accepted_without_scalar_price():
+    html = '''<html><head><script type="application/ld+json">
+    {"@type":"Product","name":"Widget","offers":{"@type":"AggregateOffer",
+    "lowPrice":"10.00","highPrice":"25.00","priceCurrency":"USD",
+    "availability":"https://schema.org/InStock"}}
+    </script></head><body><h1>Widget</h1></body></html>'''
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/widget", {})
+    assert not any(item.title == "Product offers missing price" for item in findings)
+    assert not any(item.title == "Aggregate product offer has an invalid price range" for item in findings)
+
+
+def test_aggregate_offer_flags_low_price_above_high_price():
+    html = '''<html><head><script type="application/ld+json">
+    {"@type":"Product","name":"Widget","offers":{"@type":"AggregateOffer",
+    "lowPrice":"30","highPrice":"20","priceCurrency":"USD",
+    "availability":"https://schema.org/InStock"}}
+    </script></head><body><h1>Widget</h1></body></html>'''
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/widget", {})
+    finding = next(item for item in findings if item.title == "Aggregate product offer has an invalid price range")
+    assert finding.status == "verified"
+    assert finding.severity == "medium"
+    assert finding.verification_steps
+
