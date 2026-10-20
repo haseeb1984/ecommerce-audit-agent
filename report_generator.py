@@ -49,13 +49,13 @@ def _link(url: str, style: ParagraphStyle) -> Paragraph:
         default_port = 443 if scheme == "https" else 80
         if port is not None and port != default_port:
             display_host = f"{display_host}:{port}"
-        safe_url = urlunsplit((scheme, display_host, parts.path or "/", "", ""))
+        clean_url = urlunsplit((scheme, display_host, parts.path or "/", "", ""))
         # Query strings and fragments can contain session IDs, email addresses,
         # tracking values, or reset tokens. Keep evidence links useful without
         # embedding those values in a downloadable customer report.
-        safe_url = escape(safe_url, {'"': "&quot;"})
-        label = escape(safe_url)
-        return Paragraph(f'<link href="{safe_url}" color="#1759a8">{label}</link>', style)
+        safe_href = escape(clean_url, {'"': "&quot;"})
+        label = escape(clean_url)
+        return Paragraph(f'<link href="{safe_href}" color="#1759a8">{label}</link>', style)
     except (ValueError, UnicodeError):
         return _p("Link omitted (malformed URL)", style)
 
