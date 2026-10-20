@@ -208,6 +208,7 @@ class _PageParser(HTMLParser):
         self.canonical_count = 0
         self.canonical_missing_href_count = 0
         self.h1_count = 0
+        self.empty_h1_count = 0
         self.h1_text = ""
         self._in_h1 = False
         self.images = 0
@@ -284,7 +285,9 @@ class _PageParser(HTMLParser):
         elif tag.lower() == "h1":
             if self._in_h1:
                 text = " ".join("".join(self._h1_parts).split())
-                if text and not self.h1_text:
+                if not text:
+                    self.empty_h1_count += 1
+                elif not self.h1_text:
                     self.h1_text = text
             self._in_h1 = False
 
