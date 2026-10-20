@@ -1126,3 +1126,14 @@ async def test_crawl_flags_empty_h1_heading_for_contextual_review(monkeypatch):
     assert finding.severity == "low"
     assert "2 empty H1 element(s) among 2 H1 element(s)" in finding.evidence
     assert "source-only crawler does not execute" in finding.explanation
+
+def test_anchor_name_parser_flags_links_without_text_or_accessible_label():
+    parser = crawl_checks._AnchorNameParser()
+    parser.feed(
+        '<a href="/empty"></a>'
+        '<a href="/labelled" aria-label="Open cart"></a>'
+        '<a href="/image"><img src="/icon.svg" alt="Account"></a>'
+        '<a href="/text"><span>Contact</span></a>'
+        '<a href="/title" title="Help"></a>'
+    )
+    assert parser.empty_name_hrefs == ["/empty"]
