@@ -116,7 +116,7 @@ class _ConversionParser(HTMLParser):
             self.form_actions.append(values.get("action", ""))
         elif tag in {"input", "select", "textarea"}:
             input_type = values.get("type", "text").lower()
-            if input_type not in {"hidden", "submit", "button", "reset", "image"}:
+            if self._active_form and input_type not in {"hidden", "submit", "button", "reset", "image"}:
                 self.form_controls.append((
                     values.get("id", "").strip(),
                     values.get("aria-label", "").strip(),
