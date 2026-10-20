@@ -139,7 +139,7 @@ class _MetaRefreshParser(HTMLParser):
 
 
 def inspect_meta_refresh(html: str, final_url: str) -> list[AuditFinding]:
-    """Flag HTML meta-refresh redirects for manual review; never label them malicious by default."""
+    """Flag HTML meta-refresh redirects for manual review without exposing URL credentials."""
     parser = _MetaRefreshParser()
     try:
         parser.feed(html)
@@ -147,27 +147,66 @@ def inspect_meta_refresh(html: str, final_url: str) -> list[AuditFinding]:
         return []
     if not parser.targets:
         return []
-    external_targets = []
+
+    def origin(parts):
+        scheme = parts.scheme.lower()
+        try:
+            port = parts.port
+        except ValueError:
+            return None
+        if port is None:
+            port = 443 if scheme == "https" else 80
+        return scheme, (parts.hostname or "").lower(), port
+
+    page_parts = urlsplit(final_url)
+    page_origin = origin(page_parts)
+    external_targets: list[str] = []
     malformed_targets = 0
-    for target in parser.targets[:20]:
+    checked_targets = parser.targets[:20]
+    for target in checked_targets:
         try:
             resolved = urljoin(final_url, target)
             parts = urlsplit(resolved)
-            _ = parts.port
-            if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+            target_origin = origin(parts)
+            if (
+                parts.scheme.lower() not in {"http", "https"}
+                or not parts.hostname
+                or parts.username is not None
+                or parts.password is not None
+                or target_origin is None
+            ):
                 malformed_targets += 1
                 continue
-            if (parts.scheme.lower(), parts.netloc.lower()) != (
-                urlsplit(final_url).scheme.lower(), urlsplit(final_url).netloc.lower()
-            ):
-                external_targets.append(f"{parts.scheme.lower()}://{parts.netloc.lower()}{parts.path or '/'}")
+            if target_origin != page_origin:
+                # Rebuild authority from validated host/port; never echo userinfo,
+                # fragments, or query parameters that could contain tokens.
+                host = parts.hostname.lower()
+                display_host = f"[{host}]" if ":" in host else host
+                explicit_port = parts.port
+                default_port = 443 if parts.scheme.lower() == "https" else 80
+                if explicit_port is not None and explicit_port != default_port:
+                    display_host = f"{display_host}:{explicit_port}"
+                external_targets.append(
+                    f"{parts.scheme.lower()}://{display_host}{parts.path or '/'}"
+                )
         except (ValueError, UnicodeError):
             malformed_targets += 1
-    details = [f"Detected {len(parser.targets)} meta-refresh directive(s) in returned HTML."]
+
+    details = [
+        f"Detected {len(parser.targets)} meta-refresh directive(s) in returned HTML."
+    ]
+    if len(parser.targets) > len(checked_targets):
+        details.append(
+            f"Only the first {len(checked_targets)} directives were inspected due to the safety cap."
+        )
     if external_targets:
-        details.append("External destination host(s): " + ", ".join(dict.fromkeys(external_targets)[:5]) + ".")
+        details.append(
+            "External destination host(s): " + ", ".join(dict.fromkeys(external_targets)[:5]) + "."
+        )
     if malformed_targets:
-        details.append(f"{malformed_targets} malformed or unsupported target(s) were not resolved.")
+        details.append(
+            f"{malformed_targets} malformed or unsupported target(s) were not resolved."
+        )
     return [_finding(
         "security", "HTML meta-refresh redirect needs review",
         "manual_review_required", "medium" if external_targets else "low",
