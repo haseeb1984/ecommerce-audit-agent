@@ -503,8 +503,8 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ], final_url,
         ))
     if parser.canonical_href:
-        canonical_target = urljoin(final_url, parser.canonical_href)
         try:
+            canonical_target = urljoin(final_url, parser.canonical_href)
             canonical_parts = urlsplit(canonical_target)
             _ = canonical_parts.port
             canonical_is_valid = (
