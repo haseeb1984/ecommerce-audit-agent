@@ -1,3 +1,6 @@
+import asyncio
+
+import conversion_checks
 from conversion_checks import inspect_conversion_html
 
 
@@ -139,3 +142,20 @@ def test_malformed_link_url_is_skipped_without_aborting_conversion_audit():
     finding = next(f for f in findings if f.title == "Primary conversion path signals")
     assert "1 same-origin cart/checkout/payment-like link(s)" in finding.evidence
     assert "1 malformed URL(s) skipped safely" in finding.evidence
+
+
+def test_fetch_failure_does_not_leak_exception_details(monkeypatch):
+    async def fail_fetch(_client, _url):
+        raise RuntimeError("authorization=secret-token-123; private host detail")
+
+    monkeypatch.setattr(conversion_checks, "_safe_get", fail_fetch)
+    findings, pages_checked, _limitations = asyncio.run(
+        conversion_checks.run_conversion_paid_traffic_checks("https://shop.example/")
+    )
+
+    finding = next(f for f in findings if f.title == "Conversion signals not inspected")
+    assert finding.status == "not_tested"
+    assert "RuntimeError" in finding.evidence
+    assert "secret-token-123" not in finding.evidence
+    assert "private host detail" not in finding.evidence
+    assert pages_checked == []
