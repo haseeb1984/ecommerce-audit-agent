@@ -360,6 +360,31 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ["Inspect Product entities in every JSON-LD block.", "Compare structured product names with the visible product title.", "Run a structured-data validator after changes."],
             final_url,
         ))
+    products_without_image = 0
+    for product in product_entities:
+        image = product.get("image")
+        image_values = image if isinstance(image, list) else [image]
+        has_image = any(
+            (isinstance(item, str) and item.strip())
+            or (isinstance(item, dict) and any(
+                isinstance(item.get(key), str) and item[key].strip()
+                for key in ("url", "contentUrl")
+            ))
+            for item in image_values
+        )
+        if not has_image:
+            products_without_image += 1
+    if products_without_image:
+        findings.append(_finding(
+            "structured_data", "Product structured data missing image", "verified", "medium",
+            f"Found {products_without_image} Product entity/entities without a usable image property. URL: {final_url}",
+            "Product images help search engines understand the item and are part of common product rich-result requirements. This source check does not assess image accessibility, quality, or rich-result eligibility.",
+            "Add one or more representative, crawlable product image URLs to each affected Product entity and ensure they show the actual product.",
+            ["Inspect the image property on each Product entity in JSON-LD.",
+             "Confirm each image URL loads publicly and matches the visible product or selected variant.",
+             "Validate the structured data after updating it."],
+            final_url,
+        ))
     # Check price/currency signals only when Product JSON-LD is present. This is
     # a targeted source check, not a full Google rich-result eligibility validator.
     products_with_offers = 0
