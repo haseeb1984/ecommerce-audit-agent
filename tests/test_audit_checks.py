@@ -74,6 +74,32 @@ def test_homepage_reports_malformed_canonical_declarations(head, expected_title,
 
 
 @pytest.mark.parametrize(
+    "canonical_href",
+    [
+        "javascript:alert(1)",
+        "https://user:pass@shop.example/product",
+        "https://shop.example/product#details",
+        "https://[invalid",
+    ],
+)
+def test_homepage_reports_malformed_canonical_destination(canonical_href):
+    html = f'<html><head><link rel="canonical" href="{canonical_href}"></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    finding = next(item for item in findings if item.title == "Canonical URL is malformed")
+    assert finding.status == "verified"
+    assert finding.severity == "medium"
+    assert finding.source_url == "https://shop.example/"
+    assert finding.recommendation
+    assert finding.verification_steps
+
+
+def test_homepage_accepts_relative_canonical_destination():
+    html = '<html><head><link rel="canonical" href="/products/widget"></head><body><h1>Widget</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/products/widget", {})
+    assert not any(item.title == "Canonical URL is malformed" for item in findings)
+
+
+@pytest.mark.parametrize(
     ("jsonld", "expected_title"),
     [
         ('{"@context":"https://schema.org","@type":"Product"}', "Product structured data missing name"),
