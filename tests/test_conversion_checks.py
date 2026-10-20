@@ -323,3 +323,39 @@ def test_malformed_homepage_origin_does_not_abort_conversion_scan():
         "not a valid URL",
     )
     assert any(f.title == "Primary conversion path signals" for f in findings)
+
+
+def test_detects_unlabeled_form_controls_but_accepts_explicit_label_associations():
+    html = """
+    <html><body>
+      <form>
+        <label for="email">Email address</label>
+        <input id="email" type="email" name="email">
+        <label>Password <input type="password" name="password"></label>
+        <input type="text" name="coupon" placeholder="Coupon code">
+        <input type="search" aria-label="Search products" name="q">
+        <button type="submit">Continue</button>
+      </form>
+    </body></html>
+    """
+    findings = inspect_conversion_html(html, "https://shop.example/")
+    finding = next(f for f in findings if f.title == "Form controls may lack accessible labels")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "medium"
+    assert "1 input, select, or textarea control(s)" in finding.evidence
+
+
+def test_does_not_flag_controls_with_aria_labelledby_or_title():
+    html = """
+    <html><body>
+      <form>
+        <span id="quantity-label">Quantity</span>
+        <input aria-labelledby="quantity-label" name="quantity">
+        <select title="Choose a delivery option" name="delivery"><option>Standard</option></select>
+        <textarea aria-label="Order notes" name="notes"></textarea>
+        <button type="submit">Continue</button>
+      </form>
+    </body></html>
+    """
+    findings = inspect_conversion_html(html, "https://shop.example/")
+    assert not any(f.title == "Form controls may lack accessible labels" for f in findings)
