@@ -619,20 +619,56 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
     """Perform bounded semantic checks on robots.txt and sitemap.xml content."""
     if category == "robots_txt":
         directives: list[tuple[str, str]] = []
+        wildcard_groups: list[dict[str, Any]] = []
+        current_agents: list[str] = []
+        current_rules: list[tuple[str, str]] = []
+        group_has_rule = False
+
+        def save_group() -> None:
+            if current_agents:
+                wildcard_groups.append({
+                    "agents": list(current_agents),
+                    "rules": list(current_rules),
+                })
+
         for raw_line in body.splitlines():
             line = raw_line.split("#", 1)[0].strip()
-            if ":" not in line:
+            if not line or ":" not in line:
                 continue
             key, value = line.split(":", 1)
             key = key.strip().lower()
             value = value.strip()
-            if key and value:
-                directives.append((key, value))
+            if not key:
+                continue
+            if key == "user-agent":
+                # Consecutive User-agent lines share a group until a rule
+                # has appeared; a later User-agent starts a new group.
+                if group_has_rule:
+                    save_group()
+                    current_agents = []
+                    current_rules = []
+                    group_has_rule = False
+                if value:
+                    current_agents.append(value.lower())
+                    directives.append((key, value))
+                continue
+            if not value:
+                continue
+            directives.append((key, value))
+            if key in {"allow", "disallow", "crawl-delay", "sitemap"}:
+                if key != "sitemap" and current_agents:
+                    current_rules.append((key, value))
+                    group_has_rule = True
+                elif key == "sitemap":
+                    # Sitemap is a global declaration, not a group rule.
+                    pass
+        save_group()
+
         user_agents = sum(1 for key, _ in directives if key == "user-agent")
         disallow_count = sum(1 for key, _ in directives if key == "disallow")
         allow_count = sum(1 for key, _ in directives if key == "allow")
         sitemap_count = sum(1 for key, _ in directives if key == "sitemap")
-        return [_finding(
+        findings = [_finding(
             category,
             "robots.txt directive summary",
             "verified" if user_agents else "manual_review_required",
@@ -646,6 +682,25 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
              "Check important product and category URLs with the relevant search-engine tools."],
             source_url,
         )]
+        wildcard_blocks_site = any(
+            "*" in group["agents"]
+            and any(key == "disallow" and value.strip() == "/" for key, value in group["rules"])
+            for group in wildcard_groups
+        )
+        if wildcard_blocks_site:
+            findings.append(_finding(
+                category, "robots.txt may block the entire site", "verified", "high",
+                f"A User-agent: * group contains Disallow: /. Source: {source_url}",
+                "This rule asks compliant crawlers to avoid crawling the site's URL paths. If published on a live storefront unintentionally, product and category pages may become unavailable for crawling. Robots directives do not themselves guarantee deindexing, and the rule may be intentional for staging or private environments.",
+                "Confirm the rule is intentional. For a public storefront that should be crawled, remove or narrow the wildcard Disallow rule while preserving any intentional private-path restrictions.",
+                [
+                    "Inspect the complete robots.txt group and any Allow exceptions.",
+                    "Confirm whether the site is production, staging, or intentionally private.",
+                    "Use the relevant search-engine robots tester to check representative product and category URLs.",
+                ],
+                source_url,
+            ))
+        return findings
 
     if category == "sitemap_xml":
         try:
