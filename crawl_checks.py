@@ -134,6 +134,42 @@ class _LinkParser(HTMLParser):
             self.links.append(href)
 
 
+
+class _AnchorNameParser(HTMLParser):
+    """Collect links that have no apparent accessible name in source HTML."""
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._anchors: list[dict[str, str]] = []
+        self.empty_name_hrefs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        values = {key.lower(): value or "" for key, value in attrs}
+        if tag == "a":
+            href = values.get("href", "").strip()
+            if href:
+                self._anchors.append({
+                    "href": href,
+                    "name": values.get("aria-label", "").strip() or values.get("title", "").strip(),
+                })
+        elif tag == "img" and self._anchors:
+            alt = values.get("alt", "").strip()
+            if alt:
+                for anchor in self._anchors:
+                    anchor["name"] += " " + alt
+
+    def handle_data(self, data):
+        if data.strip():
+            for anchor in self._anchors:
+                anchor["name"] += " " + data.strip()
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._anchors:
+            anchor = self._anchors.pop()
+            if not anchor["name"].strip():
+                self.empty_name_hrefs.append(anchor["href"])
+
+
 def _canonical_page_url(url: str) -> str:
     parts = urlsplit(urldefrag(url)[0])
     # Avoid multiplying the crawl through tracking and filter query parameters.
@@ -370,6 +406,22 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # An empty link name can make navigation hard to understand with
+            # assistive technology. Treat source-only detection as a review prompt.
+            anchor_parser = _AnchorNameParser()
+            anchor_parser.feed(body)
+            if anchor_parser.empty_name_hrefs:
+                examples = ", ".join(anchor_parser.empty_name_hrefs[:5])
+                findings.append(_finding(
+                    "accessibility", "Internal page links may have no accessible name",
+                    "manual_review_required", "medium",
+                    f"Found {len(anchor_parser.empty_name_hrefs)} link(s) without visible text, a non-empty aria-label/title, or non-empty image alt text on {final_url}. Example hrefs: {examples}",
+                    "Links need an understandable accessible name. This source check cannot fully compute the browser accessibility tree and may flag links whose names are supplied by scripts or CSS-generated content.",
+                    "Inspect each flagged link in the rendered page and provide a concise accessible name that describes its destination or action. Keep intentionally hidden controls out of the accessibility tree.",
+                    ["Inspect each listed anchor in the browser and with a screen reader.", "Check aria-label, visible text, and linked-image alt text.", "Retest after template changes."],
+                    final_url,
+                ))
 
             # Source-level trust cues are not proof of authenticity or usability.
             from trust_checks import inspect_trust_signals
