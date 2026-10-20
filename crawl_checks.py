@@ -663,6 +663,16 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 title_pages[page_parser.title_text.strip().casefold()].append(url)
             if page_parser.meta_description:
                 description_pages[page_parser.meta_description.strip().casefold()].append(url)
+            if page_parser.h1_count > 1:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page has multiple H1 headings",
+                    "manual_review_required", "low",
+                    f"Found {page_parser.h1_count} H1 elements in returned HTML for {final_url}.",
+                    "Multiple H1 elements are allowed by modern HTML and are not automatically an SEO error. They can, however, indicate duplicated template headings or an unclear content hierarchy, so review the rendered page in context.",
+                    "Inspect the rendered heading outline. Keep headings that accurately structure the page, and remove or adjust only redundant or misleading H1 elements rather than enforcing an arbitrary one-H1 rule.",
+                    ["Review the rendered heading outline and identify each H1's purpose.", "Check responsive templates and product/category components for duplicated headings."],
+                    final_url,
+                ))
             if page_parser.h1_count == 0:
                 findings.append(_finding(
                     "on_page_seo", "Internal page missing primary heading (H1)",
