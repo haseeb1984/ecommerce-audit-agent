@@ -698,6 +698,16 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     ["Review the rendered heading outline and identify each H1's purpose.", "Check responsive templates and product/category components for duplicated headings."],
                     final_url,
                 ))
+            if page_parser.empty_h1_count:
+                findings.append(_finding(
+                    "on_page_seo", "Internal page has empty H1 headings",
+                    "manual_review_required", "low",
+                    f"Found {page_parser.empty_h1_count} empty H1 element(s) among {page_parser.h1_count} H1 element(s) on {final_url}.",
+                    "An empty H1 element does not communicate a useful heading. Some themes populate headings with JavaScript, which this source-only crawler does not execute, so review the rendered page before changing it.",
+                    "Check whether each empty H1 is intentionally populated after rendering. Remove redundant empty elements or provide a meaningful heading when the page needs one.",
+                    ["Inspect the raw HTML and rendered heading outline.", "Check whether JavaScript or responsive templates populate the heading after initial HTML."],
+                    final_url,
+                ))
             if page_parser.h1_count == 0:
                 findings.append(_finding(
                     "on_page_seo", "Internal page missing primary heading (H1)",
