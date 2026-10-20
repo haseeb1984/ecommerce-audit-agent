@@ -476,3 +476,38 @@ def test_pdf_renders_optional_business_context_only_when_provided(monkeypatch):
     assert any("The transfer cost remains elevated." in item for item in rendered_text)
     # The second finding has no supplied business context; no generic impact is invented.
     assert all("Potential benefit" not in item for item in rendered_text[rendered_text.index("Add a descriptive title.") + 1:])
+
+
+def test_report_includes_sampled_scope_methodology_and_plain_language_glossary(monkeypatch):
+    import report_generator
+
+    rendered_text = []
+    original_p = report_generator._p
+
+    def capture_paragraph(value, style):
+        rendered_text.append(str(value))
+        return original_p(value, style)
+
+    monkeypatch.setattr(report_generator, "_p", capture_paragraph)
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-17T00:00:00+00:00",
+        pages_checked=[
+            "https://shop.example/",
+            "https://shop.example/products/one",
+            "https://shop.example/",
+        ],
+        limitations=[],
+        findings=[],
+    )
+
+    pdf = report_generator.render_audit_pdf(result)
+
+    assert pdf.startswith(b"%PDF-")
+    assert any("Sampled pages in scope" in item for item in rendered_text)
+    assert sum("https://shop.example/" in item for item in rendered_text) == 1
+    assert any("https://shop.example/products/one" in item for item in rendered_text)
+    assert any("No explicit limitation strings were supplied" in item for item in rendered_text)
+    assert any("Methodology and independent verification" in item for item in rendered_text)
+    assert any("Plain-language glossary" in item for item in rendered_text)
+    assert any("not a measured financial impact" in item for item in rendered_text)
