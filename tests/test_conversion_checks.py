@@ -127,3 +127,15 @@ def test_conversion_paths_include_mailto_and_telephone_links():
     finding = next(f for f in findings if f.title == "Primary conversion path signals")
     assert "1 mailto link(s)" in finding.evidence
     assert "1 telephone link(s)" in finding.evidence
+
+
+
+def test_malformed_link_url_is_skipped_without_aborting_conversion_audit():
+    findings = inspect_conversion_html(
+        '<html><body><a href="http://[broken">Broken link</a>'
+        '<a href="/checkout">Checkout</a></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(f for f in findings if f.title == "Primary conversion path signals")
+    assert "1 same-origin cart/checkout/payment-like link(s)" in finding.evidence
+    assert "1 malformed URL(s) skipped safely" in finding.evidence
