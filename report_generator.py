@@ -182,6 +182,42 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
 
 
 
+def _business_impact_context(finding: dict[str, object]) -> tuple[str, str]:
+    """Supply cautious category-level impact context when a check has no custom wording.
+
+    These statements describe plausible outcomes, not measured revenue or guaranteed gains.
+    Evidence-backed finding-specific text always takes precedence.
+    """
+    category = str(finding.get("category", "")).lower()
+    status = str(finding.get("status", "")).lower()
+    severity = str(finding.get("severity", "")).lower()
+    if category in {"security", "security_headers", "security_exposure", "security_transport"}:
+        benefit = "Addressing the observed security signal may reduce the specific exposure described; it does not guarantee that the website is secure or prevent every attack."
+        risk = "If the signal is confirmed in context and left unresolved, the website may remain exposed to the weakness described. This audit does not establish that a compromise has occurred."
+    elif category in {"accessibility"}:
+        benefit = "Addressing the observed accessibility signal may make the affected content or interaction easier for more people to use; a complete accessibility outcome requires contextual and assistive-technology testing."
+        risk = "If the issue is confirmed and left unresolved, some visitors may have difficulty understanding or operating the affected content."
+    elif category in {"seo", "technical_seo", "structured_data", "indexing", "crawlability"}:
+        benefit = "Addressing the observed technical signal may help search engines interpret or discover the affected content; ranking or indexing improvements are not guaranteed."
+        risk = "If the issue is confirmed and left unresolved, search engines may have difficulty discovering, interpreting, or presenting the affected content as intended."
+    elif category in {"conversion_paid_traffic", "conversion", "paid_traffic"}:
+        benefit = "Clarifying the observed journey or information may reduce avoidable user uncertainty; conversion rate, CPC, revenue, and attribution impact were not measured."
+        risk = "If the signal reflects a real journey problem and remains unresolved, some visitors may hesitate, abandon the journey, or need extra effort. The audit does not quantify lost sales or ad spend."
+    elif category in {"performance", "static_performance", "mobile_ux"}:
+        benefit = "Addressing the observed usability or performance signal may reduce friction on affected devices; actual user experience should be confirmed with browser and field measurements."
+        risk = "If confirmed and left unresolved, the affected experience may remain slower or harder to use for some visitors. This static signal alone does not quantify business loss."
+    else:
+        qualifier = "This item requires human review." if status == "manual_review_required" else "The impact has not been measured."
+        benefit = f"Resolving or validating the observation may improve the affected part of the website. {qualifier}"
+        risk = f"If the observation reflects a real issue and remains unresolved, the affected experience or control may continue to underperform. {qualifier}"
+    if severity == "info" or status in {"not_tested", "insufficient_data"}:
+        risk = "No adverse outcome is established by this result. Verify the observation in context before deciding whether action is needed."
+    return (
+        str(finding.get("potential_benefit") or benefit),
+        str(finding.get("risk_if_unresolved") or risk),
+    )
+
+
 def _prioritized_actions(findings: list[dict[str, object]]) -> list[dict[str, object]]:
     """Return evidence-backed high/critical actions in a stable, conservative order."""
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -572,17 +608,15 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             Paragraph("<b>Recommended solution</b>", body_style),
             _p(finding["recommendation"], body_style),
         ])
-        # Optional business context is only shown when supplied by an evidence-backed check.
-        if finding.get("potential_benefit"):
-            blocks.extend([
-                Paragraph("<b>Potential benefit if addressed</b>", body_style),
-                _p(finding["potential_benefit"], body_style),
-            ])
-        if finding.get("risk_if_unresolved"):
-            blocks.extend([
-                Paragraph("<b>Risk if left unresolved</b>", body_style),
-                _p(finding["risk_if_unresolved"], body_style),
-            ])
+        # Every finding gets an impact explanation, but fallback language stays cautious:
+        # no conversion/revenue gains are presented as measured or guaranteed outcomes.
+        potential_benefit, risk_if_unresolved = _business_impact_context(finding)
+        blocks.extend([
+            Paragraph("<b>Potential benefit if addressed</b>", body_style),
+            _p(potential_benefit, body_style),
+            Paragraph("<b>Risk if left unresolved</b>", body_style),
+            _p(risk_if_unresolved, body_style),
+        ])
         blocks.extend([
             Paragraph("<b>How to verify</b>", body_style),
         ])
