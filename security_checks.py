@@ -31,6 +31,7 @@ EXPOSURE_PATHS = (
     "/debug/vars",
     "/swagger-ui/index.html",
     "/openapi.json",
+    "/wp-json/wp/v2/users",
 )
 ENV_KEY_PATTERN = re.compile(
     r"(?im)^\s*(?:APP_KEY|APP_SECRET|API_KEY|API_SECRET|DB_PASSWORD|DATABASE_URL|"
@@ -118,6 +119,29 @@ def inspect_exposure_response(path: str, status: int, body: str,
             finding_status = "manual_review_required"
             finding_severity = "low"
             safe_evidence = "The response resembles an OpenAPI API schema. Public documentation is not automatically a vulnerability; review whether internal routes or sensitive operation details should be disclosed."
+
+
+    elif normalized_path == "/wp-json/wp/v2/users":
+        # WordPress may intentionally publish author profiles; this is a review signal,
+        # not proof of private-account exposure. Never include returned names or IDs.
+        import json
+        try:
+            payload = json.loads(body)
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, list) and payload and all(
+            isinstance(item, dict) and ("id" in item or "slug" in item or "name" in item)
+            for item in payload[:10]
+        ):
+            matched = "WordPress user-profile endpoint returns public records"
+            finding_category = "security_api_documentation"
+            finding_status = "manual_review_required"
+            finding_severity = "low"
+            safe_evidence = (
+                f"The response resembles a WordPress REST user-record list "
+                f"({len(payload)} record(s) in the returned sample). Names, IDs, slugs, "
+                "and profile values are omitted because author profiles may be intentionally public."
+            )
 
     if not matched:
         return []
