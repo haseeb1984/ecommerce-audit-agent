@@ -26,6 +26,8 @@ class _AccessibilityParser(HTMLParser):
         self.buttons: list[dict[str, str | bool]] = []
         self.images_missing_alt: int = 0
         self.aria_hidden_focusables: list[tuple[str, str]] = []
+        self.aria_hidden_descendant_focusables: list[tuple[str, str]] = []
+        self._aria_hidden_stack: list[tuple[str, bool]] = []
         self._active_link: dict[str, str | bool] | None = None
         self._active_button: dict[str, str | bool] | None = None
         self._active_svg_control: dict[str, str | bool] | None = None
@@ -36,14 +38,19 @@ class _AccessibilityParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
+        inherited_aria_hidden = any(hidden for _ancestor, hidden in self._aria_hidden_stack)
         if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
             self._text_id_stack.append((tag, values.get("id", "")))
         if tag == "html":
             self.html_lang = values.get("lang", "").strip()
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self._aria_hidden_stack.append((tag, inherited_aria_hidden or values.get("aria-hidden", "").strip().lower() == "true"))
         tabindex = values.get("tabindex", "").strip()
         is_focusable = tag in {"a", "button", "input", "select", "textarea"} and (tag != "a" or "href" in values)
         if values.get("aria-hidden", "").strip().lower() == "true" and (is_focusable or (tabindex.lstrip("+-").isdigit() and int(tabindex) >= 0)):
             self.aria_hidden_focusables.append((tag, values.get("type", "").strip().lower()))
+        if inherited_aria_hidden and (is_focusable or (tabindex.lstrip("+-").isdigit() and int(tabindex) >= 0)):
+            self.aria_hidden_descendant_focusables.append((tag, values.get("type", "").strip().lower()))
         # Count a native <main> or a non-main element with role=main once.
         # Do not double-count <main role=main> as two landmarks.
         if tag == "main" or values.get("role", "").strip().lower() == "main":
@@ -119,6 +126,10 @@ class _AccessibilityParser(HTMLParser):
 
     def handle_endtag(self, tag):
         tag = tag.lower()
+        for index in range(len(self._aria_hidden_stack) - 1, -1, -1):
+            if self._aria_hidden_stack[index][0] == tag:
+                del self._aria_hidden_stack[index:]
+                break
         for index in range(len(self._text_id_stack) - 1, -1, -1):
             if self._text_id_stack[index][0] == tag:
                 del self._text_id_stack[index:]
