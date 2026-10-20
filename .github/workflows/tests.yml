@@ -63,6 +63,17 @@ jobs:
           path: audit-report-sample.pdf
           if-no-files-found: warn
           retention-days: 14
+      - name: Generate PDF reports from real public websites (no license quota)
+        if: success()
+        run: python scripts/generate_live_audit_pdfs.py --output-dir live-audit-pdfs
+      - name: Upload real-site PDF smoke-test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-site-audit-pdfs
+          path: live-audit-pdfs/*.pdf
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload dependency audit evidence
         if: always()
         uses: actions/upload-artifact@v7
