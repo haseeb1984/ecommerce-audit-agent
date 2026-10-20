@@ -22,6 +22,24 @@ import socket
 MAX_LINKS_TO_REVIEW = 500
 
 
+def _normalized_http_origin(value: str) -> tuple[str, str, int] | None:
+    """Return a comparable HTTP(S) origin, normalizing default ports and excluding userinfo."""
+    try:
+        parts = urlsplit(value)
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        if scheme not in {"http", "https"} or not host:
+            return None
+        if parts.username is not None or parts.password is not None:
+            return None
+        port = parts.port
+        if port is None:
+            port = 443 if scheme == "https" else 80
+        return scheme, host.rstrip(".").lower(), port
+    except (ValueError, UnicodeError):
+        return None
+
+
 def _safe_url_evidence(value: str, base_url: str) -> str:
     """Produce bounded public URL evidence without credentials, queries, or fragments."""
     try:
@@ -177,7 +195,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     parser = _ConversionParser()
     parser.feed(html)
     findings: list[AuditFinding] = []
-    origin = f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}"
+    homepage_origin = _normalized_http_origin(final_url)
     internal_checkout = []
     internal_contact = []
     policy_links: dict[str, list[str]] = {
@@ -205,7 +223,8 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         if parsed.scheme.lower() in direct_contact_links:
             direct_contact_links[parsed.scheme.lower()] += 1
             continue
-        if parsed.scheme.lower() not in {"http", "https"} or parsed.netloc.lower() != urlsplit(origin).netloc.lower():
+        link_origin = _normalized_http_origin(absolute)
+        if homepage_origin is None or link_origin != homepage_origin:
             continue
         path = parsed.path.lower()
         searchable = f"{path} {label.lower()}"
