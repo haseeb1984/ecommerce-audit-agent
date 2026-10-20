@@ -310,7 +310,7 @@ async def run_conversion_paid_traffic_checks(target: str) -> tuple[list[AuditFin
             return [
                 _finding(
                     "conversion_paid_traffic", "Conversion signals not inspected", "not_tested", "info",
-                    f"Static homepage fetch did not complete: {type(exc).__name__}: {str(exc)[:180]}",
+                    f"Static homepage fetch did not complete ({type(exc).__name__}); internal exception details were withheld.",
                     "No reliable HTML was available, so conversion-path signals could not be checked.",
                     "Confirm the target is publicly reachable and rerun; do not interpret this as proof that conversion elements are missing.",
                     ["Open the target in a browser and verify DNS, TLS, and access rules."], normalized,
