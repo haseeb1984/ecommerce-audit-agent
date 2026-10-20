@@ -120,6 +120,34 @@ def test_homepage_checks_jsonld_syntax_and_product_name(jsonld, expected_title):
 
 
 @pytest.mark.parametrize(
+    ("description", "should_flag"),
+    [
+        (None, True),
+        ("", True),
+        ("A stainless steel water bottle.", False),
+        (123, True),
+    ],
+)
+def test_homepage_checks_product_description(description, should_flag):
+    import json
+    product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Example",
+        "image": "https://shop.example/item.jpg",
+    }
+    if description is not None:
+        product["description"] = description
+    html = f'<html><head><script type="application/ld+json">{json.dumps(product)}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    matches = [item for item in findings if item.title == "Product structured data missing description"]
+    assert bool(matches) is should_flag
+    if matches:
+        assert matches[0].severity == "low"
+        assert matches[0].source_url == "https://shop.example/"
+
+
+@pytest.mark.parametrize(
     ("image", "should_flag"),
     [
         (None, True),
