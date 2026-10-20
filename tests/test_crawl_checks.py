@@ -934,3 +934,34 @@ async def test_crawl_page_budget_of_one_checks_only_homepage(monkeypatch):
     _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
 
     assert checked == [homepage]
+
+
+@pytest.mark.asyncio
+async def test_crawl_flags_multiple_h1_as_review_not_automatic_error(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title><meta name="description" content="Store"></head>'
+                '<body><a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        return (
+            200,
+            '<html><head><title>Product</title><meta name="description" content="Product"></head>'
+            '<body><h1>Product</h1><section><h1>Related products</h1></section></body></html>',
+            {"content-type": "text/html"},
+            url,
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    finding = next(f for f in findings if f.title == "Internal page has multiple H1 headings")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "2 H1 elements" in finding.evidence
+    assert "not automatically an SEO error" in finding.explanation
