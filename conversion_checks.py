@@ -254,7 +254,10 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     # query strings because they may carry tokens or personal data.
     external_form_actions: list[str] = []
     final_parts = urlsplit(final_url)
-    final_origin = (final_parts.scheme.lower(), final_parts.hostname or "", final_parts.port)
+    final_scheme = final_parts.scheme.lower()
+    final_host = (final_parts.hostname or "").lower()
+    final_port = final_parts.port or (443 if final_scheme == "https" else 80 if final_scheme == "http" else None)
+    final_origin = (final_scheme, final_host, final_port)
     for action in parser.form_actions:
         try:
             resolved_action = urljoin(final_url, action.strip() or final_url)
@@ -264,11 +267,16 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             continue
         if action_parts.scheme.lower() not in {"http", "https"} or not action_parts.hostname:
             continue
-        action_origin = (action_parts.scheme.lower(), action_parts.hostname.lower(), action_parts.port)
-        if action_origin != (final_origin[0], final_origin[1].lower(), final_origin[2]):
-            safe_destination = (
-                f"{action_parts.scheme.lower()}://{action_parts.netloc}{action_parts.path or '/'}"
-            )
+        action_scheme = action_parts.scheme.lower()
+        action_host = action_parts.hostname.lower()
+        action_port = action_parts.port or (443 if action_scheme == "https" else 80)
+        action_origin = (action_scheme, action_host, action_port)
+        if action_origin != final_origin:
+            # Rebuild the authority from validated host/port only; never echo userinfo.
+            display_host = f"[{action_host}]" if ":" in action_host else action_host
+            if action_parts.port and action_parts.port != (443 if action_scheme == "https" else 80):
+                display_host = f"{display_host}:{action_parts.port}"
+            safe_destination = f"{action_scheme}://{display_host}{action_parts.path or '/'}"
             if safe_destination not in external_form_actions:
                 external_form_actions.append(safe_destination)
 
