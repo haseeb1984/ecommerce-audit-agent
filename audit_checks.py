@@ -426,6 +426,7 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     # a targeted source check, not a full Google rich-result eligibility validator.
     products_with_offers = 0
     offers_missing_price = 0
+    offers_invalid_price_range = 0
     offers_missing_currency = 0
     offers_invalid_availability = 0
     offers_missing_availability = 0
@@ -442,18 +443,31 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             if not isinstance(offer, dict):
                 continue
             products_with_offers += 1
-            price = offer.get("price")
-            # Treat a price as usable only when it is a finite, non-negative
-            # decimal value. A non-empty string such as "contact us", NaN,
-            # infinity, or a negative amount is not a valid numeric offer price.
-            price_valid = False
-            if isinstance(price, (str, int, float)) and not isinstance(price, bool):
+            def parse_price(value: Any) -> Decimal | None:
+                # Reject booleans, non-numeric strings, negative values, NaN and infinity.
+                if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                    return None
                 try:
-                    parsed_price = Decimal(str(price).strip())
-                    price_valid = parsed_price.is_finite() and parsed_price >= 0
+                    parsed = Decimal(str(value).strip())
                 except (InvalidOperation, ValueError):
-                    price_valid = False
-            if not price_valid:
+                    return None
+                return parsed if parsed.is_finite() and parsed >= 0 else None
+
+            offer_types = offer.get("@type", [])
+            offer_types = offer_types if isinstance(offer_types, list) else [offer_types]
+            is_aggregate_offer = any(
+                isinstance(value, str) and value.lower() == "aggregateoffer"
+                for value in offer_types
+            )
+            if is_aggregate_offer:
+                low_price = parse_price(offer.get("lowPrice"))
+                high_price = parse_price(offer.get("highPrice"))
+                # AggregateOffer uses a range; do not incorrectly require a scalar price.
+                if low_price is None and high_price is None:
+                    offers_missing_price += 1
+                elif low_price is not None and high_price is not None and low_price > high_price:
+                    offers_invalid_price_range += 1
+            elif parse_price(offer.get("price")) is None:
                 offers_missing_price += 1
             currency = offer.get("priceCurrency")
             if not (isinstance(currency, str) and re.fullmatch(r"[A-Za-z]{3}", currency.strip())):
@@ -477,6 +491,17 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             "A price is important for product offer information. This check verifies only the source property and does not assess sale-price consistency, availability, or rich-result eligibility.",
             "Provide the current, accurate price in each affected Offer and ensure it matches the visible product page and currency formatting.",
             ["Inspect each Product Offer in JSON-LD.", "Compare structured prices with the visible price and variant selection.", "Validate the page with a structured-data testing tool."],
+            final_url,
+        ))
+
+    if offers_invalid_price_range:
+        findings.append(_finding(
+            "structured_data", "Aggregate product offer has an invalid price range",
+            "verified", "medium",
+            f"Found {offers_invalid_price_range} AggregateOffer object(s) where lowPrice exceeds highPrice. URL: {final_url}",
+            "An aggregate offer's lower price should not exceed its upper price. This source check validates numeric ordering only and does not verify variant pricing or currency consistency.",
+            "Correct lowPrice and highPrice so they reflect the actual minimum and maximum prices available on the page, using the same currency and current product variants.",
+            ["Inspect lowPrice and highPrice on each AggregateOffer.", "Compare the range with purchasable variants shown on the page.", "Validate the structured data after correcting the range."],
             final_url,
         ))
 
