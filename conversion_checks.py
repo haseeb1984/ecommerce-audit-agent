@@ -166,6 +166,33 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             final_url,
         ))
 
+    insecure_form_actions: list[str] = []
+    if urlsplit(final_url).scheme.lower() == "https":
+        for action in parser.form_actions:
+            try:
+                resolved_action = urljoin(final_url, action.strip() or final_url)
+                action_parts = urlsplit(resolved_action)
+                _ = action_parts.port
+            except (ValueError, UnicodeError):
+                continue
+            if action_parts.scheme.lower() == "http" and action_parts.netloc:
+                # Keep the report evidence free of query strings, which may contain tokens.
+                safe_destination = f"http://{action_parts.netloc}{action_parts.path or '/'}"
+                if safe_destination not in insecure_form_actions:
+                    insecure_form_actions.append(safe_destination)
+
+    if insecure_form_actions:
+        findings.append(_finding(
+            "security", "Form submission may downgrade to unencrypted HTTP",
+            "verified", "high",
+            f"Found {len(insecure_form_actions)} form action destination(s) using HTTP from an HTTPS homepage: "
+            + ", ".join(insecure_form_actions[:5]),
+            "A form that submits sensitive fields over plain HTTP can expose submitted data in transit. The presence of an HTTP action is a source-level signal; this check does not submit the form or determine which fields are sensitive.",
+            "Change affected form actions to HTTPS endpoints under the intended trusted service, and verify redirects and the final submission destination in a safe test flow.",
+            ["Inspect each listed form action in the rendered page.", "Confirm the destination supports HTTPS and does not redirect submission to HTTP.", "Test with non-sensitive sample data and verify the final request uses HTTPS."],
+            final_url,
+        ))
+
     if parser.forms:
         findings.append(_finding(
             "conversion_paid_traffic", "Homepage contains HTML form(s)", "verified", "info",
