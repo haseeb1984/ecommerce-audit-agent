@@ -120,6 +120,65 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
     return findings
 
 
+class _MetaRefreshParser(HTMLParser):
+    """Collect meta-refresh directives without executing or following them."""
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.targets: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "meta":
+            return
+        values = {key.lower(): value or "" for key, value in attrs}
+        if values.get("http-equiv", "").strip().lower() != "refresh":
+            return
+        content = values.get("content", "").strip()
+        match = re.search(r"(?:^|;)\\s*url\\s*=\\s*(['\\\"]?)(.*?)\\1\\s*$", content, re.I)
+        if match:
+            self.targets.append(match.group(2).strip())
+
+
+def inspect_meta_refresh(html: str, final_url: str) -> list[AuditFinding]:
+    """Flag HTML meta-refresh redirects for manual review; never label them malicious by default."""
+    parser = _MetaRefreshParser()
+    try:
+        parser.feed(html)
+    except Exception:
+        return []
+    if not parser.targets:
+        return []
+    external_targets = []
+    malformed_targets = 0
+    for target in parser.targets[:20]:
+        try:
+            resolved = urljoin(final_url, target)
+            parts = urlsplit(resolved)
+            _ = parts.port
+            if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+                malformed_targets += 1
+                continue
+            if (parts.scheme.lower(), parts.netloc.lower()) != (
+                urlsplit(final_url).scheme.lower(), urlsplit(final_url).netloc.lower()
+            ):
+                external_targets.append(f"{parts.scheme.lower()}://{parts.netloc.lower()}{parts.path or '/'}")
+        except (ValueError, UnicodeError):
+            malformed_targets += 1
+    details = [f"Detected {len(parser.targets)} meta-refresh directive(s) in returned HTML."]
+    if external_targets:
+        details.append("External destination host(s): " + ", ".join(dict.fromkeys(external_targets)[:5]) + ".")
+    if malformed_targets:
+        details.append(f"{malformed_targets} malformed or unsupported target(s) were not resolved.")
+    return [_finding(
+        "security", "HTML meta-refresh redirect needs review",
+        "manual_review_required", "medium" if external_targets else "low",
+        " ".join(details),
+        "Meta-refresh redirects can be legitimate, but unexpected or external destinations may confuse users and complicate browser, accessibility, and search-engine behavior. This source signal does not establish malicious intent, and the audit does not follow the target.",
+        "Confirm each redirect is intentional, clearly communicated, and points to the expected destination. Prefer a correctly configured server-side redirect when appropriate; never use an untrusted input directly as a redirect destination.",
+        ["Inspect the returned meta http-equiv=refresh element.", "Verify the destination and timing in a browser or staging environment.", "Check that users can understand and control navigation where required."],
+        final_url,
+    )]
+
+
 class _LinkParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -373,6 +432,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             page_parser = _PageParser()
             page_parser.feed(body)
 
+            findings.extend(inspect_meta_refresh(body, final_url))
             findings.extend(inspect_mobile_viewport(body, final_url))
 
             # Static resource patterns are review signals, not measured Core Web Vitals.
