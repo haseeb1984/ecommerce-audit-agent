@@ -501,3 +501,48 @@ def test_present_homepage_elements_do_not_recommend_adding_them_again():
     assert "Add a concise, page-specific meta description" not in by_title["Meta description"].recommendation
     assert "Keep the title accurate" in by_title["Page title"].recommendation
     assert "Keep the description accurate" in by_title["Meta description"].recommendation
+
+
+def test_homepage_reports_duplicate_title_elements():
+    findings = audit_checks.inspect_homepage(
+        '<html><head><title>First title</title><title>Second title</title></head>'
+        '<body><h1>Shop</h1></body></html>',
+        "https://shop.example/",
+        {},
+    )
+    finding = next(item for item in findings if item.title == "Multiple title elements")
+    assert finding.status == "verified"
+    assert finding.severity == "medium"
+    assert "Found 2 title elements" in finding.evidence
+    assert finding.verification_steps
+
+
+@pytest.mark.parametrize(
+    ("descriptions", "expected_empty"),
+    [
+        ('<meta name="description" content="First"><meta name="description" content="Second">', 0),
+        ('<meta name="description" content="Useful"><meta name="description" content="">', 1),
+    ],
+)
+def test_homepage_reports_duplicate_meta_descriptions(descriptions, expected_empty):
+    findings = audit_checks.inspect_homepage(
+        f"<html><head>{descriptions}</head><body><h1>Shop</h1></body></html>",
+        "https://shop.example/",
+        {},
+    )
+    finding = next(item for item in findings if item.title == "Multiple meta description elements")
+    assert finding.status == "verified"
+    assert f"{expected_empty} empty element(s)" in finding.evidence
+    assert finding.recommendation
+    assert finding.verification_steps
+
+
+def test_single_meta_description_does_not_trigger_duplicate_finding():
+    findings = audit_checks.inspect_homepage(
+        '<html><head><meta name="description" content="Useful description"></head>'
+        '<body><h1>Shop</h1></body></html>',
+        "https://shop.example/",
+        {},
+    )
+    assert not any(item.title == "Multiple meta description elements" for item in findings)
+
