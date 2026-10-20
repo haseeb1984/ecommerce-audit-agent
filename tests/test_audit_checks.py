@@ -152,6 +152,36 @@ def test_homepage_checks_product_image_property(image, should_flag):
         ({"price": "19.99", "priceCurrency": "US"}, "Product offers missing or invalid currency"),
     ],
 )
+@pytest.mark.parametrize(
+    ("availability", "should_flag"),
+    [
+        ("https://schema.org/InStock", False),
+        ("https://schema.org/OutOfStock", False),
+        ("https://schema.org/UnknownState", True),
+        ({"value": "InStock"}, True),
+        (None, False),
+    ],
+)
+def test_homepage_checks_product_offer_availability(availability, should_flag):
+    import json
+    product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Example",
+        "image": "https://shop.example/item.jpg",
+        "offers": {"price": "19.99", "priceCurrency": "USD"},
+    }
+    if availability is not None:
+        product["offers"]["availability"] = availability
+    html = f'<html><head><script type="application/ld+json">{json.dumps(product)}</script></head><body><h1>Shop</h1></body></html>'
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    matches = [item for item in findings if item.title == "Product offers have invalid availability"]
+    assert bool(matches) is should_flag
+    if matches:
+        assert matches[0].status == "verified"
+        assert matches[0].source_url == "https://shop.example/"
+
+
 def test_homepage_checks_product_offer_price_and_currency(offer, expected_title):
     product = {"@context": "https://schema.org", "@type": "Product", "name": "Example", "image": "https://shop.example/item.jpg"}
     product["offers"] = offer
