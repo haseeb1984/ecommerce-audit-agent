@@ -360,6 +360,22 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ["Inspect Product entities in every JSON-LD block.", "Compare structured product names with the visible product title.", "Run a structured-data validator after changes."],
             final_url,
         ))
+    products_without_description = sum(
+        1 for product in product_entities
+        if not (isinstance(product.get("description"), str) and product["description"].strip())
+    )
+    if products_without_description:
+        findings.append(_finding(
+            "structured_data", "Product structured data missing description",
+            "verified", "low",
+            f"Found {products_without_description} Product entity/entities without a non-empty description property. URL: {final_url}",
+            "A concise, accurate product description can provide useful context for search systems and product features. This source check does not compare the description with visible page content or guarantee rich-result eligibility.",
+            "Add a unique, accurate description to each affected Product entity that reflects the visible product details and avoids promotional or unsupported claims.",
+            ["Inspect the description property on each Product entity.",
+             "Compare it with the visible product description and selected variant.",
+             "Validate the updated structured data."],
+            final_url,
+        ))
     products_without_image = 0
     for product in product_entities:
         image = product.get("image")
