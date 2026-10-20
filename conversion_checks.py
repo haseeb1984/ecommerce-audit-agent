@@ -129,10 +129,14 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     origin = f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}"
     internal_checkout = []
     internal_contact = []
+    direct_contact_links = {"mailto": 0, "tel": 0}
     unlabeled_links = 0
     for href, label, _ in parser.links:
         absolute = urljoin(final_url, href)
         parsed = urlsplit(absolute)
+        if parsed.scheme.lower() in direct_contact_links:
+            direct_contact_links[parsed.scheme.lower()] += 1
+            continue
         if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != urlsplit(origin).netloc.lower():
             continue
         path = parsed.path.lower()
@@ -178,7 +182,9 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     findings.append(_finding(
         "conversion_paid_traffic", "Primary conversion path signals", "manual_review_required", "info",
         f"Static HTML link scan detected {len(internal_checkout)} same-origin cart/checkout/payment-like link(s) "
-        f"and {len(internal_contact)} contact/support/help-like link(s), among {len(parser.links)} parsed links.",
+        f"and {len(internal_contact)} contact/support/help-like link(s); "
+        f"{direct_contact_links['mailto']} mailto link(s) and {direct_contact_links['tel']} telephone link(s), "
+        f"among {len(parser.links)} parsed links.",
         "URL names can suggest navigation paths but do not prove that checkout or contact journeys work, are easy to find, or convert visitors.",
         "Manually follow the intended purchase or lead path on mobile and desktop. Confirm key steps, costs, shipping/returns information, and error states are understandable before asking users to commit.",
         ["Open each detected path in a browser.", "Test keyboard navigation and mobile layouts.", "Verify forms and checkout using a safe test mode if available."],
