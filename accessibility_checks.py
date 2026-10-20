@@ -16,6 +16,7 @@ class _AccessibilityParser(HTMLParser):
         self.label_for: set[str] = set()
         self.wrapped_label_depth = 0
         self.inputs: list[dict[str, str]] = []
+        self.element_labelledby: list[str] = []
         self.image_submit_inputs: list[dict[str, str]] = []
         self.links: list[dict[str, str | bool]] = []
         self.buttons: list[dict[str, str | bool]] = []
@@ -67,16 +68,18 @@ class _AccessibilityParser(HTMLParser):
         if tag == "a" and values.get("href") is not None:
             self._active_link = {
                 "text": "", "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
                 "title": values.get("title", "").strip(), "has_image_alt": False,
-                "has_svg_title": bool(values.get("aria-label", "").strip() or values.get("aria-labelledby", "").strip()),
+                "has_svg_title": bool(values.get("aria-label", "").strip()),
                 "svg_title": "",
             }
             self.links.append(self._active_link)
         elif tag == "button":
             self._active_button = {
                 "text": "", "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
                 "title": values.get("title", "").strip(), "has_image_alt": False,
-                "has_svg_title": bool(values.get("aria-label", "").strip() or values.get("aria-labelledby", "").strip()),
+                "has_svg_title": bool(values.get("aria-label", "").strip()),
                 "svg_title": "",
             }
             self.buttons.append(self._active_button)
@@ -166,8 +169,13 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             verification_steps=["Inspect each flagged image in the rendered page and decide whether it conveys information or performs an action.", "Check product images, linked logos, and image-based controls with a browser accessibility tree or scanner."],
             source_url=page_url,
         ))
+    def has_resolvable_labelledby(item: dict[str, str]) -> bool:
+        """Count aria-labelledby only when every referenced ID exists in returned HTML."""
+        identifiers = item.get("aria_labelledby", "").split()
+        return bool(identifiers) and all(identifier in parser.ids for identifier in identifiers)
+
     unlabeled_inputs = [item for item in parser.inputs if not (
-        item["aria_label"] or item["aria_labelledby"] or item["title"] or
+        item["aria_label"] or has_resolvable_labelledby(item) or item["title"] or
         item["inside_label"] == "true" or (item["id"] and item["id"] in parser.label_for)
     )]
     unlabeled_image_submit_inputs = [
@@ -210,8 +218,8 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         ))
 
     unnamed_links = [item for item in parser.links if not (
-        str(item["text"]).strip() or item["aria_label"] or item["title"] or
-        item["has_image_alt"] or item["has_svg_title"]
+        str(item["text"]).strip() or item["aria_label"] or has_resolvable_labelledby(item) or
+        item["title"] or item["has_image_alt"] or item["has_svg_title"]
     )]
     if unnamed_links:
         findings.append(AuditFinding(
@@ -225,7 +233,8 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         ))
 
     unnamed_buttons = [item for item in parser.buttons if not (
-        str(item["text"]).strip() or item["aria_label"] or item["title"] or item["has_image_alt"] or item["has_svg_title"]
+        str(item["text"]).strip() or item["aria_label"] or has_resolvable_labelledby(item) or
+        item["title"] or item["has_image_alt"] or item["has_svg_title"]
     )]
     if unnamed_buttons:
         findings.append(AuditFinding(
