@@ -249,6 +249,41 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
                 if safe_destination not in insecure_form_actions:
                     insecure_form_actions.append(safe_destination)
 
+    # Third-party form destinations can be legitimate (for example, hosted payment
+    # providers), but deserve explicit ownership and transport review. Never include
+    # query strings because they may carry tokens or personal data.
+    external_form_actions: list[str] = []
+    final_parts = urlsplit(final_url)
+    final_origin = (final_parts.scheme.lower(), final_parts.hostname or "", final_parts.port)
+    for action in parser.form_actions:
+        try:
+            resolved_action = urljoin(final_url, action.strip() or final_url)
+            action_parts = urlsplit(resolved_action)
+            _ = action_parts.port
+        except (ValueError, UnicodeError):
+            continue
+        if action_parts.scheme.lower() not in {"http", "https"} or not action_parts.hostname:
+            continue
+        action_origin = (action_parts.scheme.lower(), action_parts.hostname.lower(), action_parts.port)
+        if action_origin != (final_origin[0], final_origin[1].lower(), final_origin[2]):
+            safe_destination = (
+                f"{action_parts.scheme.lower()}://{action_parts.netloc}{action_parts.path or '/'}"
+            )
+            if safe_destination not in external_form_actions:
+                external_form_actions.append(safe_destination)
+
+    if external_form_actions:
+        findings.append(_finding(
+            "security", "External form destination needs trust review",
+            "manual_review_required", "medium",
+            f"Found {len(external_form_actions)} form action destination(s) outside the homepage origin: "
+            + ", ".join(external_form_actions[:5]),
+            "A third-party form destination can be an intentional payment, CRM, or hosted-form integration. This static check cannot establish who controls the endpoint, what data is sent, or whether the provider is approved.",
+            "Verify each destination is an expected, trusted service, uses HTTPS for sensitive submissions, and receives only the data required for the stated purpose. Prefer an approved provider endpoint and document the integration owner.",
+            ["Compare each destination with the site's approved payment, CRM, and form-provider configuration.", "Inspect submitted fields and consent disclosures without sending real customer data.", "Confirm sensitive submissions never travel over HTTP and that the destination is controlled by the expected provider."],
+            final_url,
+        ))
+
     if parser.get_forms_with_sensitive_fields:
         findings.append(_finding(
             "security", "GET form may place personal or sensitive fields in the URL",
