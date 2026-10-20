@@ -336,10 +336,11 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             verification_steps=["Check the page's primary language and the exact html lang value.", "Verify the tag against a BCP 47 language-tag validator when regional or script subtags are used."],
             source_url=page_url,
         ))
-    if parser.aria_hidden_focusables:
+    hidden_focusables = list(dict.fromkeys(parser.aria_hidden_focusables + parser.aria_hidden_descendant_focusables))
+    if hidden_focusables:
         examples = ", ".join(
             tag + (f"[type={kind}]" if kind else "")
-            for tag, kind in parser.aria_hidden_focusables[:8]
+            for tag, kind in hidden_focusables[:8]
         )
         findings.append(AuditFinding(
             category="accessibility",
