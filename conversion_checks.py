@@ -131,13 +131,21 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     internal_contact = []
     direct_contact_links = {"mailto": 0, "tel": 0}
     unlabeled_links = 0
+    malformed_links = 0
     for href, label, _ in parser.links:
-        absolute = urljoin(final_url, href)
-        parsed = urlsplit(absolute)
+        # Public HTML is untrusted input: malformed authorities (for example,
+        # unmatched IPv6 brackets or invalid ports) must not abort the whole audit.
+        try:
+            absolute = urljoin(final_url, href)
+            parsed = urlsplit(absolute)
+            _ = parsed.port  # Force validation of an explicit port.
+        except (ValueError, UnicodeError):
+            malformed_links += 1
+            continue
         if parsed.scheme.lower() in direct_contact_links:
             direct_contact_links[parsed.scheme.lower()] += 1
             continue
-        if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != urlsplit(origin).netloc.lower():
+        if parsed.scheme.lower() not in {"http", "https"} or parsed.netloc.lower() != urlsplit(origin).netloc.lower():
             continue
         path = parsed.path.lower()
         if any(token in path for token in ("checkout", "cart", "basket", "payment")):
@@ -184,7 +192,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         f"Static HTML link scan detected {len(internal_checkout)} same-origin cart/checkout/payment-like link(s) "
         f"and {len(internal_contact)} contact/support/help-like link(s); "
         f"{direct_contact_links['mailto']} mailto link(s) and {direct_contact_links['tel']} telephone link(s), "
-        f"among {len(parser.links)} parsed links.",
+        f"among {len(parser.links)} parsed links; {malformed_links} malformed URL(s) skipped safely.",
         "URL names can suggest navigation paths but do not prove that checkout or contact journeys work, are easy to find, or convert visitors.",
         "Manually follow the intended purchase or lead path on mobile and desktop. Confirm key steps, costs, shipping/returns information, and error states are understandable before asking users to commit.",
         ["Open each detected path in a browser.", "Test keyboard navigation and mobile layouts.", "Verify forms and checkout using a safe test mode if available."],
