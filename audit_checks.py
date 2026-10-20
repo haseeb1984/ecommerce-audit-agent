@@ -359,6 +359,50 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ["Inspect Product entities in every JSON-LD block.", "Compare structured product names with the visible product title.", "Run a structured-data validator after changes."],
             final_url,
         ))
+    # Check price/currency signals only when Product JSON-LD is present. This is
+    # a targeted source check, not a full Google rich-result eligibility validator.
+    products_with_offers = 0
+    offers_missing_price = 0
+    offers_missing_currency = 0
+    for product in product_entities:
+        raw_offers = product.get("offers")
+        offers = raw_offers if isinstance(raw_offers, list) else [raw_offers]
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+            products_with_offers += 1
+            price = offer.get("price")
+            price_valid = (
+                isinstance(price, (str, int, float))
+                and not isinstance(price, bool)
+                and bool(str(price).strip())
+            )
+            if not price_valid:
+                offers_missing_price += 1
+            currency = offer.get("priceCurrency")
+            if not (isinstance(currency, str) and re.fullmatch(r"[A-Za-z]{3}", currency.strip())):
+                offers_missing_currency += 1
+
+    if offers_missing_price:
+        findings.append(_finding(
+            "structured_data", "Product offers missing price", "verified", "medium",
+            f"Found {offers_missing_price} Product Offer object(s) without a usable price property. URL: {final_url}",
+            "A price is important for product offer information. This check verifies only the source property and does not assess sale-price consistency, availability, or rich-result eligibility.",
+            "Provide the current, accurate price in each affected Offer and ensure it matches the visible product page and currency formatting.",
+            ["Inspect each Product Offer in JSON-LD.", "Compare structured prices with the visible price and variant selection.", "Validate the page with a structured-data testing tool."],
+            final_url,
+        ))
+
+    if offers_missing_currency:
+        findings.append(_finding(
+            "structured_data", "Product offers missing or invalid currency", "verified", "medium",
+            f"Found {offers_missing_currency} Product Offer object(s) without a three-letter priceCurrency code. URL: {final_url}",
+            "A currency code clarifies the denomination of a structured offer price. This source check does not verify exchange rates or merchant-feed consistency.",
+            "Set priceCurrency to the correct three-letter ISO 4217 code, such as USD, GBP, or PKR, and ensure it matches the visible offer.",
+            ["Inspect priceCurrency for each Product Offer.", "Confirm the code matches the actual storefront currency.", "Run structured-data validation after changes."],
+            final_url,
+        ))
+
     checks = [
         (bool(parser.title_text), "Page title", "The HTML response has no readable <title> element.",
          "Add a unique, descriptive title that accurately reflects this page.",
