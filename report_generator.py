@@ -5,6 +5,7 @@ from io import BytesIO
 import base64
 import re
 from xml.sax.saxutils import escape
+from urllib.parse import urlsplit, urlunsplit
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
