@@ -556,9 +556,17 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             refs = ", ".join(evidence_ids[url] for url in urls)
             blocks.append(_p(f"Evidence references: {refs}", small_style))
             blocks.append(_p(f"Affected pages with recorded evidence: {len(urls)}", small_style))
+        blocks.append(Paragraph("<b>What was observed</b>", body_style))
+        evidence_items = list(finding["evidence"])
+        if evidence_items:
+            # Keep observations distinct instead of flattening them into one long
+            # paragraph; this preserves the connection between each evidence item
+            # and its affected page when findings are consolidated across URLs.
+            for evidence_item in evidence_items:
+                blocks.append(_p("• " + evidence_item, body_style))
+        else:
+            blocks.append(_p("No specific evidence text was recorded.", body_style))
         blocks.extend([
-            Paragraph("<b>What was observed</b>", body_style),
-            _p(" | ".join(finding["evidence"]) or "No specific evidence text was recorded.", body_style),
             Paragraph("<b>What this means</b>", body_style),
             _p(finding["explanation"], body_style),
             Paragraph("<b>Recommended solution</b>", body_style),
