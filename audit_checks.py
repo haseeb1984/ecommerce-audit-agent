@@ -6,6 +6,7 @@ It performs conservative public-page checks and reports limitations explicitly.
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal, InvalidOperation
 import ipaddress
 import json
 import re
@@ -378,7 +379,6 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             price_valid = False
             if isinstance(price, (str, int, float)) and not isinstance(price, bool):
                 try:
-                    from decimal import Decimal, InvalidOperation
                     parsed_price = Decimal(str(price).strip())
                     price_valid = parsed_price.is_finite() and parsed_price >= 0
                 except (InvalidOperation, ValueError):
