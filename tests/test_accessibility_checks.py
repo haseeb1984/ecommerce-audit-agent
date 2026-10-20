@@ -195,3 +195,39 @@ def test_named_image_submit_control_is_not_flagged():
         f.title == "Image submit controls may lack accessible names"
         for f in findings
     )
+
+def test_unresolved_aria_labelledby_does_not_count_as_accessible_name():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<input aria-labelledby="missing-input-label">'
+        '<a href="/cart" aria-labelledby="missing-link-label"><svg></svg></a>'
+        '<button aria-labelledby="missing-button-label"><svg></svg></button>'
+        '</body></html>',
+        "https://shop.example/checkout",
+    )
+    titles = {finding.title for finding in findings}
+    assert "Some label or ARIA references point to missing IDs" in titles
+    assert "Form controls may lack accessible labels" in titles
+    assert "Links may have no accessible name" in titles
+    assert "Buttons may have no accessible name" in titles
+
+
+def test_resolved_aria_labelledby_is_recognized_as_name():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<span id="email-label">Email address</span><input aria-labelledby="email-label">'
+        '<span id="cart-label">View cart</span><a href="/cart" aria-labelledby="cart-label"></a>'
+        '<span id="menu-label">Open menu</span><button aria-labelledby="menu-label"></button>'
+        '</body></html>',
+        "https://shop.example/checkout",
+    )
+    assert not any(
+        finding.title in {
+            "Some label or ARIA references point to missing IDs",
+            "Form controls may lack accessible labels",
+            "Links may have no accessible name",
+            "Buttons may have no accessible name",
+        }
+        for finding in findings
+    )
+
