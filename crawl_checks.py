@@ -432,6 +432,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             page_parser = _PageParser()
             page_parser.feed(body)
 
+            findings.extend(inspect_hreflang(body, final_url))
             findings.extend(inspect_meta_refresh(body, final_url))
             findings.extend(inspect_mobile_viewport(body, final_url))
 
