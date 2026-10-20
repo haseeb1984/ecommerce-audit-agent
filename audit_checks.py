@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import re
 import socket
 import xml.etree.ElementTree as ET
@@ -308,6 +309,56 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     parser = _PageParser()
     parser.feed(html)
     findings: list[AuditFinding] = []
+
+    # Validate embedded JSON-LD syntax and flag Product entities without a name.
+    # This is a bounded source check, not a complete Schema.org validator.
+    product_entities: list[dict[str, Any]] = []
+    malformed_jsonld = 0
+
+    def collect_products(value: Any) -> None:
+        if isinstance(value, list):
+            for child in value:
+                collect_products(child)
+        elif isinstance(value, dict):
+            raw_type = value.get("@type", [])
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            if any(isinstance(item, str) and item.lower() == "product" for item in types):
+                product_entities.append(value)
+            graph = value.get("@graph")
+            if graph is not None:
+                collect_products(graph)
+
+    for script in parser.jsonld_scripts:
+        try:
+            payload = json.loads(script)
+        except (json.JSONDecodeError, TypeError):
+            malformed_jsonld += 1
+            continue
+        collect_products(payload)
+
+    if malformed_jsonld:
+        findings.append(_finding(
+            "structured_data", "Malformed JSON-LD structured data", "verified", "medium",
+            f"Found {malformed_jsonld} JSON-LD script(s) that could not be parsed as JSON. URL: {final_url}",
+            "Malformed JSON prevents parsers from reliably reading that JSON-LD block. Other structured-data blocks may still be valid; this check does not assess every Schema.org rule.",
+            "Correct the JSON syntax in each flagged script and validate the resulting structured data with a search-engine testing tool.",
+            ["Inspect each application/ld+json script in the raw HTML.", "Parse each block as JSON and validate supported structured-data properties."],
+            final_url,
+        ))
+
+    products_without_name = sum(
+        1 for product in product_entities
+        if not (isinstance(product.get("name"), str) and product["name"].strip())
+    )
+    if products_without_name:
+        findings.append(_finding(
+            "structured_data", "Product structured data missing name", "verified", "medium",
+            f"Found {products_without_name} Product entity/entities without a non-empty name property. URL: {final_url}",
+            "A product name is a core descriptive property. Missing names can make product structured data incomplete, but this source check does not determine eligibility for a particular rich result.",
+            "Add an accurate name property to each affected Product entity and validate the complete structured-data graph.",
+            ["Inspect Product entities in every JSON-LD block.", "Compare structured product names with the visible product title.", "Run a structured-data validator after changes."],
+            final_url,
+        ))
     checks = [
         (bool(parser.title_text), "Page title", "The HTML response has no readable <title> element.",
          "Add a unique, descriptive title that accurately reflects this page.",
