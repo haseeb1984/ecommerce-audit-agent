@@ -311,10 +311,16 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
          ["Inspect the rendered page and heading outline; confirm the main heading is meaningful."]),
     ]
     for passed, title, evidence, recommendation, steps in checks:
+        if passed:
+            recommendation = {
+                "Page title": "Keep the title accurate and specific to this page; review uniqueness and search intent separately because this presence check does not assess title quality.",
+                "Meta description": "Keep the description accurate and page-specific; review its usefulness and search snippet separately because this check only confirms presence.",
+                "Primary heading (H1)": "Keep a clear primary heading and verify that it accurately describes the page; this check confirms presence, not semantic quality.",
+            }.get(title, "Keep this element present and review its quality in context; this check confirms presence only.")
         findings.append(_finding(
             "on_page_seo" if title != "Mobile viewport" else "mobile_ux",
             title,
-            "verified" if not passed else "verified",
+            "verified",
             "low" if not passed else "info",
             f"{evidence} Final URL: {final_url}" if not passed else
             (f"Found: {parser.title_text[:160]}" if title == "Page title" else
