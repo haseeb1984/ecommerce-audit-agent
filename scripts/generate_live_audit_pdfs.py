@@ -22,7 +22,7 @@ from report_generator import render_audit_pdf
 
 
 async def capture_real_website_screenshot(url: str) -> str | None:
-    """Capture a real browser viewport screenshot; return a PNG data URI or None."""
+    """Capture a real browser viewport screenshot; return a JPEG data URI or None."""
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as playwright:
