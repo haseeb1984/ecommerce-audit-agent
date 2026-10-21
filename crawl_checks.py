@@ -18,7 +18,11 @@ from performance_checks import inspect_static_performance_signals
 from accessibility_checks import inspect_static_accessibility_signals
 from mobile_ux_checks import inspect_mobile_viewport
 
-from security_checks import probe_common_exposure_paths, inspect_transport_security
+from security_checks import (
+    probe_common_exposure_paths,
+    inspect_transport_security,
+    inspect_security_header_quality,
+)
 from dependency_checks import inspect_client_dependency_versions
 
 from audit_checks import (
@@ -501,6 +505,10 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # Run the existing header/cookie review on every sampled HTML page.
+            # These are configuration review signals, not automatic vulnerability claims.
+            findings.extend(inspect_security_header_quality(page_headers, final_url))
 
             findings.extend(inspect_hreflang(body, final_url))
             findings.extend(inspect_meta_refresh(body, final_url))
