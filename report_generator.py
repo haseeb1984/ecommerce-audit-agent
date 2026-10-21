@@ -440,6 +440,91 @@ class AuditAreaInfographic(Flowable):
         c.restoreState()
 
 
+
+class PhaseScorecardInfographic(Flowable):
+    """Per-phase visual snapshot of recorded evidence, not a fabricated check pass rate."""
+    PHASES = [
+        ("Technical SEO & discovery", {"seo", "technical_seo", "on_page_seo", "structured_data", "indexing", "crawlability"}),
+        ("Performance & mobile UX", {"performance", "static_performance", "mobile_ux"}),
+        ("Accessibility", {"accessibility"}),
+        ("Security & trust", {"security", "security_headers", "security_exposure", "security_transport", "trust"}),
+        ("Conversion & paid traffic", {"conversion_paid_traffic", "conversion", "paid_traffic"}),
+    ]
+
+    def __init__(self, findings: list[dict[str, object]]):
+        super().__init__()
+        self.width = 174 * mm
+        self.row_height = 26 * mm
+        self.height = 12 * mm + len(self.PHASES) * self.row_height
+        self.rows = []
+        for label, categories in self.PHASES:
+            items = [item for item in findings if str(item.get("category", "")).lower() in categories]
+            verified = sum(1 for item in items if str(item.get("status", "")).lower() == "verified")
+            review = sum(1 for item in items if str(item.get("status", "")).lower() == "manual_review_required")
+            not_tested = sum(1 for item in items if str(item.get("status", "")).lower() in {"not_tested", "insufficient_data"})
+            total = len(items)
+            evidence_pct = round(100 * verified / total) if total else None
+            severity = {
+                level: sum(1 for item in items if str(item.get("severity", "")).lower() == level)
+                for level in ("critical", "high", "medium", "low", "info")
+            }
+            self.rows.append((label, total, verified, review, not_tested, evidence_pct, severity))
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        navy = colors.HexColor("#17365D")
+        muted = colors.HexColor("#536579")
+        border = colors.HexColor("#D8E1EC")
+        c.setFillColor(navy)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(0, self.height - 7 * mm, "PHASE-BY-PHASE EVIDENCE SNAPSHOT")
+        y = self.height - 12 * mm
+        for label, total, verified, review, not_tested, evidence_pct, severity in self.rows:
+            y -= self.row_height
+            c.setFillColor(colors.HexColor("#F4F7FB"))
+            c.setStrokeColor(border)
+            c.roundRect(0, y, self.width, self.row_height - 2 * mm, 4, fill=1, stroke=1)
+            c.setFillColor(navy)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(4 * mm, y + 17 * mm, label)
+            c.setFillColor(muted)
+            c.setFont("Helvetica", 7)
+            c.drawString(4 * mm, y + 10.5 * mm, f"{total} recorded finding(s)  |  {verified} verified  |  {review} review needed  |  {not_tested} not tested / insufficient")
+            if total:
+                pct_text = f"{evidence_pct}% evidence-confirmed"
+                c.setFillColor(colors.HexColor("#23734D") if evidence_pct is not None and evidence_pct >= 75 else colors.HexColor("#9A6700"))
+            else:
+                pct_text = "No finding recorded"
+                c.setFillColor(muted)
+            c.setFont("Helvetica-Bold", 7.5)
+            c.drawRightString(self.width - 4 * mm, y + 17 * mm, pct_text)
+            # Severity distribution bar is a visual index of recorded findings only.
+            levels = [
+                ("critical", "#8E2430"), ("high", "#D3543C"), ("medium", "#E3A12F"),
+                ("low", "#2E83A6"), ("info", "#6D7C91"),
+            ]
+            total_severity = sum(severity.values())
+            x = 4 * mm
+            bar_y = y + 4 * mm
+            bar_width = self.width - 8 * mm
+            c.setFillColor(colors.HexColor("#E0E8F1"))
+            c.roundRect(x, bar_y, bar_width, 3 * mm, 1.5, fill=1, stroke=0)
+            if total_severity:
+                cursor = x
+                for level, hex_color in levels:
+                    count = severity[level]
+                    segment = bar_width * count / total_severity
+                    if segment > 0:
+                        c.setFillColor(colors.HexColor(hex_color))
+                        c.rect(cursor, bar_y, segment, 3 * mm, fill=1, stroke=0)
+                        cursor += segment
+            c.setFillColor(muted)
+            c.setFont("Helvetica-Oblique", 6)
+            c.drawRightString(self.width - 4 * mm, y + 1 * mm, "Severity mix of recorded findings")
+        c.restoreState()
+
+
 def _paid_media_coverage_rows() -> list[list[str]]:
     """Describe paid-media evidence coverage without implying account-level access."""
     return [
@@ -653,6 +738,12 @@ def render_audit_pdf(
     # split the two table rows across a page break and leave orphaned numbers.
     story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
     story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 3 * mm), AuditAreaInfographic(consolidated_findings), Spacer(1, 4 * mm)])
+    story.append(PhaseScorecardInfographic(consolidated_findings))
+    story.append(Spacer(1, 4 * mm))
+    story.append(_p(
+        "Percentage shown per phase is the share of recorded findings whose observation status is verified; it is NOT a pass rate for every possible check and does not measure complete website coverage. A phase with no recorded findings is shown as not recorded, never as 100% passed. Checks not represented as findings cannot be counted from the current result data.",
+        small_style,
+    ))
 
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
