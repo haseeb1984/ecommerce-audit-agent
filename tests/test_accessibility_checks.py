@@ -348,3 +348,24 @@ def test_focusable_control_outside_aria_hidden_container_is_not_counted_by_that_
     )
     assert parser.aria_hidden_descendant_focusables == []
 
+
+
+def test_duplicate_ids_do_not_count_as_resolvable_accessible_names():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<span id="label">First label</span><span id="label">Second label</span>'
+        '<input aria-labelledby="label">'
+        '<label for="email">Email</label><input id="email">'
+        '<label for="duplicate">Duplicate label</label>'
+        '<input id="duplicate"><input id="duplicate">'
+        '</body></html>',
+        "https://shop.example/checkout",
+    )
+    titles = {finding.title for finding in findings}
+    assert "Duplicate HTML IDs may affect accessible relationships" in titles
+    assert "Form controls may lack accessible labels" in titles
+    label_finding = next(
+        finding for finding in findings
+        if finding.title == "Form controls may lack accessible labels"
+    )
+    assert "3 form control(s)" in label_finding.evidence
