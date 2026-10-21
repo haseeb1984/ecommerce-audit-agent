@@ -1369,7 +1369,7 @@ async def test_crawl_discovers_nonstandard_sitemap_declared_in_robots(monkeypatc
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
-            return 200, f"User-agent: *\\nAllow: /\\nSitemap: {sitemap}\\n", {"content-type": "text/plain"}, url
+            return 200, f"User-agent: *\nAllow: /\nSitemap: {sitemap}\n", {"content-type": "text/plain"}, url
         if url == sitemap:
             return 200, f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{product}</loc></url></urlset>', {"content-type": "application/xml"}, sitemap
         if url == product:
@@ -1395,7 +1395,7 @@ async def test_crawl_ignores_cross_origin_sitemap_directive(monkeypatch):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
-            return 200, "Sitemap: https://outside.example/sitemap.xml\\n", {"content-type": "text/plain"}, url
+            return 200, "Sitemap: https://outside.example/sitemap.xml\n", {"content-type": "text/plain"}, url
         if url == "https://shop.example/sitemap.xml":
             return 404, "", {"content-type": "application/xml"}, url
         return 404, "", {"content-type": "text/plain"}, url
