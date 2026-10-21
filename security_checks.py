@@ -218,7 +218,9 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
         for part in csp.split(";"):
             tokens = part.strip().split()
             if tokens:
-                directives[tokens[0].lower()] = [token.lower() for token in tokens[1:]]
+                # CSP duplicate directives are ignored after the first occurrence by browsers.
+                # Preserve the first value so a later, stricter duplicate cannot mask a weak one.
+                directives.setdefault(tokens[0].lower(), [token.lower() for token in tokens[1:]])
         risky = []
         for directive in ("default-src", "script-src", "object-src", "base-uri", "frame-ancestors"):
             values = directives.get(directive, [])
