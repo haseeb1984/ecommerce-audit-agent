@@ -672,15 +672,79 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     evidence_ids = {url: f"E{index}" for index, url in enumerate(evidence_urls, 1)}
 
     for index, finding in enumerate(consolidated_findings, 1):
-        blocks = [
-            Paragraph(f"{index}. {escape(str(finding['title']))}", finding_style),
-            _p(
-                f"Category: {str(finding['category']).replace('_', ' ').title()} | "
-                f"Status: {str(finding['status']).replace('_', ' ').title()} | "
-                f"Severity: {str(finding['severity']).title()}",
+        severity = str(finding["severity"]).lower()
+        severity_colors = {
+            "critical": "#8E2430",
+            "high": "#D3543C",
+            "medium": "#B87912",
+            "low": "#2E83A6",
+            "info": "#6D7C91",
+        }
+        status_colors = {
+            "verified": "#23734D",
+            "manual_review_required": "#9A6700",
+            "not_tested": "#6D7C91",
+            "insufficient_data": "#6D7C91",
+        }
+        severity_color = colors.HexColor(severity_colors.get(severity, "#6D7C91"))
+        status = str(finding["status"]).lower()
+        status_color = colors.HexColor(status_colors.get(status, "#6D7C91"))
+        header = Table(
+            [[
+                Paragraph(
+                    f"<b>{index}. {escape(str(finding['title']))}</b>",
+                    ParagraphStyle(
+                        f"FindingCardTitle{index}", parent=finding_style,
+                        textColor=colors.HexColor("#17365D"), fontSize=10.5,
+                        leading=13, spaceBefore=0, spaceAfter=0,
+                    ),
+                ),
+                Paragraph(
+                    f'<font color="{severity_colors.get(severity, "#6D7C91")}">'
+                    f"<b>{escape(severity.upper())}</b></font>",
+                    ParagraphStyle(
+                        f"FindingCardSeverity{index}", parent=small_style,
+                        alignment=TA_CENTER, fontSize=7.5, leading=9,
+                    ),
+                ),
+            ]],
+            colWidths=[144 * mm, 30 * mm],
+            hAlign="LEFT",
+        )
+        header.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F6FB")),
+            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#D5DFEA")),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, severity_color),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        story.extend([Spacer(1, 3 * mm), header, Spacer(1, 1.5 * mm)])
+        status_badge = Table(
+            [[Paragraph(
+                f'<font color="{status_colors.get(status, "#6D7C91")}">'
+                f"<b>{escape(status.replace('_', ' ').upper())}</b></font>",
                 small_style,
-            ),
-        ]
+            )]],
+            colWidths=[174 * mm],
+            hAlign="LEFT",
+        )
+        status_badge.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FAFBFD")),
+            ("BOX", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(status_badge)
+        story.append(_p(
+            f"Category: {str(finding['category']).replace('_', ' ').title()}",
+            small_style,
+        ))
+        blocks = []
         instances = int(finding["instances"])
         urls = list(finding["source_urls"])
         if instances > 1:
