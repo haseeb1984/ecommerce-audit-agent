@@ -595,3 +595,64 @@ def test_audit_area_infographic_groups_findings_into_readable_categories():
         ("Conversion & paid traffic", 1),
         ("Mobile UX", 1),
     ]
+
+
+
+def test_phase_scorecard_reports_recorded_evidence_without_calling_it_pass_rate():
+    from report_generator import PhaseScorecardInfographic, _consolidate_findings
+
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-22T00:00:00+00:00",
+        findings=[
+            AuditFinding(
+                category="technical_seo",
+                title="Title tag found",
+                status="verified",
+                severity="info",
+                evidence="A title element was present.",
+                explanation="A title was observed.",
+                recommendation="Review title quality separately.",
+            ),
+            AuditFinding(
+                category="technical_seo",
+                title="Product schema needs review",
+                status="manual_review_required",
+                severity="medium",
+                evidence="Product schema could not be fully assessed from static HTML.",
+                explanation="Contextual review is needed.",
+                recommendation="Validate structured data in the rendered page.",
+            ),
+            AuditFinding(
+                category="mobile_ux",
+                title="Rendered mobile check unavailable",
+                status="not_tested",
+                severity="info",
+                evidence="Browser inspection was unavailable.",
+                explanation="No conclusion can be drawn.",
+                recommendation="Repeat with browser-based testing.",
+            ),
+        ],
+    )
+    infographic = PhaseScorecardInfographic(_consolidate_findings(result.findings))
+    seo = next(row for row in infographic.rows if row[0] == "Technical SEO & discovery")
+    mobile = next(row for row in infographic.rows if row[0] == "Performance & mobile UX")
+    accessibility = next(row for row in infographic.rows if row[0] == "Accessibility")
+
+    assert seo[1:6] == (2, 1, 1, 0, 50)
+    assert mobile[1:6] == (1, 0, 0, 1, 0)
+    assert accessibility[1:6] == (0, 0, 0, 0, None)
+
+
+def test_phase_scorecard_pdf_renders_all_phase_visuals():
+    from report_generator import PhaseScorecardInfographic
+
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-22T00:00:00+00:00",
+        findings=[],
+    )
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1000
+    assert len(PhaseScorecardInfographic.PHASES) == 5
