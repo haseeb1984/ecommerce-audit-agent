@@ -16,6 +16,9 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+
+_PUBLIC_HOST_CACHE: dict[str, bool] = {}
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from audit_checks import AuditCheckResult, AuditFinding, normalize_target, run_phase_one_checks
@@ -35,13 +38,20 @@ async def _allow_public_browser_request(route) -> None:
         if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
             await route.abort()
             return
-        try:
-            addresses = [ipaddress.ip_address(host.strip("[]"))]
-        except ValueError:
-            loop = asyncio.get_running_loop()
-            records = await loop.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM)
-            addresses = list({ipaddress.ip_address(record[4][0]) for record in records})
-        if not addresses or any(not address.is_global for address in addresses):
+        cached_public = _PUBLIC_HOST_CACHE.get(host)
+        if cached_public is None:
+            try:
+                addresses = [ipaddress.ip_address(host.strip("[]"))]
+            except ValueError:
+                loop = asyncio.get_running_loop()
+                records = await asyncio.wait_for(
+                    loop.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM),
+                    timeout=3.0,
+                )
+                addresses = list({ipaddress.ip_address(record[4][0]) for record in records})
+            cached_public = bool(addresses) and all(address.is_global for address in addresses)
+            _PUBLIC_HOST_CACHE[host] = cached_public
+        if not cached_public:
             await route.abort()
             return
         await route.continue_()
@@ -58,8 +68,14 @@ async def capture_real_website_screenshot(url: str, viewport_width: int = 1440, 
             browser = await playwright.chromium.launch()
             page = await browser.new_page(viewport={"width": viewport_width, "height": viewport_height}, device_scale_factor=1)
             await page.route("**/*", _allow_public_browser_request)
-            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
-            await page.wait_for_timeout(1200)
+            # Commit-level navigation avoids waiting indefinitely on slow third-party
+            # resources; the route handler independently validates every requested host.
+            await page.goto(url, wait_until="commit", timeout=20000)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                pass  # A committed document can still provide a useful, bounded screenshot.
+            await page.wait_for_timeout(800)
             image_bytes = await page.screenshot(type="jpeg", quality=72, full_page=False)
             await browser.close()
         if not image_bytes or len(image_bytes) > 900_000:
@@ -112,8 +128,13 @@ async def inspect_mobile_rendered_signals(url: str) -> tuple[list[AuditFinding],
             browser = await playwright.chromium.launch()
             page = await browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
             await page.route("**/*", _allow_public_browser_request)
-            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
-            await page.wait_for_timeout(500)
+            # Do not make the audit depend on every third-party script completing.
+            await page.goto(url, wait_until="commit", timeout=20000)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                pass  # Evaluate only what is available in the committed document.
+            await page.wait_for_timeout(400)
             metrics = await page.evaluate("""() => ({
               viewport_width: window.innerWidth,
               document_width: document.documentElement.scrollWidth,
