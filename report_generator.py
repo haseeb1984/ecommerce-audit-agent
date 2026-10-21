@@ -451,7 +451,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         [PhaseVisual("Security & trust signals", "Observable public-facing controls", "security"),
          PhaseVisual("SEO & page structure", "Metadata and sampled page signals", "seo")],
     ]
-    phase_table = Table(phase_cards, colWidths=[83 * mm, 83 * mm], hAlign="LEFT")
+    phase_table = Table(phase_cards, colWidths=[87 * mm, 87 * mm], hAlign="LEFT")
     phase_table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -475,7 +475,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
                 valid_png = match.group(1) == "image/png" and image_bytes.startswith(bytes.fromhex("89504e470d0a1a0a"))
                 valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(bytes.fromhex("ffd8ff"))
                 if image_bytes and len(image_bytes) <= 1_000_000 and (valid_png or valid_jpeg):
-                    candidate = Image(BytesIO(image_bytes), width=150 * mm, height=84 * mm, kind="proportional")
+                    candidate = Image(BytesIO(image_bytes), width=174 * mm, height=90 * mm, kind="proportional")
                     candidate.hAlign = "CENTER"
                     screenshot_flowable = candidate
             except (ValueError, TypeError, OSError):
@@ -543,7 +543,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     ]
     overview = Table(
         [overview_cells, overview_values],
-        colWidths=[51 * mm, 51 * mm, 51 * mm],
+        colWidths=[58 * mm, 58 * mm, 58 * mm],
         hAlign="LEFT",
     )
     overview.setStyle(TableStyle([
@@ -556,7 +556,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
     summary_rows = [["Status", "Consolidated issues"]] + [[status.replace("_", " ").title(), str(count)] for status, count in sorted(counts.items())]
-    summary = Table(summary_rows, colWidths=[100 * mm, 35 * mm], repeatRows=1, hAlign="LEFT")
+    summary = Table(summary_rows, colWidths=[120 * mm, 54 * mm], repeatRows=1, hAlign="LEFT")
     summary.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF5")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#17365D")),
@@ -618,7 +618,7 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     coverage_rows = _paid_media_coverage_rows()
     coverage_table = Table(
         [[_p(cell, small_style) for cell in row] for row in coverage_rows],
-        colWidths=[66 * mm, 102 * mm],
+        colWidths=[70 * mm, 104 * mm],
         repeatRows=1,
         hAlign="LEFT",
     )
