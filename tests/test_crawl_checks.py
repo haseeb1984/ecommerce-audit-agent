@@ -1869,7 +1869,7 @@ async def test_bounded_crawl_never_fetches_off_origin_robots_sitemap(monkeypatch
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
-            return 200, f"User-agent: *\\nSitemap: {external_sitemap}\\nSitemap: {local_sitemap}\\n", {"content-type": "text/plain"}, url
+            return 200, f"User-agent: *\nSitemap: {external_sitemap}\nSitemap: {local_sitemap}\n", {"content-type": "text/plain"}, url
         if url == local_sitemap:
             return 200, f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{product}</loc></url></urlset>', {"content-type": "application/xml"}, url
         if url == product:
