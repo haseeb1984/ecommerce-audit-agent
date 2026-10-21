@@ -547,3 +547,18 @@ def test_pdf_evidence_links_omit_unsupported_or_malformed_urls():
         paragraph = _link(value, style)
         assert "omitted" in paragraph.getPlainText().lower()
         assert "<link" not in paragraph.text
+
+
+def test_conversion_paid_traffic_findings_are_separated_from_general_findings():
+    from report_generator import _conversion_paid_traffic_findings
+
+    findings = [
+        {"category": "conversion_paid_traffic", "title": "Checkout path signal"},
+        {"category": "security", "title": "Header review"},
+        {"category": "Conversion_Paid_Traffic", "title": "Form review"},
+    ]
+    selected = _conversion_paid_traffic_findings(findings)
+    assert [item["title"] for item in selected] == [
+        "Checkout path signal",
+        "Form review",
+    ]
