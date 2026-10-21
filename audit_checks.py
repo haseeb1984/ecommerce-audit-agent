@@ -670,6 +670,8 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
                 "Verify the resolved destination is the preferred indexable URL.",
             ], final_url,
         ))
+    canonical_is_valid = False
+    canonical_parts = None
     if parser.canonical_href:
         try:
             canonical_target = urljoin(final_url, parser.canonical_href)
