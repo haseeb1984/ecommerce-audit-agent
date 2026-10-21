@@ -1650,3 +1650,30 @@ async def test_product_jsonld_flags_negative_price_and_malformed_currency_code(m
     assert suspicious[0].status == "manual_review_required"
     assert "negative offer price" in suspicious[0].evidence
     assert "priceCurrency is not a three-letter currency code" in suspicious[0].evidence
+
+
+def test_sensitive_get_form_detects_password_and_payment_fields():
+    findings = crawl_checks.inspect_sensitive_get_forms(
+        '<form action="/login" method="get"><input type="password" name="password">'
+        '<input name="email"></form>'
+        '<form action="/checkout" method="GET"><input name="cc-number" autocomplete="cc-number"></form>',
+        "https://shop.example/checkout",
+    )
+
+    assert len(findings) == 1
+    assert findings[0].title == "Sensitive-looking fields appear in a GET form"
+    assert findings[0].status == "manual_review_required"
+    assert findings[0].severity == "high"
+    assert "password" in findings[0].evidence
+    assert "cc-number" in findings[0].evidence
+    assert "Do not submit real credentials" in findings[0].recommendation
+
+
+def test_sensitive_get_form_ignores_safe_post_form_and_regular_get_search():
+    findings = crawl_checks.inspect_sensitive_get_forms(
+        '<form action="/login" method="post"><input type="password" name="password"></form>'
+        '<form action="/search"><input type="text" name="q"></form>',
+        "https://shop.example/",
+    )
+
+    assert findings == []
