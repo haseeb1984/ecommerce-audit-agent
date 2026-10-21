@@ -95,3 +95,28 @@ async def test_osv_service_failure_stays_not_tested(monkeypatch):
     assert findings[0].status == "not_tested"
     assert findings[0].title == "Frontend dependency vulnerability lookup incomplete"
     assert "remain unverified" in limitations[0]
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"results": [None]},
+        {"results": [{"vulns": "not-a-list"}]},
+        {"results": [{"vulns": [{"title": "missing advisory ID"}]}]},
+        {"unexpected": []},
+    ],
+)
+async def test_malformed_osv_payload_never_looks_like_a_clean_scan(monkeypatch, payload):
+    fake = FakeSession(payload=payload)
+    monkeypatch.setattr(dependency_checks.aiohttp, "ClientSession", lambda **kwargs: fake)
+    findings, limitations = await dependency_checks.inspect_client_dependency_versions(
+        '<script src="https://cdn.jsdelivr.net/npm/jquery@1.2.3/dist/jquery.min.js"></script>',
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "not_tested"
+    assert findings[0].title == "Frontend dependency vulnerability lookup incomplete"
+    assert "unverified" in limitations[0]
+    assert "No matching OSV advisories returned" not in findings[0].title
