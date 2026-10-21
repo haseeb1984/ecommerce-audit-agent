@@ -662,7 +662,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
     findings: list[AuditFinding] = []
     pages_checked: list[str] = []
     limitations = [
-        f"First-hop crawl is capped at {MAX_CRAWL_PAGES} URLs and does not recursively crawl all site pages.",
+        f"Same-origin crawl is capped at {MAX_CRAWL_PAGES} URLs and follows discovered HTML links only while page budget remains; it does not crawl the whole site.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
         "Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most 3 same-origin child sitemaps and at most 100 page URLs. Additional declared sitemap locations and deeper nesting are not fully explored.",
     ]
@@ -938,7 +938,13 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
         title_pages: dict[str, list[str]] = defaultdict(list)
         description_pages: dict[str, list[str]] = defaultdict(list)
-        for url in [_canonical_page_url(final_home), *candidates]:
+        # Keep the initial homepage/sitemap discoveries, then append newly found
+        # same-origin links as pages are inspected. Python's list iterator observes
+        # appended entries, providing bounded breadth-first traversal without an
+        # unbounded queue or a second crawler implementation.
+        crawl_queue = [_canonical_page_url(final_home), *candidates]
+        queued_urls = set(crawl_queue)
+        for url in crawl_queue:
             try:
                 # Reuse the homepage response already fetched for link discovery.
                 # This avoids spending a second request on the same page and keeps
@@ -974,6 +980,43 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            # Expand only from successfully fetched HTML pages, with a strict
+            # per-page link cap, total page cap, same-origin enforcement, and
+            # canonical URL keys that discard fragments/tracking query variants.
+            if len(crawl_queue) < MAX_CRAWL_PAGES:
+                discovered_links = _LinkParser()
+                discovered_links.feed(body)
+                for href in discovered_links.links[:MAX_LINKS_FROM_HOME]:
+                    if len(crawl_queue) >= MAX_CRAWL_PAGES:
+                        break
+                    try:
+                        absolute = urljoin(final_url, href)
+                        parts = urlsplit(absolute)
+                        if (
+                            parts.scheme.lower() not in {"http", "https"}
+                            or not parts.hostname
+                            or parts.username is not None
+                            or parts.password is not None
+                        ):
+                            continue
+                        _ = parts.port
+                        if not _same_origin(absolute, final_home):
+                            continue
+                        candidate_url = _canonical_page_url(absolute)
+                        if candidate_url in queued_urls:
+                            continue
+                        path = urlsplit(candidate_url).path.lower()
+                        if path.endswith((
+                            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
+                            ".pdf", ".css", ".js", ".woff", ".woff2", ".zip", ".xml",
+                        )):
+                            continue
+                        queued_urls.add(candidate_url)
+                        crawl_queue.append(candidate_url)
+                    except (ValueError, UnicodeError):
+                        # A malformed link must not stop inspection of other links.
+                        continue
 
             findings.extend(inspect_product_page_schema_presence(body, final_url))
             findings.extend(inspect_sensitive_get_forms(body, final_url))
