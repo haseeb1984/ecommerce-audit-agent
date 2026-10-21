@@ -461,7 +461,11 @@ def _conversion_paid_traffic_findings(findings: list[dict[str, object]]) -> list
     ]
 
 
-def render_audit_pdf(\n    result: AuditCheckResult,\n    screenshot_data_uri: str | None = None,\n    desktop_screenshot_data_uri: str | None = None,\n) -> bytes:
+def render_audit_pdf(
+    result: AuditCheckResult,
+    screenshot_data_uri: str | None = None,
+    desktop_screenshot_data_uri: str | None = None,
+) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(
