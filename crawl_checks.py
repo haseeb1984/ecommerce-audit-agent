@@ -998,6 +998,37 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         if not any(nonempty_string(offer.get("availability")) for offer in offer_nodes):
                             missing_properties.append("offers.availability")
 
+                    # Flag suspicious offer values separately from missing-property checks.
+                    # These are source-level sanity checks, not a full Schema.org validator.
+                    suspicious_offer_values: list[str] = []
+                    for offer in offer_nodes:
+                        raw_price = offer.get("price")
+                        if isinstance(raw_price, (int, float)) and not isinstance(raw_price, bool):
+                            if raw_price < 0:
+                                suspicious_offer_values.append("negative offer price")
+                        elif isinstance(raw_price, str) and raw_price.strip():
+                            try:
+                                parsed_price = float(raw_price.strip().replace(",", ""))
+                            except ValueError:
+                                parsed_price = None
+                            if parsed_price is not None and parsed_price < 0:
+                                suspicious_offer_values.append("negative offer price")
+                        raw_currency = offer.get("priceCurrency")
+                        if nonempty_string(raw_currency) and not re.fullmatch(r"[A-Za-z]{3}", raw_currency.strip()):
+                            suspicious_offer_values.append("priceCurrency is not a three-letter currency code")
+                    suspicious_offer_values = list(dict.fromkeys(suspicious_offer_values))
+                    if suspicious_offer_values:
+                        findings.append(_finding(
+                            "structured_data", "Product offer values need validation",
+                            "manual_review_required", "medium",
+                            f"On {final_url}, inspected Product/ProductGroup offer data contains suspicious value(s): "
+                            + ", ".join(suspicious_offer_values) + ".",
+                            "A negative numeric price is unlikely to represent a normal product offer, and priceCurrency is expected to use a three-letter currency code. This lightweight check does not confirm whether a currency exists or whether an offer matches the visible storefront.",
+                            "Compare every flagged value with the actual selected product variant, visible price, currency, and current structured-data requirements. Correct the source only using verified commercial data.",
+                            ["Compare JSON-LD offer values with the visible product and selected variant.", "Validate the page with Schema.org Validator and the applicable rich-result test."],
+                            final_url,
+                        ))
+
                     if missing_properties:
                         findings.append(_finding(
                             "structured_data", "Product JSON-LD needs property review",
