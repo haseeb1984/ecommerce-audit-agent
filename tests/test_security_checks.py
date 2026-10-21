@@ -488,3 +488,22 @@ def test_wordpress_user_endpoint_ignores_non_profile_or_unsuccessful_responses(s
         "/wp-json/wp/v2/users", status, body, {},
         "https://shop.example/wp-json/wp/v2/users",
     ) == []
+
+
+def test_duplicate_csp_directive_does_not_let_later_value_mask_first():
+    findings = inspect_security_header_quality(
+        {
+            "content-security-policy": (
+                "script-src 'unsafe-inline'; "
+                "script-src 'self'; "
+                "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+            )
+        },
+        "https://shop.example/",
+    )
+
+    permissive = next(
+        finding for finding in findings
+        if finding.title == "Content Security Policy may be overly permissive"
+    )
+    assert "script-src permits unsafe-inline/unsafe-eval" in permissive.evidence
