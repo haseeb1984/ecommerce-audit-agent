@@ -296,6 +296,50 @@ def _same_origin(left_url: str, right_url: str) -> bool:
     )
 
 
+def inspect_robots_txt(text: str, robots_url: str) -> tuple[list[AuditFinding], list[str]]:
+    """Review high-impact robots.txt directives without treating them as access controls."""
+    findings: list[AuditFinding] = []
+    limitations: list[str] = []
+    active_agents: list[str] = []
+    wildcard_group = False
+    disallow_all = False
+    sitemap_count = 0
+
+    for raw_line in text.splitlines()[:5000]:
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        key_lower = key.lower()
+        if key_lower == "user-agent":
+            if not value:
+                active_agents = []
+                wildcard_group = False
+                continue
+            active_agents.append(value.lower())
+            wildcard_group = "*" in active_agents
+        elif key_lower == "disallow" and wildcard_group and value.strip() == "/":
+            disallow_all = True
+        elif key_lower == "sitemap" and value:
+            sitemap_count += 1
+
+    if disallow_all:
+        findings.append(_finding(
+            "indexing", "robots.txt blocks the entire site for wildcard crawlers",
+            "manual_review_required", "high",
+            f"robots.txt at {robots_url} contains a Disallow: / directive in a User-agent: * group.",
+            "A site-wide disallow directive can prevent compliant search crawlers from fetching pages. robots.txt is a crawl directive, not an access-control or security boundary; group inheritance and crawler-specific behavior can affect interpretation.",
+            "Confirm the directive is intentional for the live production site. If pages should appear in search, narrow the rule and verify important URLs in the relevant search-engine tools.",
+            ["Review all User-agent groups and rule ordering in robots.txt.",
+             "Check representative product, category, and landing-page URLs with search-engine inspection tools.",
+             "Do not use robots.txt as a substitute for authentication or authorization."],
+            robots_url,
+        ))
+    if sitemap_count == 0:
+        limitations.append("robots.txt did not declare a Sitemap URL in the inspected text; this does not prove that no sitemap exists.")
+    return findings, limitations
+
+
 async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[str], list[str]]:
     """Inspect a capped set of same-origin HTML links; no form submission or login."""
     normalized = normalize_target(target)
@@ -334,6 +378,22 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             return findings, pages_checked, limitations + [
                 f"Bounded crawl could not fetch the homepage: {type(exc).__name__}."
             ]
+
+        # Inspect robots.txt as a discovery/indexing signal. It is fetched through
+        # the same public-only resolver and redirect/response-size safeguards.
+        robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
+        try:
+            robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
+            if 200 <= robots_status < 300 and _same_origin(robots_final_url, final_home):
+                robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
+                findings.extend(robots_findings)
+                limitations.extend(robots_limitations)
+            elif robots_status in {401, 403}:
+                limitations.append("robots.txt could not be inspected because the server returned an access-denied response.")
+            elif robots_status >= 500:
+                limitations.append(f"robots.txt could not be inspected because the server returned HTTP {robots_status}.")
+        except Exception as exc:
+            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}).")
 
         link_parser = _LinkParser()
         link_parser.feed(homepage)
