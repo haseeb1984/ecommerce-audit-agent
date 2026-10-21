@@ -721,3 +721,46 @@ def test_executive_infographic_summarizes_severity_and_status_without_fake_pass_
     assert metrics["REVIEW NEEDED"] == 1
     assert metrics["NOT TESTED"] == 1
     assert visual.pages_inspected == 2
+
+
+def test_finding_insight_infographic_distinguishes_positive_review_and_priority_signals():
+    from report_generator import FindingInsightInfographic
+
+    positive = FindingInsightInfographic({"status": "verified", "severity": "info", "category": "technical_seo"})
+    review = FindingInsightInfographic({"status": "manual_review_required", "severity": "medium", "category": "accessibility"})
+    not_tested = FindingInsightInfographic({"status": "not_tested", "severity": "info", "category": "mobile_ux"})
+    high = FindingInsightInfographic({"status": "verified", "severity": "high", "category": "security"})
+
+    assert positive.label == "POSITIVE SIGNAL — QUALITY NOT FULLY SCORED"
+    assert positive.positive is True
+    assert positive.review is False
+    assert review.label == "NEEDS HUMAN REVIEW"
+    assert review.review is True
+    assert not_tested.label == "NEEDS HUMAN REVIEW"
+    assert not_tested.review is True
+    assert high.label == "HIGH PRIORITY"
+    assert high.review is False
+    assert all(card.width > 0 and card.height > 0 for card in (positive, review, not_tested, high))
+
+
+def test_finding_insight_infographic_pdf_renders_with_explicit_evidence_qualification():
+    from report_generator import FindingInsightInfographic
+
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-22T00:00:00+00:00",
+        findings=[
+            AuditFinding(
+                category="technical_seo",
+                title="Title element observed",
+                status="verified",
+                severity="info",
+                evidence="A title element was present in inspected HTML.",
+                explanation="Presence alone does not assess quality.",
+                recommendation="Review relevance and uniqueness.",
+            ),
+        ],
+    )
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1000
