@@ -577,7 +577,7 @@ def test_paid_media_coverage_distinguishes_static_signals_from_unassessed_metric
 
 
 def test_audit_area_infographic_groups_findings_into_readable_categories():
-    from report_generator import AuditAreaInfographic
+    from report_generator import AuditAreaInfographic, mm
 
     chart = AuditAreaInfographic([
         {"category": "accessibility", "severity": "medium"},
@@ -588,7 +588,7 @@ def test_audit_area_infographic_groups_findings_into_readable_categories():
         {"category": "conversion_paid_traffic", "severity": "medium"},
     ])
 
-    assert chart.width == 174 * report_generator.mm
+    assert chart.width == 174 * mm
     assert chart.items == [
         ("Accessibility", 2),
         ("Security", 2),
