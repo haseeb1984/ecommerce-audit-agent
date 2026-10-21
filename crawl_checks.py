@@ -344,7 +344,8 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
                     display_host = f"{display_host}:{port}"
                 return f"{parts.scheme.lower()}://{display_host}{(parts.path or '/')[:120]}"
         except (ValueError, UnicodeError):
-            pass
+            if "://" in href and "@" not in href and "?" not in href and "#" not in href:
+                return href[:120]
         try:
             parts = urlsplit(href)
             if parts.scheme and parts.scheme.lower() not in {"http", "https"}:

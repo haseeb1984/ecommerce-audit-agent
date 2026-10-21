@@ -907,7 +907,7 @@ async def test_crawl_expands_limited_same_origin_sitemap_index(monkeypatch):
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
     _, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
 
-    assert any("at most 3 same-origin child sitemaps" in item and "deeper sitemap-index nesting" in item for item in limitations)
+    assert any("at most 2 same-origin child sitemaps" in item and "deeper sitemap-index nesting" in item for item in limitations)
     assert "https://shop.example/products/0" in checked
     assert "https://shop.example/categories/0" in checked
     assert not any("outside.example" in url or "evil.xml" in url for url in requested)

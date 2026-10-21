@@ -139,7 +139,7 @@ def inspect_exposure_response(path: str, status: int, body: str,
             finding_severity = "low"
             safe_evidence = (
                 f"The response resembles a WordPress REST user-record list "
-                f"({len(payload)} record(s) in the returned sample). Names, numeric identifiers, slugs, "
+                f"({len(payload)} record(s) in the returned sample). Names, numeric keys, slugs, "
                 "and profile values are omitted because author profiles may be intentionally public."
             )
 
