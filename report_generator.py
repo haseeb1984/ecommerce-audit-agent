@@ -369,6 +369,77 @@ class FindingMixInfographic(Flowable):
         c.drawString(5 * mm, 2.5 * mm, "Counts are grouped by recorded severity; they are not business-impact or revenue-loss estimates.")
         c.restoreState()
 
+class AuditAreaInfographic(Flowable):
+    """Compact, evidence-derived bar chart showing where consolidated findings cluster."""
+    LABELS = {
+        "accessibility": "Accessibility",
+        "mobile_ux": "Mobile UX",
+        "performance": "Performance",
+        "static_performance": "Performance",
+        "technical_seo": "Technical SEO",
+        "on_page_seo": "On-page SEO",
+        "seo": "SEO",
+        "security": "Security",
+        "security_headers": "Security",
+        "security_exposure": "Security",
+        "security_transport": "Security",
+        "structured_data": "Structured data",
+        "conversion_paid_traffic": "Conversion & paid traffic",
+        "conversion": "Conversion & paid traffic",
+        "paid_traffic": "Conversion & paid traffic",
+        "trust": "Trust signals",
+    }
+
+    def __init__(self, findings: list[dict[str, object]]):
+        super().__init__()
+        self.width = 174 * mm
+        self.height = 49 * mm
+        grouped: dict[str, int] = {}
+        for item in findings:
+            category = str(item.get("category", "other")).lower()
+            label = self.LABELS.get(category, category.replace("_", " ").title() or "Other")
+            grouped[label] = grouped.get(label, 0) + 1
+        self.items = sorted(grouped.items(), key=lambda pair: (-pair[1], pair[0]))[:5]
+        self.max_count = max((count for _, count in self.items), default=1)
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        c.setFillColor(colors.HexColor("#F4F7FB"))
+        c.setStrokeColor(colors.HexColor("#D8E1EC"))
+        c.roundRect(0, 0, self.width, self.height, 7, fill=1, stroke=1)
+        c.setFillColor(colors.HexColor("#17365D"))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(5 * mm, self.height - 7 * mm, "FINDINGS BY AUDIT AREA")
+        if not self.items:
+            c.setFillColor(colors.HexColor("#536579"))
+            c.setFont("Helvetica", 8)
+            c.drawString(5 * mm, self.height - 17 * mm, "No consolidated findings were recorded in this run.")
+            c.restoreState()
+            return
+        label_x = 5 * mm
+        bar_x = 57 * mm
+        bar_width = 87 * mm
+        count_x = self.width - 5 * mm
+        row_y = self.height - 15 * mm
+        for label, count in self.items:
+            c.setFillColor(colors.HexColor("#334A62"))
+            c.setFont("Helvetica", 7.5)
+            c.drawString(label_x, row_y, label[:34])
+            c.setFillColor(colors.HexColor("#E0E8F1"))
+            c.roundRect(bar_x, row_y - 1.2 * mm, bar_width, 3.2 * mm, 1.5, fill=1, stroke=0)
+            c.setFillColor(colors.HexColor("#2E83A6"))
+            c.roundRect(bar_x, row_y - 1.2 * mm, max(1.5 * mm, bar_width * count / self.max_count), 3.2 * mm, 1.5, fill=1, stroke=0)
+            c.setFillColor(colors.HexColor("#17365D"))
+            c.setFont("Helvetica-Bold", 7.5)
+            c.drawRightString(count_x, row_y, str(count))
+            row_y -= 6.1 * mm
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica-Oblique", 6.5)
+        c.drawString(5 * mm, 2.5 * mm, "Counts reflect consolidated recorded findings, not severity, business impact, or revenue loss.")
+        c.restoreState()
+
+
 def _paid_media_coverage_rows() -> list[list[str]]:
     """Describe paid-media evidence coverage without implying account-level access."""
     return [
@@ -577,7 +648,7 @@ def render_audit_pdf(\n    result: AuditCheckResult,\n    screenshot_data_uri: s
     # Keep the KPI labels and their values on the same page; otherwise ReportLab can
     # split the two table rows across a page break and leave orphaned numbers.
     story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
-    story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 4 * mm)])
+    story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 3 * mm), AuditAreaInfographic(consolidated_findings), Spacer(1, 4 * mm)])
 
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
