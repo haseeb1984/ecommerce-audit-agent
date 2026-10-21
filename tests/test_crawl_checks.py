@@ -1883,3 +1883,51 @@ async def test_bounded_crawl_never_fetches_off_origin_robots_sitemap(monkeypatch
     assert local_sitemap in requested
     assert product in checked
     assert any(f.title == "robots.txt declares an off-origin sitemap" for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_sitemap_index_rejects_off_origin_and_deduplicates_child_sitemaps(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+    sitemap = "https://shop.example/sitemap.xml"
+    child = "https://shop.example/sitemaps/products.xml"
+    product = "https://shop.example/products/one"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == sitemap:
+            return 200, (
+                '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<sitemap><loc>{child}</loc></sitemap>'
+                f'<sitemap><loc>{child}?utm_source=duplicate</loc></sitemap>'
+                '<sitemap><loc>https://outside.example/foreign.xml</loc></sitemap>'
+                '<sitemap><loc>   </loc></sitemap>'
+                '</sitemapindex>'
+            ), {"content-type": "application/xml"}, sitemap
+        if url == child:
+            return 200, (
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{product}</loc></url></urlset>'
+            ), {"content-type": "application/xml"}, child
+        if url == product:
+            return 200, '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>', {"content-type": "text/html"}, product
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert requested.count(child) == 1
+    assert product in checked
+    assert not any("outside.example" in url for url in requested)
+    assert any(
+        f.title == "Sitemap index contains unusable child sitemap locations"
+        and f.status == "manual_review_required"
+        for f in findings
+    )
