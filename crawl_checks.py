@@ -562,11 +562,29 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         try:
                             child_status, child_body, child_headers, _ = await _safe_get(client, child_sitemap_url)
                             if child_status < 200 or child_status >= 300:
+                                findings.append(_finding(
+                                    "indexing", "Child sitemap could not be retrieved",
+                                    "manual_review_required", "low",
+                                    f"Same-origin sitemap index referenced {child_sitemap_url}, which returned HTTP {child_status}.",
+                                    "A sitemap index can point crawlers toward important URLs. An unavailable child sitemap can leave part of that discovery list uninspected; it does not prove those pages are not indexed.",
+                                    "Check the child sitemap URL, its response status, and whether access restrictions or a stale sitemap-index entry are intentional.",
+                                    ["Open the child sitemap URL directly.", "Confirm the sitemap index references current, accessible sitemap files."],
+                                    child_sitemap_url,
+                                ))
                                 continue
                             if not (
                                 "xml" in child_headers.get("content-type", "").lower()
                                 or child_body.lstrip().startswith("<")
                             ):
+                                findings.append(_finding(
+                                    "indexing", "Child sitemap response is not recognizable XML",
+                                    "manual_review_required", "low",
+                                    f"Same-origin sitemap index referenced {child_sitemap_url}, but the response did not look like XML.",
+                                    "A sitemap endpoint should return a sitemap document rather than an HTML error or unrelated content. This bounded check does not assess every sitemap protocol rule.",
+                                    "Verify the child sitemap endpoint returns a valid XML sitemap and correct content type, or remove the stale entry from the index.",
+                                    ["Inspect the response status, content type, and first bytes.", "Validate the child sitemap XML with a sitemap validator."],
+                                    child_sitemap_url,
+                                ))
                                 continue
                             findings.extend(inspect_crawl_sitemap(child_body, child_sitemap_url))
                             child_root = ET.fromstring(child_body)
@@ -574,9 +592,38 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                                 continue
                             remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
                             sitemap_urls.extend(_loc_values(child_root)[:remaining])
-                        except Exception:
-                            # One unavailable child sitemap must not abort other discovery.
+                        except Exception as child_exc:
+                            findings.append(_finding(
+                                "indexing", "Child sitemap could not be inspected",
+                                "not_tested", "info",
+                                f"Could not inspect same-origin child sitemap {child_sitemap_url}: {type(child_exc).__name__}.",
+                                "The child sitemap did not yield usable discovery data during this audit. This is not proof that its URLs are unavailable to search engines.",
+                                "Retry the sitemap URL and inspect its XML structure, server response, and any access restrictions.",
+                                ["Open the child sitemap URL directly.", "Retry the audit after resolving any transient server or parsing issue."],
+                                child_sitemap_url,
+                            ))
                             continue
+            elif sitemap_url != conventional_sitemap_url:
+                if sitemap_status < 200 or sitemap_status >= 300:
+                    findings.append(_finding(
+                        "indexing", "Robots-declared sitemap could not be retrieved",
+                        "manual_review_required", "medium",
+                        f"robots.txt declared same-origin sitemap {sitemap_url}, which returned HTTP {sitemap_status}.",
+                        "A declared sitemap that cannot be retrieved may reduce reliable URL discovery. This does not establish that search engines cannot discover or index the site's pages through other routes.",
+                        "Check the declared sitemap URL, status, redirects, access rules, and whether the sitemap directive is still current.",
+                        ["Open the sitemap URL directly and confirm a successful response.", "Validate the sitemap and update robots.txt if the declared path is stale."],
+                        sitemap_url,
+                    ))
+                else:
+                    findings.append(_finding(
+                        "indexing", "Robots-declared sitemap response is not recognizable XML",
+                        "manual_review_required", "medium",
+                        f"robots.txt declared same-origin sitemap {sitemap_url}, but the response was not recognizable XML (HTTP {sitemap_status}, content type {sitemap_headers.get('content-type', 'not provided')}).",
+                        "Search crawlers expect a sitemap document at the declared endpoint. An HTML page or unrelated response may prevent sitemap-based discovery, although other discovery paths can still work.",
+                        "Ensure the declared endpoint returns a valid XML sitemap with an appropriate content type, or correct the Sitemap directive to the intended file.",
+                        ["Inspect the response body and content type.", "Validate the sitemap XML and confirm its URLs are current."],
+                        sitemap_url,
+                    ))
         except Exception:
             # The main audit reports sitemap availability/format separately.
             # Failure here only means sitemap-based URL discovery is unavailable.
