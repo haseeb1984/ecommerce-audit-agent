@@ -1295,3 +1295,40 @@ async def test_bounded_crawl_runs_security_header_quality_on_sampled_html(monkey
     assert any(f.title == "Content Security Policy may be overly permissive" for f in findings)
     assert any(f.title == "HSTS policy may need review" for f in findings)
     assert any(f.title == "Baseline browser security headers need review" for f in findings)
+
+
+def test_robots_txt_flags_sitewide_wildcard_disallow_for_manual_review():
+    from crawl_checks import inspect_robots_txt
+
+    findings, limitations = inspect_robots_txt(
+        "User-agent: *\nDisallow: /\nSitemap: https://shop.example/sitemap.xml\n",
+        "https://shop.example/robots.txt",
+    )
+    assert len(findings) == 1
+    assert findings[0].category == "indexing"
+    assert findings[0].severity == "high"
+    assert findings[0].status == "manual_review_required"
+    assert "Disallow: /" in findings[0].evidence
+    assert not limitations
+
+
+def test_robots_txt_does_not_treat_agent_specific_disallow_as_sitewide():
+    from crawl_checks import inspect_robots_txt
+
+    findings, limitations = inspect_robots_txt(
+        "User-agent: Googlebot\nDisallow: /\n"
+        "User-agent: *\nDisallow: /private/\n",
+        "https://shop.example/robots.txt",
+    )
+    assert findings == []
+    assert any("did not declare a Sitemap URL" in item for item in limitations)
+
+
+def test_robots_txt_ignores_comments_and_empty_disallow():
+    from crawl_checks import inspect_robots_txt
+
+    findings, _ = inspect_robots_txt(
+        "# Disallow: /\nUser-agent: *\nDisallow:\n",
+        "https://shop.example/robots.txt",
+    )
+    assert findings == []
