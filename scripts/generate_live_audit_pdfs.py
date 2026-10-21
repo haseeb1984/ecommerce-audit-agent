@@ -16,9 +16,6 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-
-_PUBLIC_HOST_CACHE: dict[str, bool] = {}
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from audit_checks import AuditCheckResult, AuditFinding, normalize_target, run_phase_one_checks
@@ -38,20 +35,16 @@ async def _allow_public_browser_request(route) -> None:
         if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
             await route.abort()
             return
-        cached_public = _PUBLIC_HOST_CACHE.get(host)
-        if cached_public is None:
-            try:
-                addresses = [ipaddress.ip_address(host.strip("[]"))]
-            except ValueError:
-                loop = asyncio.get_running_loop()
-                records = await asyncio.wait_for(
-                    loop.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM),
-                    timeout=3.0,
-                )
-                addresses = list({ipaddress.ip_address(record[4][0]) for record in records})
-            cached_public = bool(addresses) and all(address.is_global for address in addresses)
-            _PUBLIC_HOST_CACHE[host] = cached_public
-        if not cached_public:
+        try:
+            addresses = [ipaddress.ip_address(host.strip("[]"))]
+        except ValueError:
+            loop = asyncio.get_running_loop()
+            records = await asyncio.wait_for(
+                loop.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM),
+                timeout=3.0,
+            )
+            addresses = list({ipaddress.ip_address(record[4][0]) for record in records})
+        if not addresses or any(not address.is_global for address in addresses):
             await route.abort()
             return
         await route.continue_()
