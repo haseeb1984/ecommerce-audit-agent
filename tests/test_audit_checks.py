@@ -969,6 +969,8 @@ def test_homepage_does_not_flag_images_with_descriptive_alt_text():
         ({"@type": "AggregateRating", "ratingValue": "6", "bestRating": "5", "worstRating": "1"}, True),
         ({"@type": "AggregateRating", "ratingValue": "not-a-number", "reviewCount": 12}, True),
         ({"@type": "AggregateRating", "ratingValue": "4.5", "reviewCount": -2}, True),
+        ({"@type": "AggregateRating", "ratingValue": "4.5", "reviewCount": 0}, True),
+        ({"@type": "AggregateRating", "ratingValue": "4.5", "bestRating": "five"}, True),
         ({"@type": "AggregateRating", "ratingValue": "2", "bestRating": "1", "worstRating": "5"}, True),
     ],
 )
