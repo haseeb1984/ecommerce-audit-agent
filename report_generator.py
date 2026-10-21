@@ -741,7 +741,8 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         ]))
         story.append(status_badge)
         story.append(_p(
-            f"Category: {str(finding['category']).replace('_', ' ').title()}",
+            f"Category: {str(finding['category']).replace('_', ' ').title()} | "
+            f"Status: {status.replace('_', ' ').title()}",
             small_style,
         ))
         blocks = []
