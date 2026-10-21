@@ -253,6 +253,29 @@ def inspect_canonical_declaration(html: str, page_url: str) -> list[AuditFinding
                 ["Inspect the canonical href in the returned HTML.", "Resolve the URL and verify its status, redirect chain, and page equivalence."],
                 page_url,
             ))
+        else:
+            page_parts = urlsplit(page_url)
+            target_host = (parts.hostname or "").lower().rstrip(".")
+            page_host = (page_parts.hostname or "").lower().rstrip(".")
+            target_scheme = parts.scheme.lower()
+            page_scheme = page_parts.scheme.lower()
+            try:
+                target_port = parts.port or (443 if target_scheme == "https" else 80)
+                page_port = page_parts.port or (443 if page_scheme == "https" else 80)
+            except ValueError:
+                target_port = page_port = None
+            if (target_scheme, target_host, target_port) != (page_scheme, page_host, page_port):
+                # Cross-origin canonicals can be intentional, but deserve review
+                # because they consolidate indexing signals onto another origin.
+                findings.append(_finding(
+                    "indexability", "Canonical target points to a different origin",
+                    "manual_review_required", "medium",
+                    f"The canonical declaration on {page_url} points to a different origin ({target_scheme}://{target_host}); this source check does not fetch or validate the destination.",
+                    "Cross-origin canonicals may be appropriate for syndicated or deliberately consolidated content, but an unintended host, scheme, or port can direct search engines to prefer a different URL.",
+                    "Confirm that cross-origin canonicalization is intentional and that the destination contains equivalent content. Otherwise, point the canonical to the intended URL on this site's origin.",
+                    ["Compare the canonical destination with the page's intended indexable URL.", "Open the destination independently and verify content equivalence and redirect behavior."],
+                    page_url,
+                ))
     return findings
 
 
