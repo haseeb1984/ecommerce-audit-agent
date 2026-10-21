@@ -699,3 +699,25 @@ def test_phase_scorecard_maps_discovery_accessibility_and_dependency_categories(
     assert seo[1] == 1
     assert accessibility[1] == 1
     assert security[1] == 1
+
+
+
+def test_executive_infographic_summarizes_severity_and_status_without_fake_pass_rate():
+    from report_generator import ExecutiveSummaryInfographic, _consolidate_findings
+
+    findings = [
+        AuditFinding(category="technical_seo", title="Issue", status="verified", severity="high",
+                     evidence="Evidence", explanation="Meaning", recommendation="Review"),
+        AuditFinding(category="mobile_ux", title="Review", status="manual_review_required", severity="medium",
+                     evidence="Evidence", explanation="Meaning", recommendation="Review"),
+        AuditFinding(category="accessibility", title="Unavailable", status="not_tested", severity="info",
+                     evidence="Evidence", explanation="Meaning", recommendation="Review"),
+    ]
+    visual = ExecutiveSummaryInfographic(_consolidate_findings(findings), 2)
+    metrics = {label: value for label, value, _ in visual.metrics}
+    assert metrics["CRITICAL / HIGH"] == 1
+    assert metrics["MEDIUM"] == 1
+    assert metrics["VERIFIED"] == 1
+    assert metrics["REVIEW NEEDED"] == 1
+    assert metrics["NOT TESTED"] == 1
+    assert visual.pages_inspected == 2
