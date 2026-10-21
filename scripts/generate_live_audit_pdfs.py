@@ -140,6 +140,22 @@ async def inspect_mobile_rendered_signals(url: str) -> tuple[list[AuditFinding],
             recommendation="Rerun browser-based inspection in an environment with Chromium and Playwright installed.",
             verification_steps=["Run the manual browser QA workflow and review the generated live-site PDF."], source_url=url)], None
 
+def _live_pdf_qa_passed(
+    audit_ok: bool,
+    desktop_screenshot: str | None,
+    mobile_screenshot: str | None,
+    mobile_findings: list[AuditFinding],
+) -> bool:
+    """Require real audit evidence and both viewport screenshots for QA acceptance."""
+    if not audit_ok or not desktop_screenshot or not mobile_screenshot:
+        return False
+    return not any(
+        finding.status == "not_tested"
+        and finding.title == "Rendered mobile checks could not be completed"
+        for finding in mobile_findings
+    )
+
+
 # Keep live smoke tests limited to the two explicitly designated project test sites.
 # Third-party destinations add noise and unnecessary external requests to manual QA.
 DEFAULT_TARGETS = [
@@ -191,12 +207,13 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:100]
     output = output_dir / f"live-audit-{safe_hostname}.pdf"
     output.write_bytes(pdf_bytes)
+    qa_ok = _live_pdf_qa_passed(ok, desktop_screenshot, mobile_screenshot, mobile_findings)
     print(
         f"target={normalized} pdf={output.name} pages_checked={len(result.pages_checked)} "
         f"findings={len(result.findings)} limitations={len(result.limitations)} "
-        f"network_or_audit_ok={ok}"
+        f"network_or_audit_ok={ok} pdf_qa_acceptance={'PASS' if qa_ok else 'FAIL'}"
     )
-    return normalized, ok
+    return normalized, qa_ok
 
 
 async def main() -> int:
@@ -221,9 +238,10 @@ async def main() -> int:
             failures += 1
 
     print(f"live_targets={len(args.targets)} failures={failures} output_dir={output_dir}")
-    # Artifacts remain useful even if a target blocks automated requests; make that explicit
-    # without failing the entire unit-test suite solely due to external-site availability.
-    return 0
+    # This workflow is an explicit acceptance run, not the normal unit-test suite.
+    # Preserve generated artifacts, but fail the run if a real-site audit or required
+    # desktop/mobile screenshot could not be verified.
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
