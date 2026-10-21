@@ -111,9 +111,21 @@ async def inspect_client_dependency_versions(html: str, page_url: str) -> tuple[
                 if response.status != 200:
                     raise RuntimeError(f"OSV returned HTTP {response.status}")
                 payload = await response.json(content_type=None)
-        results = payload.get("results")
+        results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(results, list) or len(results) != len(dependencies):
             raise ValueError("OSV response did not match the submitted dependency list")
+        # A malformed per-item response must never be interpreted as a clean scan.
+        for result in results:
+            if not isinstance(result, dict):
+                raise ValueError("OSV response contained a malformed result")
+            vulnerabilities = result.get("vulns", [])
+            if not isinstance(vulnerabilities, list) or any(
+                not isinstance(vulnerability, dict)
+                or not isinstance(vulnerability.get("id"), str)
+                or not vulnerability.get("id", "").strip()
+                for vulnerability in vulnerabilities
+            ):
+                raise ValueError("OSV response contained malformed advisory data")
     except Exception as exc:
         return [
             _finding(
