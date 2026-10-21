@@ -201,6 +201,61 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
     )]
 
 
+def inspect_canonical_declaration(html: str, page_url: str) -> list[AuditFinding]:
+    """Review canonical link declaration shape without assuming every page needs one."""
+    parser = _PageParser()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:
+        return []
+    findings: list[AuditFinding] = []
+    if parser.canonical_count > 1:
+        findings.append(_finding(
+            "indexability", "Page declares multiple canonical links",
+            "manual_review_required", "medium",
+            f"Found {parser.canonical_count} canonical link elements in the returned HTML for {page_url}.",
+            "Multiple canonical declarations can send conflicting consolidation signals. This source check does not establish which URL search engines will select.",
+            "Review the page template and keep one intentional canonical declaration where appropriate. Verify the final rendered HTML and response behavior.",
+            ["Inspect all rel=canonical elements in the raw HTML.", "Confirm the intended canonical URL with the site's routing and duplicate-page strategy."],
+            page_url,
+        ))
+    if parser.canonical_missing_href_count:
+        findings.append(_finding(
+            "indexability", "Canonical link is missing its href",
+            "manual_review_required", "medium",
+            f"Found {parser.canonical_missing_href_count} canonical link element(s) without an href on {page_url}.",
+            "A canonical link without a target cannot clearly communicate the intended preferred URL.",
+            "Add a valid absolute or correctly resolved canonical target, or remove the incomplete declaration if it is unintended.",
+            ["Inspect the rel=canonical element in the returned HTML.", "Verify the resolved target in the rendered page source."],
+            page_url,
+        ))
+    if parser.canonical_href:
+        try:
+            target = urljoin(page_url, parser.canonical_href)
+            parts = urlsplit(target)
+            _ = parts.port
+            valid = (
+                parts.scheme.lower() in {"http", "https"}
+                and bool(parts.hostname)
+                and parts.username is None
+                and parts.password is None
+            )
+        except (ValueError, UnicodeError):
+            valid = False
+        if not valid:
+            findings.append(_finding(
+                "indexability", "Canonical target URL needs review",
+                "manual_review_required", "medium",
+                f"The first canonical link on {page_url} does not resolve to a valid credential-free HTTP(S) URL.",
+                "Malformed canonical targets may prevent the preferred URL from being interpreted as intended. This check validates URL shape only, not whether the destination is the correct canonical page.",
+                "Replace the malformed target with the intended valid URL and confirm that the destination is accessible and suitable for canonicalization.",
+                ["Inspect the canonical href in the returned HTML.", "Resolve the URL and verify its status, redirect chain, and page equivalence."],
+                page_url,
+            ))
+    return findings
+
+
 class _HreflangParser(HTMLParser):
     """Collect declared hreflang alternate links from the returned HTML only."""
     def __init__(self) -> None:
@@ -922,6 +977,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             findings.extend(inspect_product_page_schema_presence(body, final_url))
             findings.extend(inspect_sensitive_get_forms(body, final_url))
+            findings.extend(inspect_canonical_declaration(body, final_url))
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
