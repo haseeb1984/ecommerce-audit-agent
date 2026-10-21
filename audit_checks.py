@@ -547,6 +547,68 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             final_url,
         ))
 
+    # Validate aggregate-rating structure only when a page publishes it.
+    # This catches obvious source-data errors without claiming review authenticity.
+    rating_issues = {"missing_value": 0, "invalid_value": 0, "out_of_range": 0, "invalid_count": 0}
+    for product in product_entities:
+        if "aggregateRating" not in product:
+            continue
+        rating = product.get("aggregateRating")
+        if not isinstance(rating, dict):
+            rating_issues["invalid_value"] += 1
+            continue
+
+        def parse_rating_number(value: Any) -> Decimal | None:
+            if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                return None
+            try:
+                number = Decimal(str(value).strip())
+            except (InvalidOperation, ValueError):
+                return None
+            return number if number.is_finite() else None
+
+        rating_value = parse_rating_number(rating.get("ratingValue"))
+        if rating_value is None:
+            rating_issues["missing_value"] += 1
+            continue
+        best_rating = parse_rating_number(rating.get("bestRating"))
+        worst_rating = parse_rating_number(rating.get("worstRating"))
+        best_rating = best_rating if best_rating is not None else Decimal("5")
+        worst_rating = worst_rating if worst_rating is not None else Decimal("1")
+        if worst_rating >= best_rating or not (worst_rating <= rating_value <= best_rating):
+            rating_issues["out_of_range"] += 1
+        for count_key in ("ratingCount", "reviewCount"):
+            if count_key in rating:
+                raw_count = rating.get(count_key)
+                try:
+                    count_value = Decimal(str(raw_count).strip()) if not isinstance(raw_count, bool) else Decimal("-1")
+                except (InvalidOperation, ValueError, AttributeError):
+                    count_value = Decimal("-1")
+                if not count_value.is_finite() or count_value < 0 or count_value != count_value.to_integral_value():
+                    rating_issues["invalid_count"] += 1
+                    break
+
+    rating_issue_count = sum(rating_issues.values())
+    if rating_issue_count:
+        details = []
+        if rating_issues["missing_value"]:
+            details.append(f'{rating_issues["missing_value"]} without a numeric ratingValue')
+        if rating_issues["invalid_value"]:
+            details.append(f'{rating_issues["invalid_value"]} with a non-object AggregateRating')
+        if rating_issues["out_of_range"]:
+            details.append(f'{rating_issues["out_of_range"]} with ratingValue outside the declared/default range')
+        if rating_issues["invalid_count"]:
+            details.append(f'{rating_issues["invalid_count"]} with a negative, non-integer, or non-numeric review/rating count')
+        findings.append(_finding(
+            "structured_data", "Product aggregate rating needs review",
+            "verified", "medium" if rating_issues["out_of_range"] else "low",
+            "AggregateRating source-data issues detected: " + "; ".join(details) + f". URL: {final_url}",
+            "This check validates basic property shape and numeric bounds only. It cannot confirm that reviews are genuine, that the counts match the visible page, or that the page qualifies for a rich result.",
+            "Publish AggregateRating only when it reflects genuine, visible review data. Use a numeric ratingValue within the declared worstRating/bestRating range and non-negative integer reviewCount or ratingCount values.",
+            ["Compare the structured rating and counts with review information visible to customers.", "Remove or correct unsupported AggregateRating data.", "Validate the complete JSON-LD graph with a structured-data testing tool."],
+            final_url,
+        ))
+
     checks = [
         (bool(parser.title_text), "Page title", "The HTML response has no readable <title> element.",
          "Add a unique, descriptive title that accurately reflects this page.",
