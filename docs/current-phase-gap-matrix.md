@@ -1,8 +1,8 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `ca60d84a48fd2d380ca4425d49124c80b12d3a7f` (2026-10-19).  
+**Baseline reviewed:** `main`; bounded-crawl expansion committed during the 2026-10-21 implementation session. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
-**Operational constraint:** Vercel Functions Storage investigation is on HOLD pending support case `CSE_01KNJ6PmeXaRDTxm`. Do not change deployments or infrastructure as part of this workstream.
+**Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
 ## Status meanings
 
@@ -18,7 +18,7 @@
 | Vercel infrastructure and Functions Storage | Support case is open; latest reviewed `main` is commit `ca60d84a48fd2d380ca4425d49124c80b12d3a7f`. | **Blocked / hold** | Wait for support response. No cleanup, redeploy, or infrastructure change in this workstream without explicit decision. |
 | API and database foundation | `main.py` exposes root, `/health-check`, `/api/v1/audit-lead`, and `/api/v1/comprehensive-audit`; SQLAlchemy models cover licenses, API keys, audit leads, and quota reservations. | Implemented, verify release | Verify current production health/configuration only when authorized and without consuming audit quota; confirm required migration is applied. |
 | Authentication and quota | `auth.py`, `quota.py`, reservation model/migration, and `tests/test_api.py` cover license/API-key auth, quota exhaustion, failed-run release, and concurrent quota requests. | Implemented, verify release | Confirm production migration and approved, isolated live concurrency test results; clean up test records afterward. Do not use a production license for exploratory tests. |
-| Safe target URL fetching / SSRF | `audit_checks.py`, `crawl_checks.py`, and documented regression runs cover public-address validation, redirects, bounded reads, DNS-pinned fetching, and sitemap parsing protections. | Partial; safety baseline exists | Keep tests passing; review production outbound restrictions as defense-in-depth. No claim of complete SSRF immunity. |
+| Safe target URL fetching / bounded crawl | `audit_checks.py` and `crawl_checks.py` enforce public-address checks, redirect validation, response/time limits, DNS-pinned fetching, same-origin sitemap discovery, and a capped recursive HTML-link queue. | Partial; broader traversal implemented, release verification pending | Verify nested-link discovery, origin isolation, malformed-link resilience, duplicate URL normalization, and the hard page cap in CI. No claim of complete SSRF immunity or whole-site coverage. |
 | Technical SEO and crawl | Homepage signals, bounded same-origin crawl, sitemap expansion, canonical/robots directives, structured-data and hreflang signals exist. | Partial | Preserve explicit crawl/page caps and limitations; test representative real storefronts and do not infer Google index status without authorized Search Console data. |
 | Performance / Core Web Vitals | PageSpeed mobile Lighthouse score and Speed Index are collected; other checks use static HTML/CSS signals. | Partial | Clearly distinguish lab from field data. Browser-rendered LCP/INP/CLS, responsive reflow, overflow and console/network checks need browser-runner evidence before being claimed. |
 | Accessibility / WCAG / ARIA | `accessibility_checks.py` contains source-level accessible-name, label, language, image-alt and ID-reference signals. | Partial | Add/verify manual-review checklist and edge cases; never claim WCAG 2.2 A/AA conformance from source checks alone. |
