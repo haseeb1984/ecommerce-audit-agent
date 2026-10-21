@@ -1687,3 +1687,22 @@ def test_product_schema_presence_accepts_absolute_schema_org_type_iri():
         "https://shop.example/products/blue-shirt",
     )
     assert findings == []
+
+
+def test_hreflang_reports_missing_self_reference():
+    findings = crawl_checks.inspect_hreflang(
+        '<link rel="alternate" hreflang="fr" href="https://shop.example/fr/produit">',
+        "https://shop.example/en/product",
+    )
+    assert len(findings) == 1
+    assert findings[0].category == "international_seo"
+    assert "no hreflang target appears to reference this page itself" in findings[0].evidence
+
+
+def test_hreflang_accepts_self_reference_with_fragment_or_query_difference():
+    findings = crawl_checks.inspect_hreflang(
+        '<link rel="alternate" hreflang="en" href="https://shop.example/en/product?source=lang#top">'
+        '<link rel="alternate" hreflang="fr" href="https://shop.example/fr/produit">',
+        "https://shop.example/en/product",
+    )
+    assert findings == []
