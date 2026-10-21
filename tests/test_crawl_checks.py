@@ -1294,3 +1294,4 @@ async def test_bounded_crawl_runs_security_header_quality_on_sampled_html(monkey
     assert "https://shop.example/" in checked
     assert any(f.title == "Content Security Policy may be overly permissive" for f in findings)
     assert any(f.title == "HSTS policy may need review" for f in findings)
+    assert any(f.title == "Baseline browser security headers need review" for f in findings)
