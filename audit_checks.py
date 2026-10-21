@@ -571,11 +571,19 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
         if rating_value is None:
             rating_issues["missing_value"] += 1
             continue
-        best_rating = parse_rating_number(rating.get("bestRating"))
-        worst_rating = parse_rating_number(rating.get("worstRating"))
-        best_rating = best_rating if best_rating is not None else Decimal("5")
-        worst_rating = worst_rating if worst_rating is not None else Decimal("1")
-        if worst_rating >= best_rating or not (worst_rating <= rating_value <= best_rating):
+        best_declared = "bestRating" in rating
+        worst_declared = "worstRating" in rating
+        best_rating = parse_rating_number(rating.get("bestRating")) if best_declared else Decimal("5")
+        worst_rating = parse_rating_number(rating.get("worstRating")) if worst_declared else Decimal("1")
+        # Invalid explicitly supplied bounds must not silently fall back to 1–5.
+        if (
+            (best_declared and best_rating is None)
+            or (worst_declared and worst_rating is None)
+            or best_rating is None
+            or worst_rating is None
+            or worst_rating >= best_rating
+            or not (worst_rating <= rating_value <= best_rating)
+        ):
             rating_issues["out_of_range"] += 1
         for count_key in ("ratingCount", "reviewCount"):
             if count_key in rating:
@@ -584,7 +592,8 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
                     count_value = Decimal(str(raw_count).strip()) if not isinstance(raw_count, bool) else Decimal("-1")
                 except (InvalidOperation, ValueError, AttributeError):
                     count_value = Decimal("-1")
-                if not count_value.is_finite() or count_value < 0 or count_value != count_value.to_integral_value():
+                # A published count must describe at least one rating/review.
+                if not count_value.is_finite() or count_value < 1 or count_value != count_value.to_integral_value():
                     rating_issues["invalid_count"] += 1
                     break
 
@@ -604,7 +613,7 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             "verified", "medium" if rating_issues["out_of_range"] else "low",
             "AggregateRating source-data issues detected: " + "; ".join(details) + f". URL: {final_url}",
             "This check validates basic property shape and numeric bounds only. It cannot confirm that reviews are genuine, that the counts match the visible page, or that the page qualifies for a rich result.",
-            "Publish AggregateRating only when it reflects genuine, visible review data. Use a numeric ratingValue within the declared worstRating/bestRating range and non-negative integer reviewCount or ratingCount values.",
+            "Publish AggregateRating only when it reflects genuine, visible review data. Use a numeric ratingValue within the declared worstRating/bestRating range and positive integer reviewCount or ratingCount values.",
             ["Compare the structured rating and counts with review information visible to customers.", "Remove or correct unsupported AggregateRating data.", "Validate the complete JSON-LD graph with a structured-data testing tool."],
             final_url,
         ))
