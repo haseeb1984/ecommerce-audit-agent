@@ -1524,3 +1524,37 @@ async def test_crawl_does_not_use_robots_sitemap_redirected_off_origin(monkeypat
     assert any(f.title == "Sitemap redirect left the audited origin" for f in findings)
     assert external not in requested
     assert "https://shop.example/products/one" not in checked
+
+
+def test_product_detail_route_without_jsonld_prompts_contextual_review():
+    findings = crawl_checks.inspect_product_page_schema_presence(
+        "<html><head><title>Blue Shirt</title></head><body><h1>Blue Shirt</h1></body></html>",
+        "https://shop.example/products/blue-shirt",
+    )
+    assert len(findings) == 1
+    assert findings[0].category == "structured_data"
+    assert findings[0].status == "manual_review_required"
+    assert findings[0].severity == "low"
+    assert "does not inspect JavaScript-rendered markup" in findings[0].explanation
+
+
+def test_product_detail_route_accepts_productgroup_inside_jsonld_graph():
+    findings = crawl_checks.inspect_product_page_schema_presence(
+        '<script type="application/ld+json">'
+        '{"@context":"https://schema.org","@graph":[{"@type":"ProductGroup","name":"Shirt"}]}'
+        '</script>',
+        "https://shop.example/products/blue-shirt",
+    )
+    assert findings == []
+
+
+def test_product_schema_heuristic_ignores_non_product_routes_and_malformed_jsonld():
+    category = crawl_checks.inspect_product_page_schema_presence(
+        "<html></html>", "https://shop.example/collections/shirts"
+    )
+    malformed = crawl_checks.inspect_product_page_schema_presence(
+        '<script type="application/ld+json">{"@type":</script>',
+        "https://shop.example/products/blue-shirt",
+    )
+    assert category == []
+    assert malformed == []
