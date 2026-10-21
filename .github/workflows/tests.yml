@@ -64,21 +64,23 @@ jobs:
           path: audit-report-sample.pdf
           if-no-files-found: warn
           retention-days: 14
+      # On main pushes and manual QA runs, verify real-site PDF generation too.
+      # Pull requests retain isolated deterministic tests and do not crawl external sites.
       - name: Install browser for real website screenshots
-        if: github.event_name == 'workflow_dispatch' && success()
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && success()
         run: |
           python -m pip install playwright
           python -m playwright install --with-deps chromium
-      - name: Generate PDF reports from real public websites (manual QA only)
-        if: github.event_name == 'workflow_dispatch' && success()
+      - name: Generate PDF reports from real public websites
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && success()
         run: python scripts/generate_live_audit_pdfs.py --output-dir live-audit-pdfs
       - name: Upload real-site PDF smoke-test artifacts
-        if: always() && github.event_name == 'workflow_dispatch'
+        if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v7
         with:
           name: live-site-audit-pdfs
           path: live-audit-pdfs/*.pdf
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
       - name: Upload dependency audit evidence
         if: always()
