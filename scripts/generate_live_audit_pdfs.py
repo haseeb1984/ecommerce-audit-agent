@@ -140,11 +140,11 @@ async def inspect_mobile_rendered_signals(url: str) -> tuple[list[AuditFinding],
             recommendation="Rerun browser-based inspection in an environment with Chromium and Playwright installed.",
             verification_steps=["Run the manual browser QA workflow and review the generated live-site PDF."], source_url=url)], None
 
+# Keep live smoke tests limited to the two explicitly designated project test sites.
+# Third-party destinations add noise and unnecessary external requests to manual QA.
 DEFAULT_TARGETS = [
     "https://juncsys.com",
     "https://junctiontools.com",
-    "https://www.google.com",
-    "https://www.facebook.com",
 ]
 
 
