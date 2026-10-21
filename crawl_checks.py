@@ -763,14 +763,6 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         # Every child sitemap must remain on the audited origin before it is fetched.
         sitemap_urls: list[str] = []
         conventional_sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
-        sitemap_url = robots_sitemap_urls[0] if robots_sitemap_urls else conventional_sitemap_url
-
-        def _loc_values(root):
-            return [
-                element.text.strip()
-                for element in root.iter()
-                if element.tag.rsplit("}", 1)[-1].lower() == "loc" and element.text and element.text.strip()
-            ]
 
         def _same_origin_http_url(value: str, base: str) -> bool:
             try:
@@ -785,6 +777,32 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 )
             except (ValueError, UnicodeError):
                 return False
+
+        # robots.txt is untrusted input. Do not request an off-origin Sitemap URL
+        # just to discover later that it is outside this crawl's scope.
+        same_origin_sitemaps = [
+            value for value in robots_sitemap_urls
+            if _same_origin_http_url(value, final_home)
+        ]
+        for declared_sitemap in robots_sitemap_urls:
+            if not _same_origin_http_url(declared_sitemap, final_home):
+                findings.append(_finding(
+                    "indexing", "robots.txt declares an off-origin sitemap",
+                    "manual_review_required", "low",
+                    f"robots.txt declares sitemap {declared_sitemap}, which is outside the audited origin and was not fetched by this crawler.",
+                    "Sitemap locations can be hosted separately in supported configurations, but this bounded audit deliberately restricts discovery requests to the audited origin.",
+                    "Confirm the sitemap host and ownership are intentional. If cross-origin sitemap hosting is required, validate it through the relevant search-engine configuration rather than assuming this crawler inspected it.",
+                    ["Review the Sitemap directive and its destination.", "Confirm the sitemap's ownership and intended search-engine setup."],
+                    declared_sitemap,
+                ))
+        sitemap_url = same_origin_sitemaps[0] if same_origin_sitemaps else conventional_sitemap_url
+
+        def _loc_values(root):
+            return [
+                element.text.strip()
+                for element in root.iter()
+                if element.tag.rsplit("}", 1)[-1].lower() == "loc" and element.text and element.text.strip()
+            ]
 
         try:
             sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url)
@@ -912,7 +930,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         # ignoring every directive after the first. Keep the total number of
         # sitemap documents small and the URL discovery budget bounded.
         additional_sitemaps = [
-            value for value in robots_sitemap_urls
+            value for value in same_origin_sitemaps
             if _canonical_page_url(value) != _canonical_page_url(sitemap_url)
         ][:max(0, MAX_CHILD_SITEMAPS - 1)]
         for extra_sitemap_url in additional_sitemaps:
