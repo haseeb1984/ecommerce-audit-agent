@@ -166,7 +166,15 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             return False
         raw_type = value.get("@type", [])
         types = raw_type if isinstance(raw_type, list) else [raw_type]
-        if any(isinstance(item, str) and item.casefold() in {"product", "productgroup"} for item in types):
+
+        def is_product_type(item: object) -> bool:
+            if not isinstance(item, str):
+                return False
+            # JSON-LD permits compact names and absolute schema.org type IRIs.
+            normalized = item.rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+            return normalized.casefold() in {"product", "productgroup"}
+
+        if any(is_product_type(item) for item in types):
             return True
         return contains_product(value.get("@graph", []))
 
