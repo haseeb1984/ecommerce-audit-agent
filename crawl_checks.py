@@ -46,6 +46,87 @@ MAX_CHILD_SITEMAPS = 3
 PRODUCT_DETAIL_PATH = re.compile(r"(?:^|/)(?:products?|items?)(?:/|$)", re.I)
 
 
+class _SensitiveGetFormParser(HTMLParser):
+    """Find GET forms that appear to submit credentials or payment-related fields."""
+    SENSITIVE_NAMES = re.compile(
+        r"(?:pass(?:word)?|secret|token|credit.?card|card.?number|cc.?num|cvv|cvc|"
+        r"security.?code|payment|billing.?address|bank.?account|routing.?number)",
+        re.I,
+    )
+    SENSITIVE_TYPES = {"password"}
+    SENSITIVE_AUTOCOMPLETE = {
+        "current-password", "new-password", "cc-number", "cc-csc",
+        "cc-exp", "cc-exp-month", "cc-exp-year", "transaction-amount",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._form_stack: list[dict[str, object]] = []
+        self.sensitive_get_forms: list[tuple[str, list[str]]] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        values = {key.lower(): value or "" for key, value in attrs}
+        if tag == "form":
+            method = values.get("method", "get").strip().lower() or "get"
+            self._form_stack.append({"method": method, "fields": []})
+        elif tag in {"input", "select", "textarea", "button"} and self._form_stack:
+            form = self._form_stack[-1]
+            name = values.get("name", "").strip()
+            field_type = values.get("type", "").strip().lower()
+            autocomplete = values.get("autocomplete", "").strip().lower()
+            if (
+                field_type in self.SENSITIVE_TYPES
+                or (name and self.SENSITIVE_NAMES.search(name))
+                or autocomplete in self.SENSITIVE_AUTOCOMPLETE
+            ):
+                fields = form["fields"]
+                if isinstance(fields, list):
+                    label = name or autocomplete or field_type or tag
+                    if label not in fields:
+                        fields.append(label)
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag.lower() == "form":
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "form" or not self._form_stack:
+            return
+        form = self._form_stack.pop()
+        fields = form["fields"]
+        if form["method"] == "get" and isinstance(fields, list) and fields:
+            self.sensitive_get_forms.append(("GET", fields))
+
+
+def inspect_sensitive_get_forms(html: str, page_url: str) -> list[AuditFinding]:
+    """Flag credential/payment-like fields inside GET forms for contextual security review."""
+    parser = _SensitiveGetFormParser()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:
+        return []
+    if not parser.sensitive_get_forms:
+        return []
+    field_labels = list(dict.fromkeys(
+        field for _, fields in parser.sensitive_get_forms for field in fields
+    ))
+    return [_finding(
+        "security", "Sensitive-looking fields appear in a GET form",
+        "manual_review_required", "high",
+        f"Found {len(parser.sensitive_get_forms)} GET form(s) containing credential/payment-like field names or autocomplete hints on {page_url}. Field identifiers: "
+        + ", ".join(field_labels[:12]) + (" …" if len(field_labels) > 12 else "") + ".",
+        "GET form values are commonly encoded in the request URL and may be retained in browser history, server logs, analytics, or referrer data. The field-name heuristic cannot determine what the application actually submits, and a custom JavaScript handler may change behavior.",
+        "Inspect the rendered form and network request. Credentials, payment details, and other sensitive values should not be sent in a URL; use an appropriate POST-based flow and the payment provider's secure integration. Do not submit real credentials during this audit.",
+        ["Review the form method and any JavaScript submit handler.", "Use browser developer tools with test data to confirm which values enter the request URL.", "Verify server logs, analytics, and referrer handling do not retain sensitive query values."],
+        page_url,
+    )]
+
+
+
+
 def inspect_product_page_schema_presence(html: str, page_url: str) -> list[AuditFinding]:
     """Prompt review when a likely product-detail URL has no detectable Product JSON-LD.
 
@@ -809,6 +890,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             page_parser.feed(body)
 
             findings.extend(inspect_product_page_schema_presence(body, final_url))
+            findings.extend(inspect_sensitive_get_forms(body, final_url))
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
