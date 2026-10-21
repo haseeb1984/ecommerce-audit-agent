@@ -805,8 +805,28 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         try:
             status, homepage, headers, final_home = await _safe_get(client, normalized)
             if status < 200 or status >= 300:
+                findings.append(_finding(
+                    "crawl", "Homepage could not be audited",
+                    "manual_review_required", "medium" if status >= 500 else "low",
+                    f"The normalized target returned HTTP {status}; page-level checks were not run for this response.",
+                    "An unsuccessful response prevents this crawler from evaluating the homepage HTML. It does not, by itself, establish that the whole website is unavailable to users or search crawlers.",
+                    "Confirm the expected public homepage URL, response status, redirects, and any access controls. Retest after resolving transient errors if the response was unexpected.",
+                    ["Open the exact URL in a browser and inspect its HTTP status.", "Check the final redirect destination and server logs without exposing credentials.", "Rerun the audit after the page responds successfully."],
+                    final_home or normalized,
+                ))
+                limitations.append(f"Homepage HTML checks were skipped because the final response returned HTTP {status}.")
                 return findings, pages_checked, limitations
             if "text/html" not in headers.get("content-type", "").lower():
+                findings.append(_finding(
+                    "crawl", "Homepage response is not HTML",
+                    "manual_review_required", "low",
+                    f"The homepage returned HTTP {status} with content type {(headers.get('content-type') or 'not provided')[:100]}; HTML-based checks were not run.",
+                    "The URL may intentionally serve a file, API response, or other non-HTML content. This result alone does not indicate a website defect, but this crawler cannot assess page metadata or internal links from a non-HTML response.",
+                    "Confirm that the supplied URL is the intended storefront page and that it serves HTML to ordinary visitors. If the response is intentional, choose the canonical public HTML entry point for a page audit.",
+                    ["Inspect the response content type and first bytes.", "Confirm the URL is the intended public storefront page.", "Retry with the canonical HTML page URL when appropriate."],
+                    final_home or normalized,
+                ))
+                limitations.append("Homepage HTML checks were skipped because the final response was not text/html.")
                 return findings, pages_checked, limitations
             dependency_findings, dependency_limitations = await inspect_client_dependency_versions(
                 homepage, final_home
