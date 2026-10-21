@@ -208,13 +208,18 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         """Count aria-labelledby only when every referenced ID exists in returned HTML."""
         identifiers = (item.get("aria_labelledby", "") + " " + item.get("svg_labelledby", "")).split()
         return bool(identifiers) and all(
-            identifier in parser.ids and parser.id_text.get(identifier, "").strip()
+            identifier in parser.ids
+            and parser.id_counts.get(identifier, 0) == 1
+            and parser.id_text.get(identifier, "").strip()
             for identifier in identifiers
         )
 
     unlabeled_inputs = [item for item in parser.inputs if not (
         item["aria_label"] or has_resolvable_labelledby(item) or item["title"] or
-        item["inside_label"] == "true" or (item["id"] and item["id"] in parser.label_for)
+        item["inside_label"] == "true" or (
+            item["id"] and item["id"] in parser.label_for
+            and parser.id_counts.get(item["id"], 0) == 1
+        )
     )]
     unlabeled_image_submit_inputs = [
         item for item in parser.image_submit_inputs
