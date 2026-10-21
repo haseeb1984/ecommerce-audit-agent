@@ -574,3 +574,24 @@ def test_paid_media_coverage_distinguishes_static_signals_from_unassessed_metric
     assert "not connected / not assessed" in flattened
     assert "not verified in a live browser network session" in flattened
     assert "roas" in flattened
+
+
+def test_audit_area_infographic_groups_findings_into_readable_categories():
+    from report_generator import AuditAreaInfographic
+
+    chart = AuditAreaInfographic([
+        {"category": "accessibility", "severity": "medium"},
+        {"category": "accessibility", "severity": "low"},
+        {"category": "mobile_ux", "severity": "medium"},
+        {"category": "security_headers", "severity": "info"},
+        {"category": "security_exposure", "severity": "high"},
+        {"category": "conversion_paid_traffic", "severity": "medium"},
+    ])
+
+    assert chart.width == 174 * report_generator.mm
+    assert chart.items == [
+        ("Accessibility", 2),
+        ("Security", 2),
+        ("Conversion & paid traffic", 1),
+        ("Mobile UX", 1),
+    ]
