@@ -17,6 +17,7 @@ A successful response is a downloadable `application/pdf` attachment. The endpoi
 - Public homepage source checks for title, meta description, viewport declaration, H1 presence, and images missing an `alt` attribute.
 - Passive response-header observations for HSTS, Content-Security-Policy, X-Content-Type-Options, and Referrer-Policy.
 - Availability checks for root `robots.txt`, `sitemap.xml`, and optional `llms.txt`.
+- Canonical declaration review includes malformed targets, missing/multiple declarations, and cross-origin targets that require contextual review; same-origin default-port equivalents are accepted. This is not a verdict that cross-origin canonicals are always wrong.
 - Evidence, plain-language meaning, suggested remediation, retest steps, and explicit limitations.
 
 ## Status meanings
