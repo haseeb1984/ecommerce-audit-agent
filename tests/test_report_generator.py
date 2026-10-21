@@ -562,3 +562,14 @@ def test_conversion_paid_traffic_findings_are_separated_from_general_findings():
         "Checkout path signal",
         "Form review",
     ]
+
+
+def test_paid_media_coverage_distinguishes_static_signals_from_unassessed_metrics():
+    from report_generator import _paid_media_coverage_rows
+
+    rows = _paid_media_coverage_rows()
+    flattened = " ".join(" ".join(row) for row in rows).lower()
+    assert "publicly detectable marketing-tag signatures" in flattened
+    assert "not connected / not assessed" in flattened
+    assert "not verified in a live browser network session" in flattened
+    assert "roas" in flattened
