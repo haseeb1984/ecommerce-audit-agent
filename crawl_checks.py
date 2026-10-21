@@ -363,7 +363,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
     limitations = [
         f"First-hop crawl is capped at {MAX_CRAWL_PAGES} URLs and does not recursively crawl all site pages.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        "Discovery starts at the conventional /sitemap.xml entry point; sitemap indexes expand one level into at most 3 same-origin child sitemaps and at most 100 page URLs. Alternate sitemap locations and deeper sitemap-index nesting are not discovered.",
+        "Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most 3 same-origin child sitemaps and at most 100 page URLs. Additional declared sitemap locations and deeper nesting are not fully explored.",
     ]
 
     async with aiohttp.ClientSession(
@@ -390,6 +390,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
         # Inspect robots.txt as a discovery/indexing signal. It is fetched through
         # the same public-only resolver and redirect/response-size safeguards.
+        robots_sitemap_urls: list[str] = []
         robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
         try:
             robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
@@ -397,6 +398,29 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
                 findings.extend(robots_findings)
                 limitations.extend(robots_limitations)
+                # Sitemap directives may point to a nonstandard path. Accept only
+                # bounded, credential-free HTTP(S) URLs on the audited origin; the
+                # same-origin requirement keeps this discovery step from becoming
+                # an arbitrary URL fetch mechanism.
+                for raw_line in robots_body.splitlines()[:5000]:
+                    line = raw_line.split("#", 1)[0].strip()
+                    if ":" not in line:
+                        continue
+                    key, value = (part.strip() for part in line.split(":", 1))
+                    if key.lower() != "sitemap" or not value:
+                        continue
+                    try:
+                        parts = urlsplit(value)
+                        _ = parts.port
+                        if (parts.scheme.lower() in {"http", "https"} and parts.hostname
+                                and parts.username is None and parts.password is None
+                                and _same_origin(value, final_home)):
+                            if value not in robots_sitemap_urls:
+                                robots_sitemap_urls.append(value)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if len(robots_sitemap_urls) >= MAX_CHILD_SITEMAPS:
+                        break
             elif robots_status in {401, 403}:
                 limitations.append("robots.txt could not be inspected because the server returned an access-denied response.")
             elif robots_status >= 500:
@@ -414,7 +438,8 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         # index is expanded only one level, with a strict child-sitemap and URL cap.
         # Every child sitemap must remain on the audited origin before it is fetched.
         sitemap_urls: list[str] = []
-        sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
+        conventional_sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
+        sitemap_url = robots_sitemap_urls[0] if robots_sitemap_urls else conventional_sitemap_url
 
         def _loc_values(root):
             return [
