@@ -1793,7 +1793,7 @@ def test_canonical_review_flags_cross_origin_target_for_manual_review():
     assert findings[0].title == "Canonical target points to a different origin"
     assert findings[0].status == "manual_review_required"
     assert findings[0].severity == "medium"
-    assert "does not fetch or validate the destination" in findings[0].evidence
+    assert "does not fetch or validate the destination" in findings[0].explanation
 
 
 def test_canonical_review_accepts_same_origin_scheme_and_default_port_normalization():
