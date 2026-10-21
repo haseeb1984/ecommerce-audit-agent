@@ -1182,6 +1182,17 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     final_url,
                 ))
 
+            if page_parser.title_count == 0 and url != _canonical_page_url(final_home):
+                findings.append(_finding(
+                    "on_page_seo", "Internal page missing title element",
+                    "verified", "medium",
+                    f"No title element was found in the returned HTML for {final_url}.",
+                    "A descriptive document title helps people identify the page in browser tabs and gives search engines a useful title signal. This source-level result may miss titles inserted after JavaScript runs.",
+                    "Add one concise, page-specific title that reflects the page content and purpose. Verify the final rendered document title after any template change.",
+                    ["Inspect the returned HTML and rendered document title.", "Check the page template to ensure it emits exactly one intentional title element."],
+                    final_url,
+                ))
+
             if not page_parser.title_text and page_parser.title_count > 0:
                 findings.append(_finding(
                     "on_page_seo", "Internal page has an empty title element",
