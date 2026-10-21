@@ -1332,3 +1332,25 @@ def test_robots_txt_ignores_comments_and_empty_disallow():
         "https://shop.example/robots.txt",
     )
     assert findings == []
+
+
+def test_robots_txt_does_not_carry_wildcard_group_into_later_agent_group():
+    from crawl_checks import inspect_robots_txt
+
+    findings, _ = inspect_robots_txt(
+        "User-agent: *\nDisallow: /private/\n"
+        "User-agent: Googlebot\nDisallow: /\n",
+        "https://shop.example/robots.txt",
+    )
+    assert findings == []
+
+
+def test_robots_txt_consecutive_user_agents_share_group_before_rules():
+    from crawl_checks import inspect_robots_txt
+
+    findings, _ = inspect_robots_txt(
+        "User-agent: Googlebot\nUser-agent: *\nDisallow: /\n",
+        "https://shop.example/robots.txt",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "manual_review_required"
