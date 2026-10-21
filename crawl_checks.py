@@ -296,6 +296,72 @@ def _same_origin(left_url: str, right_url: str) -> bool:
     )
 
 
+def inspect_crawl_sitemap(body: str, sitemap_url: str) -> list[AuditFinding]:
+    """Validate sitemap structure used for crawler discovery without trusting its URLs."""
+    try:
+        root = ET.fromstring(body)
+    except Exception as exc:
+        return [_finding(
+            "sitemap_xml", "Discovered sitemap XML is malformed",
+            "manual_review_required", "medium",
+            f"The sitemap at {sitemap_url} could not be parsed ({type(exc).__name__}).",
+            "A successful HTTP response does not mean the sitemap is valid XML. Invalid sitemap documents may prevent URL discovery.",
+            "Publish well-formed XML using a urlset or sitemapindex root and validate the live response.",
+            ["Validate the sitemap XML.", "Check the sitemap report in the relevant search-engine tools."],
+            sitemap_url,
+        )]
+
+    root_type = root.tag.rsplit("}", 1)[-1].lower()
+    if root_type not in {"urlset", "sitemapindex"}:
+        return [_finding(
+            "sitemap_xml", "Discovered sitemap has an unexpected root element",
+            "manual_review_required", "medium",
+            f"The XML root element is {root_type or 'empty'}; expected urlset or sitemapindex. Source: {sitemap_url}",
+            "The document may be XML but not a sitemap document recognized by standard sitemap consumers.",
+            "Use a urlset for page URLs or a sitemapindex for child sitemap references.",
+            ["Inspect the root XML element.", "Validate the published sitemap format."],
+            sitemap_url,
+        )]
+
+    loc_elements = [
+        element for element in root.iter()
+        if element.tag.rsplit("}", 1)[-1].lower() == "loc"
+    ]
+    invalid = 0
+    empty = 0
+    for element in loc_elements:
+        value = (element.text or "").strip()
+        if not value:
+            empty += 1
+            invalid += 1
+            continue
+        try:
+            parts = urlsplit(value)
+            _ = parts.port
+            valid = (
+                parts.scheme.lower() in {"http", "https"}
+                and bool(parts.hostname)
+                and parts.username is None
+                and parts.password is None
+            )
+        except (ValueError, UnicodeError):
+            valid = False
+        if not valid:
+            invalid += 1
+
+    if not loc_elements or invalid:
+        return [_finding(
+            "sitemap_xml", "Discovered sitemap contains invalid location entries",
+            "manual_review_required", "medium",
+            f"Root element: {root_type}; loc entries: {len(loc_elements)}; empty or invalid absolute HTTP(S) locations: {invalid}; empty locations: {empty}. Source: {sitemap_url}",
+            "Sitemap entries should contain absolute HTTP(S) locations. Empty or malformed entries can reduce reliable discovery. Valid syntax alone does not prove that URLs are canonical or indexable.",
+            "Remove empty or malformed loc entries, then verify listed URLs resolve to the intended canonical pages.",
+            ["Inspect each loc element.", "Validate representative listed URLs and the sitemap with search-engine tools."],
+            sitemap_url,
+        )]
+    return []
+
+
 def inspect_robots_txt(text: str, robots_url: str) -> tuple[list[AuditFinding], list[str]]:
     """Review high-impact robots.txt directives without treating them as access controls.
 
@@ -468,6 +534,10 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 "xml" in sitemap_headers.get("content-type", "").lower()
                 or sitemap_body.lstrip().startswith("<")
             ):
+                # The main audit semantically validates the conventional sitemap.
+                # Custom robots-declared locations need equivalent evidence here.
+                if sitemap_url != conventional_sitemap_url:
+                    findings.extend(inspect_crawl_sitemap(sitemap_body, sitemap_final_url))
                 root = ET.fromstring(sitemap_body)
                 root_type = root.tag.rsplit("}", 1)[-1].lower()
                 if root_type == "urlset":
@@ -499,6 +569,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                             ):
                                 continue
                             child_root = ET.fromstring(child_body)
+                            findings.extend(inspect_crawl_sitemap(child_body, child_sitemap_url))
                             if child_root.tag.rsplit("}", 1)[-1].lower() != "urlset":
                                 continue
                             remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
