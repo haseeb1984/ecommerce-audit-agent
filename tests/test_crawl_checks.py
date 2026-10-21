@@ -1783,3 +1783,23 @@ async def test_bounded_crawl_discovers_nested_same_origin_links_without_exceedin
     assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
     assert limitations
 
+
+def test_canonical_review_flags_cross_origin_target_for_manual_review():
+    findings = crawl_checks.inspect_canonical_declaration(
+        '<link rel="canonical" href="https://www.shop.example/products/a">',
+        "https://shop.example/products/a",
+    )
+    assert len(findings) == 1
+    assert findings[0].title == "Canonical target points to a different origin"
+    assert findings[0].status == "manual_review_required"
+    assert findings[0].severity == "medium"
+    assert "does not fetch or validate the destination" in findings[0].evidence
+
+
+def test_canonical_review_accepts_same_origin_scheme_and_default_port_normalization():
+    findings = crawl_checks.inspect_canonical_declaration(
+        '<link rel="canonical" href="https://shop.example:443/products/a">',
+        "https://shop.example/products/a",
+    )
+    assert findings == []
+
