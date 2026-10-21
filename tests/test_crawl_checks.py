@@ -1823,7 +1823,7 @@ async def test_bounded_crawl_uses_multiple_robots_declared_sitemaps(monkeypatch)
         if url == "https://shop.example/robots.txt":
             return (
                 200,
-                f"User-agent: *\\nAllow: /\\nSitemap: {first_sitemap}\\nSitemap: {second_sitemap}\\n",
+                f"User-agent: *\nAllow: /\nSitemap: {first_sitemap}\nSitemap: {second_sitemap}\n",
                 {"content-type": "text/plain"},
                 url,
             )
