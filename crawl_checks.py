@@ -530,7 +530,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
         try:
             sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url)
-            if 200 <= sitemap_status < 300 and (
+            if 200 <= sitemap_status < 300 and _same_origin(sitemap_final_url, final_home) and (
                 "xml" in sitemap_headers.get("content-type", "").lower()
                 or sitemap_body.lstrip().startswith("<")
             ):
@@ -560,7 +560,18 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
                         try:
-                            child_status, child_body, child_headers, _ = await _safe_get(client, child_sitemap_url)
+                            child_status, child_body, child_headers, child_final_url = await _safe_get(client, child_sitemap_url)
+                            if not _same_origin(child_final_url, final_home):
+                                findings.append(_finding(
+                                    "indexing", "Child sitemap redirect left the audited origin",
+                                    "manual_review_required", "low",
+                                    f"Child sitemap {child_sitemap_url} redirected to a different origin and was not used for discovery.",
+                                    "The crawler limits sitemap discovery to the audited origin so external redirect destinations are not silently treated as part of this site's sitemap structure.",
+                                    "Confirm the redirect is intentional and ensure the sitemap index points to the intended same-origin sitemap location where appropriate.",
+                                    ["Inspect the child sitemap redirect chain.", "Confirm the sitemap index references the intended sitemap host."],
+                                    child_sitemap_url,
+                                ))
+                                continue
                             if child_status < 200 or child_status >= 300:
                                 findings.append(_finding(
                                     "indexing", "Child sitemap could not be retrieved",
@@ -604,7 +615,17 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                             ))
                             continue
             elif sitemap_url != conventional_sitemap_url:
-                if sitemap_status < 200 or sitemap_status >= 300:
+                if not _same_origin(sitemap_final_url, final_home):
+                    findings.append(_finding(
+                        "indexing", "Sitemap redirect left the audited origin",
+                        "manual_review_required", "medium",
+                        f"Same-origin sitemap {sitemap_url} redirected to a different origin; its response was not used for crawl discovery.",
+                        "A sitemap redirect to another origin can complicate the intended discovery path and is outside this crawler's same-origin discovery policy. This does not by itself establish an indexing failure.",
+                        "Confirm the redirect is intentional. If the sitemap should belong to this store, serve it from the audited origin or document the platform's supported cross-origin sitemap arrangement.",
+                        ["Inspect the sitemap's redirect chain in a browser or HTTP client.", "Confirm the final sitemap URL and search-engine configuration."],
+                        sitemap_url,
+                    ))
+                elif sitemap_status < 200 or sitemap_status >= 300:
                     findings.append(_finding(
                         "indexing", "Robots-declared sitemap could not be retrieved",
                         "manual_review_required", "medium",
