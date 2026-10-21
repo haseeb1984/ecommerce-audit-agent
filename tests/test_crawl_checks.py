@@ -1584,3 +1584,30 @@ async def test_crawl_prioritizes_noindex_on_product_landing_page(monkeypatch):
     assert noindex.severity == "high"
     assert "commercially important organic landing pages" in noindex.explanation
     assert any(step == "Confirm the page's business purpose and intended indexability." for step in noindex.verification_steps)
+
+
+@pytest.mark.asyncio
+async def test_crawl_reports_sampled_internal_page_missing_title_element(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    product = "https://shop.example/products/blue-shirt"
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store home</title></head><body><a href="/products/blue-shirt">Blue shirt</a></body></html>', {"content-type": "text/html"}, homepage
+        if url in {"https://shop.example/robots.txt", "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == product:
+            return 200, '<html><head><meta name="description" content="Blue shirt"></head><body><h1>Blue shirt</h1></body></html>', {"content-type": "text/html"}, product
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    missing_title = [
+        finding for finding in findings
+        if finding.title == "Internal page missing title element" and product in finding.evidence
+    ]
+    assert len(missing_title) == 1
+    assert missing_title[0].severity == "medium"
+    assert "JavaScript runs" in missing_title[0].explanation
