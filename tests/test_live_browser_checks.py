@@ -2,7 +2,14 @@ import asyncio
 
 import pytest
 
-from scripts.generate_live_audit_pdfs import _allow_public_browser_request, _mobile_render_findings
+from scripts.generate_live_audit_pdfs import DEFAULT_TARGETS, _allow_public_browser_request, _mobile_render_findings
+
+
+def test_live_pdf_smoke_test_defaults_only_to_designated_project_sites():
+    assert DEFAULT_TARGETS == [
+        "https://juncsys.com",
+        "https://junctiontools.com",
+    ]
 
 
 def test_mobile_render_findings_detect_overflow_viewport_and_hidden_focusables():
