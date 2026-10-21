@@ -656,3 +656,46 @@ def test_phase_scorecard_pdf_renders_all_phase_visuals():
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
     assert len(PhaseScorecardInfographic.PHASES) == 5
+
+
+
+def test_phase_scorecard_maps_discovery_accessibility_and_dependency_categories():
+    from report_generator import PhaseScorecardInfographic, _consolidate_findings
+
+    findings = [
+        AuditFinding(
+            category="structured_data",
+            title="Structured data observed",
+            status="verified",
+            severity="info",
+            evidence="JSON-LD was inspected.",
+            explanation="This is a bounded source-level observation.",
+            recommendation="Validate the schema separately.",
+        ),
+        AuditFinding(
+            category="aria_alt_text",
+            title="Image alt signal",
+            status="manual_review_required",
+            severity="medium",
+            evidence="Contextual accessibility review is needed.",
+            explanation="Automated source checks are not a full accessibility assessment.",
+            recommendation="Review image purpose and alternative text.",
+        ),
+        AuditFinding(
+            category="security_dependency",
+            title="Dependency version needs review",
+            status="not_tested",
+            severity="info",
+            evidence="A reliable vulnerability verdict was unavailable.",
+            explanation="No vulnerability conclusion is drawn.",
+            recommendation="Check the exact package and advisory source.",
+        ),
+    ]
+    infographic = PhaseScorecardInfographic(_consolidate_findings(findings))
+    seo = next(row for row in infographic.rows if row[0] == "Technical SEO & discovery")
+    accessibility = next(row for row in infographic.rows if row[0] == "Accessibility")
+    security = next(row for row in infographic.rows if row[0] == "Security & trust")
+
+    assert seo[1] == 1
+    assert accessibility[1] == 1
+    assert security[1] == 1
