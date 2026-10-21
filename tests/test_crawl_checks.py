@@ -1558,3 +1558,29 @@ def test_product_schema_heuristic_ignores_non_product_routes_and_malformed_jsonl
     )
     assert category == []
     assert malformed == []
+
+
+@pytest.mark.asyncio
+async def test_crawl_prioritizes_noindex_on_product_landing_page(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    product = "https://shop.example/products/blue-shirt"
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body><a href="/products/blue-shirt">Blue shirt</a></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == product:
+            return 200, '<html><head><title>Blue shirt</title><meta name="robots" content="noindex,follow"></head><body><h1>Blue shirt</h1></body></html>', {"content-type": "text/html"}, product
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    noindex = next(f for f in findings if f.title == "Page contains a noindex directive" and product in f.evidence)
+    assert noindex.severity == "high"
+    assert "commercially important organic landing pages" in noindex.explanation
+    assert any(step == "Confirm the page's business purpose and intended indexability." for step in noindex.verification_steps)
