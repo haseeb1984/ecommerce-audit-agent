@@ -371,6 +371,19 @@ class FindingMixInfographic(Flowable):
         c.drawString(5 * mm, 2.5 * mm, "Counts are grouped by recorded severity; they are not business-impact or revenue-loss estimates.")
         c.restoreState()
 
+def _paid_media_coverage_rows() -> list[list[str]]:
+    """Describe paid-media evidence coverage without implying account-level access."""
+    return [
+        ["Evidence area", "Coverage in this audit"],
+        ["Landing-page forms, links and visible trust signals", "Checked from bounded public HTML where available"],
+        ["Publicly detectable marketing-tag signatures", "Static presence signal only; firing and event payloads not verified"],
+        ["Ad-account spend, clicks and campaign settings", "Not connected / not assessed"],
+        ["Conversion attribution, CPA and ROAS", "Not connected / not assessed"],
+        ["Pixel or analytics event delivery", "Not verified in a live browser network session"],
+        ["Campaign-to-landing-page message match", "Requires campaign creatives, targeting and landing-page context"],
+    ]
+
+
 def _conversion_paid_traffic_findings(findings: list[dict[str, object]]) -> list[dict[str, object]]:
     """Select the dedicated conversion/paid-traffic category without implying measured ad loss."""
     return [
@@ -604,6 +617,25 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         "A finding here is a review lead, not proof that a campaign is underperforming.",
         body_style,
     ))
+    coverage_rows = _paid_media_coverage_rows()
+    coverage_table = Table(
+        [[_p(cell, small_style) for cell in row] for row in coverage_rows],
+        colWidths=[66 * mm, 102 * mm],
+        repeatRows=1,
+        hAlign="LEFT",
+    )
+    coverage_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF5")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#17365D")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C8D1DC")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.extend([coverage_table, Spacer(1, 3 * mm)])
     if conversion_findings:
         for item in conversion_findings:
             story.append(Paragraph(
