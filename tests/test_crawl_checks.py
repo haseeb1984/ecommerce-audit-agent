@@ -1405,3 +1405,41 @@ async def test_crawl_ignores_cross_origin_sitemap_directive(monkeypatch):
 
     assert "https://outside.example/sitemap.xml" not in requested
     assert "https://shop.example/sitemap.xml" in requested
+
+
+def test_discovered_sitemap_reports_malformed_xml():
+    findings = crawl_checks.inspect_crawl_sitemap(
+        "<urlset><url>", "https://shop.example/catalog.xml"
+    )
+    assert len(findings) == 1
+    assert findings[0].title == "Discovered sitemap XML is malformed"
+    assert findings[0].status == "manual_review_required"
+
+
+def test_discovered_sitemap_rejects_unexpected_xml_root():
+    findings = crawl_checks.inspect_crawl_sitemap(
+        "<feed><entry><id>https://shop.example/item</id></entry></feed>",
+        "https://shop.example/catalog.xml",
+    )
+    assert len(findings) == 1
+    assert findings[0].title == "Discovered sitemap has an unexpected root element"
+
+
+def test_discovered_sitemap_reports_empty_and_invalid_locations():
+    findings = crawl_checks.inspect_crawl_sitemap(
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        "<url><loc></loc></url><url><loc>javascript:alert(1)</loc></url></urlset>",
+        "https://shop.example/catalog.xml",
+    )
+    assert len(findings) == 1
+    assert findings[0].title == "Discovered sitemap contains invalid location entries"
+    assert "empty locations: 1" in findings[0].evidence
+
+
+def test_discovered_sitemap_accepts_valid_absolute_http_locations():
+    findings = crawl_checks.inspect_crawl_sitemap(
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        "<url><loc>https://shop.example/products/one</loc></url></urlset>",
+        "https://shop.example/catalog.xml",
+    )
+    assert findings == []
