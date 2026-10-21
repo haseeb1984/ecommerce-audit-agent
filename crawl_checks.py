@@ -1101,13 +1101,29 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     sources.append(f"meta robots={meta_robots!r}")
                 if x_robots_tag:
                     sources.append(f"X-Robots-Tag={x_robots_tag!r}")
+                try:
+                    path_segments = [segment.casefold() for segment in urlsplit(final_url).path.split("/") if segment]
+                except (ValueError, UnicodeError):
+                    path_segments = []
+                commercial_route = any(
+                    segment in {
+                        "product", "products", "item", "items", "collection", "collections",
+                        "category", "categories", "shop", "store", "catalog", "catalogue",
+                    }
+                    for segment in path_segments
+                )
+                severity = "high" if commercial_route else "medium"
+                route_context = (
+                    " The path resembles a product, category, collection, or store landing page, so unintended exclusion could affect commercially important organic landing pages; confirm the actual page purpose before changing anything."
+                    if commercial_route else ""
+                )
                 findings.append(_finding(
                     "indexability", "Page contains a noindex directive",
-                    "verified", "medium",
+                    "verified", severity,
                     f"Page {final_url} declares " + " and ".join(sources) + ".",
-                    "A noindex directive in HTML or an HTTP response header asks compliant search crawlers not to index this page. That may be correct for private, duplicate, cart, or account pages, but can be a problem on product or category pages intended to appear in search.",
-                    "Confirm this page should be excluded from search. If it should be indexed, remove the unintended noindex directive from the relevant HTML or response header and recheck the final response.",
-                    ["Inspect the page source and final response headers.", "Check the URL's indexing status in the site owner's search console."],
+                    "A noindex directive in HTML or an HTTP response header asks compliant search crawlers not to index this page. It may be intentional for cart, account, internal-search, duplicate, or private pages." + route_context,
+                    "Confirm this page should be excluded from search. If it is intended as an organic landing page, remove the unintended noindex directive from the relevant HTML or response header and verify the final response. Do not remove intentional exclusions from cart, account, or duplicate pages just to clear an audit finding.",
+                    ["Confirm the page's business purpose and intended indexability.", "Inspect the page source and final response headers.", "Check the URL's indexing status in the site owner's search console."],
                     final_url,
                 ))
 
