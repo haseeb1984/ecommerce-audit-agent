@@ -825,6 +825,50 @@ def render_audit_pdf(
             f"Status: {status.replace('_', ' ').title()}",
             small_style,
         ))
+
+        # At-a-glance result: never invent percentages without a measurable denominator.
+        if status in {"not_tested", "insufficient_data"}:
+            result_label = "NOT ASSESSED"
+            result_detail = "No percentage available: verified evidence is insufficient."
+            result_color = "#6D7C91"
+        elif status == "manual_review_required":
+            result_label = "REVIEW NEEDED"
+            result_detail = "Automated evidence is inconclusive; a person must verify the result."
+            result_color = "#9A6700"
+        elif severity == "info":
+            result_label = "OBSERVATION — NOT SCORED"
+            result_detail = "A signal was observed. Presence alone does not prove quality or full compliance."
+            result_color = "#2E83A6"
+        else:
+            result_label = f"{severity.upper()} SIGNAL"
+            result_detail = "A finding was recorded. A pass percentage needs a defined measurable denominator."
+            result_color = severity_colors.get(severity, "#6D7C91")
+
+        result_table = Table(
+            [[
+                Paragraph(
+                    f'<font color="{result_color}"><b>{escape(result_label)}</b></font>',
+                    ParagraphStyle(f"FindingResultLabel{index}", parent=small_style, fontSize=8, leading=10),
+                ),
+                Paragraph(
+                    escape(result_detail),
+                    ParagraphStyle(f"FindingResultDetail{index}", parent=small_style, fontSize=7.5, leading=9),
+                ),
+            ]],
+            colWidths=[47 * mm, 127 * mm],
+            hAlign="LEFT",
+        )
+        result_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FB")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#D5DFEA")),
+            ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(result_color)),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.extend([result_table, Spacer(1, 2 * mm)])
         blocks = []
         instances = int(finding["instances"])
         urls = list(finding["source_urls"])
