@@ -1853,3 +1853,33 @@ async def test_bounded_crawl_uses_multiple_robots_declared_sitemaps(monkeypatch)
     assert requested.count(first_sitemap) == 1
     assert requested.count(second_sitemap) == 1
     assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_never_fetches_off_origin_robots_sitemap(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    external_sitemap = "https://other.example/private-map.xml"
+    local_sitemap = "https://shop.example/sitemap.xml"
+    product = "https://shop.example/products/item"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, f"User-agent: *\\nSitemap: {external_sitemap}\\nSitemap: {local_sitemap}\\n", {"content-type": "text/plain"}, url
+        if url == local_sitemap:
+            return 200, f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{product}</loc></url></urlset>', {"content-type": "application/xml"}, url
+        if url == product:
+            return 200, '<html><head><title>Item</title></head><body><h1>Item</h1></body></html>', {"content-type": "text/html"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert external_sitemap not in requested
+    assert local_sitemap in requested
+    assert product in checked
+    assert any(f.title == "robots.txt declares an off-origin sitemap" for f in findings)
