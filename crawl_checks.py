@@ -229,6 +229,25 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
     duplicate_languages: set[str] = set()
     invalid_targets: list[str] = []
     invalid_language_tags: list[str] = []
+    self_reference_found = False
+
+    def comparable_page_url(value: str) -> tuple[str, str, str] | None:
+        try:
+            parts = urlsplit(value)
+            _ = parts.port
+            if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+                return None
+            host = parts.hostname.lower()
+            port = parts.port
+            default_port = 443 if parts.scheme.lower() == "https" else 80
+            authority = f"[{host}]" if ":" in host else host
+            if port is not None and port != default_port:
+                authority += f":{port}"
+            return parts.scheme.lower(), authority, parts.path or "/"
+        except (ValueError, UnicodeError):
+            return None
+
+    current_page = comparable_page_url(final_url)
 
     def safe_target_label(href: str) -> str:
         """Return a bounded URL label without credentials, query, or fragment data."""
@@ -277,8 +296,10 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
             valid_target = False
         if not valid_target:
             invalid_targets.append(safe_target_label(href))
+        elif current_page is not None and comparable_page_url(resolved) == current_page:
+            self_reference_found = True
 
-    if invalid_language_tags or invalid_targets or duplicate_languages:
+    if invalid_language_tags or invalid_targets or duplicate_languages or not self_reference_found:
         details = []
         if invalid_language_tags:
             details.append("language tag(s): " + ", ".join(value[:40] for value in sorted(set(invalid_language_tags))[:8]))
@@ -286,6 +307,8 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
             details.append("target URL issue(s): " + ", ".join(sorted(set(invalid_targets))[:8]))
         if duplicate_languages:
             details.append("duplicate language tag(s): " + ", ".join(sorted(duplicate_languages)[:8]))
+        if not self_reference_found:
+            details.append("no hreflang target appears to reference this page itself")
         findings.append(_finding(
             "international_seo",
             "Hreflang declarations need review",
