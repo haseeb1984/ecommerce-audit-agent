@@ -1,4 +1,8 @@
-from scripts.generate_live_audit_pdfs import _mobile_render_findings
+import asyncio
+
+import pytest
+
+from scripts.generate_live_audit_pdfs import _allow_public_browser_request, _mobile_render_findings
 
 
 def test_mobile_render_findings_detect_overflow_viewport_and_hidden_focusables():
@@ -30,9 +34,6 @@ def test_mobile_render_findings_do_not_infer_results_from_missing_browser_metric
     findings = _mobile_render_findings("https://shop.example/", {})
     assert findings == []
 
-import pytest
-
-from scripts.generate_live_audit_pdfs import _allow_public_browser_request
 
 
 class _FakeRequest:
@@ -57,6 +58,7 @@ class _FakeRoute:
     "http://localhost/admin",
     "http://127.0.0.1/",
     "http://192.168.1.10/",
+    "http://[::1]/",
     "file:///etc/passwd",
     "ftp://example.com/file",
 ])
@@ -71,7 +73,6 @@ async def test_browser_request_guard_fails_closed_when_dns_fails(monkeypatch):
     async def failed_getaddrinfo(*args, **kwargs):
         raise OSError("synthetic DNS failure")
 
-    import asyncio
     monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop(failed_getaddrinfo))
     route = _FakeRoute("https://public-looking.example/")
     await _allow_public_browser_request(route)
