@@ -1354,3 +1354,54 @@ def test_robots_txt_consecutive_user_agents_share_group_before_rules():
     )
     assert len(findings) == 1
     assert findings[0].status == "manual_review_required"
+
+
+@pytest.mark.asyncio
+async def test_crawl_discovers_nonstandard_sitemap_declared_in_robots(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    sitemap = "https://shop.example/catalog-index.xml"
+    product = "https://shop.example/products/from-declared-sitemap"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, f"User-agent: *\\nAllow: /\\nSitemap: {sitemap}\\n", {"content-type": "text/plain"}, url
+        if url == sitemap:
+            return 200, f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{product}</loc></url></urlset>', {"content-type": "application/xml"}, sitemap
+        if url == product:
+            return 200, '<html><head><title>Product</title><meta name="description" content="Item"></head><body><h1>Product</h1></body></html>', {"content-type": "text/html"}, product
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert sitemap in requested
+    assert product in checked
+    assert "https://shop.example/sitemap.xml" not in requested
+
+
+@pytest.mark.asyncio
+async def test_crawl_ignores_cross_origin_sitemap_directive(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, "Sitemap: https://outside.example/sitemap.xml\\n", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert "https://outside.example/sitemap.xml" not in requested
+    assert "https://shop.example/sitemap.xml" in requested
