@@ -43,6 +43,74 @@ MAX_LINKS_FROM_HOME = 100
 MAX_URLS_FROM_SITEMAP = 100
 MAX_CHILD_SITEMAPS = 3
 
+PRODUCT_DETAIL_PATH = re.compile(r"(?:^|/)(?:products?|items?)(?:/|$)", re.I)
+
+
+def inspect_product_page_schema_presence(html: str, page_url: str) -> list[AuditFinding]:
+    """Prompt review when a likely product-detail URL has no detectable Product JSON-LD.
+
+    URL patterns are only heuristics: storefront routes vary, and structured data may
+    be supplied by Microdata, RDFa, or JavaScript after the initial HTML response.
+    """
+    try:
+        path = urlsplit(page_url).path
+    except (ValueError, UnicodeError):
+        return []
+    if not PRODUCT_DETAIL_PATH.search(path):
+        return []
+
+    parser = _PageParser()
+    try:
+        parser.feed(html)
+    except Exception:
+        return []
+    if not parser.jsonld_scripts:
+        return [_finding(
+            "structured_data", "Likely product page has no detectable Product JSON-LD",
+            "manual_review_required", "low",
+            f"The URL path resembles a product-detail route, but no application/ld+json block was found in the returned HTML for {page_url}.",
+            "Product structured data can help search systems interpret product details, but not every implementation uses JSON-LD. This source-only check does not inspect JavaScript-rendered markup, Microdata, RDFa, or determine rich-result eligibility.",
+            "Inspect the rendered product page and structured-data output. If product JSON-LD is appropriate for this store, add accurate properties that match the visible item and selected variant; do not add markup solely to satisfy this heuristic.",
+            ["Confirm the URL is a product-detail page rather than a category or application route.", "Inspect the rendered DOM for Product structured data in any supported format.", "Validate any JSON-LD against the visible product details."],
+            page_url,
+        )]
+
+    found_product = False
+    malformed = False
+
+    def contains_product(value):
+        if isinstance(value, list):
+            return any(contains_product(item) for item in value)
+        if not isinstance(value, dict):
+            return False
+        raw_type = value.get("@type", [])
+        types = raw_type if isinstance(raw_type, list) else [raw_type]
+        if any(isinstance(item, str) and item.casefold() in {"product", "productgroup"} for item in types):
+            return True
+        return contains_product(value.get("@graph", []))
+
+    for script in parser.jsonld_scripts:
+        try:
+            payload = json.loads(script)
+        except (json.JSONDecodeError, TypeError):
+            malformed = True
+            continue
+        if contains_product(payload):
+            found_product = True
+            break
+
+    if found_product or malformed:
+        return []
+    return [_finding(
+        "structured_data", "Likely product page has no detectable Product JSON-LD",
+        "manual_review_required", "low",
+        f"The URL path resembles a product-detail route, but the inspected JSON-LD blocks contain no Product or ProductGroup entity: {page_url}.",
+        "A product-detail page may benefit from accurate Product structured data, but this check cannot establish that the URL is a true product page or that JSON-LD is the site's chosen structured-data format. Other markup formats and JavaScript-rendered data are outside this source check.",
+        "Confirm the page type and inspect the rendered structured data. If Product JSON-LD is appropriate, add accurate information matching the visible product and selected variant; never invent price, currency, availability, or images.",
+        ["Confirm this is a product-detail page.", "Inspect rendered JSON-LD, Microdata, or RDFa.", "Validate Product markup and compare it with the visible product information."],
+        page_url,
+    )]
+
 
 class _HreflangParser(HTMLParser):
     """Collect declared hreflang alternate links from the returned HTML only."""
@@ -739,6 +807,8 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
 
             page_parser = _PageParser()
             page_parser.feed(body)
+
+            findings.extend(inspect_product_page_schema_presence(body, final_url))
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
