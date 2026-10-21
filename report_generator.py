@@ -390,7 +390,7 @@ def _conversion_paid_traffic_findings(findings: list[dict[str, object]]) -> list
     ]
 
 
-def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None = None) -> bytes:
+def render_audit_pdf(\n    result: AuditCheckResult,\n    screenshot_data_uri: str | None = None,\n    desktop_screenshot_data_uri: str | None = None,\n) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -461,42 +461,47 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
     ]))
     story.extend([phase_table, Spacer(1, 3 * mm)])
 
-    # Embed only a real, explicitly supplied browser/PageSpeed image. Validate it
-    # again at the PDF boundary; invalid/unsupported data is omitted, never fabricated.
-    screenshot_flowable = None
-    if isinstance(screenshot_data_uri, str) and len(screenshot_data_uri) <= 1_400_000:
-        match = re.fullmatch(
-            r"data:(image/png|image/jpeg);base64,([A-Za-z0-9+/]*={0,2})",
-            screenshot_data_uri,
-        )
-        if match:
-            try:
-                image_bytes = base64.b64decode(match.group(2), validate=True)
-                valid_png = match.group(1) == "image/png" and image_bytes.startswith(bytes.fromhex("89504e470d0a1a0a"))
-                valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(bytes.fromhex("ffd8ff"))
-                if image_bytes and len(image_bytes) <= 1_000_000 and (valid_png or valid_jpeg):
-                    candidate = Image(BytesIO(image_bytes), width=174 * mm, height=90 * mm, kind="proportional")
-                    candidate.hAlign = "CENTER"
-                    screenshot_flowable = candidate
-            except (ValueError, TypeError, OSError):
-                screenshot_flowable = None
+    # Validate screenshots at the PDF boundary; only actual browser captures are accepted.
+    def _screenshot_flowable(data_uri: str | None):
+        if not isinstance(data_uri, str) or len(data_uri) > 1_400_000:
+            return None
+        match = re.fullmatch(r"data:(image/png|image/jpeg);base64,([A-Za-z0-9+/]*={0,2})", data_uri)
+        if not match:
+            return None
+        try:
+            image_bytes = base64.b64decode(match.group(2), validate=True)
+            valid_png = match.group(1) == "image/png" and image_bytes.startswith(bytes.fromhex("89504e470d0a1a0a"))
+            valid_jpeg = match.group(1) == "image/jpeg" and image_bytes.startswith(bytes.fromhex("ffd8ff"))
+            if not image_bytes or len(image_bytes) > 1_000_000 or not (valid_png or valid_jpeg):
+                return None
+            candidate = Image(BytesIO(image_bytes), width=174 * mm, height=76 * mm, kind="proportional")
+            candidate.hAlign = "CENTER"
+            return candidate
+        except (ValueError, TypeError, OSError):
+            return None
 
-    if screenshot_flowable is not None:
-        story.append(KeepTogether([
-            Paragraph("Actual website screenshot", section_style),
-            _p(
-                "This is a real browser screenshot captured from the target website during this audit run, "
-                "not an illustrative graphic. It shows the captured viewport and may not represent every page or device.",
-                small_style,
-            ),
-            screenshot_flowable,
-            Spacer(1, 2 * mm),
-        ]))
+    mobile_capture = _screenshot_flowable(screenshot_data_uri)
+    desktop_capture = _screenshot_flowable(desktop_screenshot_data_uri)
+    if desktop_capture is not None or mobile_capture is not None:
+        story.append(Paragraph("Real website screenshots", section_style))
+        story.append(_p(
+            "Captured from the audited website during this run. Screenshots are visual evidence of the captured view only; "
+            "they do not by themselves prove a finding or represent every page.",
+            small_style,
+        ))
+        if desktop_capture is not None:
+            story.extend([Paragraph("Desktop viewport (1440px)", finding_style), desktop_capture, Spacer(1, 3 * mm)])
+        if mobile_capture is not None:
+            story.extend([Paragraph("Mobile viewport (390px)", finding_style), mobile_capture, Spacer(1, 2 * mm)])
+        if desktop_capture is None:
+            story.append(_p("Desktop screenshot unavailable for this run.", small_style))
+        if mobile_capture is None:
+            story.append(_p("Mobile screenshot unavailable for this run.", small_style))
     else:
         story.extend([
-            Paragraph("Actual website screenshot", section_style),
+            Paragraph("Real website screenshots", section_style),
             _p(
-                "A real browser screenshot could not be captured for this run. No website screenshot was fabricated. "
+                "Desktop and mobile browser screenshots could not be captured for this run. No website screenshot was fabricated. "
                 "The phase illustrations below are explanatory graphics only.",
                 body_style,
             ),
