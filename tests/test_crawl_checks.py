@@ -1730,3 +1730,56 @@ def test_canonical_review_reports_malformed_target_but_accepts_valid_relative_ta
     )
     assert any(f.title == "Canonical target URL needs review" for f in malformed)
     assert valid == []
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_discovers_nested_same_origin_links_without_exceeding_budget(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    category = "https://shop.example/collections/shoes"
+    product = "https://shop.example/products/deep-product"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/collections/shoes">Shoes</a></body></html>',
+                {"content-type": "text/html"},
+                homepage,
+            )
+        if url == "https://shop.example/robots.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == category:
+            return (
+                200,
+                '<html><head><title>Shoes</title></head><body>'
+                '<a href="/products/deep-product?utm_source=test#details">Product</a>'
+                '<a href="https://outside.example/skip">External</a></body></html>',
+                {"content-type": "text/html"},
+                category,
+            )
+        if url == product:
+            return (
+                200,
+                '<html><head><title>Deep Product</title></head><body><h1>Deep Product</h1></body></html>',
+                {"content-type": "text/html"},
+                product,
+            )
+        # Safe exposure-path probes and unrelated fixed probes may fail closed.
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert homepage in checked
+    assert category in checked
+    assert product in checked
+    assert requested.count(product) == 1
+    assert not any("outside.example" in url for url in requested)
+    assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
+    assert limitations
+
