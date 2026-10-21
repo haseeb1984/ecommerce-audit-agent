@@ -290,6 +290,15 @@ def test_homepage_checks_product_offer_availability(availability, should_flag):
         assert matches[0].source_url == "https://shop.example/"
 
 
+@pytest.mark.parametrize(
+    ("offer", "expected_title"),
+    [
+        ({"price": "19.99", "priceCurrency": "USD"}, None),
+        ({"priceCurrency": "USD"}, "Product offers missing price"),
+        ({"price": "19.99"}, "Product offers missing or invalid currency"),
+        ({"price": "-1", "priceCurrency": "USD"}, "Product offers missing price"),
+    ],
+)
 def test_homepage_checks_product_offer_price_and_currency(offer, expected_title):
     product = {"@context": "https://schema.org", "@type": "Product", "name": "Example", "image": "https://shop.example/item.jpg"}
     product["offers"] = offer
