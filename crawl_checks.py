@@ -729,7 +729,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
     limitations = [
         f"Same-origin crawl is capped at {MAX_CRAWL_PAGES} URLs and follows discovered HTML links only while page budget remains; it does not crawl the whole site.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        f"Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps and at most {MAX_URLS_FROM_SITEMAP} page URLs. Additional declared sitemap locations and deeper nesting are not fully explored.",
+        f"Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps and at most {MAX_URLS_FROM_SITEMAP} page URLs. Additional declared sitemap locations and deeper sitemap-index nesting are not fully explored.",
     ]
 
     async with aiohttp.ClientSession(
