@@ -297,12 +297,17 @@ def _same_origin(left_url: str, right_url: str) -> bool:
 
 
 def inspect_robots_txt(text: str, robots_url: str) -> tuple[list[AuditFinding], list[str]]:
-    """Review high-impact robots.txt directives without treating them as access controls."""
+    """Review high-impact robots.txt directives without treating them as access controls.
+
+    A new user-agent group begins when a User-agent directive follows directives
+    in the current group. Consecutive User-agent lines before any rule belong to
+    the same group, as defined by the robots exclusion protocol.
+    """
     findings: list[AuditFinding] = []
     limitations: list[str] = []
-    active_agents: list[str] = []
-    wildcard_group = False
-    disallow_all = False
+    group_agents: list[str] = []
+    group_has_rules = False
+    wildcard_disallow_all = False
     sitemap_count = 0
 
     for raw_line in text.splitlines()[:5000]:
@@ -311,19 +316,23 @@ def inspect_robots_txt(text: str, robots_url: str) -> tuple[list[AuditFinding], 
             continue
         key, value = (part.strip() for part in line.split(":", 1))
         key_lower = key.lower()
+
         if key_lower == "user-agent":
-            if not value:
-                active_agents = []
-                wildcard_group = False
-                continue
-            active_agents.append(value.lower())
-            wildcard_group = "*" in active_agents
-        elif key_lower == "disallow" and wildcard_group and value.strip() == "/":
-            disallow_all = True
+            if group_has_rules:
+                group_agents = []
+                group_has_rules = False
+            if value:
+                group_agents.append(value.lower())
+        elif key_lower in {"allow", "disallow", "crawl-delay"}:
+            # A blank Disallow is explicitly not a site-wide block.
+            if key_lower == "disallow" and value == "/" and "*" in group_agents:
+                wildcard_disallow_all = True
+            if value or key_lower != "disallow":
+                group_has_rules = True
         elif key_lower == "sitemap" and value:
             sitemap_count += 1
 
-    if disallow_all:
+    if wildcard_disallow_all:
         findings.append(_finding(
             "indexing", "robots.txt blocks the entire site for wildcard crawlers",
             "manual_review_required", "high",
