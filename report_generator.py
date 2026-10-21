@@ -444,10 +444,10 @@ class AuditAreaInfographic(Flowable):
 class PhaseScorecardInfographic(Flowable):
     """Per-phase visual snapshot of recorded evidence, not a fabricated check pass rate."""
     PHASES = [
-        ("Technical SEO & discovery", {"seo", "technical_seo", "on_page_seo", "structured_data", "indexing", "crawlability"}),
+        ("Technical SEO & discovery", {"seo", "technical_seo", "on_page_seo", "structured_data", "indexing", "crawlability", "robots_txt", "sitemap_xml", "llms_txt", "crawl"}),
         ("Performance & mobile UX", {"performance", "static_performance", "mobile_ux"}),
-        ("Accessibility", {"accessibility"}),
-        ("Security & trust", {"security", "security_headers", "security_exposure", "security_transport", "trust"}),
+        ("Accessibility", {"accessibility", "aria_alt_text"}),
+        ("Security & trust", {"security", "security_headers", "security_exposure", "security_transport", "security_dependency", "trust"}),
         ("Conversion & paid traffic", {"conversion_paid_traffic", "conversion", "paid_traffic"}),
     ]
 
@@ -492,7 +492,7 @@ class PhaseScorecardInfographic(Flowable):
             c.setFont("Helvetica", 7)
             c.drawString(4 * mm, y + 10.5 * mm, f"{total} recorded finding(s)  |  {verified} verified  |  {review} review needed  |  {not_tested} not tested / insufficient")
             if total:
-                pct_text = f"{evidence_pct}% evidence-confirmed"
+                pct_text = f"{evidence_pct}% of findings verified"
                 c.setFillColor(colors.HexColor("#23734D") if evidence_pct is not None and evidence_pct >= 75 else colors.HexColor("#9A6700"))
             else:
                 pct_text = "No finding recorded"
@@ -741,7 +741,7 @@ def render_audit_pdf(
     story.append(PhaseScorecardInfographic(consolidated_findings))
     story.append(Spacer(1, 4 * mm))
     story.append(_p(
-        "Percentage shown per phase is the share of recorded findings whose observation status is verified; it is NOT a pass rate for every possible check and does not measure complete website coverage. A phase with no recorded findings is shown as not recorded, never as 100% passed. Checks not represented as findings cannot be counted from the current result data.",
+        "The phase percentage is the share of recorded findings marked verified, not a check pass rate. A verified finding means the observation was confirmed; it can describe either a positive signal or an issue. This audit result schema does not yet record every executed check and its pass/fail outcome, so true check success rate and execution coverage are not available here. A phase with no recorded findings is shown as not recorded, never as 100% passed.",
         small_style,
     ))
 
