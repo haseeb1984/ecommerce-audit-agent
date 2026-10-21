@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import argparse
 import base64
+import ipaddress
 import re
+import socket
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -21,6 +23,33 @@ from crawl_checks import run_bounded_site_crawl
 from report_generator import render_audit_pdf
 
 
+
+async def _allow_public_browser_request(route) -> None:
+    """Abort browser requests to non-public hosts before Chromium fetches them."""
+    try:
+        parts = urlsplit(route.request.url)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            await route.abort()
+            return
+        host = parts.hostname.rstrip(".").lower()
+        if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+            await route.abort()
+            return
+        try:
+            addresses = [ipaddress.ip_address(host.strip("[]"))]
+        except ValueError:
+            loop = asyncio.get_running_loop()
+            records = await loop.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM)
+            addresses = list({ipaddress.ip_address(record[4][0]) for record in records})
+        if not addresses or any(not address.is_global for address in addresses):
+            await route.abort()
+            return
+        await route.continue_()
+    except Exception:
+        # Fail closed if URL parsing or DNS validation fails.
+        await route.abort()
+
+
 async def capture_real_website_screenshot(url: str) -> str | None:
     """Capture a real browser viewport screenshot; return a JPEG data URI or None."""
     try:
@@ -28,6 +57,7 @@ async def capture_real_website_screenshot(url: str) -> str | None:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch()
             page = await browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
+            await page.route("**/*", _allow_public_browser_request)
             await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             await page.wait_for_timeout(1200)
             image_bytes = await page.screenshot(type="jpeg", quality=72, full_page=False)
@@ -81,6 +111,7 @@ async def inspect_mobile_rendered_signals(url: str) -> tuple[list[AuditFinding],
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch()
             page = await browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+            await page.route("**/*", _allow_public_browser_request)
             await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             await page.wait_for_timeout(500)
             metrics = await page.evaluate("""() => ({
