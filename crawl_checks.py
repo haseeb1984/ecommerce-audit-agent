@@ -820,17 +820,46 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     sitemap_urls.extend(_loc_values(root)[:MAX_URLS_FROM_SITEMAP])
                 elif root_type == "sitemapindex":
                     child_sitemaps = []
+                    seen_child_sitemaps: set[str] = set()
+                    rejected_child_sitemaps: list[str] = []
                     for child in root:
                         if child.tag.rsplit("}", 1)[-1].lower() != "sitemap":
                             continue
-                        for loc in child:
-                            if loc.tag.rsplit("}", 1)[-1].lower() == "loc" and loc.text:
-                                value = loc.text.strip()
-                                if value and _same_origin_http_url(value, sitemap_final_url):
-                                    child_sitemaps.append(urljoin(sitemap_final_url, value))
-                                break
+                        child_loc = next((
+                            (loc.text or "").strip()
+                            for loc in child
+                            if loc.tag.rsplit("}", 1)[-1].lower() == "loc"
+                        ), "")
+                        if not child_loc:
+                            rejected_child_sitemaps.append("(missing or empty loc)")
+                            continue
+                        try:
+                            resolved_child = urljoin(sitemap_final_url, child_loc)
+                            if not _same_origin_http_url(resolved_child, sitemap_final_url):
+                                rejected_child_sitemaps.append(safe_target_label(child_loc))
+                                continue
+                            normalized_child = _canonical_page_url(resolved_child)
+                        except (ValueError, UnicodeError):
+                            rejected_child_sitemaps.append(safe_target_label(child_loc))
+                            continue
+                        if normalized_child in seen_child_sitemaps:
+                            continue
+                        seen_child_sitemaps.add(normalized_child)
+                        child_sitemaps.append(resolved_child)
                         if len(child_sitemaps) >= MAX_CHILD_SITEMAPS:
                             break
+
+                    if rejected_child_sitemaps:
+                        findings.append(_finding(
+                            "indexing", "Sitemap index contains unusable child sitemap locations",
+                            "manual_review_required", "low",
+                            f"Found {len(rejected_child_sitemaps)} missing, malformed, or off-origin child sitemap location(s) in {sitemap_final_url}; those locations were not fetched. Examples: "
+                            + ", ".join(rejected_child_sitemaps[:5]) + ".",
+                            "A sitemap index should reference usable sitemap documents. This crawler deliberately refuses off-origin or malformed targets, and a rejected entry does not prove that search engines cannot discover the URLs by other means.",
+                            "Review each rejected sitemap-index location. Correct malformed entries and confirm any cross-origin sitemap hosting is intentional and supported by your search-engine configuration.",
+                            ["Inspect each sitemapindex/sitemap/loc entry.", "Confirm each child sitemap URL is valid and belongs to the intended sitemap setup."],
+                            sitemap_final_url,
+                        ))
 
                     for child_sitemap_url in child_sitemaps:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
