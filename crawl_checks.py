@@ -715,6 +715,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
         # Inspect robots.txt as a discovery/indexing signal. It is fetched through
         # the same public-only resolver and redirect/response-size safeguards.
         robots_sitemap_urls: list[str] = []
+        robots_declared_sitemap_urls: list[str] = []
         robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
         try:
             robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
@@ -736,14 +737,21 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     try:
                         parts = urlsplit(value)
                         _ = parts.port
-                        if (parts.scheme.lower() in {"http", "https"} and parts.hostname
-                                and parts.username is None and parts.password is None
-                                and _same_origin(value, final_home)):
-                            if value not in robots_sitemap_urls:
+                        if (
+                            parts.scheme.lower() in {"http", "https"}
+                            and parts.hostname
+                            and parts.username is None
+                            and parts.password is None
+                        ):
+                            if value not in robots_declared_sitemap_urls:
+                                robots_declared_sitemap_urls.append(value)
+                            if _same_origin(value, final_home) and value not in robots_sitemap_urls:
                                 robots_sitemap_urls.append(value)
                     except (ValueError, UnicodeError):
                         continue
-                    if len(robots_sitemap_urls) >= MAX_CHILD_SITEMAPS:
+                    # Keep parsing bounded, but retain off-origin declarations for
+                    # reporting instead of silently discarding them.
+                    if len(robots_declared_sitemap_urls) >= MAX_CHILD_SITEMAPS:
                         break
             elif robots_status in {401, 403}:
                 limitations.append("robots.txt could not be inspected because the server returned an access-denied response.")
@@ -784,7 +792,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             value for value in robots_sitemap_urls
             if _same_origin_http_url(value, final_home)
         ]
-        for declared_sitemap in robots_sitemap_urls:
+        for declared_sitemap in robots_declared_sitemap_urls:
             if not _same_origin_http_url(declared_sitemap, final_home):
                 findings.append(_finding(
                     "indexing", "robots.txt declares an off-origin sitemap",
