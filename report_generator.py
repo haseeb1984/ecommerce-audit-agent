@@ -998,8 +998,8 @@ def render_audit_pdf(
             ("TOPPADDING", (0, 0), (-1, -1), 7),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))
-        story.extend([Spacer(1, 3 * mm), header, Spacer(1, 1.5 * mm)])
-        story.extend([FindingInsightInfographic(finding), Spacer(1, 2 * mm)])
+        # Defer the visual header until the status and result blocks are ready, so
+        # a finding title never gets stranded at the bottom of a page by itself.
         status_badge = Table(
             [[Paragraph(
                 f'<font color="{status_colors.get(status, "#6D7C91")}">'
@@ -1017,12 +1017,11 @@ def render_audit_pdf(
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
-        story.append(status_badge)
-        story.append(_p(
+        category_line = _p(
             f"Category: {str(finding['category']).replace('_', ' ').title()} | "
             f"Status: {status.replace('_', ' ').title()}",
             small_style,
-        ))
+        )
 
         # At-a-glance result: never invent percentages without a measurable denominator.
         if status in {"not_tested", "insufficient_data"}:
@@ -1066,7 +1065,17 @@ def render_audit_pdf(
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
-        story.extend([result_table, Spacer(1, 2 * mm)])
+        story.append(KeepTogether([
+            Spacer(1, 3 * mm),
+            header,
+            Spacer(1, 1.5 * mm),
+            FindingInsightInfographic(finding),
+            Spacer(1, 2 * mm),
+            status_badge,
+            category_line,
+            result_table,
+            Spacer(1, 2 * mm),
+        ]))
         blocks = []
         instances = int(finding["instances"])
         urls = list(finding["source_urls"])
