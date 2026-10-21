@@ -319,6 +319,56 @@ class PhaseVisual(Flowable):
 
 
 
+class FindingInsightInfographic(Flowable):
+    """Compact visual summary that translates one recorded finding into an at-a-glance signal."""
+    def __init__(self, finding: dict[str, object]):
+        super().__init__()
+        self.width = 174 * mm
+        self.height = 23 * mm
+        self.finding = finding
+        self.status = str(finding.get("status", "")).lower()
+        self.severity = str(finding.get("severity", "info")).lower()
+        self.category = str(finding.get("category", "")).lower()
+        self.positive = self.severity == "info" and self.status == "verified"
+        self.review = self.status in {"manual_review_required", "not_tested", "insufficient_data"}
+        self.label = "POSITIVE SIGNAL — QUALITY NOT FULLY SCORED" if self.positive else ("NEEDS HUMAN REVIEW" if self.review else f"{self.severity.upper()} PRIORITY")
+        self.color = "#23734D" if self.positive else ("#9A6700" if self.review else {"critical":"#8E2430","high":"#D3543C","medium":"#B87912","low":"#2E83A6"}.get(self.severity,"#6D7C91"))
+        self.action = "Keep the signal; validate quality separately." if self.positive else ("Collect the missing evidence before concluding." if self.review else "Review evidence and prioritize an appropriate corrective action.")
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        c.setFillColor(colors.HexColor("#F7F9FC"))
+        c.setStrokeColor(colors.HexColor("#D8E1EC"))
+        c.roundRect(0, 0, self.width, self.height, 5, fill=1, stroke=1)
+        c.setFillColor(colors.HexColor(self.color))
+        c.roundRect(0, 0, 4 * mm, self.height, 2, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor(self.color))
+        c.circle(12 * mm, 15 * mm, 3 * mm, fill=1, stroke=0)
+        c.setStrokeColor(colors.white)
+        c.setLineWidth(1.2)
+        if self.positive:
+            c.line(10.5 * mm, 15 * mm, 11.7 * mm, 13.8 * mm)
+            c.line(11.7 * mm, 13.8 * mm, 14 * mm, 16.3 * mm)
+        elif self.review:
+            c.setFillColor(colors.white)
+            c.setFont("Helvetica-Bold", 8)
+            c.drawCentredString(12 * mm, 12.2 * mm, "?")
+        else:
+            c.line(12 * mm, 16.5 * mm, 12 * mm, 13.5 * mm)
+            c.circle(12 * mm, 11.7 * mm, .5 * mm, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor(self.color))
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(20 * mm, 16 * mm, self.label[:72])
+        c.setFillColor(colors.HexColor("#26384B"))
+        c.setFont("Helvetica", 7)
+        c.drawString(20 * mm, 9 * mm, self.action[:110])
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica", 6.5)
+        c.drawRightString(self.width - 4 * mm, 3.5 * mm, "Evidence-led signal • not a fabricated score")
+        c.restoreState()
+
+
 class FindingMixInfographic(Flowable):
     """Evidence-derived severity infographic; counts are not severity scores."""
     def __init__(self, findings: list[dict[str, object]]):
@@ -943,6 +993,7 @@ def render_audit_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))
         story.extend([Spacer(1, 3 * mm), header, Spacer(1, 1.5 * mm)])
+        story.extend([FindingInsightInfographic(finding), Spacer(1, 2 * mm)])
         status_badge = Table(
             [[Paragraph(
                 f'<font color="{status_colors.get(status, "#6D7C91")}">'
