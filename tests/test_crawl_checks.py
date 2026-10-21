@@ -1803,3 +1803,53 @@ def test_canonical_review_accepts_same_origin_scheme_and_default_port_normalizat
     )
     assert findings == []
 
+
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_uses_multiple_robots_declared_sitemaps(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    first_page = "https://shop.example/products/first"
+    second_page = "https://shop.example/products/second"
+    first_sitemap = "https://shop.example/catalog-a.xml"
+    second_sitemap = "https://shop.example/catalog-b.xml"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return (
+                200,
+                f"User-agent: *\\nAllow: /\\nSitemap: {first_sitemap}\\nSitemap: {second_sitemap}\\n",
+                {"content-type": "text/plain"},
+                url,
+            )
+        if url == first_sitemap:
+            return (
+                200,
+                f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{first_page}</loc></url></urlset>',
+                {"content-type": "application/xml"},
+                url,
+            )
+        if url == second_sitemap:
+            return (
+                200,
+                f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{second_page}</loc></url></urlset>',
+                {"content-type": "application/xml"},
+                url,
+            )
+        if url in {first_page, second_page}:
+            return 200, '<html><head><title>Product</title></head><body><h1>Item</h1></body></html>', {"content-type": "text/html"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert first_page in checked
+    assert second_page in checked
+    assert requested.count(first_sitemap) == 1
+    assert requested.count(second_sitemap) == 1
+    assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
