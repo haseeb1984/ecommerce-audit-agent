@@ -105,7 +105,7 @@ def test_secure_cookie_attributes_do_not_trigger_review():
     findings = inspect_security_header_quality(
         {"set-cookie": "session=redacted; Path=/; Secure; HttpOnly; SameSite=Lax",
          "strict-transport-security": "max-age=31536000; includeSubDomains",
-         "content-security-policy": "default-src 'self'; object-src 'none'; base-uri 'self'"},
+         "content-security-policy": "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"},
         "https://shop.example/"
     )
     assert findings == []

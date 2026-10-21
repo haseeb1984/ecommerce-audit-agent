@@ -293,10 +293,10 @@ def test_homepage_checks_product_offer_availability(availability, should_flag):
 @pytest.mark.parametrize(
     ("offer", "expected_title"),
     [
-        ({"price": "19.99", "priceCurrency": "USD"}, None),
-        ({"priceCurrency": "USD"}, "Product offers missing price"),
-        ({"price": "19.99"}, "Product offers missing or invalid currency"),
-        ({"price": "-1", "priceCurrency": "USD"}, "Product offers missing price"),
+        ({"price": "19.99", "priceCurrency": "USD", "availability": "https://schema.org/InStock"}, None),
+        ({"priceCurrency": "USD", "availability": "https://schema.org/InStock"}, "Product offers missing price"),
+        ({"price": "19.99", "availability": "https://schema.org/InStock"}, "Product offers missing or invalid currency"),
+        ({"price": "-1", "priceCurrency": "USD", "availability": "https://schema.org/InStock"}, "Product offers missing price"),
     ],
 )
 def test_homepage_checks_product_offer_price_and_currency(offer, expected_title):
@@ -850,11 +850,11 @@ def test_single_meta_robots_element_does_not_trigger_duplicate_finding():
 @pytest.mark.parametrize(
     ("robots", "should_flag"),
     [
-        ("User-agent: *\\nDisallow: /\\n", True),
-        ("User-agent: *\\nDisallow: /private/\\n", False),
-        ("User-agent: ExampleBot\\nDisallow: /\\n", False),
-        ("User-agent: *\\nAllow: /\\nDisallow: /private/\\n", False),
-        ("User-agent: Googlebot\\nDisallow: /tmp/\\nUser-agent: *\\nDisallow: /\\n", True),
+        ("User-agent: *\nDisallow: /\n", True),
+        ("User-agent: *\nDisallow: /private/\n", False),
+        ("User-agent: ExampleBot\nDisallow: /\n", False),
+        ("User-agent: *\nAllow: /\nDisallow: /private/\n", False),
+        ("User-agent: Googlebot\nDisallow: /tmp/\nUser-agent: *\nDisallow: /\n", True),
     ],
 )
 def test_robots_txt_detects_wildcard_full_site_block(robots, should_flag):

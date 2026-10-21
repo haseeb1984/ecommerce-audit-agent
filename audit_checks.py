@@ -410,9 +410,9 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     products_without_offers = sum(
         1 for product in product_entities
         if not (
-            isinstance(product.get("offers"), dict)
+            (isinstance(product.get("offers"), dict) and bool(product.get("offers")))
             or (isinstance(product.get("offers"), list) and any(
-                isinstance(offer, dict) for offer in product["offers"]
+                isinstance(offer, dict) and bool(offer) for offer in product["offers"]
             ))
         )
     )

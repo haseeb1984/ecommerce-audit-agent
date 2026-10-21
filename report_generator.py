@@ -41,8 +41,6 @@ def _link(url: str, style: ParagraphStyle) -> Paragraph:
         if (
             scheme not in {"http", "https"}
             or not host
-            or parts.username is not None
-            or parts.password is not None
         ):
             return _p("Link omitted (unsupported or unsafe URL)", style)
         display_host = f"[{host.lower()}]" if ":" in host else host.lower()
@@ -736,8 +734,8 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
             safe_url = escape(url, {'"': "&quot;"})
             safe_label = escape(url)
             story.append(Paragraph(
-                f'<b>{escape(reference_id)}:</b> '
-                f'<link href="{safe_url}" color="#1759a8">{safe_label}</link>',
+                f'<link href="{safe_url}" color="#1759a8">'
+                f'{escape(reference_id)}: {safe_label}</link>',
                 small_style,
             ))
 

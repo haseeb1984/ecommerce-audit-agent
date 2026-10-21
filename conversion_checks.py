@@ -50,8 +50,6 @@ def _safe_url_evidence(value: str, base_url: str) -> str:
         if (
             scheme not in {"http", "https"}
             or not host
-            or parts.username is not None
-            or parts.password is not None
         ):
             return "(unsupported or malformed destination omitted)"
         display_host = f"[{host.lower()}]" if ":" in host else host.lower()

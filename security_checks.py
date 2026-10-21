@@ -248,7 +248,7 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
             missing_protections.append("frame-ancestors is not explicitly set")
         if "object-src" not in directives and "default-src" not in directives:
             missing_protections.append("neither object-src nor default-src limits plugin content")
-        if missing_protections:
+        if missing_protections and not risky:
             findings.append(_finding(
                 "security_headers", "Content Security Policy has hardening opportunities",
                 "manual_review_required", "low",

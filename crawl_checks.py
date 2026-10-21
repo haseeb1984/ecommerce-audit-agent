@@ -482,7 +482,7 @@ def inspect_meta_refresh(html: str, final_url: str) -> list[AuditFinding]:
         )
     if external_targets:
         details.append(
-            "External destination host(s): " + ", ".join(dict.fromkeys(external_targets)[:5]) + "."
+            "External destination host(s): " + ", ".join(list(dict.fromkeys(external_targets))[:5]) + "."
         )
     if malformed_targets:
         details.append(
@@ -525,7 +525,7 @@ def _canonical_page_url(url: str) -> str:
     except ValueError:
         # Keep malformed values distinct and query-free; URL validation happens before fetch.
         return urlunsplit((scheme, parts.netloc.lower(), parts.path or "/", "", ""))
-    if not host or scheme not in {"http", "https"} or parts.username is not None or parts.password is not None:
+    if not host or scheme not in {"http", "https"}:
         return urlunsplit((scheme, parts.netloc.lower(), parts.path or "/", "", ""))
     default_port = 443 if scheme == "https" else 80
     display_host = f"[{host}]" if ":" in host else host

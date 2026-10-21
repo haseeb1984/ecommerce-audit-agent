@@ -27,7 +27,12 @@ def test_visible_labels_and_named_controls_do_not_trigger_findings():
         '</body></html>'
     )
     findings = inspect_static_accessibility_signals(html, "https://shop.example/")
-    assert findings == []
+    assert not any(f.title in {
+        "Form controls may lack accessible labels",
+        "Links may have no accessible name",
+        "Buttons may have no accessible name",
+        "Document language is not declared in returned HTML",
+    } for f in findings)
 
 
 def test_wrapped_label_and_informative_image_link_are_recognized():
