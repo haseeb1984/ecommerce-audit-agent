@@ -1270,3 +1270,27 @@ def test_canonical_page_url_does_not_preserve_userinfo_in_normalized_authority()
     assert crawl_checks._canonical_page_url(
         "https://user:secret@shop.example/products/one?token=private"
     ) == "https://shop.example/products/one"
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_runs_security_header_quality_on_sampled_html(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        return (
+            200,
+            '<html><head><title>Store</title></head><body><h1>Shop</h1></body></html>',
+            {
+                "content-type": "text/html",
+                "content-security-policy": "default-src *; script-src 'unsafe-inline'",
+                "strict-transport-security": "max-age=3600",
+            },
+            "https://shop.example/",
+        )
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert "https://shop.example/" in checked
+    assert any(f.title == "Content Security Policy may be overly permissive" for f in findings)
+    assert any(f.title == "HSTS policy may need review" for f in findings)
