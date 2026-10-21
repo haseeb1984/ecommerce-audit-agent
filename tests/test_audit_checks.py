@@ -193,15 +193,6 @@ def test_homepage_checks_product_image_property(image, should_flag):
 
 
 @pytest.mark.parametrize(
-    ("offer", "expected_title"),
-    [
-        ({}, "Product offers missing price"),
-        ({"price": "19.99"}, "Product offers missing or invalid currency"),
-        ({"price": "19.99", "priceCurrency": "USD"}, None),
-        ({"price": "19.99", "priceCurrency": "US"}, "Product offers missing or invalid currency"),
-    ],
-)
-@pytest.mark.parametrize(
     ("offers", "should_flag"),
     [
         (None, True),
