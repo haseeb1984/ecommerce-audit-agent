@@ -1443,3 +1443,57 @@ def test_discovered_sitemap_accepts_valid_absolute_http_locations():
         "https://shop.example/catalog.xml",
     )
     assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_crawl_reports_unavailable_robots_declared_sitemap(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    sitemap = "https://shop.example/catalog-index.xml"
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, f"User-agent: *\\nSitemap: {sitemap}\\n", {"content-type": "text/plain"}, url
+        if url == sitemap:
+            return 503, "temporarily unavailable", {"content-type": "text/plain"}, sitemap
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    finding = next(item for item in findings if item.title == "Robots-declared sitemap could not be retrieved")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "medium"
+    assert "HTTP 503" in finding.evidence
+
+
+@pytest.mark.asyncio
+async def test_crawl_reports_unavailable_child_sitemap_from_index(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    sitemap = "https://shop.example/sitemap.xml"
+    child = "https://shop.example/products-sitemap.xml"
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, "", {"content-type": "text/plain"}, url
+        if url == sitemap:
+            body = (
+                '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f"<sitemap><loc>{child}</loc></sitemap></sitemapindex>"
+            )
+            return 200, body, {"content-type": "application/xml"}, sitemap
+        if url == child:
+            return 404, "", {"content-type": "text/plain"}, child
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    finding = next(item for item in findings if item.title == "Child sitemap could not be retrieved")
+    assert finding.status == "manual_review_required"
+    assert "HTTP 404" in finding.evidence
