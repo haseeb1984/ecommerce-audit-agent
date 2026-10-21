@@ -959,3 +959,41 @@ def test_homepage_does_not_flag_images_with_descriptive_alt_text():
         "Images missing alt attributes", "Images have empty alt text"
     } for item in findings)
 
+
+
+
+@pytest.mark.parametrize(
+    ("aggregate_rating", "should_flag"),
+    [
+        ({"@type": "AggregateRating", "ratingValue": "4.7", "reviewCount": 120}, False),
+        ({"@type": "AggregateRating", "ratingValue": "6", "bestRating": "5", "worstRating": "1"}, True),
+        ({"@type": "AggregateRating", "ratingValue": "not-a-number", "reviewCount": 12}, True),
+        ({"@type": "AggregateRating", "ratingValue": "4.5", "reviewCount": -2}, True),
+        ({"@type": "AggregateRating", "ratingValue": "2", "bestRating": "1", "worstRating": "5"}, True),
+    ],
+)
+def test_product_aggregate_rating_checks_numeric_shape_and_bounds(aggregate_rating, should_flag):
+    import json
+
+    product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Example item",
+        "aggregateRating": aggregate_rating,
+    }
+    findings = audit_checks.inspect_homepage(
+        f'<html><head><script type="application/ld+json">{json.dumps(product)}</script></head><body><h1>Example item</h1></body></html>',
+        "https://shop.example/product",
+        {},
+    )
+    matches = [
+        finding for finding in findings
+        if finding.title == "Product aggregate rating needs review"
+    ]
+    assert bool(matches) is should_flag
+    if matches:
+        assert matches[0].category == "structured_data"
+        assert matches[0].status == "verified"
+        assert matches[0].source_url == "https://shop.example/product"
+        assert "cannot confirm that reviews are genuine" in matches[0].explanation
+        assert matches[0].verification_steps
