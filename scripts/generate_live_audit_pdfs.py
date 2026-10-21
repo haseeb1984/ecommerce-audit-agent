@@ -87,7 +87,7 @@ def _mobile_render_findings(page_url: str, metrics: dict) -> list[AuditFinding]:
                 explanation="Horizontal overflow can make storefront content and controls difficult to use on small screens. Intentional scrollable components need visual review.",
                 recommendation="Inspect overflowing elements at mobile widths; fix page-level layout, media, and fixed-width components without removing intentional local scrolling.",
                 verification_steps=["Recheck product, cart, and checkout flows at 320px, 375px, and 390px widths.", "Confirm important content and purchase controls are not clipped."], source_url=page_url))
-    if not isinstance(viewport_meta, str) or not re.search(r"width\s*=\s*device-width", viewport_meta, re.I):
+    if "viewport_meta" in metrics and (not isinstance(viewport_meta, str) or not re.search(r"width\s*=\s*device-width", viewport_meta, re.I)):
         findings.append(AuditFinding(category="mobile_ux", title="Rendered page lacks a device-width viewport declaration",
             status="manual_review_required", severity="medium",
             evidence="Browser did not find a viewport meta declaration containing width=device-width.",
