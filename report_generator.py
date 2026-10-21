@@ -441,6 +441,54 @@ class AuditAreaInfographic(Flowable):
 
 
 
+class ExecutiveSummaryInfographic(Flowable):
+    """Compact, first-glance severity and execution-status summary."""
+    def __init__(self, findings: list[dict[str, object]], pages_inspected: int):
+        super().__init__()
+        self.width = 174 * mm
+        self.height = 37 * mm
+        self.pages_inspected = pages_inspected
+        self.metrics = [
+            ("CRITICAL / HIGH", sum(1 for x in findings if str(x.get("severity", "")).lower() in {"critical", "high"}), "#8E2430"),
+            ("MEDIUM", sum(1 for x in findings if str(x.get("severity", "")).lower() == "medium"), "#B87912"),
+            ("LOW / INFO", sum(1 for x in findings if str(x.get("severity", "")).lower() in {"low", "info"}), "#2E83A6"),
+            ("VERIFIED", sum(1 for x in findings if str(x.get("status", "")).lower() == "verified"), "#23734D"),
+            ("REVIEW NEEDED", sum(1 for x in findings if str(x.get("status", "")).lower() == "manual_review_required"), "#9A6700"),
+            ("NOT TESTED", sum(1 for x in findings if str(x.get("status", "")).lower() in {"not_tested", "insufficient_data"}), "#6D7C91"),
+        ]
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        navy = colors.HexColor("#17365D")
+        c.setFillColor(navy)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(0, self.height - 4 * mm, "AUDIT AT A GLANCE")
+        gap = 2 * mm
+        card_w = (self.width - gap * 2) / 3
+        card_h = 12 * mm
+        start_y = self.height - 18 * mm
+        for i, (label, value, color_hex) in enumerate(self.metrics):
+            col, row = i % 3, i // 3
+            x = col * (card_w + gap)
+            y = start_y - row * (card_h + 2 * mm)
+            c.setFillColor(colors.HexColor("#F4F7FB"))
+            c.setStrokeColor(colors.HexColor("#D8E1EC"))
+            c.roundRect(x, y, card_w, card_h, 3, fill=1, stroke=1)
+            c.setFillColor(colors.HexColor(color_hex))
+            c.roundRect(x, y, 2 * mm, card_h, 1, fill=1, stroke=0)
+            c.setFillColor(colors.HexColor(color_hex))
+            c.setFont("Helvetica-Bold", 13)
+            c.drawString(x + 4 * mm, y + 4.5 * mm, str(value))
+            c.setFillColor(navy)
+            c.setFont("Helvetica-Bold", 6.5)
+            c.drawString(x + 17 * mm, y + 4.8 * mm, label)
+        c.setFillColor(colors.HexColor("#536579"))
+        c.setFont("Helvetica-Oblique", 6.5)
+        c.drawString(0, 0, f"{self.pages_inspected} page(s) inspected. Counts are consolidated findings, not a complete-check pass rate.")
+        c.restoreState()
+
+
 class PhaseScorecardInfographic(Flowable):
     """Per-phase visual snapshot of recorded evidence, not a fabricated check pass rate."""
     PHASES = [
@@ -736,6 +784,8 @@ def render_audit_pdf(
     ]))
     # Keep the KPI labels and their values on the same page; otherwise ReportLab can
     # split the two table rows across a page break and leave orphaned numbers.
+    story.append(ExecutiveSummaryInfographic(consolidated_findings, len(set(result.pages_checked))))
+    story.append(Spacer(1, 4 * mm))
     story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
     story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 3 * mm), AuditAreaInfographic(consolidated_findings), Spacer(1, 4 * mm)])
     story.append(PhaseScorecardInfographic(consolidated_findings))
