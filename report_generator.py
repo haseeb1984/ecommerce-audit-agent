@@ -371,6 +371,14 @@ class FindingMixInfographic(Flowable):
         c.drawString(5 * mm, 2.5 * mm, "Counts are grouped by recorded severity; they are not business-impact or revenue-loss estimates.")
         c.restoreState()
 
+def _conversion_paid_traffic_findings(findings: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Select the dedicated conversion/paid-traffic category without implying measured ad loss."""
+    return [
+        finding for finding in findings
+        if str(finding.get("category", "")).strip().lower() == "conversion_paid_traffic"
+    ]
+
+
 def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None = None) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -583,6 +591,41 @@ def render_audit_pdf(result: AuditCheckResult, screenshot_data_uri: str | None =
         story.append(_p(
             "No verified or manual-review high/critical/medium actions were recorded in this run. "
             "This does not prove that no material issues exist; review coverage limitations and unverified checks.",
+            body_style,
+        ))
+
+    # Keep conversion-path diagnostics visible as their own commercial review area.
+    # These are source-level signals, not measured ad attribution or lost-revenue figures.
+    conversion_findings = _conversion_paid_traffic_findings(consolidated_findings)
+    story.append(Paragraph("Conversion & Paid-Traffic Waste Audit", section_style))
+    story.append(_p(
+        "This section highlights observable friction and trust signals that may deserve attention on lead, product, cart, or checkout journeys. "
+        "The audit does not access ad-account spend, campaign attribution, analytics conversion events, or order data; it cannot quantify wasted spend or lost sales. "
+        "A finding here is a review lead, not proof that a campaign is underperforming.",
+        body_style,
+    ))
+    if conversion_findings:
+        for item in conversion_findings:
+            story.append(Paragraph(
+                f"<b>{escape(str(item['title']))}</b>",
+                finding_style,
+            ))
+            story.append(_p(
+                f"Status: {str(item['status']).replace('_', ' ').title()} | "
+                f"Severity: {str(item['severity']).title()}",
+                small_style,
+            ))
+            evidence_items = list(item.get("evidence", []))
+            if evidence_items:
+                story.append(Paragraph("<b>Observed signal</b>", body_style))
+                for evidence_item in evidence_items[:3]:
+                    story.append(_p("• " + str(evidence_item), body_style))
+            story.append(Paragraph("<b>Recommended review</b>", body_style))
+            story.append(_p(str(item["recommendation"]), body_style))
+    else:
+        story.append(_p(
+            "No findings were classified under the dedicated conversion/paid-traffic category in this run. "
+            "That does not establish that checkout works or that paid campaigns are efficient; the relevant journeys and campaign data were not proven by this category alone.",
             body_style,
         ))
 
