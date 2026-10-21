@@ -22,6 +22,7 @@ from security_checks import (
     probe_common_exposure_paths,
     inspect_transport_security,
     inspect_security_header_quality,
+    inspect_standard_security_headers,
 )
 from dependency_checks import inspect_client_dependency_versions
 
@@ -509,6 +510,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
             findings.extend(inspect_security_header_quality(page_headers, final_url))
+            findings.extend(inspect_standard_security_headers(page_headers, final_url))
 
             findings.extend(inspect_hreflang(body, final_url))
             findings.extend(inspect_meta_refresh(body, final_url))
