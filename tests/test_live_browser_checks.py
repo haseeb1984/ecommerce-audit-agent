@@ -85,3 +85,13 @@ class _FakeLoop:
 
     async def getaddrinfo(self, *args, **kwargs):
         return await self.resolver(*args, **kwargs)
+
+@pytest.mark.asyncio
+async def test_browser_request_guard_aborts_hostname_resolving_to_private_ip(monkeypatch):
+    async def private_getaddrinfo(*args, **kwargs):
+        return [(0, 0, 0, "", ("10.20.30.40", 443))]
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop(private_getaddrinfo))
+    route = _FakeRoute("https://public-looking.example/")
+    await _allow_public_browser_request(route)
+    assert route.action == "abort"
