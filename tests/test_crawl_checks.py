@@ -1401,10 +1401,15 @@ async def test_crawl_ignores_cross_origin_sitemap_directive(monkeypatch):
         return 404, "", {"content-type": "text/plain"}, url
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
-    await crawl_checks.run_bounded_site_crawl(homepage)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(homepage)
 
     assert "https://outside.example/sitemap.xml" not in requested
     assert "https://shop.example/sitemap.xml" in requested
+    assert any(
+        finding.title == "robots.txt declares an off-origin sitemap"
+        and finding.status == "manual_review_required"
+        for finding in findings
+    )
 
 
 def test_discovered_sitemap_reports_malformed_xml():
