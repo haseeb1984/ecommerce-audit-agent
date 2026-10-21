@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from audit_checks import AuditCheckResult, normalize_target, run_phase_one_checks
+from audit_checks import AuditCheckResult, AuditFinding, normalize_target, run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
 from report_generator import render_audit_pdf
 
@@ -39,6 +39,75 @@ async def capture_real_website_screenshot(url: str) -> str | None:
         # Never log raw browser errors; they may contain target URLs or request details.
         print(f"browser_screenshot=unavailable failure_class={type(exc).__name__}")
         return None
+
+
+def _mobile_render_findings(page_url: str, metrics: dict) -> list[AuditFinding]:
+    """Turn browser-observed mobile layout signals into conservative findings."""
+    findings: list[AuditFinding] = []
+    viewport_width = metrics.get("viewport_width")
+    document_width = metrics.get("document_width")
+    viewport_meta = metrics.get("viewport_meta", "")
+    hidden_focusables = metrics.get("aria_hidden_focusables")
+    if isinstance(viewport_width, (int, float)) and isinstance(document_width, (int, float)):
+        overflow = max(0, int(document_width - viewport_width))
+        if overflow > 2:
+            findings.append(AuditFinding(category="mobile_ux", title="Rendered page overflows the mobile viewport",
+                status="manual_review_required", severity="medium",
+                evidence=f"At a {int(viewport_width)} CSS-pixel viewport, rendered document width was {int(document_width)}px (about {overflow}px wider).",
+                explanation="Horizontal overflow can make storefront content and controls difficult to use on small screens. Intentional scrollable components need visual review.",
+                recommendation="Inspect overflowing elements at mobile widths; fix page-level layout, media, and fixed-width components without removing intentional local scrolling.",
+                verification_steps=["Recheck product, cart, and checkout flows at 320px, 375px, and 390px widths.", "Confirm important content and purchase controls are not clipped."], source_url=page_url))
+    if not isinstance(viewport_meta, str) or not re.search(r"width\s*=\s*device-width", viewport_meta, re.I):
+        findings.append(AuditFinding(category="mobile_ux", title="Rendered page lacks a device-width viewport declaration",
+            status="manual_review_required", severity="medium",
+            evidence="Browser did not find a viewport meta declaration containing width=device-width.",
+            explanation="Without a suitable viewport declaration, mobile browsers may scale a wider virtual layout down, making text and controls harder to use.",
+            recommendation="Add a suitable viewport meta declaration and validate zoom and responsive behavior on real devices.",
+            verification_steps=["Inspect the page head for a responsive viewport declaration.", "Check text scaling and checkout usability on a mobile browser."], source_url=page_url))
+    if isinstance(hidden_focusables, int) and hidden_focusables > 0:
+        findings.append(AuditFinding(category="accessibility", title="Rendered focusable controls are hidden from assistive technology",
+            status="manual_review_required", severity="medium",
+            evidence=f"Browser found {hidden_focusables} focusable element(s) inside an aria-hidden subtree.",
+            explanation="Keyboard users may focus controls that assistive technology is instructed to ignore; this signal requires contextual keyboard and accessibility-tree review.",
+            recommendation="Remove aria-hidden from interactive ancestors or make the hidden subtree genuinely non-interactive while hidden.",
+            verification_steps=["Tab through the page and verify focus never enters hidden content.", "Inspect the browser accessibility tree and test representative screen readers."], source_url=page_url))
+    return findings
+
+
+async def inspect_mobile_rendered_signals(url: str) -> tuple[list[AuditFinding], str | None]:
+    """Inspect one real 390px browser viewport; do not infer Core Web Vitals."""
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch()
+            page = await browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            await page.wait_for_timeout(500)
+            metrics = await page.evaluate("""() => ({
+              viewport_width: window.innerWidth,
+              document_width: document.documentElement.scrollWidth,
+              viewport_meta: document.querySelector('meta[name=\"viewport\"]')?.getAttribute('content') || '',
+              aria_hidden_focusables: Array.from(document.querySelectorAll('[aria-hidden=\"true\"]'))
+                .flatMap(root => [root, ...root.querySelectorAll('*')])
+                .filter((el, index, all) => all.indexOf(el) === index)
+                .filter(el => {
+                  const tag = el.tagName.toLowerCase();
+                  const tabindex = el.getAttribute('tabindex');
+                  const natural = (tag === 'a' && el.hasAttribute('href')) || ['button','input','select','textarea'].includes(tag);
+                  return (natural || (tabindex !== null && Number(tabindex) >= 0)) && !el.hasAttribute('disabled');
+                }).length
+            })""")
+            screenshot = await page.screenshot(type="jpeg", quality=68, full_page=False)
+            await browser.close()
+        screenshot_uri = "data:image/jpeg;base64," + base64.b64encode(screenshot).decode("ascii") if screenshot and len(screenshot) <= 900_000 else None
+        return _mobile_render_findings(url, metrics), screenshot_uri
+    except Exception as exc:
+        print(f"mobile_render_inspection=unavailable failure_class={type(exc).__name__}")
+        return [AuditFinding(category="mobile_ux", title="Rendered mobile checks could not be completed",
+            status="not_tested", severity="info", evidence=f"Browser inspection unavailable ({type(exc).__name__}); no mobile layout conclusion was drawn.",
+            explanation="Static HTML checks cannot establish rendered mobile layout or the browser accessibility tree.",
+            recommendation="Rerun browser-based inspection in an environment with Chromium and Playwright installed.",
+            verification_steps=["Run the manual browser QA workflow and review the generated live-site PDF."], source_url=url)], None
 
 DEFAULT_TARGETS = [
     "https://juncsys.com",
@@ -74,8 +143,10 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
         "Google PageSpeed Insights API metrics were not run by this live-site smoke test; "
         "no mobile score or Speed Index is claimed."
     )
-    screenshot_data_uri = await capture_real_website_screenshot(normalized)
-    print(f"target={normalized} browser_screenshot={'captured' if screenshot_data_uri else 'unavailable'}")
+    mobile_findings, mobile_screenshot = await inspect_mobile_rendered_signals(normalized)
+    result.findings.extend(mobile_findings)
+    screenshot_data_uri = mobile_screenshot or await capture_real_website_screenshot(normalized)
+    print(f"target={normalized} browser_screenshot={'captured' if screenshot_data_uri else 'unavailable'} mobile_findings={len(mobile_findings)}")
     pdf_bytes = render_audit_pdf(result, screenshot_data_uri=screenshot_data_uri)
     hostname = urlsplit(normalized).hostname or "website"
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:100]
