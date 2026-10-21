@@ -1,7 +1,7 @@
 """Bounded same-origin crawl for public ecommerce pages.
 
-This is a conservative first-hop crawler: it follows only HTML links found on the
-homepage, stays on the same origin, and enforces a fixed page budget.
+The crawler follows a capped queue of discovered same-origin HTML links and sitemap
+URLs, stays on the audited origin, and never submits forms or authenticates.
 """
 from __future__ import annotations
 
@@ -715,6 +715,70 @@ def inspect_robots_txt(text: str, robots_url: str) -> tuple[list[AuditFinding], 
     return findings, limitations
 
 
+def inspect_llms_txt(body: str, status: int, source_url: str, content_type: str = "") -> list[AuditFinding]:
+    """Inspect the conventional llms.txt endpoint without treating it as a ranking requirement."""
+    safe_url = source_url
+    if status == 404:
+        return [_finding(
+            "llms_txt", "No llms.txt file found at the conventional path",
+            "manual_review_required", "info",
+            f"The conventional /llms.txt endpoint returned HTTP 404 at {safe_url}.",
+            "llms.txt is a proposed convention, not a required web standard or a guaranteed search or AI-crawler control. Its absence alone does not establish an SEO problem.",
+            "Decide whether a curated machine-readable site guide is useful for your publishing goals. Do not add one solely to promise rankings or AI visibility.",
+            ["Check whether /llms.txt is intentionally absent.", "If used, document only public, current pages and verify each listed destination."],
+            safe_url,
+        )]
+    if status < 200 or status >= 300:
+        return [_finding(
+            "llms_txt", "llms.txt could not be inspected",
+            "manual_review_required", "info",
+            f"The conventional /llms.txt endpoint returned HTTP {status} at {safe_url}.",
+            "The response does not establish whether a valid file exists; access controls and transient server errors can affect this check.",
+            "Check the endpoint and server response before deciding whether any change is needed.",
+            ["Request /llms.txt directly.", "Retest after confirming the endpoint is publicly reachable."],
+            safe_url,
+        )]
+    text = (body or "").strip()
+    if not text:
+        return [_finding(
+            "llms_txt", "llms.txt response is empty",
+            "manual_review_required", "low",
+            f"The endpoint returned HTTP {status} but contained no non-whitespace text.",
+            "An empty file provides no curated links or explanatory content. This convention is optional and does not control whether search engines index pages.",
+            "If you intentionally publish llms.txt, add a short purpose statement and useful links, or remove the empty file if it serves no purpose.",
+            ["Open the file and confirm its intended contents.", "Retest the response after editing."],
+            safe_url,
+        )]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first = lines[0]
+    has_heading = first.startswith("# ")
+    has_markdown_links = bool(re.search(r"\[[^\]]+\]\(https?://[^)]+\)", text))
+    if not has_heading or not has_markdown_links:
+        missing = []
+        if not has_heading:
+            missing.append("a leading Markdown H1 heading")
+        if not has_markdown_links:
+            missing.append("at least one absolute HTTP(S) Markdown link")
+        return [_finding(
+            "llms_txt", "llms.txt format needs a quick review",
+            "manual_review_required", "low",
+            f"The endpoint returned HTTP {status}; basic checks did not detect {', '.join(missing)}. Non-empty lines: {len(lines)}. Content type: {(content_type or 'not supplied')[:80]}.",
+            "This lightweight heuristic checks only a few readable format cues. It does not validate a formal schema, check every link, or establish that AI systems use the file.",
+            "If you choose to maintain llms.txt, use a clear heading, concise context, and relevant public Markdown links. Keep the file accurate and avoid listing private or sensitive URLs.",
+            ["Review the file as plain text.", "Open each listed URL independently and remove stale or private destinations."],
+            safe_url,
+        )]
+    return [_finding(
+        "llms_txt", "llms.txt is present and passes basic format checks",
+        "verified", "info",
+        f"The endpoint returned HTTP {status}, a leading Markdown H1 heading, and at least one absolute HTTP(S) Markdown link. Non-empty lines: {len(lines)}.",
+        "These are basic structural signals only. They do not prove that an AI crawler will fetch, trust, or use the file, and llms.txt is not a guaranteed ranking or indexing control.",
+        "Keep the file concise, current, and limited to public pages that genuinely help readers understand the site.",
+        ["Open the listed destinations and check that they remain public and relevant.", "Recheck after significant site structure changes."],
+        safe_url,
+    )]
+
+
 async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[str], list[str]]:
     """Inspect a capped set of same-origin HTML links; no form submission or login."""
     normalized = normalize_target(target)
@@ -753,6 +817,21 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             return findings, pages_checked, limitations + [
                 f"Bounded crawl could not fetch the homepage: {type(exc).__name__}."
             ]
+
+        # llms.txt is an optional proposed convention. Inspect only the same-origin
+        # conventional path and report basic format cues without implying ranking value.
+        llms_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "llms.txt")
+        try:
+            llms_status, llms_body, llms_headers, llms_final_url = await _safe_get(client, llms_url)
+            if _same_origin(llms_final_url, final_home):
+                findings.extend(inspect_llms_txt(
+                    llms_body, llms_status, llms_final_url,
+                    llms_headers.get("content-type", ""),
+                ))
+            else:
+                limitations.append("llms.txt inspection was skipped because its redirect left the audited origin.")
+        except Exception as exc:
+            limitations.append(f"llms.txt inspection was inconclusive ({type(exc).__name__}).")
 
         # Inspect robots.txt as a discovery/indexing signal. It is fetched through
         # the same public-only resolver and redirect/response-size safeguards.

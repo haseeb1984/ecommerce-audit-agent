@@ -507,6 +507,41 @@ async def test_internal_page_missing_viewport_is_flagged_for_manual_review(monke
 
 
 
+
+def test_llms_txt_reports_optional_missing_file_without_ranking_claim():
+    from crawl_checks import inspect_llms_txt
+
+    findings = inspect_llms_txt("", 404, "https://shop.example/llms.txt")
+    assert len(findings) == 1
+    assert findings[0].category == "llms_txt"
+    assert findings[0].status == "manual_review_required"
+    assert "not a required web standard" in findings[0].explanation
+
+
+def test_llms_txt_flags_empty_and_incomplete_content_without_echoing_body():
+    from crawl_checks import inspect_llms_txt
+
+    empty = inspect_llms_txt("  \n", 200, "https://shop.example/llms.txt", "text/plain")
+    incomplete = inspect_llms_txt("# Shop guide\nPrivate draft content", 200, "https://shop.example/llms.txt")
+    assert empty[0].title == "llms.txt response is empty"
+    assert incomplete[0].title == "llms.txt format needs a quick review"
+    assert "Private draft content" not in incomplete[0].evidence
+
+
+def test_llms_txt_accepts_basic_markdown_signals_but_disclaims_crawler_use():
+    from crawl_checks import inspect_llms_txt
+
+    findings = inspect_llms_txt(
+        "# Shop guide\n\nPublic pages for the store.\n\n[Products](https://shop.example/products)",
+        200,
+        "https://shop.example/llms.txt",
+        "text/plain; charset=utf-8",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "verified"
+    assert "do not prove" in findings[0].explanation
+
+
 def test_hreflang_valid_alternates_do_not_create_review_finding():
     html = """
     <html><head>
