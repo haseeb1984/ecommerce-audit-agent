@@ -50,13 +50,13 @@ async def _allow_public_browser_request(route) -> None:
         await route.abort()
 
 
-async def capture_real_website_screenshot(url: str) -> str | None:
+async def capture_real_website_screenshot(url: str, viewport_width: int = 1440, viewport_height: int = 1000) -> str | None:
     """Capture a real browser viewport screenshot; return a JPEG data URI or None."""
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch()
-            page = await browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
+            page = await browser.new_page(viewport={"width": viewport_width, "height": viewport_height}, device_scale_factor=1)
             await page.route("**/*", _allow_public_browser_request)
             await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             await page.wait_for_timeout(1200)
@@ -176,9 +176,17 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
     )
     mobile_findings, mobile_screenshot = await inspect_mobile_rendered_signals(normalized)
     result.findings.extend(mobile_findings)
-    screenshot_data_uri = mobile_screenshot or await capture_real_website_screenshot(normalized)
-    print(f"target={normalized} browser_screenshot={'captured' if screenshot_data_uri else 'unavailable'} mobile_findings={len(mobile_findings)}")
-    pdf_bytes = render_audit_pdf(result, screenshot_data_uri=screenshot_data_uri)
+    desktop_screenshot = await capture_real_website_screenshot(normalized, 1440, 1000)
+    print(
+        f"target={normalized} desktop_screenshot={'captured' if desktop_screenshot else 'unavailable'} "
+        f"mobile_screenshot={'captured' if mobile_screenshot else 'unavailable'} "
+        f"mobile_findings={len(mobile_findings)}"
+    )
+    pdf_bytes = render_audit_pdf(
+        result,
+        screenshot_data_uri=mobile_screenshot,
+        desktop_screenshot_data_uri=desktop_screenshot,
+    )
     hostname = urlsplit(normalized).hostname or "website"
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:100]
     output = output_dir / f"live-audit-{safe_hostname}.pdf"
