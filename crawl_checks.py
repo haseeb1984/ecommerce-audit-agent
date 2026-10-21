@@ -908,6 +908,69 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             # Failure here only means sitemap-based URL discovery is unavailable.
             pass
 
+        # Inspect additional same-origin Sitemap directives rather than silently
+        # ignoring every directive after the first. Keep the total number of
+        # sitemap documents small and the URL discovery budget bounded.
+        additional_sitemaps = [
+            value for value in robots_sitemap_urls
+            if _canonical_page_url(value) != _canonical_page_url(sitemap_url)
+        ][:max(0, MAX_CHILD_SITEMAPS - 1)]
+        for extra_sitemap_url in additional_sitemaps:
+            if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
+                break
+            try:
+                extra_status, extra_body, extra_headers, extra_final_url = await _safe_get(
+                    client, extra_sitemap_url
+                )
+                if not _same_origin(extra_final_url, final_home):
+                    findings.append(_finding(
+                        "indexing", "Additional robots-declared sitemap redirected off-origin",
+                        "manual_review_required", "low",
+                        f"Additional sitemap {extra_sitemap_url} redirected away from the audited origin and was excluded from discovery.",
+                        "This crawler only follows same-origin sitemap locations. A redirect outside the origin may be intentional, but its contents are not used as evidence for this site's crawl.",
+                        "Confirm the redirect and sitemap ownership are intentional, and keep sitemap references consistent with the store's canonical host.",
+                        ["Inspect the sitemap redirect chain.", "Confirm the intended sitemap host and search-engine configuration."],
+                        extra_sitemap_url,
+                    ))
+                    continue
+                if extra_status < 200 or extra_status >= 300:
+                    findings.append(_finding(
+                        "indexing", "Additional robots-declared sitemap could not be retrieved",
+                        "manual_review_required", "low",
+                        f"Additional same-origin sitemap {extra_sitemap_url} returned HTTP {extra_status}.",
+                        "An unavailable sitemap can leave some declared URLs out of this audit's discovery sample; it does not prove those pages are not indexed.",
+                        "Check the sitemap endpoint, access rules, and robots.txt entry.",
+                        ["Open the sitemap URL directly.", "Validate its status and XML response."],
+                        extra_sitemap_url,
+                    ))
+                    continue
+                if not (
+                    "xml" in extra_headers.get("content-type", "").lower()
+                    or extra_body.lstrip().startswith("<")
+                ):
+                    findings.extend(inspect_crawl_sitemap(extra_body, extra_sitemap_url))
+                    continue
+                findings.extend(inspect_crawl_sitemap(extra_body, extra_sitemap_url))
+                extra_root = ET.fromstring(extra_body)
+                extra_type = extra_root.tag.rsplit("}", 1)[-1].lower()
+                if extra_type == "urlset":
+                    remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
+                    sitemap_urls.extend(_loc_values(extra_root)[:remaining])
+                elif extra_type == "sitemapindex":
+                    limitations.append(
+                        f"Additional sitemap index {extra_sitemap_url} was validated but its child sitemaps were not expanded."
+                    )
+            except Exception as extra_exc:
+                findings.append(_finding(
+                    "indexing", "Additional robots-declared sitemap could not be inspected",
+                    "not_tested", "info",
+                    f"Could not inspect additional sitemap {extra_sitemap_url}: {type(extra_exc).__name__}.",
+                    "This sitemap did not yield reliable discovery evidence during the audit.",
+                    "Retry the sitemap URL and inspect its XML structure and access restrictions.",
+                    ["Open the sitemap directly.", "Retry the audit after resolving transient failures."],
+                    extra_sitemap_url,
+                ))
+
         discovery_hrefs = [
             *link_parser.links[:MAX_LINKS_FROM_HOME],
             *sitemap_urls,
