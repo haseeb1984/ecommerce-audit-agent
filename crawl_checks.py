@@ -271,7 +271,7 @@ def inspect_canonical_declaration(html: str, page_url: str) -> list[AuditFinding
                     "indexability", "Canonical target points to a different origin",
                     "manual_review_required", "medium",
                     f"The canonical declaration on {page_url} points to a different origin ({target_scheme}://{target_host}); this source check does not fetch or validate the destination.",
-                    "Cross-origin canonicals may be appropriate for syndicated or deliberately consolidated content, but an unintended host, scheme, or port can direct search engines to prefer a different URL.",
+                    "Cross-origin canonicals may be appropriate for syndicated or deliberately consolidated content, but this check does not fetch or validate the destination. An unintended host, scheme, or port can direct search engines to prefer a different URL.",
                     "Confirm that cross-origin canonicalization is intentional and that the destination contains equivalent content. Otherwise, point the canonical to the intended URL on this site's origin.",
                     ["Compare the canonical destination with the page's intended indexable URL.", "Open the destination independently and verify content equivalence and redirect behavior."],
                     page_url,
@@ -329,8 +329,10 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
 
     def safe_target_label(href: str) -> str:
         """Return a bounded URL label without credentials, query, or fragment data."""
+        if not href:
+            return "(missing href)"
         try:
-            resolved = urljoin(final_url, href) if href else ""
+            resolved = urljoin(final_url, href)
             parts = urlsplit(resolved)
             _ = parts.port
             if parts.scheme.lower() in {"http", "https"} and parts.hostname:
@@ -345,8 +347,8 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
             pass
         try:
             parts = urlsplit(href)
-            if parts.scheme and parts.scheme.lower() not in {"http", "https"} and not parts.username and not parts.password:
-                return href[:120]
+            if parts.scheme and parts.scheme.lower() not in {"http", "https"}:
+                return f"(unsupported target scheme: {parts.scheme.lower()})"
         except (ValueError, UnicodeError):
             pass
         return "(malformed or unsupported target URL omitted)"

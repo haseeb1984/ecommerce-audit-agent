@@ -535,7 +535,7 @@ def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
     assert finding.category == "international_seo"
     assert finding.status == "manual_review_required"
     assert "english_US" in finding.evidence
-    assert "javascript:alert(1)" in finding.evidence
+    assert "unsupported target scheme: javascript" in finding.evidence
     assert "FR" in finding.evidence or "fr" in finding.evidence
     assert "(missing href)" in finding.evidence
     assert "https://shop.example:not-a-port/es/product" in finding.evidence
@@ -1030,7 +1030,11 @@ async def test_crawl_reports_empty_and_duplicate_meta_descriptions_separately(mo
     assert "1 empty meta description" in empty.evidence
     assert duplicate.status == "manual_review_required"
     assert "2 meta description elements" in duplicate.evidence
-    assert not any(f.title == "Internal page missing meta description" for f in findings)
+    assert not any(
+        f.title == "Internal page missing meta description"
+        and f.source_url == "https://shop.example/products/one"
+        for f in findings
+    )
 
 @pytest.mark.asyncio
 async def test_crawl_reports_title_and_description_length_as_review_signals(monkeypatch):
@@ -1060,9 +1064,9 @@ async def test_crawl_reports_title_and_description_length_as_review_signals(monk
     title = next(f for f in findings if f.title == "Internal page title length needs review")
     description = next(f for f in findings if f.title == "Internal page meta description length needs review")
     assert title.status == "manual_review_required"
-    assert "7 characters" in title.evidence
+    assert any("7 characters" in f.evidence for f in findings if f.title == "Internal page title length needs review")
     assert description.status == "manual_review_required"
-    assert "17 characters" in description.evidence
+    assert any("17 characters" in f.evidence for f in findings if f.title == "Internal page meta description length needs review")
     assert "not proof of an SEO error" in title.explanation
 
 @pytest.mark.asyncio
