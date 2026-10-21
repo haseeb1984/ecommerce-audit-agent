@@ -377,7 +377,7 @@ def test_duplicate_ids_do_not_count_as_resolvable_accessible_names():
 
 
 
-def test_focusable_descendant_of_aria_hidden_container_is_flagged():
+def test_focusable_link_and_button_inside_aria_hidden_container_are_flagged():
     findings = inspect_static_accessibility_signals(
         '<html lang="en"><body><div aria-hidden="true">'
         '<a href="/checkout">Checkout</a><button tabindex="0">Open cart</button>'
