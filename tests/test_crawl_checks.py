@@ -1611,3 +1611,42 @@ async def test_crawl_reports_sampled_internal_page_missing_title_element(monkeyp
     assert len(missing_title) == 1
     assert missing_title[0].severity == "medium"
     assert "JavaScript runs" in missing_title[0].explanation
+
+
+@pytest.mark.asyncio
+async def test_product_jsonld_flags_negative_price_and_malformed_currency_code(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body><a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url in {"https://shop.example/robots.txt", "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/products/one":
+            body = (
+                '<html><head><title>Product</title><script type="application/ld+json">'
+                '{"@context":"https://schema.org","@type":"Product","name":"Product One",'
+                '"image":["https://shop.example/one.jpg"],"offers":{"@type":"Offer",'
+                '"price":"-10.00","priceCurrency":"US dollars",'
+                '"availability":"https://schema.org/InStock"}}'
+                '</script></head><body><h1>Product One</h1></body></html>'
+            )
+            return 200, body, {"content-type": "text/html"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    suspicious = [
+        finding for finding in findings
+        if finding.title == "Product offer values need validation"
+    ]
+    assert len(suspicious) == 1
+    assert suspicious[0].status == "manual_review_required"
+    assert "negative offer price" in suspicious[0].evidence
+    assert "priceCurrency is not a three-letter currency code" in suspicious[0].evidence
