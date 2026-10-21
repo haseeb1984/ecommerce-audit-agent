@@ -1677,3 +1677,13 @@ def test_sensitive_get_form_ignores_safe_post_form_and_regular_get_search():
     )
 
     assert findings == []
+
+
+def test_product_schema_presence_accepts_absolute_schema_org_type_iri():
+    findings = crawl_checks.inspect_product_page_schema_presence(
+        '<script type="application/ld+json">'
+        '{"@context":"https://schema.org","@type":"https://schema.org/Product","name":"Blue Shirt"}'
+        '</script>',
+        "https://shop.example/products/blue-shirt",
+    )
+    assert findings == []
