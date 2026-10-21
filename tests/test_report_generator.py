@@ -474,8 +474,9 @@ def test_pdf_renders_optional_business_context_only_when_provided(monkeypatch):
     assert any("A smaller payload may reduce transfer work." in item for item in rendered_text)
     assert any("Risk if left unresolved" in item for item in rendered_text)
     assert any("The transfer cost remains elevated." in item for item in rendered_text)
-    # The second finding has no supplied business context; no generic impact is invented.
-    assert all("Potential benefit" not in item for item in rendered_text[rendered_text.index("Add a descriptive title.") + 1:])
+    # Findings without custom business wording still receive explicitly qualified, non-measured impact context.
+    assert any("Potential benefit if addressed" in item for item in rendered_text)
+    assert any("Risk if left unresolved" in item for item in rendered_text)
 
 
 def test_report_includes_sampled_scope_methodology_and_plain_language_glossary(monkeypatch):

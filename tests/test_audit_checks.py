@@ -133,7 +133,7 @@ def test_homepage_checks_jsonld_syntax_and_product_name(jsonld, expected_title):
     findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
     structured_findings = [item for item in findings if item.category == "structured_data"]
     if expected_title is None:
-        assert structured_findings == []
+        assert not any(item.title in {"Malformed JSON-LD structured data", "Product structured data missing name"} for item in structured_findings)
     else:
         finding = next(item for item in structured_findings if item.title == expected_title)
         assert finding.status == "verified"

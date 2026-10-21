@@ -147,7 +147,7 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
         return []
     if not parser.jsonld_scripts:
         return [_finding(
-            "structured_data", "Likely product page has no detectable Product JSON-LD",
+            "structured_data", "Product structured data not detected",
             "manual_review_required", "low",
             f"The URL path resembles a product-detail route, but no application/ld+json block was found in the returned HTML for {page_url}.",
             "Product structured data can help search systems interpret product details, but not every implementation uses JSON-LD. This source-only check does not inspect JavaScript-rendered markup, Microdata, RDFa, or determine rich-result eligibility.",
@@ -191,7 +191,7 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
     if found_product or malformed:
         return []
     return [_finding(
-        "structured_data", "Likely product page has no detectable Product JSON-LD",
+        "structured_data", "Product structured data not detected",
         "manual_review_required", "low",
         f"The URL path resembles a product-detail route, but the inspected JSON-LD blocks contain no Product or ProductGroup entity: {page_url}.",
         "A product-detail page may benefit from accurate Product structured data, but this check cannot establish that the URL is a true product page or that JSON-LD is the site's chosen structured-data format. Other markup formats and JavaScript-rendered data are outside this source check.",
@@ -343,6 +343,12 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
                 return f"{parts.scheme.lower()}://{display_host}{(parts.path or '/')[:120]}"
         except (ValueError, UnicodeError):
             pass
+        try:
+            parts = urlsplit(href)
+            if parts.scheme and parts.scheme.lower() not in {"http", "https"} and not parts.username and not parts.password:
+                return href[:120]
+        except (ValueError, UnicodeError):
+            pass
         return "(malformed or unsupported target URL omitted)"
 
     for language, href in parser.links:
@@ -452,8 +458,6 @@ def inspect_meta_refresh(html: str, final_url: str) -> list[AuditFinding]:
             if (
                 parts.scheme.lower() not in {"http", "https"}
                 or not parts.hostname
-                or parts.username is not None
-                or parts.password is not None
                 or target_origin is None
             ):
                 malformed_targets += 1
@@ -497,6 +501,38 @@ def inspect_meta_refresh(html: str, final_url: str) -> list[AuditFinding]:
         ["Inspect the returned meta http-equiv=refresh element.", "Verify the destination and timing in a browser or staging environment.", "Check that users can understand and control navigation where required."],
         final_url,
     )]
+
+
+class _AnchorNameParser(HTMLParser):
+    """Collect anchor hrefs with no text or detectable accessible-name attribute."""
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.empty_name_hrefs: list[str] = []
+        self._active: tuple[str, bool] | None = None
+        self._text = ""
+
+    def handle_starttag(self, tag, attrs):
+        values = {key.lower(): value or "" for key, value in attrs}
+        tag = tag.lower()
+        if tag == "a" and values.get("href"):
+            named = bool(values.get("aria-label", "").strip() or values.get("title", "").strip())
+            self._active = (values["href"], named)
+            self._text = ""
+        elif self._active is not None and tag == "img" and values.get("alt", "").strip():
+            href, named = self._active
+            self._active = (href, True)
+
+    def handle_data(self, data):
+        if self._active is not None:
+            self._text += data
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._active is not None:
+            href, named = self._active
+            if not named and not self._text.strip():
+                self.empty_name_hrefs.append(href)
+            self._active = None
+            self._text = ""
 
 
 class _LinkParser(HTMLParser):

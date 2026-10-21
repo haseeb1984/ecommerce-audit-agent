@@ -188,7 +188,7 @@ async def test_probe_records_request_failures_as_unverified(monkeypatch):
         object(), "https://shop.example/"
     )
     assert findings == []
-    assert any("2 of 14 exposure probes could not be verified" in item for item in limitations)
+    assert any("2 of 15 exposure probes could not be verified" in item for item in limitations)
 
 
 @pytest.mark.parametrize("path,body", [
@@ -245,7 +245,7 @@ async def test_generic_success_responses_are_unverified_not_assumed_safe(monkeyp
     )
     assert findings == []
     assert any(
-        "14 of 14 exposure probes returned successful responses" in item
+        "15 of 15 exposure probes returned successful responses" in item
         and "treated as unverified" in item
         for item in limitations
     )
@@ -267,7 +267,7 @@ async def test_probe_records_server_errors_as_unverified(monkeypatch):
     )
 
     assert findings == []
-    assert any("1 of 14 exposure probes returned HTTP 5xx" in item for item in limitations)
+    assert any("1 of 15 exposure probes returned HTTP 5xx" in item for item in limitations)
     assert any("treated as unverified, not safe" in item for item in limitations)
 
 @pytest.mark.asyncio

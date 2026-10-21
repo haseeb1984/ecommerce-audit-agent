@@ -1460,7 +1460,7 @@ async def test_crawl_reports_unavailable_robots_declared_sitemap(monkeypatch):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
-            return 200, f"User-agent: *\\nSitemap: {sitemap}\\n", {"content-type": "text/plain"}, url
+            return 200, f"User-agent: *\nSitemap: {sitemap}\n", {"content-type": "text/plain"}, url
         if url == sitemap:
             return 503, "temporarily unavailable", {"content-type": "text/plain"}, sitemap
         return 404, "", {"content-type": "text/plain"}, url
@@ -1517,7 +1517,7 @@ async def test_crawl_does_not_use_robots_sitemap_redirected_off_origin(monkeypat
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
-            return 200, f"User-agent: *\\nSitemap: {sitemap}\\n", {"content-type": "text/plain"}, url
+            return 200, f"User-agent: *\nSitemap: {sitemap}\n", {"content-type": "text/plain"}, url
         if url == sitemap:
             body = '<urlset><url><loc>https://shop.example/products/one</loc></url></urlset>'
             return 200, body, {"content-type": "application/xml"}, external
