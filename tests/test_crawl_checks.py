@@ -1975,3 +1975,45 @@ async def test_sitemap_index_rejects_off_origin_and_deduplicates_child_sitemaps(
         and f.status == "manual_review_required"
         for f in findings
     )
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 404, 503])
+async def test_bounded_crawl_reports_homepage_http_failure(monkeypatch, status):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        return status, "response body omitted", {"content-type": "text/html"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/"
+    )
+
+    finding = next(item for item in findings if item.title == "Homepage could not be audited")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == ("medium" if status >= 500 else "low")
+    assert str(status) in finding.evidence
+    assert not checked
+    assert any("Homepage HTML checks were skipped" in item for item in limitations)
+    assert "response body omitted" not in finding.evidence
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_reports_non_html_homepage_without_page_findings(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        return 200, '{"ok":true}', {"content-type": "application/json"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/"
+    )
+
+    finding = next(item for item in findings if item.title == "Homepage response is not HTML")
+    assert finding.status == "manual_review_required"
+    assert "application/json" in finding.evidence
+    assert not checked
+    assert any("not text/html" in item for item in limitations)
