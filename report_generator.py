@@ -741,20 +741,26 @@ def render_audit_pdf(
     mobile_capture = _screenshot_flowable(screenshot_data_uri)
     desktop_capture = _screenshot_flowable(desktop_screenshot_data_uri)
     if desktop_capture is not None or mobile_capture is not None:
-        story.append(Paragraph("Real website screenshots", section_style))
-        story.append(_p(
-            "Captured from the audited website during this run. Screenshots are visual evidence of the captured view only; "
-            "they do not by themselves prove a finding or represent every page.",
-            small_style,
-        ))
+        # Keep the section heading with its real screenshots. Without this grouping,
+        # ReportLab could leave the heading at the foot of one page and move both
+        # screenshots to the next page, creating a confusing blank gap.
+        screenshot_section = [
+            Paragraph("Real website screenshots", section_style),
+            _p(
+                "Captured from the audited website during this run. Screenshots are visual evidence of the captured view only; "
+                "they do not by themselves prove a finding or represent every page.",
+                small_style,
+            ),
+        ]
         if desktop_capture is not None:
-            story.extend([Paragraph("Desktop viewport (1440px)", finding_style), desktop_capture, Spacer(1, 3 * mm)])
+            screenshot_section.extend([Paragraph("Desktop viewport (1440px)", finding_style), desktop_capture, Spacer(1, 3 * mm)])
         if mobile_capture is not None:
-            story.extend([Paragraph("Mobile viewport (390px)", finding_style), mobile_capture, Spacer(1, 2 * mm)])
+            screenshot_section.extend([Paragraph("Mobile viewport (390px)", finding_style), mobile_capture, Spacer(1, 2 * mm)])
         if desktop_capture is None:
-            story.append(_p("Desktop screenshot unavailable for this run.", small_style))
+            screenshot_section.append(_p("Desktop screenshot unavailable for this run.", small_style))
         if mobile_capture is None:
-            story.append(_p("Mobile screenshot unavailable for this run.", small_style))
+            screenshot_section.append(_p("Mobile screenshot unavailable for this run.", small_style))
+        story.append(KeepTogether(screenshot_section))
     else:
         story.extend([
             Paragraph("Real website screenshots", section_style),
