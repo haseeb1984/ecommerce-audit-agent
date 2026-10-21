@@ -568,8 +568,8 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                                 or child_body.lstrip().startswith("<")
                             ):
                                 continue
-                            child_root = ET.fromstring(child_body)
                             findings.extend(inspect_crawl_sitemap(child_body, child_sitemap_url))
+                            child_root = ET.fromstring(child_body)
                             if child_root.tag.rsplit("}", 1)[-1].lower() != "urlset":
                                 continue
                             remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
