@@ -507,3 +507,51 @@ def test_duplicate_csp_directive_does_not_let_later_value_mask_first():
         if finding.title == "Content Security Policy may be overly permissive"
     )
     assert "script-src permits unsafe-inline/unsafe-eval" in permissive.evidence
+
+
+def test_standard_security_headers_report_missing_baseline_controls_as_low_review():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {"content-type": "text/html"},
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.category == "security_headers"
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "X-Content-Type-Options" in finding.evidence
+    assert "Referrer-Policy" in finding.evidence
+    assert "Permissions-Policy" in finding.evidence
+    assert "framing restriction" in finding.evidence
+
+
+def test_standard_security_headers_accept_valid_baseline_and_csp_framing():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "strict-origin-when-cross-origin",
+            "permissions-policy": "camera=(), microphone=()",
+            "content-security-policy": "default-src 'self'; frame-ancestors 'self'",
+        },
+        "https://shop.example/",
+    )
+    assert findings == []
+
+
+def test_standard_security_headers_accept_x_frame_options_as_framing_fallback():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "permissions-policy": "geolocation=()",
+            "x-frame-options": "DENY",
+        },
+        "https://shop.example/",
+    )
+    assert findings == []
