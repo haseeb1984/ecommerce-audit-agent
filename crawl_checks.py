@@ -348,9 +348,12 @@ def inspect_hreflang(html: str, final_url: str) -> list[AuditFinding]:
         try:
             parts = urlsplit(href)
             if parts.scheme and parts.scheme.lower() not in {"http", "https"}:
-                return f"(unsupported target scheme: {parts.scheme.lower()})"
+                return "(malformed or unsupported target URL omitted)"
         except (ValueError, UnicodeError):
-            pass
+            # Malformed URLs without credentials or query data can be shown as bounded
+            # evidence to help the site owner find the source declaration.
+            if "://" in href and "@" not in href and "?" not in href and "#" not in href:
+                return href[:120]
         return "(malformed or unsupported target URL omitted)"
 
     for language, href in parser.links:
@@ -725,7 +728,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
     limitations = [
         f"Same-origin crawl is capped at {MAX_CRAWL_PAGES} URLs and follows discovered HTML links only while page budget remains; it does not crawl the whole site.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        "Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most 3 same-origin child sitemaps and at most 100 page URLs. Additional declared sitemap locations and deeper nesting are not fully explored.",
+        f"Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps and at most {MAX_URLS_FROM_SITEMAP} page URLs. Additional declared sitemap locations and deeper nesting are not fully explored.",
     ]
 
     async with aiohttp.ClientSession(
@@ -843,6 +846,22 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                 ))
         sitemap_url = same_origin_sitemaps[0] if same_origin_sitemaps else conventional_sitemap_url
 
+        def _safe_sitemap_label(value: str) -> str:
+            try:
+                parts = urlsplit(value)
+                _ = parts.port
+                if parts.scheme.lower() in {"http", "https"} and parts.hostname:
+                    host = parts.hostname.lower()
+                    display_host = f"[{host}]" if ":" in host else host
+                    port = parts.port
+                    default_port = 443 if parts.scheme.lower() == "https" else 80
+                    if port is not None and port != default_port:
+                        display_host = f"{display_host}:{port}"
+                    return f"{parts.scheme.lower()}://{display_host}{(parts.path or '/')[:120]}"
+            except (ValueError, UnicodeError):
+                pass
+            return "(malformed or unsupported sitemap URL omitted)"
+
         def _loc_values(root):
             return [
                 element.text.strip()
@@ -882,11 +901,11 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         try:
                             resolved_child = urljoin(sitemap_final_url, child_loc)
                             if not _same_origin_http_url(resolved_child, sitemap_final_url):
-                                rejected_child_sitemaps.append(safe_target_label(child_loc))
+                                rejected_child_sitemaps.append(_safe_sitemap_label(child_loc))
                                 continue
                             normalized_child = _canonical_page_url(resolved_child)
                         except (ValueError, UnicodeError):
-                            rejected_child_sitemaps.append(safe_target_label(child_loc))
+                            rejected_child_sitemaps.append(_safe_sitemap_label(child_loc))
                             continue
                         if normalized_child in seen_child_sitemaps:
                             continue

@@ -535,7 +535,7 @@ def test_hreflang_malformed_language_target_and_duplicate_are_reviewed():
     assert finding.category == "international_seo"
     assert finding.status == "manual_review_required"
     assert "english_US" in finding.evidence
-    assert "unsupported target scheme: javascript" in finding.evidence
+    assert "(malformed or unsupported target URL omitted)" in finding.evidence
     assert "FR" in finding.evidence or "fr" in finding.evidence
     assert "(missing href)" in finding.evidence
     assert "https://shop.example:not-a-port/es/product" in finding.evidence
