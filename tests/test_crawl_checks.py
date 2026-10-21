@@ -1706,3 +1706,27 @@ def test_hreflang_accepts_self_reference_with_fragment_or_query_difference():
         "https://shop.example/en/product",
     )
     assert findings == []
+
+
+def test_canonical_review_reports_multiple_and_missing_href_declarations():
+    findings = crawl_checks.inspect_canonical_declaration(
+        '<link rel="canonical" href="https://shop.example/products/a">'
+        '<link rel="canonical" href="">',
+        "https://shop.example/products/a",
+    )
+    titles = {finding.title for finding in findings}
+    assert "Page declares multiple canonical links" in titles
+    assert "Canonical link is missing its href" in titles
+
+
+def test_canonical_review_reports_malformed_target_but_accepts_valid_relative_target():
+    malformed = crawl_checks.inspect_canonical_declaration(
+        '<link rel="canonical" href="https://[invalid">',
+        "https://shop.example/products/a",
+    )
+    valid = crawl_checks.inspect_canonical_declaration(
+        '<link rel="canonical" href="/products/a">',
+        "https://shop.example/products/a",
+    )
+    assert any(f.title == "Canonical target URL needs review" for f in malformed)
+    assert valid == []
