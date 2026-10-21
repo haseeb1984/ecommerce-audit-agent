@@ -374,3 +374,32 @@ def test_duplicate_ids_do_not_count_as_resolvable_accessible_names():
         if finding.title == "Form controls may lack accessible labels"
     )
     assert "3 form control(s)" in label_finding.evidence
+
+
+
+def test_focusable_descendant_of_aria_hidden_container_is_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><div aria-hidden="true">'
+        '<a href="/checkout">Checkout</a><button tabindex="0">Open cart</button>'
+        '</div></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(
+        f for f in findings
+        if f.title == "Focusable controls may be hidden from assistive technology"
+    )
+    assert finding.status == "manual_review_required"
+    assert "2 focusable element(s)" in finding.evidence
+
+
+def test_aria_hidden_nonfocusable_content_does_not_trigger_focusable_finding():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><div aria-hidden="true">'
+        '<span>Decorative label</span><img src="/ornament.svg" alt="">'
+        '</div></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        f.title == "Focusable controls may be hidden from assistive technology"
+        for f in findings
+    )
