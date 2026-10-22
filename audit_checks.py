@@ -861,7 +861,13 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             "verified" if value else "manual_review_required",
             "info" if value else severity,
             f"Header value: {value[:240]}" if value else f"Response did not include {header}.",
-            "Security headers can reduce certain browser-side risks, but their presence alone does not prove a site is secure.",
+            (
+                f"{label} is present in the sampled response. It is one browser-side control; "
+                "overall security also depends on application behavior, deployment configuration, and other controls."
+                if value else
+                f"{label} was not present in the sampled response. Whether that is a meaningful gap depends "
+                "on the site's architecture, required browser behavior, and threat model."
+            ),
             f"Review whether {header} is appropriate for this site and configure it safely; test for compatibility before enforcing restrictive policies.",
             [f"Inspect the response headers with browser DevTools or a reputable header scanner.", "Review configuration and test critical site flows."],
             final_url,
