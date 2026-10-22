@@ -44,7 +44,6 @@ CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     "technical_seo": ("technical_seo", "on_page_seo"),
     "crawlability": ("crawl",),
     "indexing": ("indexing",),
-    "aria": ("aria_alt_text",),
     "trust": ("trust_inspector",),
     "ecommerce": ("ecommerce_category",),
     "security_baseline": ("security",),
