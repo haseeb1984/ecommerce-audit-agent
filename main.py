@@ -1156,6 +1156,65 @@ async def admin_reconcile_payment(event_id: str, request: Request,
         raise HTTPException(status_code=502, detail="Paddle transaction reconciliation failed; verify the API configuration.") from exc
 
 
+@app.post("/api/v1/admin/payment-events/{event_id}/retry-email")
+async def admin_retry_license_email(event_id: str, request: Request,
+                                    db: AsyncSession = Depends(get_async_db)):
+    """Manually retry a failed license email for an already-recorded payment event."""
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    from sqlalchemy import select
+
+    now = datetime.now(timezone.utc)
+    event = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.event_id == event_id)
+        .with_for_update()
+    )).scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Payment event not found.")
+    if event.status == "delivered":
+        return {"status": "already_delivered", "event_id": event.event_id}
+    if event.status == "email_sending":
+        updated_at = event.updated_at
+        if updated_at is not None:
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if (now - updated_at).total_seconds() < 600:
+                raise HTTPException(status_code=409, detail="A license email delivery attempt is already in progress.")
+        # Recover a stale in-progress marker left by a timed-out server process.
+    if not event.license_id:
+        raise HTTPException(status_code=409, detail="This payment event has no linked license to deliver.")
+    license_obj = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == event.license_id)
+    )).scalar_one_or_none()
+    if license_obj is None:
+        raise HTTPException(status_code=409, detail="The license linked to this payment event is unavailable.")
+
+    event.status = "email_sending"
+    event.updated_at = now
+    await db.commit()
+    try:
+        await asyncio.to_thread(
+            _send_license_email, event.recipient_email, license_obj.license_key,
+            license_obj.tier, license_obj.max_monthly_audits,
+        )
+    except Exception as exc:
+        event.status = "email_pending"
+        event.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        logger.error("Admin license email retry failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="License email retry failed; the event remains pending.") from exc
+
+    event.status = "delivered"
+    event.updated_at = datetime.now(timezone.utc)
+    await _write_admin_log(
+        db, "payment.license_email_retried", "payment_event", event.event_id,
+        {"license_id": event.license_id, "delivery_status": "delivered"},
+    )
+    await db.commit()
+    return {"status": "delivered", "event_id": event.event_id}
+
+
 @app.get("/api/v1/admin/operations")
 async def admin_operations(request: Request, db: AsyncSession = Depends(get_async_db)):
     """Private operational diagnostics without exposing environment values or customer secrets."""
