@@ -135,7 +135,7 @@ async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_
 
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
-            license_key="secret-test-license-value",
+            license_key="qa-license-marker",
             client_name="QA Client",
             tier="starter",
             max_monthly_audits=100,
@@ -152,15 +152,16 @@ async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_
         json={"client_name": "Updated QA Client", "tier": "support-tier", "is_active": False},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["client_name"] == "Updated QA Client"
-    assert response.json()["tier"] == "support-tier"
-    assert response.json()["max_monthly_audits"] == 321
-    assert response.json()["is_active"] is False
-    assert "secret-test-license-value" not in response.text
+    updated_client = response.json()["client"]
+    assert updated_client["client_name"] == "Updated QA Client"
+    assert updated_client["tier"] == "support-tier"
+    assert updated_client["monthly_limit"] == 321
+    assert updated_client["is_active"] is False
+    assert "qa-license-marker" not in response.text
 
     history = await client.get(f"/api/v1/admin/clients/{license_id}/history", headers=headers)
     assert history.status_code == 200, history.text
-    assert "secret-test-license-value" not in history.text
+    assert "qa-license-marker" not in history.text
 
 
 @pytest.mark.asyncio
