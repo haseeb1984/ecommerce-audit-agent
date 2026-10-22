@@ -736,6 +736,194 @@ async def email_audit_report(
     return {"status": "sent", "report_id": row.id}
 
 
+
+async def _ensure_admin_tables(db: AsyncSession) -> None:
+    """Create narrowly scoped admin tables and bootstrap legacy env-defined plans once."""
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS saas_plan_packages (
+            tier VARCHAR(50) PRIMARY KEY,
+            label VARCHAR(100) NOT NULL,
+            monthly_audit_allowance INTEGER NOT NULL CHECK (monthly_audit_allowance BETWEEN 1 AND 10000000),
+            max_concurrent_audits INTEGER NOT NULL CHECK (max_concurrent_audits BETWEEN 1 AND 10000),
+            paddle_price_id VARCHAR(100),
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
+            id BIGSERIAL PRIMARY KEY,
+            action VARCHAR(80) NOT NULL,
+            entity_type VARCHAR(50) NOT NULL,
+            entity_id VARCHAR(255),
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    # Migrate configured legacy plans without overwriting operator-managed values.
+    for plan in _configured_payment_plans():
+        tier = plan["tier"]
+        env_suffix = tier.upper()
+        try:
+            concurrency = int(os.getenv(f"LICENSE_MAX_CONCURRENT_AUDITS_{env_suffix}", "1"))
+        except ValueError:
+            concurrency = 1
+        concurrency = min(10000, max(1, concurrency))
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES (:tier, :label, :allowance, :concurrency, :price_id, TRUE)
+            ON CONFLICT (tier) DO NOTHING
+        """), {"tier": tier, "label": plan["label"], "allowance": plan["monthly_audit_allowance"],
+               "concurrency": concurrency, "price_id": plan["price_id"]})
+    await db.commit()
+
+
+async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
+                           entity_id: str | int | None, details: dict | None = None) -> None:
+    # Never put license keys, API keys, passwords, or secret values in this audit log.
+    await db.execute(text("""
+        INSERT INTO saas_admin_action_logs (action, entity_type, entity_id, details_json)
+        VALUES (:action, :entity_type, :entity_id, :details_json)
+    """), {"action": action, "entity_type": entity_type,
+           "entity_id": str(entity_id) if entity_id is not None else None,
+           "details_json": json.dumps(details or {}, separators=(",", ":"))})
+
+
+async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[dict]:
+    await _ensure_admin_tables(db)
+    query = "SELECT tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active FROM saas_plan_packages"
+    if active_only:
+        query += " WHERE is_active = TRUE"
+    query += " ORDER BY monthly_audit_allowance ASC, tier ASC"
+    rows = (await db.execute(text(query))).mappings().all()
+    return [{
+        "tier": row["tier"], "label": row["label"],
+        "monthly_audit_allowance": int(row["monthly_audit_allowance"]),
+        "max_concurrent_audits": int(row["max_concurrent_audits"]),
+        "price_id": row["paddle_price_id"], "is_active": bool(row["is_active"])
+    } for row in rows]
+
+
+class AdminPackageInput(BaseModel):
+    tier: str
+    label: str
+    monthly_audit_allowance: int
+    max_concurrent_audits: int = 1
+    paddle_price_id: str | None = None
+    is_active: bool = True
+
+
+def _validate_admin_package(payload: AdminPackageInput) -> dict:
+    tier = payload.tier.strip().lower()
+    label = payload.label.strip()
+    price_id = (payload.paddle_price_id or "").strip() or None
+    if not re.fullmatch(r"[a-z0-9_-]{2,50}", tier):
+        raise HTTPException(status_code=422, detail="Package tier must be 2-50 lowercase letters, numbers, underscores or hyphens.")
+    if not label or len(label) > 100:
+        raise HTTPException(status_code=422, detail="Package label must be 1-100 characters.")
+    if not 1 <= payload.monthly_audit_allowance <= 10000000:
+        raise HTTPException(status_code=422, detail="Monthly audit allowance must be between 1 and 10,000,000.")
+    if not 1 <= payload.max_concurrent_audits <= 10000:
+        raise HTTPException(status_code=422, detail="Concurrent audit limit must be between 1 and 10,000.")
+    if price_id and not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id):
+        raise HTTPException(status_code=422, detail="Paddle price ID format is invalid.")
+    return {"tier": tier, "label": label, "monthly_audit_allowance": payload.monthly_audit_allowance,
+            "max_concurrent_audits": payload.max_concurrent_audits,
+            "paddle_price_id": price_id, "is_active": payload.is_active}
+
+
+@app.get("/api/v1/admin/packages")
+async def admin_list_packages(request: Request, db: AsyncSession = Depends(get_async_db)):
+    _require_admin_key(request)
+    return {"packages": await _db_payment_plans(db, active_only=False)}
+
+
+@app.post("/api/v1/admin/packages")
+async def admin_create_package(payload: AdminPackageInput, request: Request,
+                               db: AsyncSession = Depends(get_async_db)):
+    _require_admin_key(request)
+    values = _validate_admin_package(payload)
+    await _ensure_admin_tables(db)
+    try:
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES (:tier, :label, :monthly_audit_allowance, :max_concurrent_audits, :paddle_price_id, :is_active)
+        """), values)
+        await _write_admin_log(db, "package.created", "package", values["tier"], {
+            "monthly_audit_allowance": values["monthly_audit_allowance"],
+            "max_concurrent_audits": values["max_concurrent_audits"], "is_active": values["is_active"]})
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        if "IntegrityError" in type(exc).__name__:
+            raise HTTPException(status_code=409, detail="A package with this tier already exists.") from exc
+        logger.error("Admin package creation failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Unable to create package.") from exc
+    return {"status": "created", "tier": values["tier"]}
+
+
+@app.patch("/api/v1/admin/packages/{tier}")
+async def admin_update_package(tier: str, payload: AdminPackageInput, request: Request,
+                               db: AsyncSession = Depends(get_async_db)):
+    _require_admin_key(request)
+    values = _validate_admin_package(payload)
+    tier = tier.strip().lower()
+    if values["tier"] != tier:
+        raise HTTPException(status_code=422, detail="Package tier is immutable; create a new package to use a different identifier.")
+    await _ensure_admin_tables(db)
+    result = await db.execute(text("""
+        UPDATE saas_plan_packages SET label=:label,
+          monthly_audit_allowance=:monthly_audit_allowance,
+          max_concurrent_audits=:max_concurrent_audits,
+          paddle_price_id=:paddle_price_id, is_active=:is_active, updated_at=NOW()
+        WHERE tier=:tier
+    """), values)
+    if result.rowcount == 0:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Package not found.")
+    await _write_admin_log(db, "package.updated", "package", tier, {
+        "monthly_audit_allowance": values["monthly_audit_allowance"],
+        "max_concurrent_audits": values["max_concurrent_audits"], "is_active": values["is_active"]})
+    await db.commit()
+    return {"status": "updated", "tier": tier}
+
+
+@app.delete("/api/v1/admin/packages/{tier}")
+async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession = Depends(get_async_db)):
+    """Soft-delete packages to preserve subscription/account history."""
+    _require_admin_key(request)
+    tier = tier.strip().lower()
+    await _ensure_admin_tables(db)
+    result = await db.execute(text("""
+        UPDATE saas_plan_packages SET is_active=FALSE, updated_at=NOW() WHERE tier=:tier
+    """), {"tier": tier})
+    if result.rowcount == 0:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Package not found.")
+    await _write_admin_log(db, "package.deactivated", "package", tier)
+    await db.commit()
+    return {"status": "deactivated", "tier": tier}
+
+
+@app.get("/api/v1/admin/actions")
+async def admin_action_history(request: Request, limit: int = Query(100, ge=1, le=500),
+                              db: AsyncSession = Depends(get_async_db)):
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    rows = (await db.execute(text("""
+        SELECT id, action, entity_type, entity_id, details_json, created_at
+        FROM saas_admin_action_logs ORDER BY created_at DESC, id DESC LIMIT :limit
+    """), {"limit": limit})).mappings().all()
+    return {"actions": [{
+        "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
+        "entity_id": row["entity_id"], "details": json.loads(row["details_json"] or "{}"),
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None
+    } for row in rows]}
+
+
 # ----------------------- Admin operations dashboard -----------------------
 # Fail closed: configure ADMIN_API_KEY as a deployment secret. Never log its value.
 def _require_admin_key(request: Request) -> None:
