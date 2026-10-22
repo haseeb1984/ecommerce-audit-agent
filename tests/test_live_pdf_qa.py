@@ -1,5 +1,7 @@
+import asyncio
+
 from audit_checks import AuditFinding
-from scripts.generate_live_audit_pdfs import _live_pdf_qa_passed
+from scripts.generate_live_audit_pdfs import _live_pdf_qa_passed, _run_pagespeed_smoke
 
 
 def _mobile_unavailable():
@@ -42,3 +44,13 @@ def test_live_pdf_qa_allows_observed_mobile_findings_for_manual_review():
         "mobile-data-uri",
         [finding],
     ) is True
+
+
+
+def test_pagespeed_smoke_discloses_missing_secret_without_fabricating_metrics(monkeypatch):
+    monkeypatch.delenv("GOOGLE_PAGESPEED_API_KEY", raising=False)
+    findings, limitation = asyncio.run(_run_pagespeed_smoke("https://shop.example/"))
+    assert findings == []
+    assert limitation is not None
+    assert "not run" in limitation.lower()
+    assert "no score" not in limitation.lower() or "not configured" in limitation.lower()
