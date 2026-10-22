@@ -417,144 +417,157 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
             server.send_message(message)
 
 
+def _paddle_api_base() -> str:
+    environment = os.getenv("PADDLE_ENVIRONMENT", "sandbox").strip().lower()
+    if environment == "production": return "https://api.paddle.com"
+    if environment == "sandbox": return "https://sandbox-api.paddle.com"
+    raise RuntimeError("PADDLE_ENVIRONMENT must be sandbox or production")
+
+
+def _paddle_api_request(path: str, method: str = "GET", payload: dict | None = None) -> dict:
+    """Call Paddle Billing with server-side credentials; never log tokens or request bodies."""
+    import urllib.request
+    import urllib.error
+    api_key = os.getenv("PADDLE_API_KEY", "").strip()
+    if not api_key: raise RuntimeError("Paddle API is not configured")
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(_paddle_api_base() + path, data=body, method=method,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Paddle API request failed (HTTP {exc.code})") from exc
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError(f"Paddle API request failed ({type(exc).__name__})") from exc
+
+
 def _configured_payment_plans() -> list[dict]:
     plans = []
-    for tier, label, default_quota in (
-        ("STARTER", "Starter", 100),
-        ("PRO", "Pro", 500),
-        ("BUSINESS", "Business", 2000),
-    ):
-        checkout_url = os.getenv(f"STRIPE_CHECKOUT_URL_{tier}", "").strip()
-        payment_link_id = os.getenv(f"STRIPE_PAYMENT_LINK_ID_{tier}", "").strip()
-        if not checkout_url or not payment_link_id:
-            continue
-        parsed = urlsplit(checkout_url)
-        if parsed.scheme != "https" or not parsed.hostname:
-            continue
-        try:
-            quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
-        except ValueError:
-            continue
-        if quota < 1:
-            continue
-        plans.append({
-            "tier": tier.lower(),
-            "label": label,
-            "monthly_audit_allowance": quota,
-            "checkout_url": checkout_url,
-            "payment_link_id": payment_link_id,
-        })
+    for tier, label, default_quota in (("STARTER", "Starter", 100), ("PRO", "Pro", 500), ("BUSINESS", "Business", 2000)):
+        price_id = os.getenv(f"PADDLE_PRICE_ID_{tier}", "").strip()
+        if not re.fullmatch(r"pri_[a-z0-9]+", price_id): continue
+        try: quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
+        except ValueError: continue
+        if quota < 1: continue
+        plans.append({"tier": tier.lower(), "label": label, "monthly_audit_allowance": quota, "price_id": price_id})
     return plans
+
+
+class PaddleCheckoutRequest(BaseModel):
+    tier: str
 
 
 @app.get("/api/v1/billing/plans")
 async def public_billing_plans():
-    """Expose checkout only when payment verification and license email delivery are ready."""
-    checkout_ready = bool(
-        os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-        and os.getenv("SMTP_HOST", "").strip()
-        and os.getenv("SMTP_FROM", "").strip()
-    )
-    plans = _configured_payment_plans() if checkout_ready else []
-    return {
-        "checkout_provider": "Stripe Payment Links",
-        "configured": bool(plans),
-        "plans": [
-            {key: value for key, value in plan.items() if key != "payment_link_id"}
-            for plan in plans
-        ],
-        "configuration_needed": [] if plans else [
-            "Stripe webhook signing secret",
-            "SMTP host and sender",
-            "Checkout URL and Payment Link ID for each plan",
-        ],
-    }
+    """Expose plans only when Paddle API, webhook and license email are configured."""
+    ready = bool(os.getenv("PADDLE_API_KEY", "").strip() and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
+                 and os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip())
+    plans = _configured_payment_plans() if ready else []
+    return {"checkout_provider": "Paddle", "configured": bool(plans),
+        "plans": [{key: value for key, value in plan.items() if key != "price_id"} for plan in plans],
+        "configuration_needed": [] if plans else ["Paddle API key", "Paddle notification destination secret",
+            "SMTP host and sender", "Paddle price ID for each enabled plan"]}
 
 
-@app.post("/api/v1/billing/stripe-webhook")
-async def stripe_checkout_webhook(request: Request, db: AsyncSession = Depends(get_async_db)):
-    """Verify Stripe signatures, provision paid licenses idempotently, and email the key."""
-    secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-    signature = request.headers.get("stripe-signature", "")
+@app.post("/api/v1/billing/checkout")
+async def create_paddle_checkout(payload: PaddleCheckoutRequest):
+    """Create a transaction using a server-selected price; the client cannot set amounts."""
+    tier = payload.tier.strip().upper()
+    if tier not in {"STARTER", "PRO", "BUSINESS"}: raise HTTPException(status_code=422, detail="Choose a valid plan.")
+    plan = next((p for p in _configured_payment_plans() if p["tier"].upper() == tier), None)
+    if plan is None or not os.getenv("PADDLE_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="This Paddle plan is not configured.")
+    transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
+                   "custom_data": {"license_tier": plan["tier"]}}
+    checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
+    if checkout_url:
+        parsed = urlsplit(checkout_url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise HTTPException(status_code=503, detail="Paddle checkout URL configuration is invalid.")
+        transaction["checkout"] = {"url": checkout_url}
+    try:
+        response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
+        url = response.get("data", {}).get("checkout", {}).get("url")
+        parsed = urlsplit(url or "")
+        if parsed.scheme != "https" or not parsed.hostname: raise RuntimeError("Paddle did not return a valid checkout URL")
+        return {"checkout_url": url, "transaction_id": response.get("data", {}).get("id")}
+    except Exception as exc:
+        logger.error("Paddle checkout creation failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Unable to start Paddle checkout; verify billing configuration.") from exc
+
+
+@app.post("/api/v1/billing/paddle-webhook")
+async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_db)):
+    """Verify Paddle signatures and provision licenses idempotently after transaction completion."""
+    secret = os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
+    signature = request.headers.get("paddle-signature", "")
     if not secret or not signature:
-        raise HTTPException(status_code=503 if not secret else 400,
-                            detail="Payment webhook is not configured or signature is missing.")
+        raise HTTPException(status_code=503 if not secret else 400, detail="Paddle webhook is not configured or signature is missing.")
     raw_body = await request.body()
     try:
         parts = {}
-        for item in signature.split(","):
+        for item in signature.split(";"):
             key, value = item.split("=", 1)
             parts.setdefault(key, []).append(value)
-        timestamp = int(parts["t"][0])
-        signatures = parts.get("v1", [])
+        timestamp = int(parts["ts"][0])
+        signatures = parts.get("h1", [])
     except (KeyError, ValueError, IndexError):
-        raise HTTPException(status_code=400, detail="Malformed payment signature.")
+        raise HTTPException(status_code=400, detail="Malformed Paddle signature.")
     if abs(int(time.time()) - timestamp) > 300:
-        raise HTTPException(status_code=400, detail="Payment signature timestamp is outside the allowed window.")
-    signed_payload = str(timestamp).encode() + b"." + raw_body
-    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+        raise HTTPException(status_code=400, detail="Paddle signature timestamp is outside the allowed window.")
+    expected = hmac.new(secret.encode(), str(timestamp).encode() + b":" + raw_body, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
-        raise HTTPException(status_code=400, detail="Invalid payment signature.")
-    try:
-        event = json.loads(raw_body)
-    except (ValueError, UnicodeDecodeError):
-        raise HTTPException(status_code=400, detail="Invalid payment event JSON.")
-    event_id = str(event.get("id", ""))
-    event_type = str(event.get("type", ""))
-    if not event_id:
-        raise HTTPException(status_code=400, detail="Payment event ID is missing.")
-    if event_type not in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
-        return {"status": "ignored", "event_id": event_id}
-    session_data = event.get("data", {}).get("object", {})
-    if session_data.get("payment_status") != "paid":
-        return {"status": "payment_not_complete", "event_id": event_id}
+        raise HTTPException(status_code=400, detail="Invalid Paddle signature.")
+    try: event = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError): raise HTTPException(status_code=400, detail="Invalid Paddle event JSON.")
+    event_id = str(event.get("event_id") or event.get("id") or "")
+    event_type = str(event.get("event_type") or event.get("type") or "")
+    if not event_id: raise HTTPException(status_code=400, detail="Paddle event ID is missing.")
+    if event_type != "transaction.completed": return {"status": "ignored", "event_id": event_id}
+    transaction = event.get("data") or {}
+    if transaction.get("status") != "completed": return {"status": "payment_not_complete", "event_id": event_id}
+    custom_data = transaction.get("custom_data") or {}
+    tier = str(custom_data.get("license_tier", "")).upper()
+    plans = {p["tier"].upper(): p for p in _configured_payment_plans()}
+    price_ids = {item.get("price", {}).get("id") for item in (transaction.get("items") or []) if isinstance(item, dict)}
+    plan = plans.get(tier)
+    if plan is None or plan["price_id"] not in price_ids:
+        plan = next((candidate for candidate in plans.values() if candidate["price_id"] in price_ids), None)
+    if plan is None: raise HTTPException(status_code=400, detail="Completed Paddle transaction does not match a configured price.")
 
     from sqlalchemy import select
-    webhook_event = (await db.execute(
-        select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
-    )).scalar_one_or_none()
+    webhook_event = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id))).scalar_one_or_none()
     if webhook_event is None:
-        payment_link_id = session_data.get("payment_link")
-        plan = next((p for p in _configured_payment_plans()
-                     if p["payment_link_id"] == payment_link_id), None)
-        if plan is None:
-            raise HTTPException(status_code=400, detail="Paid checkout does not match a configured payment link.")
-        customer = session_data.get("customer_details") or {}
-        recipient = str(customer.get("email") or session_data.get("customer_email") or "").strip()
+        customer = transaction.get("customer") or {}
+        recipient = str(customer.get("email") or "").strip()
+        customer_name = str(customer.get("name") or "").strip()
+        customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
+        if not recipient and customer_id and os.getenv("PADDLE_API_KEY", "").strip():
+            try:
+                customer_response = await asyncio.to_thread(_paddle_api_request, f"/customers/{customer_id}")
+                customer = customer_response.get("data") or {}
+                recipient = str(customer.get("email") or "").strip()
+                customer_name = str(customer.get("name") or "").strip()
+            except Exception as exc:
+                logger.error("Paddle customer lookup failed (error_type=%s)", type(exc).__name__)
+                raise HTTPException(status_code=502, detail="Paddle customer details could not be retrieved; webhook can retry.") from exc
         if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
-            raise HTTPException(status_code=400, detail="Paid checkout did not include a valid customer email.")
-        license_key = secrets.token_urlsafe(32)
-        license_obj = SoftwareLicense(
-            license_key=license_key,
-            client_name=str(customer.get("name") or recipient)[:255],
-            tier=plan["tier"],
-            max_monthly_audits=plan["monthly_audit_allowance"],
-            is_active=True,
-        )
+            raise HTTPException(status_code=400, detail="Completed Paddle transaction has no valid customer email.")
+        license_obj = SoftwareLicense(license_key=secrets.token_urlsafe(32), client_name=(customer_name or recipient)[:255],
+            tier=plan["tier"], max_monthly_audits=plan["monthly_audit_allowance"], is_active=True)
         db.add(license_obj)
         await db.flush()
-        webhook_event = PaymentWebhookEvent(
-            event_id=event_id,
-            status="email_pending",
-            license_id=license_obj.id,
-            recipient_email=recipient,
-        )
+        webhook_event = PaymentWebhookEvent(event_id=event_id, status="email_pending", license_id=license_obj.id, recipient_email=recipient)
         db.add(webhook_event)
         await db.commit()
     elif webhook_event.status == "delivered":
         return {"status": "already_processed", "event_id": event_id}
-
-    # For a prior email_pending event, retry the same stored license rather than minting a new key.
-    license_obj = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id == webhook_event.license_id)
-    )).scalar_one_or_none()
-    if license_obj is None:
-        raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
+    license_obj = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == webhook_event.license_id))).scalar_one_or_none()
+    if license_obj is None: raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
     try:
-        await asyncio.to_thread(
-            _send_license_email, webhook_event.recipient_email, license_obj.license_key,
-            license_obj.tier, license_obj.max_monthly_audits,
-        )
+        await asyncio.to_thread(_send_license_email, webhook_event.recipient_email, license_obj.license_key,
+            license_obj.tier, license_obj.max_monthly_audits)
     except Exception as exc:
         logger.error("License email delivery failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Payment was recorded; license email is pending SMTP delivery retry.") from exc
@@ -562,7 +575,6 @@ async def stripe_checkout_webhook(request: Request, db: AsyncSession = Depends(g
     webhook_event.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "provisioned", "event_id": event_id}
-
 
 def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: bytes) -> None:
     """Send a user-requested report using SMTP configuration supplied only via environment."""
