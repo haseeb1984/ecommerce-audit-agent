@@ -22,6 +22,10 @@ elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("p
 connect_args = {
     "timeout": 10.0,
     "command_timeout": 10.0,
+    # Supabase transaction-mode poolers may reuse backend connections across logical
+    # clients. Disable asyncpg statement caching to avoid stale/duplicate prepared
+    # statement names when NullPool opens a fresh client connection per invocation.
+    "statement_cache_size": 0,
     "server_settings": {
         "tcp_user_timeout": "10000"
     },
@@ -38,6 +42,8 @@ engine = create_async_engine(
     DATABASE_URL,
     poolclass=NullPool,
     connect_args=connect_args,
+    # Also disable SQLAlchemy asyncpg dialect caching for transaction-pooler safety.
+    prepared_statement_cache_size=0,
 )
 
 AsyncSessionLocal = async_sessionmaker(
