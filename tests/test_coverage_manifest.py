@@ -68,3 +68,34 @@ def test_coverage_manifest_records_each_observation_without_url_query_secrets():
     assert observation["source_url"] == "https://shop.example/product"
     assert "session" not in observation["source_url"]
     assert first["recorded_observations_count"] == 1
+
+
+
+def test_completed_checker_group_without_findings_is_not_marked_unproven_or_as_a_pass():
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/",
+        pages_checked=["https://shop.example/"],
+        findings=[
+            SimpleNamespace(category="technical_seo", status="verified"),
+        ],
+        limitations=["Google Search Console is not connected."],
+        executed_categories=["performance", "accessibility"],
+    )
+
+    performance = next(
+        item for item in manifest["checked_without_findings_categories"]
+        if item["category"] == "performance"
+    )
+    accessibility = next(
+        item for item in manifest["checked_without_findings_categories"]
+        if item["category"] == "accessibility"
+    )
+    assert performance["status"] == "checked_no_findings"
+    assert performance["checker_group_executed"] is True
+    assert accessibility["status"] == "checked_no_findings"
+    assert "indexing" in {
+        item["category"] for item in manifest["not_proven_categories"]
+    }
+    assert manifest["categories_checked"] == 3
+    assert manifest["categories_checked_without_findings"] == 2
+    assert manifest["category_execution_coverage_pct"] > manifest["category_signal_coverage_pct"]
