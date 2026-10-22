@@ -39,8 +39,43 @@ box("Audit activity",d.audits,a=>[a.domain,"#"+a.id+" · "+date(a.created_at)+" 
 box("Saved PDF reports",d.reports,r=>[r.domain,"Report #"+r.id+" · "+r.finding_count+" findings · "+date(r.created_at)]),
 box("Quota reservations",d.reservations,r=>["Reservation #"+r.id,r.status+" · Started "+date(r.created_at)+" · Expires "+date(r.expires_at)]),
 box("Payment provisioning events",d.payments,p=>[p.status,"Event "+p.event_id+" · "+(p.recipient_email||"No email recorded")+" · "+date(p.created_at)+" · Updated "+date(p.updated_at)]));$("historyPanel").scrollIntoView({behavior:"smooth"})}catch(e){status(e.message,"error")}}
-async function refreshOps(){const d=await api("/api/v1/admin/operations");const h=d.health;const states=[["Database",h.database==="healthy"?"Healthy":"Unavailable"],["Paddle API key",h.paddle_api_key_configured?"Configured":"Missing"],["Paddle webhook secret",h.paddle_webhook_secret_configured?"Configured":"Missing"],["SMTP",h.smtp_configured?"Configured":"Missing"],["Admin authentication",h.admin_key_configured?"Configured":"Missing"],["Pending payment emails",d.counts.pending_payment_email_events],["Expired reservations",d.counts.expired_quota_reservations],["Active reservations",d.counts.active_quota_reservations]];$("opsHealth").replaceChildren(...states.map(x=>metric(x[0],typeof x[1]==="number"?x[1]:x[1])));const p=$("pendingPayments");p.replaceChildren();if(!d.pending_payment_events.length)p.append(el("p","No pending payment provisioning events.","muted"));for(const x of d.pending_payment_events){const n=el("div",undefined,"historyitem");n.append(el("strong",x.status+" · Event "+x.event_id),el("span",(x.recipient_email||"No email")+" · Client #"+(x.license_id??"unassigned")+" · "+date(x.updated_at),"small"));p.append(n)}const s=$("staleReservations");s.replaceChildren();if(!d.expired_reservations.length)s.append(el("p","No expired quota reservations found.","muted"));for(const x of d.expired_reservations){const n=el("div",undefined,"historyitem");n.append(el("strong","Reservation #"+x.id),el("span","Client #"+x.license_id+" · Expired "+date(x.expires_at),"small"));s.append(n)}}async function refresh(){render(await api("/api/v1/admin/overview"));$("refresh").disabled=false;$("opsRefresh").disabled=false;await refreshOps();status("Connected. Loaded "+clients.length+" client records.","success")}
-$("connect").addEventListener("click",async()=>{key=$("adminKey").value.trim();if(!key){status("Enter the admin key configured on the backend.","error");return}$("connect").disabled=true;try{await refresh()}catch(e){key="";status(e.message,"error")}finally{$("connect").disabled=false}});
+async function refreshPackages(){
+ const d=await api("/api/v1/admin/packages"),body=$("packages");body.replaceChildren();
+ if(!d.packages.length){const tr=el("tr"),td=el("td","No packages configured.","empty");td.colSpan=6;tr.append(td);body.append(tr);return}
+ for(const p of d.packages){const tr=el("tr"),actions=el("td"),edit=el("button","Edit","secondary"),toggle=el("button",p.is_active?"Deactivate":"Activate","secondary");
+ edit.addEventListener("click",()=>editPackage(p));toggle.addEventListener("click",()=>togglePackage(p));actions.append(edit,document.createTextNode(" "),toggle);
+ tr.append(el("td",p.label+" ("+p.tier+")"),el("td",p.monthly_audit_allowance),el("td",p.max_concurrent_audits),el("td",p.price_id?"Configured":"Missing"),el("td",p.is_active?"Active":"Inactive"),actions);body.append(tr)}
+}
+function packagePayload(p){
+ const tier=window.prompt("Stable package tier ID:",p?p.tier:"");if(tier===null)return null;
+ const label=window.prompt("Display name:",p?p.label:"");if(label===null)return null;
+ const a=window.prompt("Monthly audit allowance:",String(p?p.monthly_audit_allowance:100));if(a===null)return null;
+ const c=window.prompt("Concurrent audit limit:",String(p?p.max_concurrent_audits:1));if(c===null)return null;
+ const price=window.prompt("Paddle price ID (pri_...), blank disables checkout:",p?(p.price_id||""):"");if(price===null)return null;
+ const allowance=Number(a),concurrency=Number(c);
+ if(!Number.isInteger(allowance)||allowance<1||!Number.isInteger(concurrency)||concurrency<1){status("Package limits must be positive whole numbers.","error");return null}
+ return {tier:tier.trim().toLowerCase(),label:label.trim(),monthly_audit_allowance:allowance,max_concurrent_audits:concurrency,paddle_price_id:price.trim()||null,is_active:p?!!p.is_active:true};
+}
+async function addPackage(){
+ const p=packagePayload(null);if(!p)return;
+ try{const r=await fetch("/api/v1/admin/packages",{method:"POST",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify(p)});
+ if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||"Package creation failed ("+r.status+")")}
+ await refreshPackages();status("Package created.","success")}catch(e){status(e.message,"error")}
+}
+async function editPackage(old){
+ const p=packagePayload(old);if(!p)return;p.tier=old.tier;
+ try{const r=await fetch("/api/v1/admin/packages/"+encodeURIComponent(old.tier),{method:"PATCH",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify(p)});
+ if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||"Package update failed ("+r.status+")")}
+ await refreshPackages();await refresh();status("Package updated.","success")}catch(e){status(e.message,"error")}
+}
+async function togglePackage(p){
+ try{let r;if(p.is_active){if(!window.confirm("Deactivate "+p.label+"? New checkouts will no longer be offered."))return;r=await fetch("/api/v1/admin/packages/"+encodeURIComponent(p.tier),{method:"DELETE",headers:{"X-Admin-Key":key}})}
+ else{const body={tier:p.tier,label:p.label,monthly_audit_allowance:p.monthly_audit_allowance,max_concurrent_audits:p.max_concurrent_audits,paddle_price_id:p.price_id,is_active:true};r=await fetch("/api/v1/admin/packages/"+encodeURIComponent(p.tier),{method:"PATCH",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify(body)})}
+ if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||"Package status update failed ("+r.status+")")}
+ await refreshPackages();status("Package status updated.","success")}catch(e){status(e.message,"error")}
+}
+async function refreshOps(){const d=await api("/api/v1/admin/operations");const h=d.health;const states=[["Database",h.database==="healthy"?"Healthy":"Unavailable"],["Paddle API key",h.paddle_api_key_configured?"Configured":"Missing"],["Paddle webhook secret",h.paddle_webhook_secret_configured?"Configured":"Missing"],["SMTP",h.smtp_configured?"Configured":"Missing"],["Admin authentication",h.admin_key_configured?"Configured":"Missing"],["Pending payment emails",d.counts.pending_payment_email_events],["Expired reservations",d.counts.expired_quota_reservations],["Active reservations",d.counts.active_quota_reservations]];$("opsHealth").replaceChildren(...states.map(x=>metric(x[0],typeof x[1]==="number"?x[1]:x[1])));const p=$("pendingPayments");p.replaceChildren();if(!d.pending_payment_events.length)p.append(el("p","No pending payment provisioning events.","muted"));for(const x of d.pending_payment_events){const n=el("div",undefined,"historyitem");n.append(el("strong",x.status+" · Event "+x.event_id),el("span",(x.recipient_email||"No email")+" · Client #"+(x.license_id??"unassigned")+" · "+date(x.updated_at),"small"));p.append(n)}const s=$("staleReservations");s.replaceChildren();if(!d.expired_reservations.length)s.append(el("p","No expired quota reservations found.","muted"));for(const x of d.expired_reservations){const n=el("div",undefined,"historyitem");n.append(el("strong","Reservation #"+x.id),el("span","Client #"+x.license_id+" · Expired "+date(x.expires_at),"small"));s.append(n)}}async function refresh(){render(await api("/api/v1/admin/overview"));$("refresh").disabled=false;$("opsRefresh").disabled=false;await refreshOps();await refreshPackages();status("Connected. Loaded "+clients.length+" client records.","success")}
+$("addPackage").addEventListener("click",addPackage);$("connect").addEventListener("click",async()=>{key=$("adminKey").value.trim();if(!key){status("Enter the admin key configured on the backend.","error");return}$("connect").disabled=true;try{await refresh()}catch(e){key="";status(e.message,"error")}finally{$("connect").disabled=false}});
 $("refresh").addEventListener("click",async()=>{try{await refresh()}catch(e){status(e.message,"error")}});$("opsRefresh").addEventListener("click",async()=>{try{await refreshOps();status("Operational diagnostics refreshed.","success")}catch(e){status(e.message,"error")}});$("search").addEventListener("input",drawClients);$("closeHistory").addEventListener("click",()=>$("historyPanel").hidden=true);
 })();
 </script></body></html>
