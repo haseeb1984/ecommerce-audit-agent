@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -122,7 +122,7 @@ class SaaSAdminActionLog(Base):
         Index("ix_saas_admin_action_logs_created", "created_at", "id"),
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     action = Column(String(80), nullable=False)
     entity_type = Column(String(50), nullable=False)
     entity_id = Column(String(255), nullable=True)
