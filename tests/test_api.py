@@ -1,5 +1,8 @@
 import asyncio
 import hashlib
+import hmac
+import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -7,7 +10,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 
 
@@ -375,3 +378,81 @@ async def test_report_email_uses_configured_sender_only_for_owned_report(client,
         "report_id": report_id,
         "pdf_bytes": b"%PDF-email",
     }
+
+
+@pytest.mark.asyncio
+async def test_stripe_webhook_verifies_payment_provisions_license_and_is_idempotent(client, monkeypatch):
+    secret = "stripe-test-webhook-secret"
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("STRIPE_CHECKOUT_URL_STARTER", "https://buy.stripe.com/test_starter")
+    monkeypatch.setenv("STRIPE_PAYMENT_LINK_ID_STARTER", "plink_test_starter")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    sent = []
+    def fake_send(email, license_key, tier, quota):
+        sent.append((email, license_key, tier, quota))
+    monkeypatch.setattr(main, "_send_license_email", fake_send)
+
+    event = {
+        "id": "evt_test_paid_checkout",
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "payment_status": "paid",
+            "payment_link": "plink_test_starter",
+            "customer_details": {"email": "buyer@example.com", "name": "Test Buyer"},
+        }},
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(secret.encode(), str(timestamp).encode() + b"." + body, hashlib.sha256).hexdigest()
+    headers = {"Stripe-Signature": f"t={timestamp},v1={signature}"}
+
+    first = await client.post("/api/v1/billing/stripe-webhook", content=body, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["status"] == "provisioned"
+    assert len(sent) == 1
+    assert sent[0][0] == "buyer@example.com"
+    assert sent[0][2:] == ("starter", 100)
+
+    duplicate = await client.post("/api/v1/billing/stripe-webhook", content=body, headers=headers)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
+    assert len(sent) == 1
+
+    async with AsyncSessionLocal() as db:
+        licenses = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Test Buyer")
+        )).scalars().all()
+        events = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_test_paid_checkout")
+        )).scalars().all()
+    assert len(licenses) == 1
+    assert len(events) == 1
+    assert events[0].status == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_stripe_webhook_rejects_invalid_signature_without_provisioning(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "stripe-test-webhook-secret")
+    body = b'{"id":"evt_bad","type":"checkout.session.completed","data":{"object":{"payment_status":"paid"}}}'
+    response = await client.post(
+        "/api/v1/billing/stripe-webhook",
+        content=body,
+        headers={"Stripe-Signature": f"t={int(time.time())},v1=invalid"},
+    )
+    assert response.status_code == 400
+    async with AsyncSessionLocal() as db:
+        assert (await db.execute(select(func.count(SoftwareLicense.id)))).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_public_plans_only_show_complete_configured_checkout_pairs(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_CHECKOUT_URL_STARTER", "https://buy.stripe.com/starter")
+    monkeypatch.setenv("STRIPE_PAYMENT_LINK_ID_STARTER", "plink_starter")
+    monkeypatch.setenv("STRIPE_CHECKOUT_URL_PRO", "https://buy.stripe.com/pro")
+    monkeypatch.delenv("STRIPE_PAYMENT_LINK_ID_PRO", raising=False)
+    response = await client.get("/api/v1/billing/plans")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["configured"] is True
+    assert [plan["tier"] for plan in payload["plans"]] == ["starter"]
+    assert "payment_link_id" not in payload["plans"][0]
