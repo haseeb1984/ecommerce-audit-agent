@@ -943,7 +943,6 @@ def render_audit_pdf(
         small_style,
     ))
 
-    story.append(PageBreak())
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
         "This short list orders observed high-, critical-, and medium-severity items for triage. "
