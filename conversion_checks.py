@@ -289,8 +289,8 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             "accessibility", "Form controls may lack accessible labels",
             "manual_review_required", "medium",
             f"Found {unlabeled_form_controls} input, select, or textarea control(s) without a detectable associated label, aria-label, aria-labelledby, or title in the returned HTML.",
-            "Unlabeled form controls can make checkout, search, and contact tasks harder for screen-reader users. This static check cannot fully resolve labels supplied by JavaScript or every browser accessibility-name rule, so each control needs rendered-page verification.",
-            "Associate each control with a visible label where possible, or provide a concise programmatic label for controls whose purpose is clear from context. Do not rely on placeholder text alone as the only label.",
+            "People using screen readers need each form control's purpose announced. This static check may miss labels or accessible names created by JavaScript and cannot assess whether a label is meaningful.",
+            "Give each user-facing form control a visible, programmatically associated label where possible. Use aria-label or aria-labelledby only when a visible label is not practical, and verify the rendered accessibility tree.",
             ["Inspect each flagged control in the browser accessibility tree.", "Confirm its computed accessible name describes the field purpose.", "Test the form with a screen reader and keyboard before release."],
             final_url,
         ))
@@ -499,8 +499,8 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         findings.append(_finding(
             "accessibility", "Links may have no accessible name", "manual_review_required", "medium",
             f"{unlabeled_links} same-origin link(s) had no readable text or aria-label in the returned HTML.",
-            "Links without an accessible name can make navigation difficult for screen-reader users. Source HTML alone cannot determine whether an image or another rendered technique supplies an accessible name.",
-            "Review each flagged link in the rendered page and provide a concise accessible name that describes its destination or action.",
+            "A link needs an accessible name so assistive technology users can understand its destination or purpose. This source check cannot determine whether JavaScript adds a name or whether existing link text is clear.",
+            "Provide concise link text that describes the destination or action. For icon-only links, provide an appropriate accessible name and verify the rendered accessibility tree.",
             ["Inspect flagged links in the browser accessibility tree.", "Confirm icon-only links expose an appropriate computed accessible name."],
             final_url,
         ))
@@ -509,8 +509,8 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         findings.append(_finding(
             "accessibility", "Buttons may have no accessible name", "manual_review_required", "medium",
             f"{parser.buttons_without_name} button element(s) had neither an aria-label/title nor readable text in the returned HTML.",
-            "A button without an accessible name can make an important action unclear to screen-reader users. This can also make a primary journey harder to use, but conversion impact is not measured here.",
-            "Give each button a concise accessible name that describes its action; icon-only buttons need a meaningful accessible label.",
+            "Buttons need an accessible name that describes the action. Icon-only controls and names added by JavaScript require rendered-page review.",
+            "Add meaningful visible button text where possible. For icon-only buttons, provide a concise accessible name and check it in the rendered accessibility tree.",
             ["Inspect each flagged button in the rendered page.", "Check its computed accessible name with browser accessibility tools."],
             final_url,
         ))

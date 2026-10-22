@@ -796,3 +796,22 @@ def test_render_audit_pdf_accepts_conservative_coverage_manifest():
     pdf = render_audit_pdf(result, coverage_manifest=manifest)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+def test_accessible_name_findings_from_conversion_and_accessibility_checks_consolidate():
+    from accessibility_checks import inspect_static_accessibility_signals
+    from conversion_checks import inspect_conversion_html
+    from report_generator import _consolidate_findings
+
+    html = "<html><body><button><svg></svg></button></body></html>"
+    url = "https://shop.example/"
+    findings = inspect_static_accessibility_signals(html, url) + inspect_conversion_html(html, url)
+    consolidated = _consolidate_findings(findings)
+    button_findings = [
+        item for item in consolidated
+        if item["title"] == "Buttons may have no accessible name"
+    ]
+
+    assert len(button_findings) == 1
+    assert button_findings[0]["category"] == "accessibility"
+    assert button_findings[0]["instances"] == 2
