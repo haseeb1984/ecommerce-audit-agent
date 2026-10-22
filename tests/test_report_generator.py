@@ -983,3 +983,12 @@ def test_issue_dashboard_uses_only_screenshot_for_matching_affected_url():
     # The product-page capture adds a second image object; the homepage-only
     # capture must not be reused as if it proves the product-page issue.
     assert pdf_with_matching_capture.count(b"/Subtype /Image") > pdf_without_matching_capture.count(b"/Subtype /Image")
+
+
+def test_pdf_evidence_url_redacts_credentials_query_and_fragment():
+    from report_generator import _safe_public_url
+
+    assert _safe_public_url("https://user:pass@shop.example/products?token=secret#account") is None
+    assert _safe_public_url("https://shop.example/products?token=secret#account") == "https://shop.example/products"
+    assert _safe_public_url("javascript:alert(1)") is None
+    assert _safe_public_url("https://shop.example:443/") == "https://shop.example/"
