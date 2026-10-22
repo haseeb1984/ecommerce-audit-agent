@@ -117,15 +117,16 @@ async def audit_lead(
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db)
 ):
+    license_id = license_id
     reservation_id = None
     try:
         # Reserve quota in a short transaction. No row lock is held during external API calls.
-        reservation_id, reserved_at = await reserve_audit_slot(db, license_obj.id)
+        reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
         dossier = await agent.process_lead(domain=domain, user_email=email, source=source)
 
         db_lead = AuditLead(
-            license_id=license_obj.id,
+            license_id=license_id,
             domain=dossier.audit.domain,
             mobile_score=dossier.audit.mobile_score,
             speed_index_sec=dossier.audit.speed_index_sec,
@@ -152,7 +153,7 @@ async def audit_lead(
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         await _record_operation_event(db, "quota_denied" if exc.status_code == 429 else "audit_rejected",
-                                      license_obj.id, _safe_diagnostic_host(domain), f"HTTP_{exc.status_code}")
+                                      license_id, _safe_diagnostic_host(domain), f"HTTP_{exc.status_code}")
         raise
     except Exception as exc:
         await db.rollback()
@@ -161,7 +162,7 @@ async def audit_lead(
                 await release_audit_reservation(db, reservation_id)
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
-        await _record_operation_event(db, "audit_failed", license_obj.id, _safe_diagnostic_host(domain), type(exc).__name__)
+        await _record_operation_event(db, "audit_failed", license_id, _safe_diagnostic_host(domain), type(exc).__name__)
         logger.error("Audit execution failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
@@ -181,9 +182,10 @@ async def comprehensive_audit_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    license_id = license_id
     reservation_id = None
     try:
-        reservation_id, reserved_at = await reserve_audit_slot(db, license_obj.id)
+        reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
         # Existing PageSpeed metric fields are required by the current audit_leads schema.
         # Keep this call strict rather than writing fabricated placeholder metrics.
@@ -271,7 +273,7 @@ async def comprehensive_audit_pdf(
             coverage_manifest=coverage_manifest,
         )
         report = AuditReport(
-            license_id=license_obj.id,
+            license_id=license_id,
             domain=urlsplit(target_url).hostname or metrics.domain,
             pdf_bytes=pdf_bytes,
             coverage_json=json.dumps(coverage_manifest, separators=(",", ":")),
@@ -283,7 +285,7 @@ async def comprehensive_audit_pdf(
         report_id = report.id
 
         db.add(AuditLead(
-            license_id=license_obj.id,
+            license_id=license_id,
             domain=urlsplit(target_url).hostname or metrics.domain,
             mobile_score=metrics.mobile_score,
             speed_index_sec=metrics.speed_index_sec,
@@ -318,7 +320,7 @@ async def comprehensive_audit_pdf(
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
         await _record_operation_event(db, "quota_denied" if exc.status_code == 429 else "audit_rejected",
-                                      license_obj.id, _safe_diagnostic_host(target_url), f"HTTP_{exc.status_code}")
+                                      license_id, _safe_diagnostic_host(target_url), f"HTTP_{exc.status_code}")
         raise
     except Exception as exc:
         await db.rollback()
@@ -327,7 +329,7 @@ async def comprehensive_audit_pdf(
                 await release_audit_reservation(db, reservation_id)
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
-        await _record_operation_event(db, "audit_failed", license_obj.id, _safe_diagnostic_host(target_url), type(exc).__name__)
+        await _record_operation_event(db, "audit_failed", license_id, _safe_diagnostic_host(target_url), type(exc).__name__)
         logger.error("Comprehensive audit report generation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
@@ -562,9 +564,11 @@ async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
 async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSession = Depends(get_async_db)):
     """Create a transaction using an active server-managed package price; the client cannot set amounts."""
     tier = payload.tier.strip().lower()
-    plan = next((p for p in await _db_payment_plans(db, active_only=True)
-                 if p["tier"] == tier and p.get("price_id")), None)
-    if plan is None or not os.getenv("PADDLE_API_KEY", "").strip():
+    plans = await _db_payment_plans(db, active_only=True)
+    plan = next((p for p in plans if p["tier"] == tier), None)
+    if plan is None:
+        raise HTTPException(status_code=422, detail="The selected package is unavailable.")
+    if not plan.get("price_id") or not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="This Paddle plan is not configured.")
     transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
                    "custom_data": {"license_tier": plan["tier"]}}
