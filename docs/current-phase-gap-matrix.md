@@ -11,6 +11,14 @@
 - **Not established in repository:** current backend files/routes do not demonstrate the feature; inspect connected frontend/product work before assuming no work exists elsewhere.
 - **Blocked / hold:** do not proceed until the stated dependency or approval is resolved.
 
+## Additional repository-only work completed (no deployment or workflow run)
+
+- Customer report history now uses the API's `limit`/`offset` pagination and `total` count, with a load-more control instead of silently stopping at the first 50 records.
+- The customer portal refreshes the usage meter after a successful new audit so the quota display does not remain stale.
+- Authenticated customer usage, report-list, and evidence-coverage responses now set `Cache-Control: no-store, private` and `Pragma: no-cache`. Stored PDF downloads also set `no-store` and `X-Content-Type-Options: nosniff`.
+- Added a focused report-pagination API test and assertions for privacy/cache headers. These new tests are **not executed**; no CI minutes were consumed for these commits.
+- One signature-order correction was committed after manual source inspection. Full syntax/runtime validation is still required before these changes can be treated as verified.
+
 ## Repository-only work completed without deployments/workflow minutes
 
 - Customer portal now displays a license-scoped monthly quota meter and a report-history summary/filter. The browser keeps the entered credential in memory only.
