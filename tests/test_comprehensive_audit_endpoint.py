@@ -16,9 +16,16 @@ class FakeDB:
         self.execute = AsyncMock()
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self._next_id = 500
 
     def add(self, item):
         self.added.append(item)
+
+    async def flush(self):
+        for item in self.added:
+            if hasattr(item, "id") and getattr(item, "id", None) is None:
+                item.id = self._next_id
+                self._next_id += 1
 
 
 @pytest.mark.asyncio
@@ -54,7 +61,7 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
     captured_results = []
     monkeypatch.setattr(
         main, "render_audit_pdf",
-        lambda result: (captured_results.append(result), b"%PDF-test-content")[1],
+        lambda result, **kwargs: (captured_results.append(result), b"%PDF-test-content")[1],
     )
 
     main.app.dependency_overrides[main.verify_license_or_api_key] = lambda: license_obj
@@ -80,8 +87,9 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
             for finding in reported.findings
         )
         assert any("Homepage-only phase one." in item for item in reported.limitations)
-        assert len(db.added) == 1
-        assert db.added[0].source_channel == "comprehensive_audit"
+        assert len(db.added) == 2
+        assert any(item.source_channel == "comprehensive_audit" for item in db.added)
+        assert any(item.__class__.__name__ == "AuditReport" for item in db.added)
         db.commit.assert_awaited_once()
         main.reserve_audit_slot.assert_awaited_once_with(db, license_obj.id) if hasattr(main.reserve_audit_slot, "assert_awaited_once_with") else None
     finally:
