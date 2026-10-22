@@ -223,18 +223,18 @@ async def comprehensive_audit_pdf(
                 "No usable actual-page screenshot was supplied by the Google PageSpeed response for this run; "
                 "the report uses explanatory vector illustrations only and does not fabricate website screenshots."
             )
-        pdf_bytes = (
-            render_audit_pdf(result, screenshot_data_uri=metrics.screenshot_data_uri)
-            if metrics.screenshot_data_uri
-            else render_audit_pdf(result)
-        )
-
-        # Coverage is category-level evidence, not a claim that every check passed.
+        # Calculate coverage before PDF rendering so the same manifest appears in the PDF,
+        # the saved report metadata, and the customer dashboard.
         coverage_manifest = build_coverage_manifest(
             target_url=target_url,
             pages_checked=result.pages_checked,
             findings=result.findings,
             limitations=result.limitations,
+        )
+        pdf_bytes = render_audit_pdf(
+            result,
+            screenshot_data_uri=metrics.screenshot_data_uri,
+            coverage_manifest=coverage_manifest,
         )
         report = AuditReport(
             license_id=license_obj.id,
