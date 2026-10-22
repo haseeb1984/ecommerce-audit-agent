@@ -5,10 +5,11 @@ import pytest
 from scripts.generate_live_audit_pdfs import DEFAULT_TARGETS, _allow_public_browser_request, _mobile_render_findings
 
 
-def test_live_pdf_smoke_test_defaults_only_to_designated_project_sites():
+def test_live_pdf_smoke_test_defaults_to_project_sites_and_active_ad_qa_site():
     assert DEFAULT_TARGETS == [
         "https://juncsys.com",
         "https://junctiontools.com",
+        "https://mushq.com",
     ]
 
 
