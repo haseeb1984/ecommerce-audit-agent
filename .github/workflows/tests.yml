@@ -31,6 +31,8 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/ecommerce_audit_test
       DATABASE_SSL: "false"
       GROQ_API_KEY: test-only-key
+      # Optional live PageSpeed smoke-test credential; never printed by the script.
+      GOOGLE_PAGESPEED_API_KEY: ${{ secrets.GOOGLE_PAGESPEED_API_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
