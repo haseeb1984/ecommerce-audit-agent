@@ -1106,6 +1106,23 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
     }
 
 
+@app.get("/api/v1/admin/reports/{report_id}/pdf", response_class=Response)
+async def admin_download_audit_report(report_id: int, request: Request,
+                                      db: AsyncSession = Depends(get_async_db)):
+    """Allow authenticated operators to retrieve a saved customer report for support."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    report = (await db.execute(select(AuditReport).where(AuditReport.id == report_id))).scalar_one_or_none()
+    if report is None:
+        raise HTTPException(status_code=404, detail="Audit report not found.")
+    safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
+    return Response(
+        content=report.pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"'},
+    )
+
+
 @app.get("/api/v1/admin/clients/{license_id}/history")
 async def admin_client_history(license_id: int, request: Request, limit: int = Query(100, ge=1, le=500),
                               db: AsyncSession = Depends(get_async_db)):
