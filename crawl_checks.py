@@ -17,6 +17,7 @@ import re
 from performance_checks import inspect_static_performance_signals
 from accessibility_checks import inspect_static_accessibility_signals
 from mobile_ux_checks import inspect_mobile_viewport
+from trust_checks import inspect_trust_signals
 
 from security_checks import (
     probe_common_exposure_paths,
@@ -1333,6 +1334,8 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             findings.extend(inspect_static_performance_signals(body, final_url))
             # Source-level accessibility signals are review prompts, not a WCAG verdict.
             findings.extend(inspect_static_accessibility_signals(body, final_url))
+            # Trust inventory is source-level only and explicitly avoids authenticity claims.
+            findings.extend(inspect_trust_signals(body, final_url))
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
