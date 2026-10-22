@@ -1198,7 +1198,7 @@ def render_audit_pdf(
             coverage_rows.append([
                 _p(item.get("label", item.get("category", "Unknown")), small_style),
                 _p(item.get("status", "not_proven").replace("_", " "), small_style),
-                _p(item.get("findings_in_category", 0), small_style),
+                _p(str(item.get("findings_in_category", 0)), small_style),
             ])
         coverage_table = Table(coverage_rows, colWidths=[91 * mm, 43 * mm, 34 * mm], repeatRows=1, hAlign="LEFT")
         coverage_table.setStyle(TableStyle([
