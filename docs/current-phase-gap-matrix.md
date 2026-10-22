@@ -64,3 +64,7 @@
 - Distinguish `verified`, `manual_review_required`, and `not_tested` / insufficient evidence.
 - Preserve existing license/quota reservation behavior and regression tests.
 - No production deploy, database migration, credential rotation, or infrastructure cleanup without the appropriate explicit approval.
+
+- Customer portal clears the previously displayed report list and quota summary when switching credentials, and also clears account data after a failed reconnect, reducing accidental exposure on shared browsers.
+- PDF evidence-source URLs are normalized before inclusion; userinfo, query strings, and fragments are omitted so signed links, reset tokens, tracking values, or email-like query data are not embedded in the evidence index. Added a focused helper test. The report target URL metadata/cover still warrants separate review for query-string redaction.
+- These changes are committed on `main` with `[skip ci]`; the new tests remain unexecuted under the no-workflow constraint.
