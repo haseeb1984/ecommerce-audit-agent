@@ -279,8 +279,24 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
 
     pagespeed_findings, pagespeed_limitation = await _run_pagespeed_smoke(normalized)
     result.findings.extend(pagespeed_findings)
-    if pagespeed_limitation:
-        result.limitations.append(pagespeed_limitation)
+    if pagespeed_findings:
+        # Log only validated numeric metrics parsed from Lighthouse; never log URL,
+        # API key, response body, or exception text.
+        evidence = pagespeed_findings[0].evidence
+        score_match = re.search(r"performance score of (\d+)/100", evidence)
+        speed_match = re.search(r"Speed Index of ([0-9]+(?:\.[0-9]+)?) seconds", evidence)
+        if score_match and speed_match:
+            print(
+                f"pagespeed_status=success score={score_match.group(1)}/100 "
+                f"speed_index_seconds={speed_match.group(1)}"
+            )
+        else:
+            print("pagespeed_status=unavailable reason=validated_metrics_missing")
+    else:
+        if pagespeed_limitation:
+            result.limitations.append(pagespeed_limitation)
+        reason = "secret_missing" if "not configured" in (pagespeed_limitation or "").lower() else "api_or_response_unavailable"
+        print(f"pagespeed_status=unavailable reason={reason}")
     mobile_findings, mobile_screenshot = await inspect_mobile_rendered_signals(normalized)
     result.findings.extend(mobile_findings)
     desktop_screenshot = await capture_real_website_screenshot(normalized, 1440, 1000)
