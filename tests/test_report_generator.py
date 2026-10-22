@@ -764,3 +764,35 @@ def test_finding_insight_infographic_pdf_renders_with_explicit_evidence_qualific
     pdf = render_audit_pdf(result)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+
+def test_render_audit_pdf_accepts_conservative_coverage_manifest():
+    from coverage_manifest import build_coverage_manifest
+
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-22T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        limitations=["Google Search Console was not queried."],
+        findings=[
+            AuditFinding(
+                category="indexing",
+                title="Google indexing status not verified",
+                status="not_tested",
+                severity="info",
+                evidence="Search Console was not queried.",
+                explanation="Public signals do not prove index status.",
+                recommendation="Review the URL in the authorized Search Console property.",
+            )
+        ],
+    )
+    manifest = build_coverage_manifest(
+        target_url=result.target_url,
+        pages_checked=result.pages_checked,
+        findings=result.findings,
+        limitations=result.limitations,
+    )
+    pdf = render_audit_pdf(result, coverage_manifest=manifest)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1000
