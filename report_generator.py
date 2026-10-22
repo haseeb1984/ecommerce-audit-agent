@@ -979,6 +979,7 @@ def render_audit_pdf(
     screenshot_data_uri: str | None = None,
     desktop_screenshot_data_uri: str | None = None,
     coverage_manifest: dict[str, object] | None = None,
+    issue_screenshots_by_url: dict[str, str] | None = None,
 ) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -1413,6 +1414,23 @@ def render_audit_pdf(
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ]))
             story.extend([Paragraph("<b>Affected pages and evidence index</b>", body_style), page_table, Spacer(1, 1.5 * mm)])
+        # Attach a screenshot only when the caller captured that exact affected URL.
+        # Never reuse the homepage capture as evidence for a different page.
+        screenshot_map = issue_screenshots_by_url or {}
+        matching_capture_url = next((url for url in urls if url in screenshot_map), None)
+        if matching_capture_url:
+            issue_capture = _screenshot_flowable(screenshot_map.get(matching_capture_url))
+            if issue_capture:
+                blocks.extend([
+                    Paragraph("<b>Live page evidence — captured from this affected URL</b>", body_style),
+                    _p(matching_capture_url, small_style),
+                    issue_capture,
+                ])
+            else:
+                blocks.append(_p("Issue screenshot: evidence not captured (image data was invalid or exceeded the report limit).", small_style))
+        else:
+            blocks.append(_p("Issue screenshot: evidence not captured for this affected URL in this run; the general site screenshot is not treated as proof of this finding.", small_style))
+
         if instances > 1:
             blocks.append(_p(f"Occurrences consolidated: {instances}", small_style))
         if urls:
