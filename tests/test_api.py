@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 
 
@@ -252,3 +252,56 @@ async def test_missing_domain_is_rejected(client):
         headers={"X-License-Key": "domain-validation-license"},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_report_history_is_scoped_to_authenticated_license(client):
+    owner_id = await create_license(key="report-owner")
+    other_id = await create_license(key="report-other")
+    async with AsyncSessionLocal() as db:
+        owned = AuditReport(
+            license_id=owner_id,
+            domain="owned.example",
+            pdf_bytes=b"%PDF-owned",
+            coverage_json='{"findings_total": 1}',
+            finding_count=1,
+        )
+        private = AuditReport(
+            license_id=other_id,
+            domain="private.example",
+            pdf_bytes=b"%PDF-private",
+            coverage_json='{"findings_total": 2}',
+            finding_count=2,
+        )
+        db.add_all([owned, private])
+        await db.commit()
+        await db.refresh(owned)
+        await db.refresh(private)
+        owned_id, private_id = owned.id, private.id
+
+    headers = {"X-License-Key": "report-owner"}
+    listing = await client.get("/api/v1/reports", headers=headers)
+    assert listing.status_code == 200
+    payload = listing.json()
+    assert payload["total"] == 1
+    assert [row["domain"] for row in payload["reports"]] == ["owned.example"]
+
+    pdf = await client.get(f"/api/v1/reports/{owned_id}/pdf", headers=headers)
+    assert pdf.status_code == 200
+    assert pdf.content == b"%PDF-owned"
+    assert pdf.headers["content-type"] == "application/pdf"
+
+    coverage = await client.get(f"/api/v1/reports/{owned_id}/coverage", headers=headers)
+    assert coverage.status_code == 200
+    assert coverage.json()["findings_total"] == 1
+
+    forbidden_pdf = await client.get(f"/api/v1/reports/{private_id}/pdf", headers=headers)
+    forbidden_coverage = await client.get(f"/api/v1/reports/{private_id}/coverage", headers=headers)
+    assert forbidden_pdf.status_code == 404
+    assert forbidden_coverage.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_report_history_requires_authentication(client):
+    response = await client.get("/api/v1/reports")
+    assert response.status_code == 401
