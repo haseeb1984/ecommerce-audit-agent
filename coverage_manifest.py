@@ -32,13 +32,13 @@ REQUIRED_AUDIT_CATEGORIES: tuple[tuple[str, str], ...] = (
 )
 
 CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
-    "indexing": ("indexing", "technical_seo"),
-    "aria": ("aria", "accessibility"),
-    "pixel_analytics": ("pixel_analytics", "conversion_paid_traffic", "conversion"),
-    "ecommerce": ("ecommerce", "product", "category"),
-    "dependency_advisory": ("dependency_advisory", "dependencies", "dependency"),
-    "backlink_competitor": ("backlink_competitor",),
-    "content_quality": ("content_quality", "content"),
+    "technical_seo": ("technical_seo", "on_page_seo", "indexability"),
+    "indexing": ("indexing",),
+    "aria": ("aria_alt_text",),
+    "trust": ("trust_inspector",),
+    "ecommerce": ("ecommerce_category",),
+    "dependency_advisory": ("security_dependency",),
+    "content_quality": ("duplicate_content",),
 }
 
 
