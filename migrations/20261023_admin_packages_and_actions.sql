@@ -39,3 +39,13 @@ CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
 
 CREATE INDEX IF NOT EXISTS ix_saas_admin_action_logs_created
     ON saas_admin_action_logs (created_at DESC, id DESC);
+
+-- Add billing references to existing verified webhook records for reconciliation.
+ALTER TABLE payment_webhook_events
+    ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100);
+ALTER TABLE payment_webhook_events
+    ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100);
+CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id
+    ON payment_webhook_events (transaction_id);
+CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id
+    ON payment_webhook_events (subscription_id);
