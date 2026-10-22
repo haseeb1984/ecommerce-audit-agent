@@ -1,5 +1,9 @@
+import asyncio
 import logging
+import os
+import smtplib
 import json
+from email.message import EmailMessage
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
@@ -23,6 +27,7 @@ for _logger in [logging.getLogger(), *[
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +51,11 @@ app = FastAPI(
 )
 
 agent = UniversalEcommerceAgent()
+
+
+class ReportEmailRequest(BaseModel):
+    recipient_email: str
+    recipient_confirmed: bool = False
 
 
 def custom_openapi():
@@ -361,3 +371,85 @@ async def get_audit_report_coverage(
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
     return json.loads(row.coverage_json)
+
+
+
+def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: bytes) -> None:
+    """Send a user-requested report using SMTP configuration supplied only via environment."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+
+    message = EmailMessage()
+    message["Subject"] = f"Your e-commerce audit report for {domain}"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"Your requested e-commerce audit report for {domain} is attached.\n\n"
+        "The report describes observed public signals and limitations. It does not claim "
+        "complete security, WCAG conformance, Google indexing, or measured revenue impact.\n"
+        f"Report reference: {report_id}\n"
+    )
+    message.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="pdf",
+        filename=f"ecommerce-audit-{report_id}.pdf",
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
+@app.post("/api/v1/reports/{report_id}/email")
+async def email_audit_report(
+    report_id: int,
+    payload: ReportEmailRequest,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Email a saved PDF only on explicit request and only for a report owned by this license."""
+    from sqlalchemy import select
+    recipient = payload.recipient_email.strip()
+    if not payload.recipient_confirmed:
+        raise HTTPException(status_code=422, detail="Confirm that the recipient requested this report.")
+    if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
+        raise HTTPException(status_code=422, detail="Provide a valid recipient email address.")
+    row = (await db.execute(select(AuditReport).where(
+        AuditReport.id == report_id,
+        AuditReport.license_id == license_obj.id,
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audit report not found")
+    if len(row.pdf_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Report exceeds the email attachment size limit.")
+    try:
+        await asyncio.to_thread(
+            _send_pdf_email, recipient, row.domain, row.id, row.pdf_bytes
+        )
+    except RuntimeError as exc:
+        if str(exc) == "Email delivery is not configured":
+            raise HTTPException(status_code=503, detail="Email delivery is not configured on this deployment.") from exc
+        logger.error("Report email configuration rejected (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Email delivery configuration is invalid.") from exc
+    except Exception as exc:
+        logger.error("Report email delivery failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Email delivery failed; verify SMTP configuration and retry.") from exc
+    return {"status": "sent", "report_id": row.id}
