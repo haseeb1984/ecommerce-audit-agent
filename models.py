@@ -101,6 +101,35 @@ class AuditReport(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+class SaaSPlanPackage(Base):
+    """Operator-managed plan catalogue; raw SQL endpoints use the same table schema."""
+    __tablename__ = "saas_plan_packages"
+
+    tier = Column(String(50), primary_key=True)
+    label = Column(String(100), nullable=False)
+    monthly_audit_allowance = Column(Integer, nullable=False)
+    max_concurrent_audits = Column(Integer, nullable=False)
+    paddle_price_id = Column(String(100), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class SaaSAdminActionLog(Base):
+    """Persistent operator activity log. Secret values must never be written here."""
+    __tablename__ = "saas_admin_action_logs"
+    __table_args__ = (
+        Index("ix_saas_admin_action_logs_created", "created_at", "id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action = Column(String(80), nullable=False)
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(String(255), nullable=True)
+    details_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class PaymentWebhookEvent(Base):
     """Idempotency and retry state for verified hosted-checkout webhook events."""
 
