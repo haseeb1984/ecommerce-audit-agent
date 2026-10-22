@@ -815,3 +815,45 @@ def test_accessible_name_findings_from_conversion_and_accessibility_checks_conso
     assert len(button_findings) == 1
     assert button_findings[0]["category"] == "accessibility"
     assert button_findings[0]["instances"] == 2
+
+
+def test_premium_cover_and_chapter_layout_are_present_in_generated_pdf():
+    from report_generator import PremiumCoverHero
+    from reportlab.lib.units import mm
+
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-22T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        findings=[
+            AuditFinding(
+                category="security",
+                title="Security header needs review",
+                status="manual_review_required",
+                severity="high",
+                evidence="The sampled response did not include the expected header.",
+                explanation="The returned response did not expose this baseline control.",
+                recommendation="Review the production response and add the header where appropriate.",
+            ),
+            AuditFinding(
+                category="technical_seo",
+                title="Title element observed",
+                status="verified",
+                severity="info",
+                evidence="A title element was present in the inspected HTML.",
+                explanation="Presence does not assess relevance or uniqueness.",
+                recommendation="Review the title in context.",
+            ),
+        ],
+    )
+    hero = PremiumCoverHero(result.target_url, result.checked_at_utc, 1, 2, 1)
+    assert hero.width == 174 * mm
+    assert hero.height == 65 * mm
+
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1500
+    # Verify text-selectable, client-facing chapter labels exist in the PDF stream.
+    assert b"Executive overview" in pdf
+    assert b"Recommended action plan" in pdf
+    assert b"Conversion" in pdf

@@ -16,6 +16,8 @@ from reportlab.platypus import (
     HRFlowable,
     Flowable,
     KeepTogether,
+    CondPageBreak,
+    PageBreak,
     Image,
     Paragraph,
     SimpleDocTemplate,
@@ -273,6 +275,76 @@ def _prioritized_actions(findings: list[dict[str, object]]) -> list[dict[str, ob
             str(item.get("title", "")).casefold(),
         ),
     )
+
+
+class PremiumCoverHero(Flowable):
+    """Premium editorial cover panel with evidence-based audit metrics."""
+    def __init__(self, target_url: str, generated_at: str, pages: int, findings: int, priority: int):
+        super().__init__()
+        self.target_url = target_url
+        self.generated_at = generated_at
+        self.pages = pages
+        self.findings = findings
+        self.priority = priority
+        self.width = 174 * mm
+        self.height = 65 * mm
+
+    def draw(self):
+        c = self.canv
+        c.saveState()
+        navy = colors.HexColor("#10243A")
+        blue = colors.HexColor("#1C4164")
+        teal = colors.HexColor("#49D3C4")
+        muted = colors.HexColor("#D5E2EF")
+        c.setFillColor(navy)
+        c.roundRect(0, 0, self.width, self.height, 5 * mm, fill=1, stroke=0)
+        c.setFillColor(teal)
+        c.roundRect(0, 0, 3 * mm, self.height, 1.5 * mm, fill=1, stroke=0)
+        c.setFillColor(teal)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(9 * mm, self.height - 9 * mm, "ECOMMERCE AUDIT AGENT  /  CLIENT REPORT")
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 22)
+        c.drawString(9 * mm, self.height - 21 * mm, "Ecommerce website")
+        c.drawString(9 * mm, self.height - 29 * mm, "audit")
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 8)
+        c.drawString(9 * mm, self.height - 36 * mm, "Evidence-led findings • prioritized actions • verification guidance")
+        try:
+            parts = urlsplit(self.target_url)
+            host = (parts.hostname or self.target_url).lower()
+            target = host + (parts.path.rstrip("/") if parts.path and parts.path != "/" else "")
+        except (ValueError, UnicodeError):
+            target = self.target_url
+        if len(target) > 62:
+            target = target[:59] + "..."
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(9 * mm, self.height - 44 * mm, target)
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 7)
+        c.drawString(9 * mm, self.height - 49 * mm, "GENERATED (UTC)  " + str(self.generated_at)[:25])
+        metrics = [
+            ("PAGES INSPECTED", str(self.pages)),
+            ("RECORDED FINDINGS", str(self.findings)),
+            ("HIGH / CRITICAL", str(self.priority)),
+        ]
+        gap = 2 * mm
+        left = 9 * mm
+        usable = self.width - 18 * mm
+        card_w = (usable - gap * 2) / 3
+        y = 3.5 * mm
+        for i, (label, value) in enumerate(metrics):
+            x = left + i * (card_w + gap)
+            c.setFillColor(blue)
+            c.roundRect(x, y, card_w, 10 * mm, 2 * mm, fill=1, stroke=0)
+            c.setFillColor(colors.white)
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(x + 3 * mm, y + 4.8 * mm, value)
+            c.setFillColor(muted)
+            c.setFont("Helvetica-Bold", 5.7)
+            c.drawRightString(x + card_w - 2.5 * mm, y + 5.2 * mm, label)
+        c.restoreState()
 
 
 class PhaseVisual(Flowable):
@@ -719,22 +791,36 @@ def render_audit_pdf(
         textColor=colors.HexColor("#555555"),
     )
 
+    cover_findings = _consolidate_findings(result.findings)
+    cover_priority_count = sum(
+        1 for finding in cover_findings
+        if str(finding.get("severity", "")).lower() in {"critical", "high"}
+    )
     story = [
-        Spacer(1, 12 * mm),
-        Paragraph("Ecommerce Website Audit", title_style),
-        Paragraph("Evidence-first technical checks", base["Heading2"]),
-        Spacer(1, 4 * mm),
-        _p("Website: " + result.target_url, body_style),
-        _p("Report generated (UTC): " + result.checked_at_utc, body_style),
-        _p(f"Pages successfully inspected: {len(set(result.pages_checked))}", body_style),
-        _p("Assessment scope: publicly accessible pages and responses only; the sample and exclusions are listed below.", body_style),
-        Spacer(1, 3 * mm),
-        HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#AAB7C4")),
+        PremiumCoverHero(
+            result.target_url,
+            result.checked_at_utc,
+            len(set(result.pages_checked)),
+            len(cover_findings),
+            cover_priority_count,
+        ),
+        Spacer(1, 5 * mm),
+        Paragraph("Executive overview", section_style),
+        _p(
+            "A decision-focused review of observable website signals, likely areas for human verification, and practical next steps. "
+            "This report distinguishes direct observations from items that need further evidence.",
+            body_style,
+        ),
         Paragraph("How to read this report", section_style),
-        _p("Verified means the reported observation was directly seen in the response inspected; it does not automatically mean the business impact is proven. Manual review required means human/contextual review is needed. Not tested means the check could not be completed and must not be treated as a pass or failure.", body_style),
-        _p("Severity is a triage aid, not a revenue-loss estimate. This report does not guarantee rankings, conversions, legal compliance, accessibility conformance, or security.", body_style),
-        Paragraph("Summary", section_style),
-        _p("This report checks a bounded sample of publicly accessible pages. The phase cards below are explanatory illustrations; actual desktop and mobile captures, when available, appear on the next page.", small_style),
+        _p(
+            "Verified means the stated observation was directly seen in the sampled response; it does not automatically prove business impact. "
+            "Manual review required means context or human validation is needed. Not tested / insufficient data means no pass or failure can be inferred.",
+            body_style,
+        ),
+        _p(
+            "Severity is a triage aid, not a revenue-loss estimate. This report does not guarantee rankings, conversions, legal compliance, accessibility conformance, or security.",
+            small_style,
+        ),
     ]
 
     phase_cards = [
@@ -754,6 +840,7 @@ def render_audit_pdf(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
     ]))
     story.extend([phase_table, Spacer(1, 3 * mm)])
+    story.append(PageBreak())
 
     # Validate screenshots at the PDF boundary; only actual browser captures are accepted.
     def _screenshot_flowable(data_uri: str | None):
@@ -839,6 +926,8 @@ def render_audit_pdf(
         ),
     ])
 
+    story.append(PageBreak())
+
     consolidated_findings = _consolidate_findings(result.findings)
     counts: dict[str, int] = {}
     for finding in consolidated_findings:
@@ -899,6 +988,7 @@ def render_audit_pdf(
         small_style,
     ))
 
+    story.append(PageBreak())
     story.append(Paragraph("Recommended action plan", section_style))
     story.append(_p(
         "This short list orders observed high-, critical-, and medium-severity items for triage. "
@@ -909,15 +999,18 @@ def render_audit_pdf(
     priority_actions = _prioritized_actions(consolidated_findings)
     if priority_actions:
         for action in priority_actions[:8]:
-            story.append(Paragraph(
-                f"<b>{escape(str(action['severity']).title())} — {escape(str(action['title']))}</b>",
-                finding_style,
-            ))
-            story.append(_p(
-                f"Status: {str(action['status']).replace('_', ' ').title()}",
-                small_style,
-            ))
-            story.append(_p(str(action["recommendation"]), body_style))
+            story.append(KeepTogether([
+                Paragraph(
+                    f"<b>{escape(str(action['severity']).title())} — {escape(str(action['title']))}</b>",
+                    finding_style,
+                ),
+                _p(
+                    f"Status: {str(action['status']).replace('_', ' ').title()}",
+                    small_style,
+                ),
+                _p(str(action["recommendation"]), body_style),
+                Spacer(1, 2 * mm),
+            ]))
         if len(priority_actions) > 8:
             story.append(_p(
                 f"{len(priority_actions) - 8} additional medium/high/critical action(s) are detailed in the findings section.",
@@ -933,6 +1026,7 @@ def render_audit_pdf(
     # Keep conversion-path diagnostics visible as their own commercial review area.
     # These are source-level signals, not measured ad attribution or lost-revenue figures.
     conversion_findings = _conversion_paid_traffic_findings(consolidated_findings)
+    story.append(PageBreak())
     story.append(Paragraph("Conversion & Paid-Traffic Waste Audit", section_style))
     story.append(_p(
         "This section highlights observable friction and trust signals that may deserve attention on lead, product, cart, or checkout journeys. "
@@ -961,22 +1055,27 @@ def render_audit_pdf(
     story.extend([coverage_table, Spacer(1, 3 * mm)])
     if conversion_findings:
         for item in conversion_findings:
-            story.append(Paragraph(
-                f"<b>{escape(str(item['title']))}</b>",
-                finding_style,
-            ))
-            story.append(_p(
-                f"Status: {str(item['status']).replace('_', ' ').title()} | "
-                f"Severity: {str(item['severity']).title()}",
-                small_style,
-            ))
+            conversion_block = [
+                Paragraph(
+                    f"<b>{escape(str(item['title']))}</b>",
+                    finding_style,
+                ),
+                _p(
+                    f"Status: {str(item['status']).replace('_', ' ').title()} | "
+                    f"Severity: {str(item['severity']).title()}",
+                    small_style,
+                ),
+            ]
             evidence_items = list(item.get("evidence", []))
             if evidence_items:
-                story.append(Paragraph("<b>Observed signal</b>", body_style))
-                for evidence_item in evidence_items[:3]:
-                    story.append(_p("• " + str(evidence_item), body_style))
-            story.append(Paragraph("<b>Recommended review</b>", body_style))
-            story.append(_p(str(item["recommendation"]), body_style))
+                conversion_block.append(Paragraph("<b>Observed signal</b>", body_style))
+                conversion_block.extend(_p("• " + str(evidence_item), body_style) for evidence_item in evidence_items[:2])
+            conversion_block.extend([
+                Paragraph("<b>Recommended review</b>", body_style),
+                _p(str(item["recommendation"]), body_style),
+                Spacer(1, 2 * mm),
+            ])
+            story.append(KeepTogether(conversion_block))
     else:
         story.append(_p(
             "No findings were classified under the dedicated conversion/paid-traffic category in this run. "
@@ -984,6 +1083,7 @@ def render_audit_pdf(
             body_style,
         ))
 
+    story.append(PageBreak())
     story.append(Paragraph("Findings and recommended actions", section_style))
     if not consolidated_findings:
         story.append(_p("No findings were produced. This is not proof that the website has no issues; review the limitations and check execution status.", body_style))
@@ -1113,6 +1213,9 @@ def render_audit_pdf(
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
+        # Keep each finding's visual header away from the foot of a page. The body may
+        # continue naturally, but the title/status/result panel should start as a unit.
+        story.append(CondPageBreak(52 * mm))
         story.append(KeepTogether([
             Spacer(1, 3 * mm),
             header,
