@@ -759,6 +759,10 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         )
     """))
     await db.execute(text("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_plan_packages_paddle_price_id
+        ON saas_plan_packages (paddle_price_id) WHERE paddle_price_id IS NOT NULL
+    """))
+    await db.execute(text("""
         CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
             id BIGSERIAL PRIMARY KEY,
             action VARCHAR(80) NOT NULL,
@@ -853,6 +857,12 @@ async def admin_create_package(payload: AdminPackageInput, request: Request,
     _require_admin_key(request)
     values = _validate_admin_package(payload)
     await _ensure_admin_tables(db)
+    if values["paddle_price_id"]:
+        duplicate = (await db.execute(text("""
+            SELECT tier FROM saas_plan_packages WHERE paddle_price_id=:price_id
+        """), {"price_id": values["paddle_price_id"]})).scalar_one_or_none()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="That Paddle price is already assigned to another package.")
     try:
         await db.execute(text("""
             INSERT INTO saas_plan_packages
@@ -885,6 +895,12 @@ async def admin_update_package(tier: str, payload: AdminPackageInput, request: R
     if values["tier"] != tier:
         raise HTTPException(status_code=422, detail="Package tier is immutable; create a new package to use a different identifier.")
     await _ensure_admin_tables(db)
+    if values["paddle_price_id"]:
+        duplicate = (await db.execute(text("""
+            SELECT tier FROM saas_plan_packages WHERE paddle_price_id=:price_id AND tier<>:tier
+        """), {"price_id": values["paddle_price_id"], "tier": tier})).scalar_one_or_none()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="That Paddle price is already assigned to another package.")
     result = await db.execute(text("""
         UPDATE saas_plan_packages SET label=:label,
           monthly_audit_allowance=:monthly_audit_allowance,
