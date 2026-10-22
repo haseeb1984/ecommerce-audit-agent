@@ -171,11 +171,13 @@ def _live_pdf_qa_passed(
     )
 
 
-# Keep live smoke tests limited to the two explicitly designated project test sites.
-# Third-party destinations add noise and unnecessary external requests to manual QA.
+# Keep project-owned sites plus one public ecommerce site with independently reported
+# active Meta ads in the live PDF smoke test. Ads activity is a test target signal only;
+# it does not establish spend, conversions, campaign profitability, or ROAS.
 DEFAULT_TARGETS = [
     "https://juncsys.com",
     "https://junctiontools.com",
+    "https://mushq.com",
 ]
 
 
