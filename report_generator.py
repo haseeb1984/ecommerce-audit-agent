@@ -928,58 +928,14 @@ def render_audit_pdf(
     story.append(PageBreak())
 
     consolidated_findings = _consolidate_findings(result.findings)
-    counts: dict[str, int] = {}
-    for finding in consolidated_findings:
-        status = str(finding["status"])
-        counts[status] = counts.get(status, 0) + 1
-    high_priority_count = sum(
-        1 for finding in consolidated_findings
-        if str(finding["severity"]).lower() in {"critical", "high"}
-    )
-    overview_cells = [
-        _p("CONSOLIDATED ISSUES", small_style),
-        _p("PAGES INSPECTED", small_style),
-        _p("HIGH / CRITICAL", small_style),
-    ]
-    overview_values = [
-        _p(str(len(consolidated_findings)), title_style),
-        _p(str(len(set(result.pages_checked))), title_style),
-        _p(str(high_priority_count), title_style),
-    ]
-    overview = Table(
-        [overview_cells, overview_values],
-        colWidths=[58 * mm, 58 * mm, 58 * mm],
-        hAlign="LEFT",
-    )
-    overview.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F5F9")),
-        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#C8D1DC")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D5DCE5")),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-    ]))
-    summary_rows = [["Status", "Consolidated issues"]] + [[status.replace("_", " ").title(), str(count)] for status, count in sorted(counts.items())]
-    summary = Table(summary_rows, colWidths=[120 * mm, 54 * mm], repeatRows=1, hAlign="LEFT")
-    summary.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF5")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#17365D")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C8D1DC")),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    # Keep the KPI labels and their values on the same page; otherwise ReportLab can
-    # split the two table rows across a page break and leave orphaned numbers.
     story.append(ExecutiveSummaryInfographic(consolidated_findings, len(set(result.pages_checked))))
     story.append(Spacer(1, 4 * mm))
-    story.append(KeepTogether([overview, Spacer(1, 4 * mm), summary, Spacer(1, 4 * mm)]))
-    story.extend([FindingMixInfographic(consolidated_findings), Spacer(1, 3 * mm), AuditAreaInfographic(consolidated_findings), Spacer(1, 4 * mm)])
+    story.extend([
+        FindingMixInfographic(consolidated_findings),
+        Spacer(1, 3 * mm),
+        AuditAreaInfographic(consolidated_findings),
+        Spacer(1, 4 * mm),
+    ])
     story.append(PhaseScorecardInfographic(consolidated_findings))
     story.append(Spacer(1, 4 * mm))
     story.append(_p(
