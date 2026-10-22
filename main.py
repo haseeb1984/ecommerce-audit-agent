@@ -775,6 +775,9 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         select(PaymentWebhookEvent).where(PaymentWebhookEvent.status != "delivered")
         .order_by(PaymentWebhookEvent.updated_at.asc()).limit(50)
     )).scalars().all()
+    expired_reservation_count = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
+        AuditQuotaReservation.expires_at <= now
+    ))).scalar_one()
     expired_reservations = (await db.execute(
         select(AuditQuotaReservation).where(AuditQuotaReservation.expires_at <= now)
         .order_by(AuditQuotaReservation.expires_at.asc()).limit(100)
@@ -793,7 +796,7 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         },
         "counts": {
             "pending_payment_email_events": int(pending_email or 0),
-            "expired_quota_reservations": len(expired_reservations),
+            "expired_quota_reservations": int(expired_reservation_count or 0),
             "active_quota_reservations": int(active_reservations or 0),
         },
         "pending_payment_events": [{
