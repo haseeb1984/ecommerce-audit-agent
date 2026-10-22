@@ -497,7 +497,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
 
     if unlabeled_links:
         findings.append(_finding(
-            "accessibility", "Links may lack an accessible name", "manual_review_required", "medium",
+            "accessibility", "Links may have no accessible name", "manual_review_required", "medium",
             f"{unlabeled_links} same-origin link(s) had no readable text or aria-label in the returned HTML.",
             "Links without an accessible name can make navigation difficult for screen-reader users. Source HTML alone cannot determine whether an image or another rendered technique supplies an accessible name.",
             "Review each flagged link in the rendered page and provide a concise accessible name that describes its destination or action.",
@@ -507,7 +507,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
 
     if parser.buttons_without_name:
         findings.append(_finding(
-            "conversion_paid_traffic", "Buttons may lack an accessible name", "manual_review_required", "medium",
+            "accessibility", "Buttons may have no accessible name", "manual_review_required", "medium",
             f"{parser.buttons_without_name} button element(s) had neither an aria-label/title nor readable text in the returned HTML.",
             "A button without an accessible name can make an important action unclear to screen-reader users. This can also make a primary journey harder to use, but conversion impact is not measured here.",
             "Give each button a concise accessible name that describes its action; icon-only buttons need a meaningful accessible label.",

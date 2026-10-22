@@ -48,13 +48,13 @@ def test_detects_button_without_accessible_name():
         "<html><body><button><svg></svg></button></body></html>",
         "https://shop.example/",
     )
-    finding = next(f for f in findings if f.title == "Buttons may lack an accessible name")
+    finding = next(f for f in findings if f.title == "Buttons may have no accessible name")
     assert finding.status == "manual_review_required"
     assert "1 button element(s)" in finding.evidence
 
 def test_detects_anchor_without_readable_name():
     findings = inspect_conversion_html('<html><body><a href="/cart"></a></body></html>', "https://shop.example/")
-    finding = next(f for f in findings if f.title == "Links may lack an accessible name")
+    finding = next(f for f in findings if f.title == "Links may have no accessible name")
     assert finding.status == "manual_review_required"
     assert "1 same-origin link(s)" in finding.evidence
 
