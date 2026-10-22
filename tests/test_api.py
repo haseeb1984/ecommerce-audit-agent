@@ -103,6 +103,7 @@ async def test_account_usage_reports_monthly_quota_without_exposing_license_key(
     assert "license_key" not in data
     assert "usage-private-license" not in response.text
     assert data["period_resets_at"]
+    assert response.headers["cache-control"] == "no-store, private"
 
 
 @pytest.mark.asyncio
@@ -369,16 +370,20 @@ async def test_report_history_is_scoped_to_authenticated_license(client):
     assert listing.status_code == 200
     payload = listing.json()
     assert payload["total"] == 1
+    assert listing.headers["cache-control"] == "no-store, private"
     assert [row["domain"] for row in payload["reports"]] == ["owned.example"]
 
     pdf = await client.get(f"/api/v1/reports/{owned_id}/pdf", headers=headers)
     assert pdf.status_code == 200
     assert pdf.content == b"%PDF-owned"
     assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.headers["cache-control"] == "no-store, private"
+    assert pdf.headers["x-content-type-options"] == "nosniff"
 
     coverage = await client.get(f"/api/v1/reports/{owned_id}/coverage", headers=headers)
     assert coverage.status_code == 200
     assert coverage.json()["findings_total"] == 1
+    assert coverage.headers["cache-control"] == "no-store, private"
 
     forbidden_pdf = await client.get(f"/api/v1/reports/{private_id}/pdf", headers=headers)
     forbidden_coverage = await client.get(f"/api/v1/reports/{private_id}/coverage", headers=headers)
