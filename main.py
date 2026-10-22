@@ -144,13 +144,15 @@ async def audit_lead(
         await db.commit()
         reservation_id = None
         return dossier
-    except HTTPException:
+    except HTTPException as exc:
         await db.rollback()
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        await _record_operation_event(db, "quota_denied" if exc.status_code == 429 else "audit_rejected",
+                                      license_obj.id, _safe_diagnostic_host(domain), f"HTTP_{exc.status_code}")
         raise
     except Exception as exc:
         await db.rollback()
@@ -159,6 +161,7 @@ async def audit_lead(
                 await release_audit_reservation(db, reservation_id)
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        await _record_operation_event(db, "audit_failed", license_obj.id, _safe_diagnostic_host(domain), type(exc).__name__)
         logger.error("Audit execution failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
@@ -307,13 +310,15 @@ async def comprehensive_audit_pdf(
                 "X-Audit-Report-ID": str(report_id),
             },
         )
-    except HTTPException:
+    except HTTPException as exc:
         await db.rollback()
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        await _record_operation_event(db, "quota_denied" if exc.status_code == 429 else "audit_rejected",
+                                      license_obj.id, _safe_diagnostic_host(target_url), f"HTTP_{exc.status_code}")
         raise
     except Exception as exc:
         await db.rollback()
@@ -322,6 +327,7 @@ async def comprehensive_audit_pdf(
                 await release_audit_reservation(db, reservation_id)
             except Exception as release_exc:
                 logger.error("Failed to release quota reservation (error_type=%s)", type(release_exc).__name__)
+        await _record_operation_event(db, "audit_failed", license_obj.id, _safe_diagnostic_host(target_url), type(exc).__name__)
         logger.error("Comprehensive audit report generation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(
             status_code=500,
@@ -822,6 +828,17 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
     """), {"action": action, "entity_type": entity_type,
            "entity_id": str(entity_id) if entity_id is not None else None,
            "details_json": json.dumps(details or {}, separators=(",", ":"))})
+
+
+def _safe_diagnostic_host(value: str | None) -> str | None:
+    try:
+        raw = (value or "").strip()
+        if not raw:
+            return None
+        parsed = urlsplit(raw if "://" in raw else "https://" + raw)
+        return (parsed.hostname or "")[:255] or None
+    except Exception:
+        return None
 
 
 async def _record_operation_event(db: AsyncSession, event_type: str, license_id: int | None,
