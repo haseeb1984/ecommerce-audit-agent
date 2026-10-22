@@ -987,6 +987,7 @@ def render_audit_pdf(
 ) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
+    safe_target_url = _safe_public_url(result.target_url) or "Target URL omitted (unsupported or unsafe URL)"
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -994,7 +995,7 @@ def render_audit_pdf(
         leftMargin=18 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title=f"Ecommerce website audit — {result.target_url}",
+        title=f"Ecommerce website audit — {safe_target_url}",
         author="Ecommerce Audit Agent",
         subject="Evidence-first public website audit",
     )
@@ -1028,7 +1029,7 @@ def render_audit_pdf(
     )
     story = [
         PremiumCoverHero(
-            result.target_url,
+            safe_target_url,
             result.checked_at_utc,
             len(set(result.pages_checked)),
             len(cover_findings),
@@ -1496,7 +1497,11 @@ def render_audit_pdf(
             body_style,
         ))
         for page_url in dict.fromkeys(result.pages_checked):
-            story.append(_p("• " + page_url, small_style))
+            safe_page_url = _safe_public_url(page_url)
+            if safe_page_url:
+                story.append(_p("• " + safe_page_url, small_style))
+            else:
+                story.append(_p("• Page URL omitted (unsupported or unsafe URL)", small_style))
     else:
         story.append(_p(
             "No page was recorded as successfully inspected. Findings and coverage should be interpreted accordingly.",
