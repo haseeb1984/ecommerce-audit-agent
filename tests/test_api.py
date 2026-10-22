@@ -446,6 +446,9 @@ async def test_stripe_webhook_rejects_invalid_signature_without_provisioning(cli
 
 @pytest.mark.asyncio
 async def test_public_plans_only_show_complete_configured_checkout_pairs(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
     monkeypatch.setenv("STRIPE_CHECKOUT_URL_STARTER", "https://buy.stripe.com/starter")
     monkeypatch.setenv("STRIPE_PAYMENT_LINK_ID_STARTER", "plink_starter")
     monkeypatch.setenv("STRIPE_CHECKOUT_URL_PRO", "https://buy.stripe.com/pro")
