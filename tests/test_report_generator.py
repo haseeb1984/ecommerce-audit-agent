@@ -734,7 +734,7 @@ def test_finding_insight_infographic_distinguishes_positive_review_and_priority_
     assert positive.label == "POSITIVE SIGNAL — QUALITY NOT FULLY SCORED"
     assert positive.positive is True
     assert positive.review is False
-    assert review.label == "NEEDS HUMAN REVIEW"
+    assert review.label == "VALIDATE BEFORE ACTION"
     assert review.review is True
     assert not_tested.label == "NEEDS HUMAN REVIEW"
     assert not_tested.review is True
