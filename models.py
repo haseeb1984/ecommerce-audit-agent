@@ -130,6 +130,22 @@ class SaaSAdminActionLog(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class SaaSOperationEvent(Base):
+    """Minimal diagnostic events; store error classes and hostnames, never secrets or tracebacks."""
+    __tablename__ = "saas_operation_events"
+    __table_args__ = (
+        Index("ix_saas_operation_events_created", "created_at", "id"),
+        Index("ix_saas_operation_events_type_created", "event_type", "created_at"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    event_type = Column(String(80), nullable=False)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="SET NULL"), nullable=True)
+    domain = Column(String(255), nullable=True)
+    error_type = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class PaymentWebhookEvent(Base):
     """Idempotency and retry state for verified hosted-checkout webhook events."""
 
