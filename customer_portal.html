@@ -14,6 +14,11 @@
 <header><h1>E-commerce Audit Dashboard</h1><p>Run an evidence-based public-site audit, download your PDF, and revisit saved reports.</p></header>
 <main class="wrap">
 <section class="panel">
+<h2>Purchase access</h2>
+<p class="muted">Choose a configured plan to complete checkout with Stripe. After confirmed payment, your license key is sent to the checkout email address. If no plan is shown, checkout has not been configured on this deployment.</p>
+<div id="plans" class="reports"><p class="muted">Loading available plans…</p></div>
+</section>
+<section class="panel">
 <h2>1. Connect your license</h2>
 <p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
 <div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
@@ -37,6 +42,7 @@
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
   const authHeaders = () => ({[headerName]: credential});
+  loadPlans();
   async function api(path, options = {}) {
     const response = await fetch(path, {...options, headers: {...authHeaders(), ...(options.headers || {})}});
     if (!response.ok) {
@@ -45,6 +51,28 @@
       throw new Error(message);
     }
     return response;
+  }
+  async function loadPlans() {
+    const container = $("plans");
+    try {
+      const response = await fetch("/api/v1/billing/plans");
+      if (!response.ok) throw new Error("Plan list is unavailable.");
+      const data = await response.json();
+      container.replaceChildren();
+      if (!data.plans || !data.plans.length) {
+        container.textContent = "Checkout is not configured yet. Payment-link IDs, checkout URLs, webhook signing secret, and SMTP delivery must be set by the operator.";
+        return;
+      }
+      for (const plan of data.plans) {
+        const card = document.createElement("article"); card.className = "report";
+        const meta = document.createElement("div");
+        const title = document.createElement("strong"); title.textContent = plan.label;
+        const quota = document.createElement("small"); quota.textContent = plan.monthly_audit_allowance + " audits per month";
+        meta.append(title, quota);
+        const link = document.createElement("a"); link.href = plan.checkout_url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "Continue to secure checkout";
+        card.append(meta, link); container.append(card);
+      }
+    } catch (e) { container.textContent = e.message; }
   }
   async function loadReports() {
     const response = await api("/api/v1/reports?limit=50");
