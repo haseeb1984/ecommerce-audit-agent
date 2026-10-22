@@ -14,6 +14,20 @@ CREATE TABLE IF NOT EXISTS saas_plan_packages (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_plan_packages_paddle_price_id
     ON saas_plan_packages (paddle_price_id) WHERE paddle_price_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS saas_operation_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(80) NOT NULL,
+    license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
+    domain VARCHAR(255),
+    error_type VARCHAR(120),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_saas_operation_events_created
+    ON saas_operation_events (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS ix_saas_operation_events_type_created
+    ON saas_operation_events (event_type, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
     id BIGSERIAL PRIMARY KEY,
     action VARCHAR(80) NOT NULL,
