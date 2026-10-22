@@ -919,3 +919,30 @@ def test_individual_checks_receive_check_specific_infographic_motifs():
         # Infographics expose observed counts, not invented scores or business impact.
         assert not hasattr(infographic, "score")
         assert not hasattr(infographic, "revenue_loss")
+
+
+
+def test_all_audit_finding_categories_have_report_infographic_labels():
+    from report_generator import FindingInsightInfographic
+
+    categories = [
+        "accessibility", "aria_alt_text", "broken_internal_links",
+        "conversion_paid_traffic", "crawl", "duplicate_content",
+        "ecommerce_category", "indexability", "indexing", "international_seo",
+        "llms_txt", "mobile_ux", "on_page_seo", "pixel_analytics",
+        "security", "security_cookies", "security_dependency",
+        "security_headers", "security_transport", "sitemap_xml",
+        "structured_data", "technical_seo", "trust_inspector",
+    ]
+    for category in categories:
+        infographic = FindingInsightInfographic({
+            "category": category,
+            "title": f"Coverage check for {category}",
+            "status": "not_tested",
+            "severity": "info",
+            "instances": 1,
+            "evidence": [],
+        })
+        assert infographic.category_label != "AUDIT CHECK"
+        assert infographic.check_glyph
+        assert infographic.review is True
