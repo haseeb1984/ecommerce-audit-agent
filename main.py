@@ -449,13 +449,24 @@ def _configured_payment_plans() -> list[dict]:
 
 @app.get("/api/v1/billing/plans")
 async def public_billing_plans():
-    """Expose only configured hosted checkout links; never return Stripe secrets."""
+    """Expose checkout only when payment verification and license email delivery are ready."""
+    checkout_ready = bool(
+        os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+        and os.getenv("SMTP_HOST", "").strip()
+        and os.getenv("SMTP_FROM", "").strip()
+    )
+    plans = _configured_payment_plans() if checkout_ready else []
     return {
         "checkout_provider": "Stripe Payment Links",
-        "configured": bool(_configured_payment_plans()),
+        "configured": bool(plans),
         "plans": [
             {key: value for key, value in plan.items() if key != "payment_link_id"}
-            for plan in _configured_payment_plans()
+            for plan in plans
+        ],
+        "configuration_needed": [] if plans else [
+            "Stripe webhook signing secret",
+            "SMTP host and sender",
+            "Checkout URL and Payment Link ID for each plan",
         ],
     }
 
