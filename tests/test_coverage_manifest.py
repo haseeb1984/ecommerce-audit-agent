@@ -18,7 +18,7 @@ def test_coverage_manifest_never_counts_absent_categories_as_passes():
 
     assert manifest["required_categories"] == 28
     assert manifest["pages_checked_count"] == 1
-    assert manifest["categories_with_observed_evidence"] == 3
+    assert manifest["categories_with_recorded_findings"] == 3
     assert manifest["categories_not_proven"] == 25
     assert manifest["category_signal_coverage_pct"] == 10.7
     assert manifest["coverage_level"] == "category_signal_coverage_not_individual_check_coverage"
@@ -36,7 +36,7 @@ def test_not_tested_finding_is_observed_but_never_described_as_pass():
         limitations=[],
     )
     row = next(item for item in manifest["observed_categories"] if item["category"] == "indexing")
-    assert row["status"] == "observed"
+    assert row["status"] == "recorded"
     assert row["findings_in_category"] == 1
     assert "does not prove" in manifest["important_note"]
 
