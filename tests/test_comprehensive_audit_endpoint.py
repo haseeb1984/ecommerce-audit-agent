@@ -88,7 +88,7 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
         )
         assert any("Homepage-only phase one." in item for item in reported.limitations)
         assert len(db.added) == 2
-        assert any(item.source_channel == "comprehensive_audit" for item in db.added)
+        assert any(getattr(item, "source_channel", None) == "comprehensive_audit" for item in db.added)
         assert any(item.__class__.__name__ == "AuditReport" for item in db.added)
         db.commit.assert_awaited_once()
         main.reserve_audit_slot.assert_awaited_once_with(db, license_obj.id) if hasattr(main.reserve_audit_slot, "assert_awaited_once_with") else None
