@@ -15,7 +15,7 @@
 <main class="wrap">
 <section class="panel">
 <h2>Purchase access</h2>
-<p class="muted">Choose a configured plan to complete checkout with Stripe. After confirmed payment, your license key is sent to the checkout email address. If no plan is shown, checkout has not been configured on this deployment.</p>
+<p class="muted">Choose a configured plan to pay securely through Paddle. After confirmed payment, your license key is sent to the checkout email address. If no plan is shown, checkout has not been configured on this deployment.</p>
 <div id="plans" class="reports"><p class="muted">Loading available plans…</p></div>
 </section>
 <section class="panel">
@@ -60,7 +60,7 @@
       const data = await response.json();
       container.replaceChildren();
       if (!data.plans || !data.plans.length) {
-        container.textContent = "Checkout is not configured yet. Payment-link IDs, checkout URLs, webhook signing secret, and SMTP delivery must be set by the operator.";
+        container.textContent = "Paddle checkout is not configured yet. Paddle API key, price IDs, webhook secret, and SMTP delivery must be set by the operator.";
         return;
       }
       for (const plan of data.plans) {
@@ -69,7 +69,16 @@
         const title = document.createElement("strong"); title.textContent = plan.label;
         const quota = document.createElement("small"); quota.textContent = plan.monthly_audit_allowance + " audits per month";
         meta.append(title, quota);
-        const link = document.createElement("a"); link.href = plan.checkout_url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "Continue to secure checkout";
+        const link = document.createElement("button"); link.type = "button"; link.textContent = "Continue to Paddle checkout";
+        link.addEventListener("click", async () => {
+          link.disabled = true;
+          try {
+            const checkoutResponse = await fetch("/api/v1/billing/checkout", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tier: plan.tier})});
+            const checkoutData = await checkoutResponse.json();
+            if (!checkoutResponse.ok || !checkoutData.checkout_url) throw new Error(checkoutData.detail || "Unable to start Paddle checkout.");
+            window.location.assign(checkoutData.checkout_url);
+          } catch (error) { setStatus("connectStatus", error.message, "error"); link.disabled = false; }
+        });
         card.append(meta, link); container.append(card);
       }
     } catch (e) { container.textContent = e.message; }
