@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -77,3 +77,25 @@ class AuditQuotaReservation(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
     license = relationship("SoftwareLicense", back_populates="audit_reservations")
+
+
+class AuditReport(Base):
+    """Persist the exact customer PDF and auditable metadata under its owning license."""
+
+    __tablename__ = "audit_reports"
+    __table_args__ = (
+        Index("ix_audit_reports_license_created", "license_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    domain = Column(String(255), nullable=False, index=True)
+    pdf_bytes = Column(LargeBinary, nullable=False)
+    coverage_json = Column(Text, nullable=False, default="{}")
+    finding_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
