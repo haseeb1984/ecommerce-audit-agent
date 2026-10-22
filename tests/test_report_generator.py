@@ -946,3 +946,40 @@ def test_all_audit_finding_categories_have_report_infographic_labels():
         assert infographic.category_label != "AUDIT CHECK"
         assert infographic.check_glyph
         assert infographic.review is True
+
+
+def test_issue_dashboard_uses_only_screenshot_for_matching_affected_url():
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-22T00:00:00+00:00",
+        pages_checked=["https://shop.example/", "https://shop.example/products/item"],
+        findings=[
+            AuditFinding(
+                category="on_page_seo",
+                title="Missing product page meta description",
+                status="verified",
+                severity="medium",
+                evidence="Product page source had no meta description.",
+                explanation="Search previews may have less useful context.",
+                recommendation="Write a unique description aligned with the product page.",
+                verification_steps=["Inspect the rendered head and recheck the URL."],
+                source_url="https://shop.example/products/item",
+            )
+        ],
+    )
+    screenshot = _tiny_png_data_uri()
+    pdf_with_matching_capture = render_audit_pdf(
+        result,
+        screenshot_data_uri=screenshot,
+        issue_screenshots_by_url={"https://shop.example/products/item": screenshot},
+    )
+    pdf_without_matching_capture = render_audit_pdf(
+        result,
+        screenshot_data_uri=screenshot,
+        issue_screenshots_by_url={"https://shop.example/": screenshot},
+    )
+    assert pdf_with_matching_capture.startswith(b"%PDF-")
+    assert pdf_without_matching_capture.startswith(b"%PDF-")
+    # The product-page capture adds a second image object; the homepage-only
+    # capture must not be reused as if it proves the product-page issue.
+    assert pdf_with_matching_capture.count(b"/Subtype /Image") > pdf_without_matching_capture.count(b"/Subtype /Image")
