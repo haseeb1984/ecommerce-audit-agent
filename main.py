@@ -9,6 +9,7 @@ import smtplib
 import json
 from email.message import EmailMessage
 from pathlib import Path
+from datetime import datetime, timezone
 import re
 from urllib.parse import urlsplit
 
@@ -509,7 +510,7 @@ async def stripe_checkout_webhook(request: Request, db: AsyncSession = Depends(g
             raise HTTPException(status_code=400, detail="Paid checkout does not match a configured payment link.")
         customer = session_data.get("customer_details") or {}
         recipient = str(customer.get("email") or session_data.get("customer_email") or "").strip()
-        if len(recipient) > 254 or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", recipient):
+        if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
             raise HTTPException(status_code=400, detail="Paid checkout did not include a valid customer email.")
         license_key = secrets.token_urlsafe(32)
         license_obj = SoftwareLicense(
@@ -547,7 +548,7 @@ async def stripe_checkout_webhook(request: Request, db: AsyncSession = Depends(g
         logger.error("License email delivery failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Payment was recorded; license email is pending SMTP delivery retry.") from exc
     webhook_event.status = "delivered"
-    webhook_event.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    webhook_event.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "provisioned", "event_id": event_id}
 
