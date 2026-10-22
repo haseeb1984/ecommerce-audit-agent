@@ -117,7 +117,7 @@ async def audit_lead(
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db)
 ):
-    license_id = license_id
+    license_id = license_obj.id
     reservation_id = None
     try:
         # Reserve quota in a short transaction. No row lock is held during external API calls.
@@ -182,7 +182,7 @@ async def comprehensive_audit_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    license_id = license_id
+    license_id = license_obj.id
     reservation_id = None
     try:
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
