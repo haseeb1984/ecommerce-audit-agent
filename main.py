@@ -1079,7 +1079,7 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
         client_rows.append({
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
             "is_active": bool(item.is_active),
-            "expired": bool(item.expires_at and item.expires_at < now),
+            "expired": bool(item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "expires_at": item.expires_at.isoformat() if item.expires_at else None,
             "monthly_limit": int(item.max_monthly_audits or 0),
