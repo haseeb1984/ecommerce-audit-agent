@@ -16,11 +16,11 @@ def test_coverage_manifest_never_counts_absent_categories_as_passes():
         limitations=["Search Console was not queried."],
     )
 
-    assert manifest["required_categories"] == 21
+    assert manifest["required_categories"] == 28
     assert manifest["pages_checked_count"] == 1
     assert manifest["categories_with_observed_evidence"] == 3
-    assert manifest["categories_not_proven"] == 18
-    assert manifest["category_signal_coverage_pct"] == 14.3
+    assert manifest["categories_not_proven"] == 25
+    assert manifest["category_signal_coverage_pct"] == 10.7
     assert manifest["coverage_level"] == "category_signal_coverage_not_individual_check_coverage"
     assert {item["category"] for item in manifest["not_proven_categories"]} >= {
         "pixel_analytics", "backlink_competitor", "content_quality"
