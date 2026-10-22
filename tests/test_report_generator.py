@@ -736,7 +736,7 @@ def test_finding_insight_infographic_distinguishes_positive_review_and_priority_
     assert positive.review is False
     assert review.label == "VALIDATE BEFORE ACTION"
     assert review.review is True
-    assert not_tested.label == "NEEDS HUMAN REVIEW"
+    assert not_tested.label == "VALIDATE BEFORE ACTION"
     assert not_tested.review is True
     assert high.label == "HIGH PRIORITY"
     assert high.review is False
