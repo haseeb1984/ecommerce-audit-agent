@@ -305,3 +305,73 @@ async def test_report_history_is_scoped_to_authenticated_license(client):
 async def test_report_history_requires_authentication(client):
     response = await client.get("/api/v1/reports")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_portal_is_served(client):
+    response = await client.get("/app")
+    assert response.status_code == 200
+    assert "E-commerce Audit Dashboard" in response.text
+    assert 'id="auditForm"' in response.text
+
+
+@pytest.mark.asyncio
+async def test_report_email_requires_explicit_recipient_confirmation(client, monkeypatch):
+    license_id = await create_license(key="email-report-license")
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="mail.example",
+            pdf_bytes=b"%PDF-email",
+            coverage_json="{}",
+            finding_count=0,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    response = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers={"X-License-Key": "email-report-license"},
+        json={"recipient_email": "customer@example.com", "recipient_confirmed": False},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_report_email_uses_configured_sender_only_for_owned_report(client, monkeypatch):
+    license_id = await create_license(key="email-report-owner")
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="mail.example",
+            pdf_bytes=b"%PDF-email",
+            coverage_json="{}",
+            finding_count=0,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    sent = {}
+    def fake_send(recipient, domain, report_id_arg, pdf_bytes):
+        sent.update({
+            "recipient": recipient, "domain": domain,
+            "report_id": report_id_arg, "pdf_bytes": pdf_bytes,
+        })
+    monkeypatch.setattr(main, "_send_pdf_email", fake_send)
+    response = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers={"X-License-Key": "email-report-owner"},
+        json={"recipient_email": "customer@example.com", "recipient_confirmed": True},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "sent", "report_id": report_id}
+    assert sent == {
+        "recipient": "customer@example.com",
+        "domain": "mail.example",
+        "report_id": report_id,
+        "pdf_bytes": b"%PDF-email",
+    }
