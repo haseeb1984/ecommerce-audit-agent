@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 # Mirrors the agreed requirements categories. A category counts as observed only when
 # this run emits at least one finding in that category. This is deliberately conservative:
@@ -65,6 +67,35 @@ def build_coverage_manifest(
         (observed if count else not_proven).append(entry)
 
     total = len(REQUIRED_AUDIT_CATEGORIES)
+    recorded_observations = []
+    for finding in findings:
+        category = str(getattr(finding, "category", "unknown"))
+        title = str(getattr(finding, "title", "Untitled check"))
+        source_url = getattr(finding, "source_url", None)
+        safe_source_url = None
+        if source_url:
+            try:
+                parts = urlsplit(str(source_url))
+                if parts.scheme in {"http", "https"} and parts.hostname:
+                    host = parts.hostname.lower()
+                    if ":" in host and not host.startswith("["):
+                        host = f"[{host}]"
+                    port = parts.port
+                    if port and port not in (80, 443):
+                        host = f"{host}:{port}"
+                    safe_source_url = urlunsplit((parts.scheme.lower(), host, parts.path or "/", "", ""))
+            except ValueError:
+                safe_source_url = None
+        identity = "|".join((category, title, safe_source_url or ""))
+        recorded_observations.append({
+            "check_id": hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16],
+            "category": category,
+            "title": title,
+            "status": str(getattr(finding, "status", "unknown")),
+            "severity": str(getattr(finding, "severity", "info")),
+            "source_url": safe_source_url,
+        })
+
     return {
         "schema_version": 1,
         "coverage_level": "category_signal_coverage_not_individual_check_coverage",
@@ -74,6 +105,8 @@ def build_coverage_manifest(
         "findings_total": len(findings),
         "finding_status_counts": dict(Counter(str(getattr(item, "status", "unknown")) for item in findings)),
         "finding_category_counts": dict(raw_counts),
+        "recorded_observations": recorded_observations,
+        "recorded_observations_count": len(recorded_observations),
         "required_categories": total,
         "categories_with_observed_evidence": len(observed),
         "categories_not_proven": len(not_proven),
