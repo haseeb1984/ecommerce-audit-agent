@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import os
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import AuditLead, AuditQuotaReservation, SoftwareLicense
@@ -69,39 +69,67 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
             )
         ).scalar_one()
 
-        # Concurrency limits are opt-in per tier. When unset, preserve the existing
-        # unlimited-concurrency behavior; malformed configured values fail closed.
-        tier = str(license_obj.tier or "starter").strip().upper()
-        raw_concurrency_limit = os.getenv(f"LICENSE_MAX_CONCURRENT_AUDITS_{tier}", "").strip()
-        if raw_concurrency_limit:
-            try:
-                concurrency_limit = int(raw_concurrency_limit)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Audit concurrency configuration is invalid.",
-                ) from exc
-            if concurrency_limit < 1:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Audit concurrency configuration is invalid.",
+        # Prefer the operator-managed package limit; fall back to environment configuration
+        # for deployments that have not yet opened the admin console/migrated the package table.
+        tier_key = str(license_obj.tier or "starter").strip().lower()
+        concurrency_limit = None
+        try:
+            await db.execute(text("""
+                CREATE TABLE IF NOT EXISTS saas_plan_packages (
+                    tier VARCHAR(50) PRIMARY KEY,
+                    label VARCHAR(100) NOT NULL,
+                    monthly_audit_allowance INTEGER NOT NULL CHECK (monthly_audit_allowance BETWEEN 1 AND 10000000),
+                    max_concurrent_audits INTEGER NOT NULL CHECK (max_concurrent_audits BETWEEN 1 AND 10000),
+                    paddle_price_id VARCHAR(100),
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
-            active_count = (
-                await db.execute(
-                    select(func.count(AuditQuotaReservation.id)).where(
-                        AuditQuotaReservation.license_id == license_id,
-                        AuditQuotaReservation.expires_at > now,
-                    )
-                )
-            ).scalar_one()
+            """))
+            package_result = await db.execute(text("""
+                SELECT max_concurrent_audits FROM saas_plan_packages WHERE tier=:tier
+            """), {"tier": tier_key})
+            package_limit = package_result.scalar_one_or_none()
+            if package_limit is not None:
+                concurrency_limit = int(package_limit)
+        except Exception as exc:
+            # Fail closed only for malformed limits; a missing/unavailable optional package table
+            # retains environment-based limits so a dashboard migration cannot disable audits.
+            await db.rollback()
+            logger_type = type(exc).__name__
+            # No exception text or connection details are logged.
+            import logging
+            logging.getLogger("audit_service").warning(
+                "Package concurrency lookup unavailable (error_type=%s)", logger_type
+            )
+            result = await db.execute(
+                select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+                .with_for_update().execution_options(populate_existing=True)
+            )
+            license_obj = result.scalar_one_or_none()
+            if license_obj is None or not license_obj.is_active or (license_obj.expires_at and license_obj.expires_at < now):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                    detail="License is invalid, expired, or revoked.")
+        if concurrency_limit is None:
+            tier_env = tier_key.upper()
+            raw_concurrency_limit = os.getenv(f"LICENSE_MAX_CONCURRENT_AUDITS_{tier_env}", "").strip()
+            if raw_concurrency_limit:
+                try:
+                    concurrency_limit = int(raw_concurrency_limit)
+                except ValueError as exc:
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                        detail="Audit concurrency configuration is invalid.") from exc
+                if concurrency_limit < 1:
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                        detail="Audit concurrency configuration is invalid.")
+        if concurrency_limit is not None:
+            active_count = (await db.execute(select(func.count(AuditQuotaReservation.id)).where(
+                AuditQuotaReservation.license_id == license_id,
+                AuditQuotaReservation.expires_at > now,
+            ))).scalar_one()
             if active_count >= concurrency_limit:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=(
-                        f"Concurrent audit limit of {concurrency_limit} "
-                        f"reached for tier '{license_obj.tier}'."
-                    ),
-                )
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Concurrent audit limit of {concurrency_limit} reached for tier '{license_obj.tier}'.")
 
         if successful_count + pending_count >= license_obj.max_monthly_audits:
             raise HTTPException(
