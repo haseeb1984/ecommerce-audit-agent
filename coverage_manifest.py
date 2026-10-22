@@ -58,23 +58,40 @@ def build_coverage_manifest(
     pages_checked: list[str],
     findings: list[Any],
     limitations: list[str],
+    executed_categories: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Build category-level evidence coverage, not a false per-check success percentage."""
+    """Build coverage from findings plus explicit records of successfully run check groups.
+
+    A category can have no findings because its checks found no signal. It is only
+    marked checked_no_findings when the caller confirms the corresponding checker ran;
+    otherwise it remains not_proven. This is category-level, not individual-check coverage.
+    """
     raw_counts = Counter(str(getattr(item, "category", "unknown")) for item in findings)
+    executed = set(executed_categories)
     observed: list[dict[str, Any]] = []
+    checked_without_findings: list[dict[str, Any]] = []
     not_proven: list[dict[str, Any]] = []
     for category, label in REQUIRED_AUDIT_CATEGORIES:
         accepted = CATEGORY_ALIASES.get(category, (category,))
         count = sum(raw_counts.get(name, 0) for name in accepted)
+        is_executed = category in executed or any(alias in executed for alias in accepted)
+        status = "recorded" if count else "checked_no_findings" if is_executed else "not_proven"
         entry = {
             "category": category,
             "label": label,
-            "status": "recorded" if count else "not_proven",
+            "status": status,
             "findings_in_category": count,
+            "checker_group_executed": is_executed,
         }
-        (observed if count else not_proven).append(entry)
+        if count:
+            observed.append(entry)
+        elif is_executed:
+            checked_without_findings.append(entry)
+        else:
+            not_proven.append(entry)
 
     total = len(REQUIRED_AUDIT_CATEGORIES)
+    categories_checked = len(observed) + len(checked_without_findings)
     recorded_observations = []
     for finding in findings:
         category = str(getattr(finding, "category", "unknown"))
@@ -117,16 +134,21 @@ def build_coverage_manifest(
         "recorded_observations_count": len(recorded_observations),
         "required_categories": total,
         "categories_with_recorded_findings": len(observed),
+        "categories_checked_without_findings": len(checked_without_findings),
+        "categories_checked": categories_checked,
         "categories_not_proven": len(not_proven),
         "category_signal_coverage_pct": round(100 * len(observed) / total, 1) if total else None,
+        "category_execution_coverage_pct": round(100 * categories_checked / total, 1) if total else None,
         "observed_categories": observed,
+        "checked_without_findings_categories": checked_without_findings,
         "not_proven_categories": not_proven,
         "limitations": list(dict.fromkeys(limitations)),
         "important_note": (
-            "This percentage measures categories with at least one recorded signal only. "
-            "It does not prove that every check inside a category ran or passed. "
-            "Categories without findings are not counted as passes. Google indexing, "
-            "field Core Web Vitals, full WCAG conformance, complete software composition "
+            "category_signal_coverage_pct measures categories with at least one recorded finding. "
+            "category_execution_coverage_pct measures category groups whose checker completed, "
+            "including groups that found no issue; neither percentage proves every individual "
+            "check ran or passed. Categories not explicitly marked as executed remain not proven. "
+            "Google indexing,             "field Core Web Vitals, full WCAG conformance, complete software composition "
             "analysis, live event attribution, and measured CPC/ROAS/revenue impact require "
             "additional authorized data or separate testing."
         ),
