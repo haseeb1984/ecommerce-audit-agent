@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent
+from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
@@ -763,6 +763,24 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         ON saas_plan_packages (paddle_price_id) WHERE paddle_price_id IS NOT NULL
     """))
     await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS saas_operation_events (
+            id BIGSERIAL PRIMARY KEY,
+            event_type VARCHAR(80) NOT NULL,
+            license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
+            domain VARCHAR(255),
+            error_type VARCHAR(120),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    await db.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_saas_operation_events_created
+        ON saas_operation_events (created_at DESC, id DESC)
+    """))
+    await db.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_saas_operation_events_type_created
+        ON saas_operation_events (event_type, created_at DESC)
+    """))
+    await db.execute(text("""
         CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
             id BIGSERIAL PRIMARY KEY,
             action VARCHAR(80) NOT NULL,
@@ -804,6 +822,31 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
     """), {"action": action, "entity_type": entity_type,
            "entity_id": str(entity_id) if entity_id is not None else None,
            "details_json": json.dumps(details or {}, separators=(",", ":"))})
+
+
+async def _record_operation_event(db: AsyncSession, event_type: str, license_id: int | None,
+                                domain: str | None, error_type: str | None) -> None:
+    """Best-effort diagnostic write with only a hostname and exception class; never store traceback/secrets."""
+    try:
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS saas_operation_events (
+                id BIGSERIAL PRIMARY KEY,
+                event_type VARCHAR(80) NOT NULL,
+                license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
+                domain VARCHAR(255),
+                error_type VARCHAR(120),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await db.execute(text("""
+            INSERT INTO saas_operation_events (event_type, license_id, domain, error_type)
+            VALUES (:event_type, :license_id, :domain, :error_type)
+        """), {"event_type": event_type[:80], "license_id": license_id,
+               "domain": (domain or "")[:255] or None, "error_type": (error_type or "")[:120] or None})
+        await db.commit()
+    except Exception as log_exc:
+        await db.rollback()
+        logger.warning("Operation diagnostic write failed (error_type=%s)", type(log_exc).__name__)
 
 
 async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[dict]:
@@ -1010,6 +1053,16 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
     active_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at > now
     ))).scalar_one()
+    recent_failures = (await db.execute(text("""
+        SELECT id, event_type, license_id, domain, error_type, created_at
+        FROM saas_operation_events
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        ORDER BY created_at DESC, id DESC LIMIT 100
+    """))).mappings().all()
+    failures_24h = (await db.execute(text("""
+        SELECT COUNT(*) FROM saas_operation_events
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+    """))).scalar_one()
     return {
         "generated_at": now.isoformat(),
         "health": {
@@ -1023,7 +1076,13 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
             "pending_payment_email_events": int(pending_email or 0),
             "expired_quota_reservations": int(expired_reservation_count or 0),
             "active_quota_reservations": int(active_reservations or 0),
+            "audit_and_operation_failures_24h": int(failures_24h or 0),
         },
+        "recent_failures": [{
+            "id": row["id"], "event_type": row["event_type"], "license_id": row["license_id"],
+            "domain": row["domain"], "error_type": row["error_type"],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        } for row in recent_failures],
         "pending_payment_events": [{
             "event_id": item.event_id,
             "status": item.status,
