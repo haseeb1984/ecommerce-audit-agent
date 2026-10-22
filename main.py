@@ -772,6 +772,10 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """))
+    await db.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_saas_admin_action_logs_created
+        ON saas_admin_action_logs (created_at DESC, id DESC)
+    """))
     # Migrate configured legacy plans without overwriting operator-managed values.
     for plan in _configured_payment_plans():
         tier = plan["tier"]
