@@ -36,9 +36,11 @@
 </section>
 <section class="panel">
 <h2>3. Saved reports</h2>
-<div class="row" aria-label="Report summary"><div class="status"><strong id="reportCount">0</strong><br><span class="muted">Saved reports loaded</span></div><div class="status"><strong id="findingCount">0</strong><br><span class="muted">Findings across loaded reports</span></div></div>
+<div class="row" aria-label="Report summary"><div class="status"><strong id="reportCount">0 / 0</strong><br><span class="muted">Reports loaded / total</span></div><div class="status"><strong id="findingCount">0</strong><br><span class="muted">Findings across loaded reports</span></div></div>
 <label for="reportFilter">Filter reports by website</label><input id="reportFilter" type="text" maxlength="253" placeholder="Search a domain, e.g. example.com" autocomplete="off" aria-describedby="reportFilterHelp"><p id="reportFilterHelp" class="muted">Filtering happens in this page; it does not send your search text to the server.</p>
 <div id="reports" class="reports" aria-live="polite"><p class="muted">Connect to load reports for your license.</p></div>
+<p id="reportPaginationStatus" class="muted" aria-live="polite"></p>
+<button id="loadMoreReports" class="secondary" type="button" hidden>Load more reports</button>
 </section>
 <p class="muted">Coverage notes: observed findings and crawl limits are shown as evidence; a missing finding is not automatically a pass. Public checks do not establish full WCAG conformance, Google indexing status, complete vulnerability coverage, event attribution, or measured revenue loss.</p>
 </main>
@@ -48,6 +50,9 @@
   let credential = "";
   let headerName = "X-License-Key";
   let loadedReports = [];
+  let reportsTotal = 0;
+  const reportPageSize = 50;
+  let reportsLoading = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -117,13 +122,27 @@
       if (!Number.isNaN(expiry.getTime())) $("usageSummary").textContent += " · Expires " + expiry.toLocaleDateString();
     }
   }
-  async function loadReports() {
-    const response = await api("/api/v1/reports?limit=50");
-    const data = await response.json();
-    loadedReports = Array.isArray(data.reports) ? data.reports : [];
-    $("reportCount").textContent = String(loadedReports.length);
-    $("findingCount").textContent = String(loadedReports.reduce((sum, item) => sum + Math.max(0, Number(item.finding_count) || 0), 0));
-    renderReports();
+  async function loadReports({reset = true} = {}) {
+    if (reportsLoading) return;
+    reportsLoading = true;
+    const moreButton = $("loadMoreReports");
+    moreButton.disabled = true;
+    try {
+      const offset = reset ? 0 : loadedReports.length;
+      const response = await api("/api/v1/reports?limit=" + reportPageSize + "&offset=" + offset);
+      const data = await response.json();
+      const page = Array.isArray(data.reports) ? data.reports : [];
+      loadedReports = reset ? page : [...loadedReports, ...page];
+      reportsTotal = Math.max(0, Number(data.total) || 0);
+      $("reportCount").textContent = String(loadedReports.length) + " / " + String(reportsTotal);
+      $("findingCount").textContent = String(loadedReports.reduce((sum, item) => sum + Math.max(0, Number(item.finding_count) || 0), 0));
+      $("reportPaginationStatus").textContent = "Loaded " + loadedReports.length + " of " + reportsTotal + " saved reports.";
+      moreButton.hidden = loadedReports.length >= reportsTotal;
+      renderReports();
+    } finally {
+      reportsLoading = false;
+      moreButton.disabled = false;
+    }
   }
   function renderReports() {
     const container = $("reports"); container.replaceChildren();
@@ -172,6 +191,10 @@
     }
   }
   $("reportFilter").addEventListener("input", renderReports);
+  $("loadMoreReports").addEventListener("click", async () => {
+    try { await loadReports({reset:false}); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
   $("connect").addEventListener("click", async () => {
     credential = $("credential").value.trim(); headerName = $("authType").value;
     if (!credential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
@@ -193,6 +216,7 @@
       const reportId = response.headers.get("X-Audit-Report-ID");
       setStatus("auditStatus", "PDF generated and saved to your account." + (reportId ? " Report ID: " + reportId + "." : "") + " Refreshing report history.", "success");
       await loadReports();
+      await loadUsage();
     } catch (e) { setStatus("auditStatus", e.message, "error"); }
     finally { button.disabled = false; }
   });
