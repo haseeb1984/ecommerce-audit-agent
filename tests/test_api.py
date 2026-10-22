@@ -387,6 +387,36 @@ async def test_report_history_is_scoped_to_authenticated_license(client):
 
 
 @pytest.mark.asyncio
+async def test_report_history_supports_stable_offset_pagination(client):
+    license_id = await create_license(key="report-pagination-owner")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            AuditReport(
+                license_id=license_id,
+                domain=f"shop-{index}.example",
+                pdf_bytes=b"%PDF-test",
+                coverage_json="{}",
+                finding_count=index,
+                created_at=datetime.now(timezone.utc) + timedelta(seconds=index),
+            )
+            for index in range(3)
+        ])
+        await db.commit()
+
+    headers = {"X-License-Key": "report-pagination-owner"}
+    first = await client.get("/api/v1/reports?limit=2&offset=0", headers=headers)
+    second = await client.get("/api/v1/reports?limit=2&offset=2", headers=headers)
+    assert first.status_code == second.status_code == 200
+    first_data, second_data = first.json(), second.json()
+    assert first_data["total"] == second_data["total"] == 3
+    assert len(first_data["reports"]) == 2
+    assert len(second_data["reports"]) == 1
+    first_ids = {row["id"] for row in first_data["reports"]}
+    second_ids = {row["id"] for row in second_data["reports"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+@pytest.mark.asyncio
 async def test_report_history_requires_authentication(client):
     response = await client.get("/api/v1/reports")
     assert response.status_code == 401
