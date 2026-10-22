@@ -113,7 +113,7 @@ async def test_comprehensive_audit_returns_real_rendered_pdf_with_findings(monke
         assert b"%%EOF" in response.content[-2048:]
         assert len(response.content) > 1000
         assert len(db.added) == 2
-        assert any(item.source_channel == "comprehensive_audit" for item in db.added)
+        assert any(getattr(item, "source_channel", None) == "comprehensive_audit" for item in db.added)
         assert any(item.__class__.__name__ == "AuditReport" for item in db.added)
         db.commit.assert_awaited_once()
     finally:
