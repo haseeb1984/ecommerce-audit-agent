@@ -231,7 +231,7 @@ def test_different_remediation_is_not_merged_into_same_issue():
 
 
 
-def _tiny_png_data_uri():
+def _tiny_png_data_uri(rgb=(255, 255, 255)):
     # Construct a valid 1x1 RGB PNG with the standard library; no external image is fetched.
     import base64
     import struct
@@ -244,7 +244,7 @@ def _tiny_png_data_uri():
     png = (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff"))
+        + chunk(b"IDAT", zlib.compress(bytes([0, *rgb])))
         + chunk(b"IEND", b"")
     )
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
@@ -971,7 +971,7 @@ def test_issue_dashboard_uses_only_screenshot_for_matching_affected_url():
     pdf_with_matching_capture = render_audit_pdf(
         result,
         screenshot_data_uri=screenshot,
-        issue_screenshots_by_url={"https://shop.example/products/item": screenshot},
+        issue_screenshots_by_url={"https://shop.example/products/item": _tiny_png_data_uri((0, 0, 0))},
     )
     pdf_without_matching_capture = render_audit_pdf(
         result,
