@@ -1051,6 +1051,50 @@ async def admin_dashboard_page():
 
 
 
+@app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
+async def admin_reconcile_payment(event_id: str, request: Request,
+                                  db: AsyncSession = Depends(get_async_db)):
+    """Read-only Paddle reconciliation for a previously verified transaction."""
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    from sqlalchemy import select
+    event = (await db.execute(select(PaymentWebhookEvent).where(
+        PaymentWebhookEvent.event_id == event_id
+    ))).scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Payment event not found.")
+    if not event.transaction_id:
+        raise HTTPException(status_code=409, detail="This event has no recorded Paddle transaction ID; automatic reconciliation is unavailable.")
+    if not os.getenv("PADDLE_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="Paddle API is not configured.")
+    try:
+        response = await asyncio.to_thread(_paddle_api_request, f"/transactions/{event.transaction_id}")
+        data = response.get("data") or {}
+        details = data.get("details") or {}
+        totals = details.get("totals") or {}
+        result = {
+            "event_id": event.event_id,
+            "recorded_email_status": event.status,
+            "recorded_transaction_id": event.transaction_id,
+            "paddle_transaction_id": data.get("id"),
+            "paddle_status": data.get("status"),
+            "subscription_id": data.get("subscription_id"),
+            "currency_code": data.get("currency_code"),
+            "total_minor_units": totals.get("total"),
+            "customer_id": data.get("customer_id"),
+        }
+        await _write_admin_log(db, "payment.reconciled", "payment_event", event.event_id, {
+            "transaction_id": event.transaction_id, "paddle_status": str(data.get("status") or "")[:40]})
+        await db.commit()
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.error("Admin payment reconciliation failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Paddle transaction reconciliation failed; verify the API configuration.") from exc
+
+
 @app.get("/api/v1/admin/operations")
 async def admin_operations(request: Request, db: AsyncSession = Depends(get_async_db)):
     """Private operational diagnostics without exposing environment values or customer secrets."""
