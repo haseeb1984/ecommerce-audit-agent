@@ -41,6 +41,7 @@ REQUIRED_AUDIT_CATEGORIES: tuple[tuple[str, str], ...] = (
 )
 
 CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
+    "aria": ("aria", "accessibility", "aria_alt_text"),
     "technical_seo": ("technical_seo", "on_page_seo"),
     "crawlability": ("crawl",),
     "indexing": ("indexing",),
