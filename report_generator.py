@@ -418,52 +418,158 @@ class PhaseVisual(Flowable):
 
 
 class FindingInsightInfographic(Flowable):
-    """Compact visual summary that translates one recorded finding into an at-a-glance signal."""
+    """Per-finding infographic with a category-specific glyph and evidence-derived labels."""
+    CATEGORY_LABELS = {
+        "performance": "PERFORMANCE / SPEED",
+        "static_performance": "PERFORMANCE / SPEED",
+        "mobile_ux": "MOBILE EXPERIENCE",
+        "accessibility": "ACCESSIBILITY / WCAG",
+        "aria": "ACCESSIBILITY / ARIA",
+        "aria_alt_text": "ACCESSIBLE CONTENT",
+        "security": "SECURITY CONTROL",
+        "security_headers": "SECURITY HEADERS",
+        "security_exposure": "SECURITY EXPOSURE",
+        "security_transport": "TLS / TRANSPORT",
+        "security_cookies": "COOKIE SECURITY",
+        "security_dependency": "DEPENDENCY RISK",
+        "dependency_advisory": "DEPENDENCY ADVISORY",
+        "seo": "SEARCH OPTIMIZATION",
+        "on_page_seo": "ON-PAGE SEO",
+        "technical_seo": "TECHNICAL SEO",
+        "structured_data": "STRUCTURED DATA",
+        "indexing": "INDEXING",
+        "crawlability": "CRAWLABILITY",
+        "indexability": "INDEXABILITY",
+        "robots_txt": "ROBOTS.TXT",
+        "sitemap_xml": "XML SITEMAP",
+        "llms_txt": "LLMS.TXT",
+        "conversion_paid_traffic": "CONVERSION / PAID TRAFFIC",
+        "pixel_analytics": "PIXEL / ANALYTICS",
+        "conversion": "CONVERSION JOURNEY",
+        "paid_traffic": "PAID-TRAFFIC SIGNAL",
+        "trust": "SHOPPER TRUST",
+        "trust_inspector": "TRUST SIGNALS",
+        "ecommerce": "ECOMMERCE EXPERIENCE",
+        "ecommerce_category": "CATALOG / CATEGORY",
+        "broken_internal_links": "INTERNAL LINKS",
+        "content_quality": "CONTENT QUALITY",
+        "duplicate_content": "DUPLICATE CONTENT",
+        "international_seo": "INTERNATIONAL SEO",
+        "robots": "CRAWL DIRECTIVES",
+        "crawl": "SITE AVAILABILITY",
+    }
+
     def __init__(self, finding: dict[str, object]):
         super().__init__()
         self.width = 174 * mm
-        self.height = 23 * mm
+        self.height = 27 * mm
         self.finding = finding
         self.status = str(finding.get("status", "")).lower()
         self.severity = str(finding.get("severity", "info")).lower()
         self.category = str(finding.get("category", "")).lower()
+        self.title = str(finding.get("title", "Audit check"))
+        self.evidence_count = len(finding.get("evidence", []) or [])
+        self.instances = int(finding.get("instances", 1) or 1)
         self.positive = self.severity == "info" and self.status == "verified"
         self.review = self.status in {"manual_review_required", "not_tested", "insufficient_data"}
         self.label = "POSITIVE SIGNAL — QUALITY NOT FULLY SCORED" if self.positive else ("VALIDATE BEFORE ACTION" if self.review else f"{self.severity.upper()} PRIORITY")
         self.color = "#23734D" if self.positive else ("#9A6700" if self.review else {"critical":"#8E2430","high":"#D3543C","medium":"#B87912","low":"#2E83A6"}.get(self.severity,"#6D7C91"))
         self.action = "Keep the signal; validate quality separately." if self.positive else ("Collect the missing evidence before concluding." if self.review else "Review evidence and prioritize an appropriate corrective action.")
+        self.category_label = self.CATEGORY_LABELS.get(self.category, self.category.replace("_", " ").upper()[:34] or "AUDIT CHECK")
+        self.glyph = (
+            "speed" if self.category in {"performance", "static_performance", "mobile_ux"} else
+            "accessibility" if self.category in {"accessibility", "aria", "aria_alt_text"} else
+            "security" if self.category.startswith("security") or self.category in {"dependency_advisory", "security_dependency"} else
+            "seo" if any(term in self.category for term in ("seo", "index", "crawl", "robots", "sitemap", "llms", "structured_data", "content_quality", "duplicate_content", "broken_internal_links")) else
+            "conversion" if any(term in self.category for term in ("conversion", "paid_traffic", "pixel", "ecommerce", "trust")) else
+            "check"
+        )
 
     def draw(self):
         c = self.canv
         c.saveState()
+        ink = colors.HexColor("#17365D")
+        muted = colors.HexColor("#536579")
+        accent = colors.HexColor(self.color)
         c.setFillColor(colors.HexColor("#F7F9FC"))
         c.setStrokeColor(colors.HexColor("#D8E1EC"))
         c.roundRect(0, 0, self.width, self.height, 5, fill=1, stroke=1)
-        c.setFillColor(colors.HexColor(self.color))
+        c.setFillColor(accent)
         c.roundRect(0, 0, 4 * mm, self.height, 2, fill=1, stroke=0)
-        c.setFillColor(colors.HexColor(self.color))
-        c.circle(12 * mm, 15 * mm, 3 * mm, fill=1, stroke=0)
-        c.setStrokeColor(colors.white)
-        c.setLineWidth(1.2)
-        if self.positive:
-            c.line(10.5 * mm, 15 * mm, 11.7 * mm, 13.8 * mm)
-            c.line(11.7 * mm, 13.8 * mm, 14 * mm, 16.3 * mm)
-        elif self.review:
-            c.setFillColor(colors.white)
-            c.setFont("Helvetica-Bold", 8)
-            c.drawCentredString(12 * mm, 12.2 * mm, "?")
+
+        # Category-specific vector icon: this identifies the kind of check, not a score.
+        ix, iy = 12 * mm, 14 * mm
+        c.setFillColor(colors.HexColor("#E5EDF6"))
+        c.circle(ix, iy, 6 * mm, fill=1, stroke=0)
+        c.setStrokeColor(accent)
+        c.setFillColor(accent)
+        c.setLineWidth(1.25)
+        if self.glyph == "speed":
+            c.line(ix - 3.5 * mm, iy - 1.5 * mm, ix - 1.5 * mm, iy + 1.5 * mm)
+            c.line(ix - 1.5 * mm, iy + 1.5 * mm, ix + .5 * mm, iy)
+            c.line(ix + .5 * mm, iy, ix + 3.5 * mm, iy + 3 * mm)
+            c.circle(ix + 3.5 * mm, iy + 3 * mm, .7 * mm, fill=1, stroke=0)
+        elif self.glyph == "accessibility":
+            c.circle(ix, iy + 2.7 * mm, 1.1 * mm, fill=0, stroke=1)
+            c.line(ix, iy + 1.4 * mm, ix, iy - 1.5 * mm)
+            c.line(ix - 3 * mm, iy + .5 * mm, ix + 3 * mm, iy + .5 * mm)
+            c.line(ix, iy - 1.5 * mm, ix - 2.5 * mm, iy - 4 * mm)
+            c.line(ix, iy - 1.5 * mm, ix + 2.5 * mm, iy - 4 * mm)
+        elif self.glyph == "security":
+            p = c.beginPath()
+            p.moveTo(ix, iy + 4 * mm)
+            p.lineTo(ix + 3.5 * mm, iy + 2.5 * mm)
+            p.lineTo(ix + 2.8 * mm, iy - 2 * mm)
+            p.lineTo(ix, iy - 4 * mm)
+            p.lineTo(ix - 2.8 * mm, iy - 2 * mm)
+            p.lineTo(ix - 3.5 * mm, iy + 2.5 * mm)
+            p.close()
+            c.drawPath(p, fill=0, stroke=1)
+            c.line(ix - 1.8 * mm, iy, ix - .4 * mm, iy - 1.4 * mm)
+            c.line(ix - .4 * mm, iy - 1.4 * mm, ix + 2 * mm, iy + 1.5 * mm)
+        elif self.glyph == "seo":
+            c.circle(ix - 1 * mm, iy + 1 * mm, 2.5 * mm, fill=0, stroke=1)
+            c.line(ix + .8 * mm, iy - .8 * mm, ix + 3.7 * mm, iy - 3.7 * mm)
+        elif self.glyph == "conversion":
+            c.line(ix - 3.5 * mm, iy + 3 * mm, ix + 3.5 * mm, iy + 3 * mm)
+            c.line(ix - 2.5 * mm, iy + .5 * mm, ix + 2.5 * mm, iy + .5 * mm)
+            c.line(ix - 1.2 * mm, iy - 2 * mm, ix + 1.2 * mm, iy - 2 * mm)
+            c.line(ix - 3.5 * mm, iy + 3 * mm, ix - 1.2 * mm, iy - 2 * mm)
+            c.line(ix + 3.5 * mm, iy + 3 * mm, ix + 1.2 * mm, iy - 2 * mm)
         else:
-            c.line(12 * mm, 16.5 * mm, 12 * mm, 13.5 * mm)
-            c.circle(12 * mm, 11.7 * mm, .5 * mm, fill=1, stroke=0)
-        c.setFillColor(colors.HexColor(self.color))
-        c.setFont("Helvetica-Bold", 7.5)
-        c.drawString(20 * mm, 16 * mm, self.label[:72])
-        c.setFillColor(colors.HexColor("#26384B"))
-        c.setFont("Helvetica", 7)
-        c.drawString(20 * mm, 9 * mm, self.action[:110])
-        c.setFillColor(colors.HexColor("#536579"))
+            c.rect(ix - 2.5 * mm, iy - 3 * mm, 5 * mm, 6 * mm, fill=0, stroke=1)
+            c.line(ix - 1.4 * mm, iy + 1 * mm, ix + 1.4 * mm, iy + 1 * mm)
+            c.line(ix - 1.4 * mm, iy - 1 * mm, ix + 1.4 * mm, iy - 1 * mm)
+
+        c.setFillColor(ink)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(22 * mm, 20 * mm, self.category_label[:46])
+        c.setFillColor(accent)
+        c.setFont("Helvetica-Bold", 7.2)
+        c.drawString(22 * mm, 14 * mm, self.label[:72])
+        c.setFillColor(muted)
         c.setFont("Helvetica", 6.5)
-        c.drawRightString(self.width - 4 * mm, 3.5 * mm, "Evidence-led signal • not a fabricated score")
+        c.drawString(22 * mm, 7.5 * mm, self.title[:78])
+
+        # Evidence counts come from this finding; no invented score or performance metric.
+        metric_x = self.width - 48 * mm
+        c.setStrokeColor(colors.HexColor("#D8E1EC"))
+        c.line(metric_x - 3 * mm, 4 * mm, metric_x - 3 * mm, self.height - 4 * mm)
+        c.setFillColor(ink)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(metric_x, 16 * mm, str(self.instances))
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 5.8)
+        c.drawString(metric_x, 11 * mm, "OCCURRENCE(S)")
+        c.setFillColor(ink)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(metric_x + 19 * mm, 16 * mm, str(self.evidence_count))
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 5.8)
+        c.drawString(metric_x + 19 * mm, 11 * mm, "EVIDENCE ITEM(S)")
+        c.setFillColor(muted)
+        c.setFont("Helvetica", 5.8)
+        c.drawRightString(self.width - 4 * mm, 2.5 * mm, "Observed record • no fabricated score")
         c.restoreState()
 
 
