@@ -847,7 +847,7 @@ async def admin_client_history(license_id: int, request: Request, limit: int = Q
                           "expires_at": r.expires_at.isoformat(),
                           "status": "active" if r.expires_at > datetime.now(timezone.utc) else "expired"}
                          for r in reservations],
-        "payments": [{"event_id": p.event_id, "status": p.status,
+        "payments": [{"event_id": p.event_id, "status": p.status, "recipient_email": p.recipient_email,
                       "created_at": p.created_at.isoformat() if p.created_at else None,
                       "updated_at": p.updated_at.isoformat() if p.updated_at else None} for p in payments],
     }
