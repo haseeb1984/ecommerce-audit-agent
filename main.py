@@ -1,4 +1,8 @@
 import asyncio
+import hashlib
+import hmac
+import secrets
+import time
 import logging
 import os
 import smtplib
@@ -24,7 +28,7 @@ for _logger in [logging.getLogger(), *[
             _handler.addFilter(_redaction_filter)
             _seen_handlers.add(id(_handler))
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Response
+from fastapi import FastAPI, Depends, HTTPException, Query, Response, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -33,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport
+from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
@@ -372,6 +376,180 @@ async def get_audit_report_coverage(
         raise HTTPException(status_code=404, detail="Audit report not found")
     return json.loads(row.coverage_json)
 
+
+
+
+def _send_license_email(recipient: str, license_key: str, tier: str, quota: int) -> None:
+    """Deliver a newly provisioned license using SMTP secrets from the runtime environment."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+    message = EmailMessage()
+    message["Subject"] = "Your E-commerce Audit Agent license"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        "Your payment has been confirmed and your audit license is ready.\n\n"
+        f"License key: {license_key}\nPlan: {tier}\nMonthly audit allowance: {quota}\n\n"
+        "Open the customer dashboard, choose License key, and paste this key to access your reports. "
+        "Keep this key private; it authorizes use of your account allowance."
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
+def _configured_payment_plans() -> list[dict]:
+    plans = []
+    for tier, label, default_quota in (
+        ("STARTER", "Starter", 100),
+        ("PRO", "Pro", 500),
+        ("BUSINESS", "Business", 2000),
+    ):
+        checkout_url = os.getenv(f"STRIPE_CHECKOUT_URL_{tier}", "").strip()
+        payment_link_id = os.getenv(f"STRIPE_PAYMENT_LINK_ID_{tier}", "").strip()
+        if not checkout_url or not payment_link_id:
+            continue
+        parsed = urlsplit(checkout_url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            continue
+        try:
+            quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
+        except ValueError:
+            continue
+        if quota < 1:
+            continue
+        plans.append({
+            "tier": tier.lower(),
+            "label": label,
+            "monthly_audit_allowance": quota,
+            "checkout_url": checkout_url,
+            "payment_link_id": payment_link_id,
+        })
+    return plans
+
+
+@app.get("/api/v1/billing/plans")
+async def public_billing_plans():
+    """Expose only configured hosted checkout links; never return Stripe secrets."""
+    return {
+        "checkout_provider": "Stripe Payment Links",
+        "configured": bool(_configured_payment_plans()),
+        "plans": [
+            {key: value for key, value in plan.items() if key != "payment_link_id"}
+            for plan in _configured_payment_plans()
+        ],
+    }
+
+
+@app.post("/api/v1/billing/stripe-webhook")
+async def stripe_checkout_webhook(request: Request, db: AsyncSession = Depends(get_async_db)):
+    """Verify Stripe signatures, provision paid licenses idempotently, and email the key."""
+    secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    signature = request.headers.get("stripe-signature", "")
+    if not secret or not signature:
+        raise HTTPException(status_code=503 if not secret else 400,
+                            detail="Payment webhook is not configured or signature is missing.")
+    raw_body = await request.body()
+    try:
+        parts = {}
+        for item in signature.split(","):
+            key, value = item.split("=", 1)
+            parts.setdefault(key, []).append(value)
+        timestamp = int(parts["t"][0])
+        signatures = parts.get("v1", [])
+    except (KeyError, ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="Malformed payment signature.")
+    if abs(int(time.time()) - timestamp) > 300:
+        raise HTTPException(status_code=400, detail="Payment signature timestamp is outside the allowed window.")
+    signed_payload = str(timestamp).encode() + b"." + raw_body
+    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
+        raise HTTPException(status_code=400, detail="Invalid payment signature.")
+    try:
+        event = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid payment event JSON.")
+    event_id = str(event.get("id", ""))
+    event_type = str(event.get("type", ""))
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Payment event ID is missing.")
+    if event_type not in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+        return {"status": "ignored", "event_id": event_id}
+    session_data = event.get("data", {}).get("object", {})
+    if session_data.get("payment_status") != "paid":
+        return {"status": "payment_not_complete", "event_id": event_id}
+
+    from sqlalchemy import select
+    webhook_event = (await db.execute(
+        select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+    )).scalar_one_or_none()
+    if webhook_event is None:
+        payment_link_id = session_data.get("payment_link")
+        plan = next((p for p in _configured_payment_plans()
+                     if p["payment_link_id"] == payment_link_id), None)
+        if plan is None:
+            raise HTTPException(status_code=400, detail="Paid checkout does not match a configured payment link.")
+        customer = session_data.get("customer_details") or {}
+        recipient = str(customer.get("email") or session_data.get("customer_email") or "").strip()
+        if len(recipient) > 254 or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", recipient):
+            raise HTTPException(status_code=400, detail="Paid checkout did not include a valid customer email.")
+        license_key = secrets.token_urlsafe(32)
+        license_obj = SoftwareLicense(
+            license_key=license_key,
+            client_name=str(customer.get("name") or recipient)[:255],
+            tier=plan["tier"],
+            max_monthly_audits=plan["monthly_audit_allowance"],
+            is_active=True,
+        )
+        db.add(license_obj)
+        await db.flush()
+        webhook_event = PaymentWebhookEvent(
+            event_id=event_id,
+            status="email_pending",
+            license_id=license_obj.id,
+            recipient_email=recipient,
+        )
+        db.add(webhook_event)
+        await db.commit()
+    elif webhook_event.status == "delivered":
+        return {"status": "already_processed", "event_id": event_id}
+
+    # For a prior email_pending event, retry the same stored license rather than minting a new key.
+    license_obj = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == webhook_event.license_id)
+    )).scalar_one_or_none()
+    if license_obj is None:
+        raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
+    try:
+        await asyncio.to_thread(
+            _send_license_email, webhook_event.recipient_email, license_obj.license_key,
+            license_obj.tier, license_obj.max_monthly_audits,
+        )
+    except Exception as exc:
+        logger.error("License email delivery failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Payment was recorded; license email is pending SMTP delivery retry.") from exc
+    webhook_event.status = "delivered"
+    webhook_event.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    await db.commit()
+    return {"status": "provisioned", "event_id": event_id}
 
 
 def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: bytes) -> None:
