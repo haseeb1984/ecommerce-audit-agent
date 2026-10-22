@@ -11,6 +11,14 @@
 - **Not established in repository:** current backend files/routes do not demonstrate the feature; inspect connected frontend/product work before assuming no work exists elsewhere.
 - **Blocked / hold:** do not proceed until the stated dependency or approval is resolved.
 
+## Repository-only work completed without deployments/workflow minutes
+
+- Customer portal now displays a license-scoped monthly quota meter and a report-history summary/filter. The browser keeps the entered credential in memory only.
+- `GET /api/v1/account/usage` reports monthly limit, completed usage, active reservations, remaining quota, reset date, and license active/expiry metadata; it never returns the license key.
+- PDF download object URLs are revoked after a short delay instead of immediately, reducing browser download race conditions.
+- Added focused API tests for quota accounting and unauthenticated access. These tests were **added but not executed** because workflow minutes were intentionally conserved.
+- These commits use GitHub's `[skip ci]` convention. No Vercel deployment was requested or performed. The latest prior test workflow still needs a future authorized run before these changes can be considered CI-verified.
+
 ## Current evidence-backed matrix
 
 | Workstream | Evidence in current repository | Status | Acceptance gate / next action |
