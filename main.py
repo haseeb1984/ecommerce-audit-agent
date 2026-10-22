@@ -891,6 +891,11 @@ async def admin_update_package(tier: str, payload: AdminPackageInput, request: R
     if result.rowcount == 0:
         await db.rollback()
         raise HTTPException(status_code=404, detail="Package not found.")
+    # Keep existing licenses on this tier consistent with the package monthly allowance.
+    await db.execute(text("""
+        UPDATE software_licenses SET max_monthly_audits=:allowance
+        WHERE LOWER(tier)=:tier
+    """), {"allowance": values["monthly_audit_allowance"], "tier": tier})
     await _write_admin_log(db, "package.updated", "package", tier, {
         "monthly_audit_allowance": values["monthly_audit_allowance"],
         "max_concurrent_audits": values["max_concurrent_audits"], "is_active": values["is_active"]})
@@ -1105,7 +1110,7 @@ async def admin_client_history(license_id: int, request: Request, limit: int = Q
                      "created_at": r.created_at.isoformat() if r.created_at else None} for r in reports],
         "reservations": [{"id": r.id, "created_at": r.created_at.isoformat(),
                           "expires_at": r.expires_at.isoformat(),
-                          "status": "active" if r.expires_at > datetime.now(timezone.utc) else "expired"}
+                          "status": "active" if (r.expires_at.replace(tzinfo=timezone.utc) if r.expires_at.tzinfo is None else r.expires_at) > datetime.now(timezone.utc) else "expired"}
                          for r in reservations],
         "payments": [{"event_id": p.event_id, "status": p.status, "recipient_email": p.recipient_email,
                       "created_at": p.created_at.isoformat() if p.created_at else None,
@@ -1155,6 +1160,12 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
         if key not in allowed:
             raise HTTPException(status_code=422, detail="Unsupported client update field.")
         setattr(client, key, value)
+    await _write_admin_log(db, "client.updated", "client", client.id, {
+        "fields": sorted(changes),
+        "tier": client.tier,
+        "max_monthly_audits": client.max_monthly_audits,
+        "is_active": bool(client.is_active),
+    })
     await db.commit()
     await db.refresh(client)
     # Deliberately log only the client ID and field names, never license keys or credentials.
