@@ -159,6 +159,8 @@ class PaymentWebhookEvent(Base):
         nullable=True,
         index=True,
     )
+    transaction_id = Column(String(100), nullable=True, index=True)
+    subscription_id = Column(String(100), nullable=True, index=True)
     recipient_email = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
