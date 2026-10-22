@@ -650,11 +650,19 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             tier=plan["tier"], max_monthly_audits=plan["monthly_audit_allowance"], is_active=True)
         db.add(license_obj)
         await db.flush()
-        webhook_event = PaymentWebhookEvent(event_id=event_id, status="email_pending", license_id=license_obj.id, recipient_email=recipient)
+        webhook_event = PaymentWebhookEvent(
+            event_id=event_id, status="email_pending", license_id=license_obj.id,
+            recipient_email=recipient, transaction_id=str(transaction.get("id") or "")[:100] or None,
+            subscription_id=str(transaction.get("subscription_id") or "")[:100] or None,
+        )
         db.add(webhook_event)
         await db.commit()
     elif webhook_event.status == "delivered":
         return {"status": "already_processed", "event_id": event_id}
+    if not webhook_event.transaction_id:
+        webhook_event.transaction_id = str(transaction.get("id") or "")[:100] or None
+    if not webhook_event.subscription_id:
+        webhook_event.subscription_id = str(transaction.get("subscription_id") or "")[:100] or None
     license_obj = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == webhook_event.license_id))).scalar_one_or_none()
     if license_obj is None: raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
     try:
@@ -800,6 +808,11 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         CREATE INDEX IF NOT EXISTS ix_saas_admin_action_logs_created
         ON saas_admin_action_logs (created_at DESC, id DESC)
     """))
+    # Keep billing references available when this code is upgraded against an existing database.
+    await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100)"))
+    await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id ON payment_webhook_events (transaction_id)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id ON payment_webhook_events (subscription_id)"))
     # Migrate configured legacy plans without overwriting operator-managed values.
     for plan in _configured_payment_plans():
         tier = plan["tier"]
@@ -1102,6 +1115,8 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         } for row in recent_failures],
         "pending_payment_events": [{
             "event_id": item.event_id,
+            "transaction_id": item.transaction_id,
+            "subscription_id": item.subscription_id,
             "status": item.status,
             "license_id": item.license_id,
             "recipient_email": item.recipient_email,
@@ -1231,6 +1246,7 @@ async def admin_client_history(license_id: int, request: Request, limit: int = Q
                           "status": "active" if (r.expires_at.replace(tzinfo=timezone.utc) if r.expires_at.tzinfo is None else r.expires_at) > datetime.now(timezone.utc) else "expired"}
                          for r in reservations],
         "payments": [{"event_id": p.event_id, "status": p.status, "recipient_email": p.recipient_email,
+                      "transaction_id": p.transaction_id, "subscription_id": p.subscription_id,
                       "created_at": p.created_at.isoformat() if p.created_at else None,
                       "updated_at": p.updated_at.isoformat() if p.updated_at else None} for p in payments],
     }
