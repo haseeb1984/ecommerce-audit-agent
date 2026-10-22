@@ -21,9 +21,16 @@ class FakeDB:
         self.execute = AsyncMock()
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self._next_id = 500
 
     def add(self, item):
         self.added.append(item)
+
+    async def flush(self):
+        for item in self.added:
+            if hasattr(item, "id") and getattr(item, "id", None) is None:
+                item.id = self._next_id
+                self._next_id += 1
 
 
 @pytest.mark.asyncio
@@ -105,8 +112,9 @@ async def test_comprehensive_audit_returns_real_rendered_pdf_with_findings(monke
         assert response.content.startswith(b"%PDF-")
         assert b"%%EOF" in response.content[-2048:]
         assert len(response.content) > 1000
-        assert len(db.added) == 1
-        assert db.added[0].source_channel == "comprehensive_audit"
+        assert len(db.added) == 2
+        assert any(item.source_channel == "comprehensive_audit" for item in db.added)
+        assert any(item.__class__.__name__ == "AuditReport" for item in db.added)
         db.commit.assert_awaited_once()
     finally:
         main.app.dependency_overrides.clear()
