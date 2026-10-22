@@ -1348,14 +1348,77 @@ def render_audit_pdf(
         blocks = []
         instances = int(finding["instances"])
         urls = list(finding["source_urls"])
+        evidence_items = list(finding["evidence"])
+
+        # Dashboard-style result panel for every individual issue. These are
+        # counts of recorded evidence, not guessed pass rates or site-wide coverage.
+        dashboard_metrics = [
+            ("CHECK STATUS", status.replace("_", " ").upper()),
+            ("OCCURRENCES", str(instances)),
+            ("AFFECTED URLS", str(len(urls))),
+            ("EVIDENCE ITEMS", str(len(evidence_items))),
+        ]
+        dashboard_cells = []
+        for metric_index, (metric_label, metric_value) in enumerate(dashboard_metrics):
+            dashboard_cells.append([
+                Paragraph(
+                    f'<font color="#536579"><b>{escape(metric_label)}</b></font>',
+                    ParagraphStyle(
+                        f"FindingMetricLabel{index}_{metric_index}", parent=small_style,
+                        fontSize=6.3, leading=7.2, alignment=TA_CENTER,
+                    ),
+                ),
+                Paragraph(
+                    f'<font color="{status_colors.get(status, "#6D7C91")}"><b>{escape(metric_value)}</b></font>',
+                    ParagraphStyle(
+                        f"FindingMetricValue{index}_{metric_index}", parent=small_style,
+                        fontSize=8.2, leading=10, alignment=TA_CENTER,
+                    ),
+                ),
+            ])
+        dashboard = Table(
+            [[Table([[cell[0]], [cell[1]]], colWidths=[42 * mm]) for cell in dashboard_cells]],
+            colWidths=[43.5 * mm] * 4,
+            hAlign="LEFT",
+        )
+        dashboard.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F5F8FC")),
+            ("BOX", (0, 0), (-1, -1), 0.65, colors.HexColor("#D5DFEA")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D5DFEA")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.extend([dashboard, Spacer(1, 1.5 * mm)])
+        if urls:
+            page_rows = [[_p("AFFECTED PAGE", small_style), _p("EVIDENCE REF", small_style)]]
+            for affected_url in urls:
+                page_rows.append([
+                    _p(affected_url, small_style),
+                    _p(evidence_ids[affected_url], small_style),
+                ])
+            page_table = Table(
+                page_rows, colWidths=[139 * mm, 35 * mm],
+                repeatRows=1, hAlign="LEFT",
+            )
+            page_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            story.extend([Paragraph("<b>Affected pages and evidence index</b>", body_style), page_table, Spacer(1, 1.5 * mm)])
         if instances > 1:
             blocks.append(_p(f"Occurrences consolidated: {instances}", small_style))
         if urls:
             refs = ", ".join(evidence_ids[url] for url in urls)
             blocks.append(_p(f"Evidence references: {refs}", small_style))
-            blocks.append(_p(f"Affected pages with recorded evidence: {len(urls)}", small_style))
         blocks.append(Paragraph("<b>What was observed</b>", body_style))
-        evidence_items = list(finding["evidence"])
         if evidence_items:
             # Keep observations distinct instead of flattening them into one long
             # paragraph; this preserves the connection between each evidence item
