@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>E-commerce Audit Dashboard</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172334;background:#f4f7fb}
+*{box-sizing:border-box}body{margin:0}header{background:#102b46;color:#fff;padding:28px max(20px,calc((100vw - 1040px)/2))}header h1{margin:0 0 8px;font-size:clamp(1.5rem,4vw,2.1rem)}header p{margin:0;color:#d7e4f1}.wrap{max-width:1040px;margin:24px auto;padding:0 18px 48px}.panel{background:white;border:1px solid #dce5ef;border-radius:14px;padding:22px;margin:0 0 18px;box-shadow:0 3px 14px #16324b0a}h2{font-size:1.2rem;margin:0 0 14px}label{display:block;font-weight:650;margin:12px 0 6px}input,select,button{font:inherit}input[type=text],input[type=password],input[type=url]{width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;background:#fff;color:#172334}button{border:0;border-radius:8px;background:#155a8a;color:white;font-weight:700;padding:12px 16px;cursor:pointer}button.secondary{background:#e8f0f7;color:#15344f}button:disabled{opacity:.55;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.muted{color:#5b6b7c;font-size:.92rem}.status{padding:12px;border-radius:8px;background:#eef4f8;margin-top:12px;white-space:pre-wrap}.error{background:#fff0ee;color:#812a22}.success{background:#eaf7ef;color:#1d6038}.reports{display:grid;gap:10px}.report{border:1px solid #dce5ef;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;justify-content:space-between}.report strong{display:block}.report small{display:block;color:#5b6b7c;margin-top:4px}.report-actions{display:flex;gap:8px;flex-wrap:wrap}a{color:#155a8a}@media(max-width:650px){.row{grid-template-columns:1fr}.report{align-items:flex-start;flex-direction:column}.report-actions{width:100%}button{width:100%}}
+</style>
+</head>
+<body>
+<header><h1>E-commerce Audit Dashboard</h1><p>Run an evidence-based public-site audit, download your PDF, and revisit saved reports.</p></header>
+<main class="wrap">
+<section class="panel">
+<h2>1. Connect your license</h2>
+<p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
+<div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
+<button id="connect" type="button">Load report history</button><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
+</section>
+<section class="panel">
+<h2>2. Run a website audit</h2>
+<form id="auditForm"><label for="target">Public website URL</label><input id="target" type="url" required maxlength="2048" placeholder="https://example.com"><p class="muted">Only public HTTP/HTTPS websites are accepted. This performs an audit only; it does not change the target website. A run consumes your license quota.</p><button id="runAudit" type="submit">Run audit and generate PDF</button></form><div id="auditStatus" class="status" role="status" aria-live="polite">Connect your credential first.</div>
+</section>
+<section class="panel">
+<h2>3. Saved reports</h2><div id="reports" class="reports"><p class="muted">Connect to load reports for your license.</p></div>
+</section>
+<p class="muted">Coverage notes: observed findings and crawl limits are shown as evidence; a missing finding is not automatically a pass. Public checks do not establish full WCAG conformance, Google indexing status, complete vulnerability coverage, event attribution, or measured revenue loss.</p>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let credential = "";
+  let headerName = "X-License-Key";
+  const setStatus = (id, message, kind = "") => {
+    const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
+  };
+  const authHeaders = () => ({[headerName]: credential});
+  async function api(path, options = {}) {
+    const response = await fetch(path, {...options, headers: {...authHeaders(), ...(options.headers || {})}});
+    if (!response.ok) {
+      let message = "Request failed (" + response.status + ")";
+      try { const body = await response.json(); if (body.detail) message += ": " + body.detail; } catch {}
+      throw new Error(message);
+    }
+    return response;
+  }
+  async function loadReports() {
+    const response = await api("/api/v1/reports?limit=50");
+    const data = await response.json();
+    const container = $("reports"); container.replaceChildren();
+    if (!data.reports.length) { container.textContent = "No saved reports yet."; return; }
+    for (const item of data.reports) {
+      const card = document.createElement("article"); card.className = "report";
+      const meta = document.createElement("div");
+      const name = document.createElement("strong"); name.textContent = item.domain;
+      const detail = document.createElement("small");
+      detail.textContent = new Date(item.created_at).toLocaleString() + " · " + item.finding_count + " findings · report #" + item.id;
+      meta.append(name, detail);
+      const actions = document.createElement("div"); actions.className = "report-actions";
+      const download = document.createElement("button"); download.type = "button"; download.textContent = "Download PDF";
+      download.addEventListener("click", async () => {
+        try { const r = await api(item.download_url); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "ecommerce-audit-" + item.id + ".pdf"; a.click(); URL.revokeObjectURL(url); }
+        catch (e) { setStatus("connectStatus", e.message, "error"); }
+      });
+      const coverage = document.createElement("button"); coverage.type = "button"; coverage.className = "secondary"; coverage.textContent = "View evidence coverage";
+      coverage.addEventListener("click", async () => {
+        try { const r = await api(item.coverage_url); const data = await r.json(); setStatus("auditStatus", JSON.stringify(data, null, 2)); }
+        catch (e) { setStatus("auditStatus", e.message, "error"); }
+      });
+      actions.append(download, coverage); card.append(meta, actions); container.append(card);
+    }
+  }
+  $("connect").addEventListener("click", async () => {
+    credential = $("credential").value.trim(); headerName = $("authType").value;
+    if (!credential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
+    $("connect").disabled = true;
+    try { await loadReports(); setStatus("connectStatus", "Connected. Your license-scoped report history is loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+    finally { $("connect").disabled = false; }
+  });
+  $("auditForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!credential) { setStatus("auditStatus", "Connect your license or API key first.", "error"); return; }
+    const button = $("runAudit"); button.disabled = true; setStatus("auditStatus", "Audit running. Please wait for the report response.");
+    try {
+      const target = $("target").value.trim();
+      const response = await api("/api/v1/comprehensive-audit?domain=" + encodeURIComponent(target), {method:"POST"});
+      const blob = await response.blob();
+      if (!blob.size || blob.type !== "application/pdf") throw new Error("The server response was not a valid PDF.");
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "ecommerce-audit-" + new URL(target).hostname + ".pdf"; a.click(); URL.revokeObjectURL(url);
+      const reportId = response.headers.get("X-Audit-Report-ID");
+      setStatus("auditStatus", "PDF generated and saved to your account." + (reportId ? " Report ID: " + reportId + "." : "") + " Refreshing report history.", "success");
+      await loadReports();
+    } catch (e) { setStatus("auditStatus", e.message, "error"); }
+    finally { button.disabled = false; }
+  });
+})();
+</script>
+</body>
+</html>
