@@ -32,31 +32,32 @@ def _p(value: object, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape(str(value or "Not available")), style)
 
 
-def _link(url: str, style: ParagraphStyle) -> Paragraph:
-    """Render only validated public HTTP(S) links and redact URL secrets in the PDF."""
+def _safe_public_url(url: str) -> str | None:
+    """Normalize public HTTP(S) evidence URLs and omit credentials, queries and fragments."""
     try:
         parts = urlsplit(str(url or "").strip())
         scheme = parts.scheme.lower()
         host = parts.hostname
         port = parts.port  # Access validates malformed and out-of-range ports.
-        if (
-            scheme not in {"http", "https"}
-            or not host
-        ):
-            return _p("Link omitted (unsupported or unsafe URL)", style)
+        if scheme not in {"http", "https"} or not host or parts.username or parts.password:
+            return None
         display_host = f"[{host.lower()}]" if ":" in host else host.lower()
         default_port = 443 if scheme == "https" else 80
         if port is not None and port != default_port:
             display_host = f"{display_host}:{port}"
-        clean_url = urlunsplit((scheme, display_host, parts.path or "/", "", ""))
-        # Query strings and fragments can contain session IDs, email addresses,
-        # tracking values, or reset tokens. Keep evidence links useful without
-        # embedding those values in a downloadable customer report.
-        safe_href = escape(clean_url, {'"': "&quot;"})
-        label = escape(clean_url)
-        return Paragraph(f'<link href="{safe_href}" color="#1759a8">{label}</link>', style)
+        return urlunsplit((scheme, display_host, parts.path or "/", "", ""))
     except (ValueError, UnicodeError):
-        return _p("Link omitted (malformed URL)", style)
+        return None
+
+
+def _link(url: str, style: ParagraphStyle) -> Paragraph:
+    """Render a validated public HTTP(S) link without URL credentials or secret query data."""
+    clean_url = _safe_public_url(url)
+    if clean_url is None:
+        return _p("Link omitted (unsupported, unsafe or malformed URL)", style)
+    safe_href = escape(clean_url, {'"': "&quot;"})
+    label = escape(clean_url)
+    return Paragraph(f'<link href="{safe_href}" color="#1759a8">{label}</link>', style)
 
 
 SECURITY_HEADER_LABELS = {
@@ -199,8 +200,11 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
         for step in finding.verification_steps:
             if step not in item["verification_steps"]:
                 item["verification_steps"].append(step)
-        if finding.source_url and finding.source_url not in item["source_urls"]:
-            item["source_urls"].append(finding.source_url)
+        if finding.source_url:
+            # Never place URL credentials, query tokens, email addresses or fragments in a PDF.
+            safe_source_url = _safe_public_url(finding.source_url)
+            if safe_source_url and safe_source_url not in item["source_urls"]:
+                item["source_urls"].append(safe_source_url)
     return list(groups.values())
 
 
