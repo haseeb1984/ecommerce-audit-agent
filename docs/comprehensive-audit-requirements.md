@@ -119,3 +119,30 @@ The inspected `main.py` currently calls `UniversalEcommerceAgent.process_lead()`
 - Include audit timestamp, target scope, sampled URLs, crawl depth/page limits, user agent, tools/versions, lab/field distinctions, failed checks and exclusions.
 - Include a prioritized action plan that separates severity, effort estimate, dependencies and business relevance. Mark effort as an estimate with stated basis.
 - Add a glossary for non-technical owners and a methodology section describing how independent cross-checks can be repeated.
+
+## Mandatory per-issue visual report standard (user-approved reference)
+
+The supplied “Meta Description SEO Audit Dashboard” image is the visual quality and information-density reference for **every individual issue/check detail**, not merely the executive summary. The report generator must implement a reusable issue-dashboard layout with the following elements for each finding:
+
+1. **Issue identity header:** audit category, exact check name, status badge, severity/action priority, and evidence reference IDs.
+2. **Outcome summary:** compact visual breakdown of pass / issue / warning / not assessed counts and percentages for the actual sampled pages. Counts must be calculated from recorded check outcomes; never infer a pass from the mere absence of a finding. If the data model cannot establish all four states, label the summary unavailable rather than fabricate 100% pass.
+3. **What was observed:** concise, factual, finding-specific observations tied to affected URLs and evidence.
+4. **What this means:** plain-language interpretation, separating confirmed technical behavior from hypotheses.
+5. **Recommended solution:** actionable steps specific to the check, with retest instructions.
+6. **Potential benefit if addressed** and **risk if unresolved:** qualitative unless measurable site/analytics data supports quantified claims.
+7. **How to verify:** reproducible cross-check steps and authoritative references where applicable.
+8. **Evidence panel:** the actual browser screenshot of the affected page when available, plus the relevant source/DOM/network excerpt or other raw evidence for that exact check. Clearly label viewport, capture time and source URL. Do not reuse a generic homepage screenshot as if it proves an issue on another URL. If evidence is unavailable, show a clear “Evidence not captured” state and explain why; never create fake screenshots or source snippets.
+9. **Affected-pages table:** exact URL, observed value, outcome, issue/warning status, and check-specific measurements where applicable. Keep repeated URLs consolidated when multiple identical instances can be represented without losing evidence traceability.
+10. **Overall result panel:** issue-specific outcome, tested-page denominator, unassessed-page count, and a concise interpretation with explicit limits.
+
+### Outcome and data integrity rules
+- Every audited check must have an explicit outcome record: pass, issue, warning, not_assessed, or error, plus tested-page denominator and evidence links.
+- A check that ran and found no issue is a pass only if the checker recorded a successful, valid evaluation. Missing finding records alone are not proof of a pass.
+- Keep check execution status separate from finding severity. “Verified” means the observation is supported by evidence; it does not by itself mean the check passed.
+- Use real counts and percentages with the denominator visible. A page with missing/invalid markup must not be silently excluded from the denominator.
+- Each issue/check gets its own appropriately themed infographic and evidence panel. The infographic must depict that specific check, not repeat a generic icon/graphic as a substitute for evidence.
+- Capture issue-level evidence during the same bounded, authorized browser crawl. Store bounded/sanitized excerpts and screenshot references in the finding model; never store credentials, cookies, payment details, or sensitive customer data in a report.
+- Keep the full report professional and readable across page boundaries: consistent spacing, no clipped tables, no stranded headings, page numbers, and a table of contents for long reports.
+- Add regression tests that inspect each required panel, evidence-to-URL linkage, counts/denominators, unavailable-evidence handling, and PDF pagination. Update visual snapshots for representative SEO, accessibility, performance, security, ecommerce, and conversion findings.
+
+**Acceptance gate:** do not mark per-issue dashboard reporting complete until the generated PDF for each representative audit category visually demonstrates these elements with real evidence and tests pass. A successful PDF-generation job alone is not acceptance.
