@@ -429,7 +429,7 @@ class FindingInsightInfographic(Flowable):
         self.category = str(finding.get("category", "")).lower()
         self.positive = self.severity == "info" and self.status == "verified"
         self.review = self.status in {"manual_review_required", "not_tested", "insufficient_data"}
-        self.label = "POSITIVE SIGNAL — QUALITY NOT FULLY SCORED" if self.positive else ("NEEDS HUMAN REVIEW" if self.review else f"{self.severity.upper()} PRIORITY")
+        self.label = "POSITIVE SIGNAL — QUALITY NOT FULLY SCORED" if self.positive else ("VALIDATE BEFORE ACTION" if self.review else f"{self.severity.upper()} PRIORITY")
         self.color = "#23734D" if self.positive else ("#9A6700" if self.review else {"critical":"#8E2430","high":"#D3543C","medium":"#B87912","low":"#2E83A6"}.get(self.severity,"#6D7C91"))
         self.action = "Keep the signal; validate quality separately." if self.positive else ("Collect the missing evidence before concluding." if self.review else "Review evidence and prioritize an appropriate corrective action.")
 
@@ -1104,7 +1104,8 @@ def render_audit_pdf(
         # Defer the visual header until the status and result blocks are ready, so
         # a finding title never gets stranded at the bottom of a page by itself.
         category_line = _p(
-            f"Category: {str(finding['category']).replace('_', ' ').title()}",
+            f"Category: {str(finding['category']).replace('_', ' ').title()} | "
+            f"Status: {status.replace('_', ' ').title()}",
             small_style,
         )
 
