@@ -1182,7 +1182,7 @@ def render_audit_pdf(
     story.append(Paragraph("Coverage and limitations", section_style))
     if coverage_manifest:
         coverage_pct = coverage_manifest.get("category_signal_coverage_pct")
-        observed_count = coverage_manifest.get("categories_with_observed_evidence", 0)
+        observed_count = coverage_manifest.get("categories_with_recorded_findings", 0)
         category_total = coverage_manifest.get("required_categories", 0)
         story.append(Paragraph("Audit category evidence coverage", base["Heading2"]))
         story.append(_p(
