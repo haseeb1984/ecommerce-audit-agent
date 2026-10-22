@@ -859,6 +859,10 @@ async def admin_create_package(payload: AdminPackageInput, request: Request,
                 (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
             VALUES (:tier, :label, :monthly_audit_allowance, :max_concurrent_audits, :paddle_price_id, :is_active)
         """), values)
+        await db.execute(text("""
+            UPDATE software_licenses SET max_monthly_audits=:allowance
+            WHERE LOWER(tier)=:tier
+        """), {"allowance": values["monthly_audit_allowance"], "tier": values["tier"]})
         await _write_admin_log(db, "package.created", "package", values["tier"], {
             "monthly_audit_allowance": values["monthly_audit_allowance"],
             "max_concurrent_audits": values["max_concurrent_audits"], "is_active": values["is_active"]})
@@ -1157,6 +1161,14 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     client = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_id))).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
+    if "tier" in changes:
+        package = (await db.execute(text("""
+            SELECT monthly_audit_allowance FROM saas_plan_packages WHERE tier=:tier
+        """), {"tier": changes["tier"]})).mappings().first()
+        if package is None:
+            raise HTTPException(status_code=422, detail="Select a package that exists in admin package management.")
+        if "max_monthly_audits" not in changes:
+            changes["max_monthly_audits"] = int(package["monthly_audit_allowance"])
     allowed = {"client_name", "tier", "max_monthly_audits", "is_active", "expires_at"}
     for key, value in changes.items():
         if key not in allowed:
