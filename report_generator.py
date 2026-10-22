@@ -593,7 +593,13 @@ class PhaseScorecardInfographic(Flowable):
                 pct_text = f"{evidence_pct}% of findings verified"
                 c.setFillColor(colors.HexColor("#23734D") if evidence_pct is not None and evidence_pct >= 75 else colors.HexColor("#9A6700"))
             else:
-                pct_text = "No finding recorded"
+                # An empty finding bucket is not evidence of a successful audit.
+                # Paid-traffic checks requiring ad-account or browser-network data
+                # remain unassessed in a public-HTML-only run.
+                if "conversion" in label.lower() or "paid traffic" in label.lower():
+                    pct_text = "Coverage incomplete"
+                else:
+                    pct_text = "No finding recorded"
                 c.setFillColor(muted)
             c.setFont("Helvetica-Bold", 7.5)
             c.drawRightString(self.width - 4 * mm, y + 17 * mm, pct_text)
