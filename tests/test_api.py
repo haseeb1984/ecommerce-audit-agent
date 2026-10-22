@@ -214,6 +214,46 @@ async def test_parallel_requests_with_one_slot_return_one_200_and_one_429(
 
 
 @pytest.mark.asyncio
+async def test_configured_concurrency_limit_rejects_extra_active_audit(client, monkeypatch):
+    license_id = await create_license(key="concurrency-license", quota=10)
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "1")
+    async with AsyncSessionLocal() as db:
+        db.add(
+            AuditQuotaReservation(
+                license_id=license_id,
+                created_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+        )
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/audit-lead",
+        params={"domain": "second-shop.example"},
+        headers={"X-License-Key": "concurrency-license"},
+    )
+
+    assert response.status_code == 429
+    assert "Concurrent audit limit of 1" in response.json()["detail"]
+    assert await table_count(AuditQuotaReservation) == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_configured_concurrency_limit_fails_closed(client, monkeypatch):
+    await create_license(key="invalid-concurrency-license", quota=10)
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "not-a-number")
+
+    response = await client.post(
+        "/api/v1/audit-lead",
+        params={"domain": "shop.example"},
+        headers={"X-License-Key": "invalid-concurrency-license"},
+    )
+
+    assert response.status_code == 503
+    assert await table_count(AuditQuotaReservation) == 0
+
+
+@pytest.mark.asyncio
 async def test_api_key_authentication_and_revocation(client, mock_process_lead):
     api_key = "test-api-key-secret"
     license_id = await create_license(key="api-key-license", quota=5)
