@@ -7,7 +7,7 @@
 <title>E-commerce Audit Dashboard</title>
 <style>
 :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172334;background:#f4f7fb}
-*{box-sizing:border-box}body{margin:0}header{background:#102b46;color:#fff;padding:28px max(20px,calc((100vw - 1040px)/2))}header h1{margin:0 0 8px;font-size:clamp(1.5rem,4vw,2.1rem)}header p{margin:0;color:#d7e4f1}.wrap{max-width:1040px;margin:24px auto;padding:0 18px 48px}.panel{background:white;border:1px solid #dce5ef;border-radius:14px;padding:22px;margin:0 0 18px;box-shadow:0 3px 14px #16324b0a}h2{font-size:1.2rem;margin:0 0 14px}label{display:block;font-weight:650;margin:12px 0 6px}input,select,button{font:inherit}input[type=text],input[type=password],input[type=url]{width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;background:#fff;color:#172334}button{border:0;border-radius:8px;background:#155a8a;color:white;font-weight:700;padding:12px 16px;cursor:pointer}button.secondary{background:#e8f0f7;color:#15344f}button:disabled{opacity:.55;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.muted{color:#5b6b7c;font-size:.92rem}.status{padding:12px;border-radius:8px;background:#eef4f8;margin-top:12px;white-space:pre-wrap}.error{background:#fff0ee;color:#812a22}.success{background:#eaf7ef;color:#1d6038}.reports{display:grid;gap:10px}.report{border:1px solid #dce5ef;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;justify-content:space-between}.report strong{display:block}.report small{display:block;color:#5b6b7c;margin-top:4px}.report-actions{display:flex;gap:8px;flex-wrap:wrap}.emailbox{display:grid;gap:6px;min-width:220px}.emailbox input{font:inherit;padding:9px;border:1px solid #b8c7d8;border-radius:7px}.emailbox label{font-size:.82rem;font-weight:500;margin:0}a{color:#155a8a}@media(max-width:650px){.row{grid-template-columns:1fr}.report{align-items:flex-start;flex-direction:column}.report-actions{width:100%}button{width:100%}}
+*{box-sizing:border-box}body{margin:0}header{background:#102b46;color:#fff;padding:28px max(20px,calc((100vw - 1040px)/2))}header h1{margin:0 0 8px;font-size:clamp(1.5rem,4vw,2.1rem)}header p{margin:0;color:#d7e4f1}.wrap{max-width:1040px;margin:24px auto;padding:0 18px 48px}.panel{background:white;border:1px solid #dce5ef;border-radius:14px;padding:22px;margin:0 0 18px;box-shadow:0 3px 14px #16324b0a}h2{font-size:1.2rem;margin:0 0 14px}label{display:block;font-weight:650;margin:12px 0 6px}input,select,button{font:inherit}input[type=text],input[type=password],input[type=url]{width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;background:#fff;color:#172334}button{border:0;border-radius:8px;background:#155a8a;color:white;font-weight:700;padding:12px 16px;cursor:pointer}button.secondary{background:#e8f0f7;color:#15344f}button:disabled{opacity:.55;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.muted{color:#5b6b7c;font-size:.92rem}.status{padding:12px;border-radius:8px;background:#eef4f8;margin-top:12px;white-space:pre-wrap}.error{background:#fff0ee;color:#812a22}.success{background:#eaf7ef;color:#1d6038}.reports{display:grid;gap:10px}.usagebar{height:12px;border-radius:999px;background:#e3ebf3;overflow:hidden;margin:10px 0}.usagebar>span{display:block;height:100%;width:0;background:#1976a8;transition:width .2s}.usage-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.report{border:1px solid #dce5ef;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;justify-content:space-between}.report strong{display:block}.report small{display:block;color:#5b6b7c;margin-top:4px}.report-actions{display:flex;gap:8px;flex-wrap:wrap}.emailbox{display:grid;gap:6px;min-width:220px}.emailbox input{font:inherit;padding:9px;border:1px solid #b8c7d8;border-radius:7px}.emailbox label{font-size:.82rem;font-weight:500;margin:0}a{color:#155a8a}@media(max-width:650px){.row{grid-template-columns:1fr}.report{align-items:flex-start;flex-direction:column}.report-actions{width:100%}button{width:100%}}
 </style>
 </head>
 <body>
@@ -23,6 +23,12 @@
 <p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
 <div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
 <button id="connect" type="button">Load report history</button><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
+</section>
+<section class="panel" aria-labelledby="usageHeading">
+<h2 id="usageHeading">Account usage</h2>
+<p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
+<div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
+<div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
 </section>
 <section class="panel">
 <h2>2. Run a website audit</h2>
@@ -92,6 +98,25 @@
       }
     } catch (e) { container.textContent = e.message; }
   }
+  async function loadUsage() {
+    const response = await api("/api/v1/account/usage");
+    const usage = await response.json();
+    const used = Math.max(0, Number(usage.used) || 0);
+    const pending = Math.max(0, Number(usage.in_progress) || 0);
+    const limit = Math.max(0, Number(usage.monthly_limit) || 0);
+    const percent = Math.max(0, Math.min(100, Number(usage.usage_percent) || 0));
+    $("usageSummary").textContent = (usage.tier || "Plan") + " plan · " + used + " completed" + (pending ? " · " + pending + " in progress" : "") + " of " + limit + " monthly audits used";
+    $("usageFill").style.width = percent + "%";
+    $("usageBar").setAttribute("aria-valuenow", String(Math.round(percent)));
+    $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
+    const reset = usage.period_resets_at ? new Date(usage.period_resets_at) : null;
+    $("usageReset").textContent = "Period resets: " + (reset && !Number.isNaN(reset.getTime()) ? reset.toLocaleDateString() : "not available");
+    if (!usage.is_active) $("usageSummary").textContent += " · Account inactive";
+    if (usage.expires_at) {
+      const expiry = new Date(usage.expires_at);
+      if (!Number.isNaN(expiry.getTime())) $("usageSummary").textContent += " · Expires " + expiry.toLocaleDateString();
+    }
+  }
   async function loadReports() {
     const response = await api("/api/v1/reports?limit=50");
     const data = await response.json();
@@ -151,7 +176,7 @@
     credential = $("credential").value.trim(); headerName = $("authType").value;
     if (!credential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
     $("connect").disabled = true;
-    try { await loadReports(); setStatus("connectStatus", "Connected. Your license-scoped report history is loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
+    try { await loadReports(); await loadUsage(); setStatus("connectStatus", "Connected. Your license-scoped report history and quota are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
     finally { $("connect").disabled = false; }
   });
