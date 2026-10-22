@@ -16,7 +16,6 @@ from reportlab.platypus import (
     HRFlowable,
     Flowable,
     KeepTogether,
-    CondPageBreak,
     PageBreak,
     Image,
     Paragraph,
@@ -1148,84 +1147,21 @@ def render_audit_pdf(
         ]))
         # Defer the visual header until the status and result blocks are ready, so
         # a finding title never gets stranded at the bottom of a page by itself.
-        status_badge = Table(
-            [[Paragraph(
-                f'<font color="{status_colors.get(status, "#6D7C91")}">'
-                f"<b>{escape(status.replace('_', ' ').upper())}</b></font>",
-                small_style,
-            )]],
-            colWidths=[174 * mm],
-            hAlign="LEFT",
-        )
-        status_badge.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FAFBFD")),
-            ("BOX", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
         category_line = _p(
-            f"Category: {str(finding['category']).replace('_', ' ').title()} | "
-            f"Status: {status.replace('_', ' ').title()}",
+            f"Category: {str(finding['category']).replace('_', ' ').title()}",
             small_style,
         )
 
-        # At-a-glance result: never invent percentages without a measurable denominator.
-        if status in {"not_tested", "insufficient_data"}:
-            result_label = "NOT ASSESSED"
-            result_detail = "No percentage available: verified evidence is insufficient."
-            result_color = "#6D7C91"
-        elif status == "manual_review_required":
-            result_label = "REVIEW NEEDED"
-            result_detail = "Automated evidence is inconclusive; a person must verify the result."
-            result_color = "#9A6700"
-        elif severity == "info":
-            result_label = "OBSERVATION — NOT SCORED"
-            result_detail = "Observation only; review the evidence and any required follow-up checks before drawing a conclusion."
-            result_color = "#2E83A6"
-        else:
-            result_label = f"{severity.upper()} SIGNAL"
-            result_detail = "A finding was recorded. A pass percentage needs a defined measurable denominator."
-            result_color = severity_colors.get(severity, "#6D7C91")
-
-        result_table = Table(
-            [[
-                Paragraph(
-                    f'<font color="{result_color}"><b>{escape(result_label)}</b></font>',
-                    ParagraphStyle(f"FindingResultLabel{index}", parent=small_style, fontSize=8, leading=10),
-                ),
-                Paragraph(
-                    escape(result_detail),
-                    ParagraphStyle(f"FindingResultDetail{index}", parent=small_style, fontSize=7.5, leading=9),
-                ),
-            ]],
-            colWidths=[47 * mm, 127 * mm],
-            hAlign="LEFT",
-        )
-        result_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FB")),
-            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#D5DFEA")),
-            ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(result_color)),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ]))
         # Keep each finding's visual header away from the foot of a page. The body may
         # continue naturally, but the title/status/result panel should start as a unit.
-        story.append(CondPageBreak(52 * mm))
         story.append(KeepTogether([
-            Spacer(1, 3 * mm),
+            Spacer(1, 2 * mm),
             header,
             Spacer(1, 1.5 * mm),
             FindingInsightInfographic(finding),
-            Spacer(1, 2 * mm),
-            status_badge,
+            Spacer(1, 1.5 * mm),
             category_line,
-            result_table,
-            Spacer(1, 2 * mm),
+            Spacer(1, 1 * mm),
         ]))
         blocks = []
         instances = int(finding["instances"])
@@ -1365,11 +1301,26 @@ def render_audit_pdf(
 
     def footer(canvas, document):
         canvas.saveState()
+        # Restrained running header and footer keep multi-page client reports branded
+        # without competing with the evidence or screenshots.
+        canvas.setStrokeColor(colors.HexColor("#49D3C4"))
+        canvas.setLineWidth(0.8)
+        canvas.line(18 * mm, A4[1] - 15 * mm, A4[0] - 18 * mm, A4[1] - 15 * mm)
+        canvas.setFillColor(colors.HexColor("#17365D"))
+        canvas.setFont("Helvetica-Bold", 7)
+        canvas.drawString(18 * mm, A4[1] - 11 * mm, "ECOMMERCE AUDIT AGENT")
+        try:
+            report_host = (urlsplit(result.target_url).hostname or "website").lower()
+        except (ValueError, UnicodeError):
+            report_host = "website"
+        canvas.setFillColor(colors.HexColor("#2E83A6"))
+        canvas.setFont("Helvetica", 7)
+        canvas.drawRightString(A4[0] - 18 * mm, A4[1] - 11 * mm, f"CLIENT REPORT  •  {report_host[:48]}")
         canvas.setStrokeColor(colors.HexColor("#D5DCE5"))
         canvas.line(18 * mm, 13 * mm, A4[0] - 18 * mm, 13 * mm)
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#555555"))
-        canvas.drawString(18 * mm, 8 * mm, "Ecommerce Audit Agent — client audit report")
+        canvas.drawString(18 * mm, 8 * mm, "Evidence-first website audit")
         canvas.drawRightString(A4[0] - 18 * mm, 8 * mm, f"Page {document.page}")
         canvas.restoreState()
 
