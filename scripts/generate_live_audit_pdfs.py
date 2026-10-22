@@ -1,8 +1,8 @@
 """Generate evidence-based PDFs from real public websites in CI.
 
 This is a non-production QA helper. It does not call the authenticated API, consume
-license quota, store audit leads, or deploy anything. PageSpeed metrics are explicitly
-marked as not run in this live-site smoke test.
+license quota, store audit leads, or deploy anything. PageSpeed is attempted only when
+GOOGLE_PAGESPEED_API_KEY is configured as a CI secret; unavailable metrics are disclosed.
 """
 from __future__ import annotations
 
@@ -10,11 +10,14 @@ import asyncio
 import argparse
 import base64
 import ipaddress
+import os
 import re
 import socket
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -79,6 +82,67 @@ async def capture_real_website_screenshot(url: str, viewport_width: int = 1440, 
         # Never log raw browser errors; they may contain target URLs or request details.
         print(f"browser_screenshot=unavailable failure_class={type(exc).__name__}")
         return None
+
+
+async def _run_pagespeed_smoke(url: str) -> tuple[list[AuditFinding], str | None]:
+    """Fetch real mobile Lighthouse metrics without ever logging the API key or URL."""
+    api_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "").strip()
+    if not api_key:
+        return [], "Google PageSpeed Insights was not run in this CI smoke test because GOOGLE_PAGESPEED_API_KEY is not configured."
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+            response = await client.get(
+                "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+                params={
+                    "url": url,
+                    "strategy": "mobile",
+                    "category": "performance",
+                    "key": api_key,
+                },
+            )
+        if response.is_error:
+            return [], f"Google PageSpeed Insights was unavailable for this run (HTTP {response.status_code}); no score or Speed Index is claimed."
+        payload = response.json()
+        lighthouse = payload.get("lighthouseResult")
+        if not isinstance(lighthouse, dict):
+            return [], "Google PageSpeed Insights returned no Lighthouse report; no score or Speed Index is claimed."
+        score_raw = lighthouse.get("categories", {}).get("performance", {}).get("score")
+        speed_raw = lighthouse.get("audits", {}).get("speed-index", {}).get("numericValue")
+        if not isinstance(score_raw, (int, float)) or not isinstance(speed_raw, (int, float)):
+            return [], "Google PageSpeed Insights response omitted the performance score or Speed Index; no incomplete metric is reported."
+        score = round(float(score_raw) * 100)
+        speed_index = float(speed_raw) / 1000
+        if not 0 <= score <= 100 or speed_index < 0:
+            return [], "Google PageSpeed Insights returned out-of-range metrics; no score or Speed Index is claimed."
+        severity = "medium" if score < 50 else "low" if score < 90 else "info"
+        finding = AuditFinding(
+            category="performance",
+            title="Google PageSpeed mobile performance snapshot",
+            status="verified",
+            severity=severity,
+            evidence=(
+                f"Google PageSpeed Insights mobile Lighthouse reported a performance score of {score}/100 "
+                f"and Speed Index of {speed_index:.2f} seconds for {url}. These are lab results; "
+                "field experience can differ."
+            ),
+            explanation=(
+                "The performance score summarizes one mobile Lighthouse lab run. It is not a direct "
+                "measurement of revenue, conversion rate, or search ranking, and can vary between runs."
+            ),
+            recommendation=(
+                "Review the linked PageSpeed report and its individual diagnostics, prioritize changes "
+                "supported by the trace, then rerun the same mobile test to compare results."
+            ),
+            verification_steps=[
+                "Open https://pagespeed.web.dev/ and test the exact target URL using the mobile strategy.",
+                "Compare the run timestamp, score, Speed Index, and any available field data.",
+            ],
+            source_url=url,
+        )
+        return [finding], None
+    except Exception as exc:
+        # Exception text may contain request URLs or query parameters; only log the class.
+        return [], f"Google PageSpeed Insights could not be completed ({type(exc).__name__}); no score or Speed Index is claimed."
 
 
 def _mobile_render_findings(page_url: str, metrics: dict) -> list[AuditFinding]:
@@ -213,10 +277,10 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
             ],
         )
 
-    result.limitations.append(
-        "Google PageSpeed Insights API metrics were not run by this live-site smoke test; "
-        "no mobile score or Speed Index is claimed."
-    )
+    pagespeed_findings, pagespeed_limitation = await _run_pagespeed_smoke(normalized)
+    result.findings.extend(pagespeed_findings)
+    if pagespeed_limitation:
+        result.limitations.append(pagespeed_limitation)
     mobile_findings, mobile_screenshot = await inspect_mobile_rendered_signals(normalized)
     result.findings.extend(mobile_findings)
     desktop_screenshot = await capture_real_website_screenshot(normalized, 1440, 1000)
