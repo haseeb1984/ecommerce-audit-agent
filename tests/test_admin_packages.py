@@ -170,3 +170,66 @@ async def test_admin_routes_fail_closed_when_admin_key_is_unconfigured(client, m
     response = await client.get("/api/v1/admin/packages")
     assert response.status_code == 503
     assert response.json()["detail"] == "Admin access is not configured."
+
+
+
+@pytest.mark.asyncio
+async def test_admin_packages_reject_duplicate_paddle_price_mapping(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
+    headers = {"X-Admin-Key": "test-admin-key-only"}
+    first = await client.post(
+        "/api/v1/admin/packages",
+        headers=headers,
+        json={
+            "tier": "paddle-plan-a",
+            "label": "Paddle Plan A",
+            "monthly_audit_allowance": 100,
+            "max_concurrent_audits": 1,
+            "paddle_price_id": "pri_TestPrice123",
+            "is_active": True,
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    duplicate = await client.post(
+        "/api/v1/admin/packages",
+        headers=headers,
+        json={
+            "tier": "paddle-plan-b",
+            "label": "Paddle Plan B",
+            "monthly_audit_allowance": 500,
+            "max_concurrent_audits": 2,
+            "paddle_price_id": "pri_TestPrice123",
+            "is_active": True,
+        },
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert "already assigned" in duplicate.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_admin_client_update_rejects_unknown_package(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import SoftwareLicense
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
+    async with AsyncSessionLocal() as db:
+        license_obj = SoftwareLicense(
+            license_key="qa-unknown-tier-marker",
+            client_name="QA Client",
+            tier="starter",
+            max_monthly_audits=100,
+            is_active=True,
+        )
+        db.add(license_obj)
+        await db.commit()
+        await db.refresh(license_obj)
+        license_id = license_obj.id
+
+    response = await client.patch(
+        f"/api/v1/admin/clients/{license_id}",
+        headers={"X-Admin-Key": "test-admin-key-only"},
+        json={"tier": "does-not-exist"},
+    )
+    assert response.status_code == 422
+    assert "package" in response.json()["detail"].lower()
