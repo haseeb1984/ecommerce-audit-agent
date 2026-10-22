@@ -84,22 +84,43 @@ async def capture_real_website_screenshot(url: str, viewport_width: int = 1440, 
         return None
 
 
+# Google PageSpeed Insights can enforce per-key/per-minute quotas. Serialize calls
+# across concurrent site audits and retry transient throttling/server responses.
+_PAGESPEED_REQUEST_LOCK = asyncio.Lock()
+
+
 async def _run_pagespeed_smoke(url: str) -> tuple[list[AuditFinding], str | None]:
-    """Fetch real mobile Lighthouse metrics without ever logging the API key or URL."""
+    """Fetch mobile Lighthouse metrics with bounded retries and no secret-bearing logs."""
     api_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "").strip()
     if not api_key:
         return [], "Google PageSpeed Insights was not run in this CI smoke test because GOOGLE_PAGESPEED_API_KEY is not configured."
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-            response = await client.get(
-                "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
-                params={
-                    "url": url,
-                    "strategy": "mobile",
-                    "category": "performance",
-                    "key": api_key,
-                },
-            )
+        # Only one PageSpeed request is in flight at a time, even though the site
+        # audits themselves run concurrently.
+        async with _PAGESPEED_REQUEST_LOCK:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+                response = None
+                for attempt, delay in enumerate((0, 2, 5), start=1):
+                    if delay:
+                        await asyncio.sleep(delay)
+                    response = await client.get(
+                        "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+                        params={
+                            "url": url,
+                            "strategy": "mobile",
+                            "category": "performance",
+                            "key": api_key,
+                        },
+                    )
+                    # Retry only transient throttling and server errors.
+                    if response.status_code != 429 and response.status_code < 500:
+                        break
+                    if attempt == 3:
+                        break
+
+        if response is None:
+            return [], "Google PageSpeed Insights returned no response; no score or Speed Index is claimed."
         if response.is_error:
             return [], f"Google PageSpeed Insights was unavailable for this run (HTTP {response.status_code}); no score or Speed Index is claimed."
         payload = response.json()
@@ -141,7 +162,7 @@ async def _run_pagespeed_smoke(url: str) -> tuple[list[AuditFinding], str | None
         )
         return [finding], None
     except Exception as exc:
-        # Exception text may contain request URLs or query parameters; only log the class.
+        # Exception text may contain URLs or query parameters; expose only a safe class.
         return [], f"Google PageSpeed Insights could not be completed ({type(exc).__name__}); no score or Speed Index is claimed."
 
 
@@ -279,24 +300,43 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
 
     pagespeed_findings, pagespeed_limitation = await _run_pagespeed_smoke(normalized)
     result.findings.extend(pagespeed_findings)
+    host = (urlsplit(normalized).hostname or "unknown").lower()
+    safe_host = re.sub(r"[^a-zA-Z0-9.-]", "-", host)[:100] or "unknown"
     if pagespeed_findings:
-        # Log only validated numeric metrics parsed from Lighthouse; never log URL,
-        # API key, response body, or exception text.
+        # Hostname and validated metrics are safe; never log full URL, query
+        # parameters, API key, response body, or exception text.
         evidence = pagespeed_findings[0].evidence
         score_match = re.search(r"performance score of (\d+)/100", evidence)
-        speed_match = re.search(r"Speed Index of ([0-9]+(?:\.[0-9]+)?) seconds", evidence)
+        speed_match = re.search(r"Speed Index of ([0-9]+(?:\.\d+)?) seconds", evidence)
         if score_match and speed_match:
             print(
-                f"pagespeed_status=success score={score_match.group(1)}/100 "
-                f"speed_index_seconds={speed_match.group(1)}"
+                f"pagespeed_status=success host={safe_host} "
+                f"score={score_match.group(1)}/100 speed_index_seconds={speed_match.group(1)}"
             )
         else:
-            print("pagespeed_status=unavailable reason=validated_metrics_missing")
+            print(f"pagespeed_status=unavailable host={safe_host} reason=validated_metrics_missing")
     else:
         if pagespeed_limitation:
             result.limitations.append(pagespeed_limitation)
-        reason = "secret_missing" if "not configured" in (pagespeed_limitation or "").lower() else "api_or_response_unavailable"
-        print(f"pagespeed_status=unavailable reason={reason}")
+        limitation = pagespeed_limitation or ""
+        status_match = re.search(r"HTTP (\d{3})", limitation)
+        if "not configured" in limitation.lower():
+            reason = "secret_missing"
+        elif status_match:
+            code = int(status_match.group(1))
+            reason = f"http_{code}" if code in {400, 401, 403, 404, 408, 429, 500, 502, 503, 504} else "http_error"
+        elif "Timeout" in limitation:
+            reason = "request_timeout"
+        elif "no Lighthouse report" in limitation:
+            reason = "lighthouse_report_missing"
+        elif "omitted" in limitation:
+            reason = "metrics_missing"
+        elif "out-of-range" in limitation:
+            reason = "metrics_out_of_range"
+        else:
+            failure_match = re.search(r"completed \(([A-Za-z0-9_]+)\)", limitation)
+            reason = f"exception_{failure_match.group(1)}" if failure_match else "response_unavailable"
+        print(f"pagespeed_status=unavailable host={safe_host} reason={reason}")
     mobile_findings, mobile_screenshot = await inspect_mobile_rendered_signals(normalized)
     result.findings.extend(mobile_findings)
     desktop_screenshot = await capture_real_website_screenshot(normalized, 1440, 1000)
