@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from audit_checks import AuditCheckResult, AuditFinding, normalize_target, run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
+from conversion_checks import run_conversion_paid_traffic_checks
 from report_generator import render_audit_pdf
 
 
@@ -187,6 +188,16 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
         result.findings.extend(crawl_findings)
         result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
         result.limitations.extend(crawl_limitations)
+
+        # Keep CI-generated real-site PDFs aligned with the production audit endpoint.
+        # Without this call, the dedicated conversion/paid-traffic section had no
+        # phase findings even though the API path ran the checks.
+        conversion_findings, conversion_pages, conversion_limitations = (
+            await run_conversion_paid_traffic_checks(normalized)
+        )
+        result.findings.extend(conversion_findings)
+        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
+        result.limitations.extend(conversion_limitations)
     except Exception as exc:
         ok = False
         result = AuditCheckResult(
