@@ -661,38 +661,6 @@ class FindingInsightInfographic(Flowable):
             c.line(ix - 1.5 * mm, iy + 1.5 * mm, ix + .5 * mm, iy)
             c.line(ix + .5 * mm, iy, ix + 3.5 * mm, iy + 3 * mm)
             c.circle(ix + 3.5 * mm, iy + 3 * mm, .7 * mm, fill=1, stroke=0)
-        elif self.glyph == "accessibility":
-            c.circle(ix, iy + 2.7 * mm, 1.1 * mm, fill=0, stroke=1)
-            c.line(ix, iy + 1.4 * mm, ix, iy - 1.5 * mm)
-            c.line(ix - 3 * mm, iy + .5 * mm, ix + 3 * mm, iy + .5 * mm)
-            c.line(ix, iy - 1.5 * mm, ix - 2.5 * mm, iy - 4 * mm)
-            c.line(ix, iy - 1.5 * mm, ix + 2.5 * mm, iy - 4 * mm)
-        elif self.glyph == "security":
-            p = c.beginPath()
-            p.moveTo(ix, iy + 4 * mm)
-            p.lineTo(ix + 3.5 * mm, iy + 2.5 * mm)
-            p.lineTo(ix + 2.8 * mm, iy - 2 * mm)
-            p.lineTo(ix, iy - 4 * mm)
-            p.lineTo(ix - 2.8 * mm, iy - 2 * mm)
-            p.lineTo(ix - 3.5 * mm, iy + 2.5 * mm)
-            p.close()
-            c.drawPath(p, fill=0, stroke=1)
-            c.line(ix - 1.8 * mm, iy, ix - .4 * mm, iy - 1.4 * mm)
-            c.line(ix - .4 * mm, iy - 1.4 * mm, ix + 2 * mm, iy + 1.5 * mm)
-        elif self.glyph == "seo":
-            c.circle(ix - 1 * mm, iy + 1 * mm, 2.5 * mm, fill=0, stroke=1)
-            c.line(ix + .8 * mm, iy - .8 * mm, ix + 3.7 * mm, iy - 3.7 * mm)
-        elif self.glyph == "conversion":
-            c.line(ix - 3.5 * mm, iy + 3 * mm, ix + 3.5 * mm, iy + 3 * mm)
-            c.line(ix - 2.5 * mm, iy + .5 * mm, ix + 2.5 * mm, iy + .5 * mm)
-            c.line(ix - 1.2 * mm, iy - 2 * mm, ix + 1.2 * mm, iy - 2 * mm)
-            c.line(ix - 3.5 * mm, iy + 3 * mm, ix - 1.2 * mm, iy - 2 * mm)
-            c.line(ix + 3.5 * mm, iy + 3 * mm, ix + 1.2 * mm, iy - 2 * mm)
-        else:
-            c.rect(ix - 2.5 * mm, iy - 3 * mm, 5 * mm, 6 * mm, fill=0, stroke=1)
-            c.line(ix - 1.4 * mm, iy + 1 * mm, ix + 1.4 * mm, iy + 1 * mm)
-            c.line(ix - 1.4 * mm, iy - 1 * mm, ix + 1.4 * mm, iy - 1 * mm)
-
         c.setFillColor(ink)
         c.setFont("Helvetica-Bold", 7)
         c.drawString(22 * mm, 20 * mm, self.category_label[:46])
