@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import os
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
@@ -67,6 +68,40 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
                 )
             )
         ).scalar_one()
+
+        # Concurrency limits are opt-in per tier. When unset, preserve the existing
+        # unlimited-concurrency behavior; malformed configured values fail closed.
+        tier = str(license_obj.tier or "starter").strip().upper()
+        raw_concurrency_limit = os.getenv(f"LICENSE_MAX_CONCURRENT_AUDITS_{tier}", "").strip()
+        if raw_concurrency_limit:
+            try:
+                concurrency_limit = int(raw_concurrency_limit)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Audit concurrency configuration is invalid.",
+                ) from exc
+            if concurrency_limit < 1:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Audit concurrency configuration is invalid.",
+                )
+            active_count = (
+                await db.execute(
+                    select(func.count(AuditQuotaReservation.id)).where(
+                        AuditQuotaReservation.license_id == license_id,
+                        AuditQuotaReservation.expires_at > now,
+                    )
+                )
+            ).scalar_one()
+            if active_count >= concurrency_limit:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=(
+                        f"Concurrent audit limit of {concurrency_limit} "
+                        f"reached for tier '{license_obj.tier}'."
+                    ),
+                )
 
         if successful_count + pending_count >= license_obj.max_monthly_audits:
             raise HTTPException(
