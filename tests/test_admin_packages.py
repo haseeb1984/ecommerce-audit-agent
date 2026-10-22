@@ -109,3 +109,63 @@ async def test_payment_reconciliation_requires_recorded_transaction_id(client, m
     )
     assert response.status_code == 409
     assert "transaction ID" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_private(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import SoftwareLicense
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
+    headers = {"X-Admin-Key": "test-admin-key-only"}
+
+    package = await client.post(
+        "/api/v1/admin/packages",
+        headers=headers,
+        json={
+            "tier": "support-tier",
+            "label": "Support Tier",
+            "monthly_audit_allowance": 321,
+            "max_concurrent_audits": 2,
+            "paddle_price_id": None,
+            "is_active": True,
+        },
+    )
+    assert package.status_code == 200, package.text
+
+    async with AsyncSessionLocal() as db:
+        license_obj = SoftwareLicense(
+            license_key="secret-test-license-value",
+            client_name="QA Client",
+            tier="starter",
+            max_monthly_audits=100,
+            is_active=True,
+        )
+        db.add(license_obj)
+        await db.commit()
+        await db.refresh(license_obj)
+        license_id = license_obj.id
+
+    response = await client.patch(
+        f"/api/v1/admin/clients/{license_id}",
+        headers=headers,
+        json={"client_name": "Updated QA Client", "tier": "support-tier", "is_active": False},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["client_name"] == "Updated QA Client"
+    assert response.json()["tier"] == "support-tier"
+    assert response.json()["max_monthly_audits"] == 321
+    assert response.json()["is_active"] is False
+    assert "secret-test-license-value" not in response.text
+
+    history = await client.get(f"/api/v1/admin/clients/{license_id}/history", headers=headers)
+    assert history.status_code == 200, history.text
+    assert "secret-test-license-value" not in history.text
+
+
+@pytest.mark.asyncio
+async def test_admin_routes_fail_closed_when_admin_key_is_unconfigured(client, monkeypatch):
+    monkeypatch.delenv("ADMIN_API_KEY", raising=False)
+    response = await client.get("/api/v1/admin/packages")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Admin access is not configured."
