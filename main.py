@@ -753,6 +753,66 @@ async def admin_dashboard_page():
     return FileResponse(Path(__file__).resolve().parent / "admin_portal.html")
 
 
+
+@app.get("/api/v1/admin/operations")
+async def admin_operations(request: Request, db: AsyncSession = Depends(get_async_db)):
+    """Private operational diagnostics without exposing environment values or customer secrets."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func
+    now = datetime.now(timezone.utc)
+    # Probe DB with a harmless query and return only health state, never connection details.
+    try:
+        await db.execute(text("SELECT 1"))
+        database_status = "healthy"
+    except Exception as exc:
+        logger.error("Admin database diagnostic failed (error_type=%s)", type(exc).__name__)
+        database_status = "unavailable"
+
+    pending_email = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)).where(
+        PaymentWebhookEvent.status != "delivered"
+    ))).scalar_one()
+    payment_events = (await db.execute(
+        select(PaymentWebhookEvent).where(PaymentWebhookEvent.status != "delivered")
+        .order_by(PaymentWebhookEvent.updated_at.asc()).limit(50)
+    )).scalars().all()
+    expired_reservations = (await db.execute(
+        select(AuditQuotaReservation).where(AuditQuotaReservation.expires_at <= now)
+        .order_by(AuditQuotaReservation.expires_at.asc()).limit(100)
+    )).scalars().all()
+    active_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
+        AuditQuotaReservation.expires_at > now
+    ))).scalar_one()
+    return {
+        "generated_at": now.isoformat(),
+        "health": {
+            "database": database_status,
+            "paddle_api_key_configured": bool(os.getenv("PADDLE_API_KEY", "").strip()),
+            "paddle_webhook_secret_configured": bool(os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()),
+            "smtp_configured": bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip()),
+            "admin_key_configured": bool(os.getenv("ADMIN_API_KEY", "").strip()),
+        },
+        "counts": {
+            "pending_payment_email_events": int(pending_email or 0),
+            "expired_quota_reservations": len(expired_reservations),
+            "active_quota_reservations": int(active_reservations or 0),
+        },
+        "pending_payment_events": [{
+            "event_id": item.event_id,
+            "status": item.status,
+            "license_id": item.license_id,
+            "recipient_email": item.recipient_email,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in payment_events],
+        "expired_reservations": [{
+            "id": item.id,
+            "license_id": item.license_id,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+        } for item in expired_reservations],
+    }
+
+
 @app.get("/api/v1/admin/overview")
 async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_db)):
     """Aggregated platform metrics and per-client quota/usage data for authorized operators."""
