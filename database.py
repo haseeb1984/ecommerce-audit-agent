@@ -38,12 +38,16 @@ if os.getenv("DATABASE_SSL", "true").lower() not in {"0", "false", "no"}:
     ssl_context.load_verify_locations(cafile=str(supabase_ca))
     connect_args["ssl"] = ssl_context
 
+# SQLAlchemy consumes this dialect option from the URL query string (not as a
+# create_async_engine keyword). Preserve any existing connection options.
+_cache_separator = "&" if "?" in DATABASE_URL else "?"
+if "prepared_statement_cache_size=" not in DATABASE_URL:
+    DATABASE_URL = f"{DATABASE_URL}{_cache_separator}prepared_statement_cache_size=0"
+
 engine = create_async_engine(
     DATABASE_URL,
     poolclass=NullPool,
     connect_args=connect_args,
-    # Also disable SQLAlchemy asyncpg dialect caching for transaction-pooler safety.
-    prepared_statement_cache_size=0,
 )
 
 AsyncSessionLocal = async_sessionmaker(
