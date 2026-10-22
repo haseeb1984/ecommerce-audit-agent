@@ -26,7 +26,7 @@ async function history(id){try{const d=await api("/api/v1/admin/clients/"+id+"/h
 box("Audit activity",d.audits,a=>[a.domain,"#"+a.id+" · "+date(a.created_at)+" · Mobile score "+a.mobile_score+" · Speed Index "+a.speed_index_sec+"s · "+a.source]),
 box("Saved PDF reports",d.reports,r=>[r.domain,"Report #"+r.id+" · "+r.finding_count+" findings · "+date(r.created_at)]),
 box("Quota reservations",d.reservations,r=>["Reservation #"+r.id,r.status+" · Started "+date(r.created_at)+" · Expires "+date(r.expires_at)]),
-box("Payment provisioning events",d.payments,p=>[p.status,"Event "+p.event_id+" · "+date(p.created_at)+" · Updated "+date(p.updated_at)]));$("historyPanel").scrollIntoView({behavior:"smooth"})}catch(e){status(e.message,"error")}}
+box("Payment provisioning events",d.payments,p=>[p.status,"Event "+p.event_id+" · "+(p.recipient_email||"No email recorded")+" · "+date(p.created_at)+" · Updated "+date(p.updated_at)]));$("historyPanel").scrollIntoView({behavior:"smooth"})}catch(e){status(e.message,"error")}}
 async function refresh(){render(await api("/api/v1/admin/overview"));$("refresh").disabled=false;status("Connected. Loaded "+clients.length+" client records.","success")}
 $("connect").addEventListener("click",async()=>{key=$("adminKey").value.trim();if(!key){status("Enter the admin key configured on the backend.","error");return}$("connect").disabled=true;try{await refresh()}catch(e){key="";status(e.message,"error")}finally{$("connect").disabled=false}});
 $("refresh").addEventListener("click",async()=>{try{await refresh()}catch(e){status(e.message,"error")}});$("search").addEventListener("input",drawClients);$("closeHistory").addEventListener("click",()=>$("historyPanel").hidden=true);
