@@ -195,12 +195,35 @@
     try { await loadReports({reset:false}); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
   });
+  function clearAccountView() {
+    loadedReports = [];
+    reportsTotal = 0;
+    $("reportCount").textContent = "0 / 0";
+    $("findingCount").textContent = "0";
+    $("reportPaginationStatus").textContent = "Connect to load reports for this credential.";
+    $("reports").replaceChildren();
+    const message = document.createElement("p");
+    message.className = "muted";
+    message.textContent = "Connect to load reports for this credential.";
+    $("reports").append(message);
+    $("loadMoreReports").hidden = true;
+    $("usageSummary").textContent = "Connect your license to load monthly usage.";
+    $("usageFill").style.width = "0%";
+    $("usageBar").setAttribute("aria-valuenow", "0");
+    $("usageRemaining").textContent = "Remaining: —";
+    $("usageReset").textContent = "Period reset: —";
+  }
   $("connect").addEventListener("click", async () => {
-    credential = $("credential").value.trim(); headerName = $("authType").value;
-    if (!credential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
+    const nextCredential = $("credential").value.trim();
+    const nextHeaderName = $("authType").value;
+    if (!nextCredential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
+    // Clear previously displayed account data before attempting a new identity, including
+    // failed reconnects, so a shared browser does not leave another account's history visible.
+    if (nextCredential !== credential || nextHeaderName !== headerName) clearAccountView();
+    credential = nextCredential; headerName = nextHeaderName;
     $("connect").disabled = true;
     try { await loadReports(); await loadUsage(); setStatus("connectStatus", "Connected. Your license-scoped report history and quota are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
-    catch (e) { setStatus("connectStatus", e.message, "error"); }
+    catch (e) { clearAccountView(); setStatus("connectStatus", e.message, "error"); }
     finally { $("connect").disabled = false; }
   });
   $("auditForm").addEventListener("submit", async event => {
