@@ -853,3 +853,59 @@ async def admin_client_history(license_id: int, request: Request, limit: int = Q
                       "created_at": p.created_at.isoformat() if p.created_at else None,
                       "updated_at": p.updated_at.isoformat() if p.updated_at else None} for p in payments],
     }
+
+
+class AdminClientUpdate(BaseModel):
+    client_name: str | None = None
+    tier: str | None = None
+    max_monthly_audits: int | None = None
+    is_active: bool | None = None
+    expires_at: datetime | None = None
+
+
+@app.patch("/api/v1/admin/clients/{license_id}")
+async def admin_update_client(license_id: int, payload: AdminClientUpdate, request: Request,
+                              db: AsyncSession = Depends(get_async_db)):
+    """Allow an authenticated operator to adjust a customer's entitlement and account status."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="Provide at least one field to update.")
+    if "client_name" in changes:
+        value = (changes["client_name"] or "").strip()
+        if not value or len(value) > 255:
+            raise HTTPException(status_code=422, detail="Client name must be between 1 and 255 characters.")
+        changes["client_name"] = value
+    if "tier" in changes:
+        value = (changes["tier"] or "").strip().lower()
+        if not value or len(value) > 50 or not re.fullmatch(r"[a-z0-9_-]+", value):
+            raise HTTPException(status_code=422, detail="Package tier identifier is invalid.")
+        changes["tier"] = value
+    if "max_monthly_audits" in changes:
+        value = changes["max_monthly_audits"]
+        if value is None or value < 1 or value > 10000000:
+            raise HTTPException(status_code=422, detail="Monthly audit limit must be between 1 and 10,000,000.")
+    if "expires_at" in changes and changes["expires_at"] is not None:
+        if changes["expires_at"].tzinfo is None:
+            changes["expires_at"] = changes["expires_at"].replace(tzinfo=timezone.utc)
+    client = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_id))).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    allowed = {"client_name", "tier", "max_monthly_audits", "is_active", "expires_at"}
+    for key, value in changes.items():
+        if key not in allowed:
+            raise HTTPException(status_code=422, detail="Unsupported client update field.")
+        setattr(client, key, value)
+    await db.commit()
+    await db.refresh(client)
+    # Deliberately log only the client ID and field names, never license keys or credentials.
+    logger.info("Admin updated client account (client_id=%s, fields=%s)", client.id, ",".join(sorted(changes)))
+    return {
+        "status": "updated", "client": {
+            "id": client.id, "client_name": client.client_name, "tier": client.tier,
+            "is_active": bool(client.is_active), "monthly_limit": client.max_monthly_audits,
+            "expires_at": client.expires_at.isoformat() if client.expires_at else None,
+        }
+    }
+
