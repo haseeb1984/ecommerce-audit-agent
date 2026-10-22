@@ -1,4 +1,6 @@
 import logging
+import json
+from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
@@ -20,12 +22,13 @@ for _logger in [logging.getLogger(), *[
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, AuditLead, AuditQuotaReservation
+from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
@@ -210,6 +213,37 @@ async def comprehensive_audit_pdf(
             else render_audit_pdf(result)
         )
 
+        # Persist the exact PDF and an evidence manifest under the owning license.
+        # Finding counts are observations, not a denominator for all possible checks.
+        status_counts = {}
+        category_counts = {}
+        for finding in result.findings:
+            status_counts[finding.status] = status_counts.get(finding.status, 0) + 1
+            category_counts[finding.category] = category_counts.get(finding.category, 0) + 1
+        coverage_manifest = {
+            "schema_version": 1,
+            "coverage_semantics": "observed_findings_not_all_possible_checks",
+            "target_url": target_url,
+            "pages_checked": result.pages_checked,
+            "pages_checked_count": len(result.pages_checked),
+            "findings_total": len(result.findings),
+            "finding_status_counts": status_counts,
+            "finding_category_counts": category_counts,
+            "limitations": list(dict.fromkeys(result.limitations)),
+            "not_a_claim_of_complete_wcag_security_indexing_or_conversion_coverage": True,
+        }
+        report = AuditReport(
+            license_id=license_obj.id,
+            domain=urlsplit(target_url).hostname or metrics.domain,
+            pdf_bytes=pdf_bytes,
+            coverage_json=json.dumps(coverage_manifest, separators=(",", ":")),
+            finding_count=len(result.findings),
+            created_at=reserved_at,
+        )
+        db.add(report)
+        await db.flush()
+        report_id = report.id
+
         db.add(AuditLead(
             license_id=license_obj.id,
             domain=urlsplit(target_url).hostname or metrics.domain,
@@ -233,7 +267,10 @@ async def comprehensive_audit_pdf(
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}.pdf"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}.pdf"',
+                "X-Audit-Report-ID": str(report_id),
+            },
         )
     except HTTPException:
         await db.rollback()
@@ -255,3 +292,83 @@ async def comprehensive_audit_pdf(
             status_code=500,
             detail="Comprehensive audit report generation failed. Check server logs for diagnostics.",
         ) from exc
+
+ 
+@app.get("/app", include_in_schema=False)
+async def customer_portal():
+    """Serve the lightweight, API-backed customer portal bundled with this repository."""
+    return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
+
+
+@app.get("/api/v1/reports")
+async def list_audit_reports(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List only reports owned by the authenticated license; never expose PDF bytes here."""
+    from sqlalchemy import select, func as sql_func
+    total = (await db.execute(
+        select(sql_func.count(AuditReport.id)).where(AuditReport.license_id == license_obj.id)
+    )).scalar_one()
+    rows = (await db.execute(
+        select(AuditReport).where(AuditReport.license_id == license_obj.id)
+        .order_by(AuditReport.created_at.desc(), AuditReport.id.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "reports": [
+            {
+                "id": row.id,
+                "domain": row.domain,
+                "finding_count": row.finding_count,
+                "created_at": row.created_at.isoformat(),
+                "download_url": f"/api/v1/reports/{row.id}/pdf",
+                "coverage_url": f"/api/v1/reports/{row.id}/coverage",
+            }
+            for row in rows
+        ],
+    }
+
+
+@app.get("/api/v1/reports/{report_id}/pdf", response_class=Response)
+async def download_audit_report(
+    report_id: int,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Download a stored report only when it belongs to the authenticated license."""
+    from sqlalchemy import select
+    row = (await db.execute(select(AuditReport).where(
+        AuditReport.id == report_id,
+        AuditReport.license_id == license_obj.id,
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audit report not found")
+    safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", row.domain)[:180] or "website"
+    return Response(
+        content=row.pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{row.id}.pdf"'},
+    )
+
+
+@app.get("/api/v1/reports/{report_id}/coverage")
+async def get_audit_report_coverage(
+    report_id: int,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return the run's recorded evidence manifest, scoped to the owning license."""
+    from sqlalchemy import select
+    row = (await db.execute(select(AuditReport).where(
+        AuditReport.id == report_id,
+        AuditReport.license_id == license_obj.id,
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audit report not found")
+    return json.loads(row.coverage_json)
