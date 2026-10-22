@@ -99,3 +99,21 @@ class AuditReport(Base):
     coverage_json = Column(Text, nullable=False, default="{}")
     finding_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class PaymentWebhookEvent(Base):
+    """Idempotency and retry state for verified hosted-checkout webhook events."""
+
+    __tablename__ = "payment_webhook_events"
+
+    event_id = Column(String(255), primary_key=True)
+    status = Column(String(40), nullable=False, default="email_pending")
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    recipient_email = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
