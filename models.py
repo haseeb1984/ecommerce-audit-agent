@@ -109,7 +109,7 @@ class SaaSPlanPackage(Base):
     label = Column(String(100), nullable=False)
     monthly_audit_allowance = Column(Integer, nullable=False)
     max_concurrent_audits = Column(Integer, nullable=False)
-    paddle_price_id = Column(String(100), nullable=True)
+    paddle_price_id = Column(String(100), nullable=True, unique=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
