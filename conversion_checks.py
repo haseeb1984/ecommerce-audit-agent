@@ -544,7 +544,26 @@ async def run_conversion_paid_traffic_checks(target: str) -> tuple[list[AuditFin
                         ["Open the target in a browser and check the HTTP response."], final_url,
                     )
                 ], [], limitations
-            return inspect_conversion_html(html, final_url), [final_url], limitations
+            findings = inspect_conversion_html(html, final_url)
+            # Always make the boundary of this phase visible in the report. An empty
+            # static-HTML finding list must not be mistaken for a measured, healthy
+            # paid campaign or a verified checkout journey.
+            findings.append(_finding(
+                "conversion_paid_traffic",
+                "Campaign efficiency and live conversion events not measured",
+                "not_tested",
+                "info",
+                "This run inspected public static HTML only. No ad-account spend, clicks, CPC, CPA, ROAS, attribution data, or live browser network events were supplied, so campaign efficiency and event delivery remain unassessed.",
+                "Static source can reveal visible forms, links, and tag signatures, but it cannot establish that a shopper can complete checkout, that a pixel fires with the correct payload, or that paid traffic is profitable.",
+                "Connect authorized campaign analytics or provide an export for spend and outcome metrics, and run a consent-aware browser journey with test data to verify event delivery. Do not infer revenue loss or campaign performance from tag presence alone.",
+                [
+                    "Review campaign spend, clicks, conversions, CPC, CPA, and ROAS from an authorized ad/analytics export.",
+                    "Test key product, cart, checkout, and confirmation journeys in a browser using test data.",
+                    "Inspect network events and consent behavior to confirm the intended conversion events and payloads.",
+                ],
+                final_url,
+            ))
+            return findings, [final_url], limitations
         except Exception as exc:
             return [
                 _finding(
