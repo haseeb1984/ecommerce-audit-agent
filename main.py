@@ -393,6 +393,7 @@ async def customer_portal():
 
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -421,6 +422,8 @@ async def get_account_usage(
     )).scalar_one() or 0)
     limit = max(0, int(license_obj.max_monthly_audits or 0))
     consumed = used + pending
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "tier": str(license_obj.tier or "starter"),
         "monthly_limit": limit,
@@ -438,6 +441,7 @@ async def get_account_usage(
 async def list_audit_reports(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -451,6 +455,8 @@ async def list_audit_reports(
         .order_by(AuditReport.created_at.desc(), AuditReport.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "total": total,
         "limit": limit,
@@ -487,13 +493,19 @@ async def download_audit_report(
     return Response(
         content=row.pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{row.id}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{row.id}.pdf"',
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
 @app.get("/api/v1/reports/{report_id}/coverage")
 async def get_audit_report_coverage(
     report_id: int,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -505,6 +517,8 @@ async def get_audit_report_coverage(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return json.loads(row.coverage_json)
 
 
