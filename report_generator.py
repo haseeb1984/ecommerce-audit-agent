@@ -304,6 +304,15 @@ class PhaseVisual(Flowable):
             c.drawPath(p, fill=0, stroke=1)
             c.line(10 * mm, 14 * mm, 12 * mm, 12 * mm)
             c.line(12 * mm, 12 * mm, 16 * mm, 16 * mm)
+        elif self.kind == "conversion":
+            # A simple basket/cart glyph; this is an area label, not a finding.
+            c.line(8 * mm, 18 * mm, 10 * mm, 18 * mm)
+            c.line(10 * mm, 18 * mm, 12 * mm, 11 * mm)
+            c.line(12 * mm, 11 * mm, 18 * mm, 11 * mm)
+            c.line(18 * mm, 11 * mm, 20 * mm, 16 * mm)
+            c.line(11 * mm, 16 * mm, 19 * mm, 16 * mm)
+            c.circle(13 * mm, 8.5 * mm, 1.2 * mm, fill=0, stroke=1)
+            c.circle(18 * mm, 8.5 * mm, 1.2 * mm, fill=0, stroke=1)
         else:
             c.rect(9 * mm, 10 * mm, 8 * mm, 9 * mm, fill=0, stroke=1)
             c.line(11 * mm, 16 * mm, 15 * mm, 16 * mm)
@@ -706,14 +715,16 @@ def render_audit_pdf(
         _p("Verified means the reported observation was directly seen in the response inspected; it does not automatically mean the business impact is proven. Manual review required means human/contextual review is needed. Not tested means the check could not be completed and must not be treated as a pass or failure.", body_style),
         _p("Severity is a triage aid, not a revenue-loss estimate. This report does not guarantee rankings, conversions, legal compliance, accessibility conformance, or security.", body_style),
         Paragraph("Summary", section_style),
-        _p("This report checks a bounded sample of publicly accessible pages. Each visual below is an explanatory illustration of an audit area, not a screenshot of your website.", small_style),
+        _p("This report checks a bounded sample of publicly accessible pages. The phase cards below are explanatory illustrations; actual desktop and mobile captures, when available, appear on the next page.", small_style),
     ]
 
     phase_cards = [
-        [PhaseVisual("Performance & experience", "Speed signals and page delivery", "performance"),
-         PhaseVisual("Accessibility & usability", "Labels, structure and mobile signals", "accessibility")],
-        [PhaseVisual("Security & trust signals", "Observable public-facing controls", "security"),
-         PhaseVisual("SEO & page structure", "Metadata and sampled page signals", "seo")],
+        [PhaseVisual("Technical SEO & discovery", "Metadata, crawl and index signals", "seo"),
+         PhaseVisual("Performance & mobile UX", "Delivery and rendered viewport signals", "performance")],
+        [PhaseVisual("Accessibility & usability", "Labels, semantics and keyboard signals", "accessibility"),
+         PhaseVisual("Security & trust", "Headers and public exposure checks", "security")],
+        [PhaseVisual("Conversion & paid traffic", "Journey friction and campaign-data limits", "conversion"),
+         PhaseVisual("Evidence & coverage", "Sampled pages and verification status", "evidence")],
     ]
     phase_table = Table(phase_cards, colWidths=[87 * mm, 87 * mm], hAlign="LEFT")
     phase_table.setStyle(TableStyle([
@@ -758,10 +769,22 @@ def render_audit_pdf(
                 small_style,
             ),
         ]
+        capture_label_style = ParagraphStyle(
+            "ScreenshotCaptureLabel", parent=small_style, fontName="Helvetica-Bold",
+            fontSize=8, leading=10, textColor=colors.HexColor("#245B8F"),
+            backColor=colors.HexColor("#EEF4FA"), borderColor=colors.HexColor("#D5DFEA"),
+            borderWidth=0.5, borderPadding=5, spaceBefore=2, spaceAfter=4,
+        )
         if desktop_capture is not None:
-            screenshot_section.extend([Paragraph("Desktop viewport (1440px)", finding_style), desktop_capture, Spacer(1, 3 * mm)])
+            screenshot_section.extend([
+                Paragraph("DESKTOP CAPTURE  •  1440 CSS px viewport  •  Live browser evidence", capture_label_style),
+                desktop_capture, Spacer(1, 3 * mm),
+            ])
         if mobile_capture is not None:
-            screenshot_section.extend([Paragraph("Mobile viewport (390px)", finding_style), mobile_capture, Spacer(1, 2 * mm)])
+            screenshot_section.extend([
+                Paragraph("MOBILE CAPTURE  •  390 CSS px viewport  •  Live browser evidence", capture_label_style),
+                mobile_capture, Spacer(1, 2 * mm),
+            ])
         if desktop_capture is None:
             screenshot_section.append(_p("Desktop screenshot unavailable for this run.", small_style))
         if mobile_capture is None:
