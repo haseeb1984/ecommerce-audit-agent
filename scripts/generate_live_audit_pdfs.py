@@ -284,15 +284,29 @@ async def audit_one(target: str, output_dir: Path) -> tuple[str, bool]:
     mobile_findings, mobile_screenshot = await inspect_mobile_rendered_signals(normalized)
     result.findings.extend(mobile_findings)
     desktop_screenshot = await capture_real_website_screenshot(normalized, 1440, 1000)
+    # Capture issue evidence against the exact source URL, never substitute the
+    # homepage screenshot for a product/category/checkout page. Bound the number
+    # of additional browser sessions so public-site smoke tests remain predictable.
+    issue_urls = list(dict.fromkeys(
+        finding.source_url for finding in result.findings
+        if finding.source_url and finding.source_url.startswith(("https://", "http://"))
+    ))
+    issue_screenshots_by_url: dict[str, str] = {}
+    for issue_url in issue_urls[:8]:
+        capture = await capture_real_website_screenshot(issue_url, 1200, 850)
+        if capture:
+            issue_screenshots_by_url[issue_url] = capture
     print(
         f"target={normalized} desktop_screenshot={'captured' if desktop_screenshot else 'unavailable'} "
         f"mobile_screenshot={'captured' if mobile_screenshot else 'unavailable'} "
+        f"issue_screenshots={len(issue_screenshots_by_url)}/{min(len(issue_urls), 8)} "
         f"mobile_findings={len(mobile_findings)}"
     )
     pdf_bytes = render_audit_pdf(
         result,
         screenshot_data_uri=mobile_screenshot,
         desktop_screenshot_data_uri=desktop_screenshot,
+        issue_screenshots_by_url=issue_screenshots_by_url,
     )
     hostname = urlsplit(normalized).hostname or "website"
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:100]
