@@ -734,3 +734,120 @@ async def email_audit_report(
         logger.error("Report email delivery failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Email delivery failed; verify SMTP configuration and retry.") from exc
     return {"status": "sent", "report_id": row.id}
+
+
+# ----------------------- Admin operations dashboard -----------------------
+# Fail closed: configure ADMIN_API_KEY as a deployment secret. Never log its value.
+def _require_admin_key(request: Request) -> None:
+    expected = os.getenv("ADMIN_API_KEY", "").strip()
+    supplied = request.headers.get("x-admin-key", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Admin access is not configured.")
+    if not supplied or not hmac.compare_digest(expected, supplied):
+        raise HTTPException(status_code=403, detail="Admin authentication failed.")
+
+
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+async def admin_dashboard_page():
+    """Serve the operator-only dashboard shell; every data endpoint independently authenticates."""
+    return FileResponse(Path(__file__).resolve().parent / "admin_portal.html")
+
+
+@app.get("/api/v1/admin/overview")
+async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_db)):
+    """Aggregated platform metrics and per-client quota/usage data for authorized operators."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    licenses = (await db.execute(
+        select(SoftwareLicense).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
+    )).scalars().all()
+    total_leads = (await db.execute(select(sql_func.count(AuditLead.id)))).scalar_one()
+    total_reports = (await db.execute(select(sql_func.count(AuditReport.id)))).scalar_one()
+    total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)))).scalar_one()
+    total_webhooks = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)))).scalar_one()
+    monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
+        AuditLead.created_at >= month_start
+    ))).scalar_one()
+    active_clients = sum(1 for item in licenses if item.is_active and not (item.expires_at and item.expires_at < now))
+    client_rows = []
+    for item in licenses:
+        used_month = (await db.execute(select(sql_func.count(AuditLead.id)).where(
+            AuditLead.license_id == item.id, AuditLead.created_at >= month_start
+        ))).scalar_one()
+        report_count = (await db.execute(select(sql_func.count(AuditReport.id)).where(
+            AuditReport.license_id == item.id
+        ))).scalar_one()
+        active_runs = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == item.id, AuditQuotaReservation.expires_at > now
+        ))).scalar_one()
+        latest_audit = (await db.execute(select(sql_func.max(AuditLead.created_at)).where(
+            AuditLead.license_id == item.id
+        ))).scalar_one()
+        client_rows.append({
+            "id": item.id, "client_name": item.client_name, "tier": item.tier,
+            "is_active": bool(item.is_active),
+            "expired": bool(item.expires_at and item.expires_at < now),
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "monthly_limit": int(item.max_monthly_audits or 0),
+            "monthly_used": int(used_month or 0),
+            "monthly_remaining": max(0, int(item.max_monthly_audits or 0) - int(used_month or 0)),
+            "usage_percent": round(100 * int(used_month or 0) / int(item.max_monthly_audits), 1) if item.max_monthly_audits else 0,
+            "total_audits": int((await db.execute(select(sql_func.count(AuditLead.id)).where(
+                AuditLead.license_id == item.id
+            ))).scalar_one() or 0),
+            "reports_saved": int(report_count or 0),
+            "active_audit_reservations": int(active_runs or 0),
+            "last_audit_at": latest_audit.isoformat() if latest_audit else None,
+        })
+    return {
+        "generated_at": now.isoformat(), "month_start": month_start.isoformat(),
+        "summary": {
+            "clients_total": len(licenses), "clients_active": active_clients,
+            "clients_inactive_or_expired": len(licenses) - active_clients,
+            "audits_this_month": int(monthly_leads or 0), "audits_all_time": int(total_leads or 0),
+            "reports_saved": int(total_reports or 0), "active_audit_reservations": int(total_reservations or 0),
+            "payment_webhook_events": int(total_webhooks or 0),
+        },
+        "clients": client_rows,
+    }
+
+
+@app.get("/api/v1/admin/clients/{license_id}/history")
+async def admin_client_history(license_id: int, request: Request, limit: int = Query(100, ge=1, le=500),
+                              db: AsyncSession = Depends(get_async_db)):
+    """Return a single client's audit, report, reservation and payment-provisioning history."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    client = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_id))).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    audits = (await db.execute(select(AuditLead).where(AuditLead.license_id == license_id)
+        .order_by(AuditLead.created_at.desc(), AuditLead.id.desc()).limit(limit))).scalars().all()
+    reports = (await db.execute(select(AuditReport).where(AuditReport.license_id == license_id)
+        .order_by(AuditReport.created_at.desc(), AuditReport.id.desc()).limit(limit))).scalars().all()
+    reservations = (await db.execute(select(AuditQuotaReservation).where(AuditQuotaReservation.license_id == license_id)
+        .order_by(AuditQuotaReservation.created_at.desc(), AuditQuotaReservation.id.desc()).limit(limit))).scalars().all()
+    payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id == license_id)
+        .order_by(PaymentWebhookEvent.created_at.desc()).limit(limit))).scalars().all()
+    return {
+        "client": {"id": client.id, "client_name": client.client_name, "tier": client.tier,
+                   "is_active": bool(client.is_active), "monthly_limit": client.max_monthly_audits,
+                   "created_at": client.created_at.isoformat() if client.created_at else None,
+                   "expires_at": client.expires_at.isoformat() if client.expires_at else None},
+        "audits": [{"id": a.id, "domain": a.domain, "mobile_score": a.mobile_score,
+                    "speed_index_sec": a.speed_index_sec, "source": a.source_channel,
+                    "created_at": a.created_at.isoformat() if a.created_at else None} for a in audits],
+        "reports": [{"id": r.id, "domain": r.domain, "finding_count": r.finding_count,
+                     "created_at": r.created_at.isoformat() if r.created_at else None} for r in reports],
+        "reservations": [{"id": r.id, "created_at": r.created_at.isoformat(),
+                          "expires_at": r.expires_at.isoformat(),
+                          "status": "active" if r.expires_at > datetime.now(timezone.utc) else "expired"}
+                         for r in reservations],
+        "payments": [{"event_id": p.event_id, "status": p.status,
+                      "created_at": p.created_at.isoformat() if p.created_at else None,
+                      "updated_at": p.updated_at.isoformat() if p.updated_at else None} for p in payments],
+    }
