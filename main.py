@@ -958,6 +958,7 @@ async def admin_dashboard_page():
 async def admin_operations(request: Request, db: AsyncSession = Depends(get_async_db)):
     """Private operational diagnostics without exposing environment values or customer secrets."""
     _require_admin_key(request)
+    await _ensure_admin_tables(db)
     from sqlalchemy import select, func as sql_func
     now = datetime.now(timezone.utc)
     # Probe DB with a harmless query and return only health state, never connection details.
@@ -1036,7 +1037,7 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
     monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
         AuditLead.created_at >= month_start
     ))).scalar_one()
-    active_clients = sum(1 for item in licenses if item.is_active and not (item.expires_at and item.expires_at < now))
+    active_clients = sum(1 for item in licenses if item.is_active and not (item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now))
     client_rows = []
     for item in licenses:
         used_month = (await db.execute(select(sql_func.count(AuditLead.id)).where(
@@ -1131,6 +1132,7 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
                               db: AsyncSession = Depends(get_async_db)):
     """Allow an authenticated operator to adjust a customer's entitlement and account status."""
     _require_admin_key(request)
+    await _ensure_admin_tables(db)
     from sqlalchemy import select
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
