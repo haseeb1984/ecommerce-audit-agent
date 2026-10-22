@@ -31,7 +31,7 @@ for _logger in [logging.getLogger(), *[
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Response, Request
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -298,6 +298,54 @@ async def comprehensive_audit_pdf(
         ) from exc
 
  
+
+@app.get("/checkout", response_class=HTMLResponse, include_in_schema=False)
+async def paddle_checkout_page(request: Request):
+    """Launch a Paddle-hosted transaction from the configured payment link."""
+    client_token = os.getenv("PADDLE_CLIENT_TOKEN", "").strip()
+    environment = os.getenv("PADDLE_ENVIRONMENT", "sandbox").strip().lower()
+    if environment not in {"sandbox", "production"}:
+        environment = "sandbox"
+    token_json = json.dumps(client_token)
+    environment_js = "Paddle.Environment.set('sandbox');" if environment == "sandbox" else ""
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Secure checkout | E-Commerce Audit Agent</title>
+<style>
+body{{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f5f7fb;color:#172033;min-height:100vh;display:grid;place-items:center}}
+main{{background:#fff;padding:2rem;border-radius:16px;max-width:520px;margin:1rem;box-shadow:0 12px 40px #17203312}}
+h1{{margin-top:0}}p{{line-height:1.6;color:#46536a}}#status{{font-weight:600}}
+</style>
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+</head><body><main>
+<h1>Secure checkout</h1><p id="status">Preparing your secure Paddle checkout…</p>
+<p>You will complete payment on Paddle's secure checkout. Do not refresh this page while checkout opens.</p>
+</main>
+<script>
+(async function() {{
+  const status = document.getElementById("status");
+  const token = {token_json};
+  const params = new URLSearchParams(window.location.search);
+  const transactionId = params.get("_ptxn") || params.get("transaction_id");
+  if (!token) {{ status.textContent = "Checkout is not configured yet. Please contact support."; return; }}
+  if (!transactionId || !/^txn_[A-Za-z0-9]+$/.test(transactionId)) {{
+    status.textContent = "No valid checkout transaction was supplied. Please return to the plans page and try again.";
+    return;
+  }}
+  try {{
+    {environment_js}
+    Paddle.Initialize({{ token: token }});
+    status.textContent = "Opening secure checkout…";
+    Paddle.Checkout.open({{ transactionId: transactionId }});
+  }} catch (error) {{
+    status.textContent = "Checkout could not be opened. Please return to the plans page and try again.";
+  }}
+}})();
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
 @app.get("/app", include_in_schema=False)
 async def customer_portal():
     """Serve the lightweight, API-backed customer portal bundled with this repository."""
