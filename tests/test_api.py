@@ -70,6 +70,48 @@ def mock_process_lead(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_account_usage_reports_monthly_quota_without_exposing_license_key(client):
+    license_id = await create_license(key="usage-private-license", quota=5)
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add(AuditLead(
+            license_id=license_id,
+            domain="used.example",
+            mobile_score=80,
+            speed_index_sec=2.0,
+            created_at=now,
+        ))
+        db.add(AuditQuotaReservation(
+            license_id=license_id,
+            created_at=now,
+            expires_at=now + timedelta(minutes=10),
+        ))
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/account/usage",
+        headers={"X-License-Key": "usage-private-license"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["monthly_limit"] == 5
+    assert data["used"] == 1
+    assert data["in_progress"] == 1
+    assert data["remaining"] == 3
+    assert data["usage_percent"] == 40
+    assert data["tier"] == "test"
+    assert "license_key" not in data
+    assert "usage-private-license" not in response.text
+    assert data["period_resets_at"]
+
+
+@pytest.mark.asyncio
+async def test_account_usage_requires_authentication(client):
+    response = await client.get("/api/v1/account/usage")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_root_and_database_health(client):
     root = await client.get("/")
     assert root.status_code == 200
