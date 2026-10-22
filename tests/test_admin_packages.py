@@ -84,3 +84,28 @@ async def test_admin_package_validation_rejects_invalid_limits(client, monkeypat
         },
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_payment_reconciliation_requires_recorded_transaction_id(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import PaymentWebhookEvent
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_reconcile_without_transaction",
+            status="email_pending",
+            license_id=None,
+            recipient_email="qa@example.test",
+            transaction_id=None,
+            subscription_id=None,
+        ))
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/admin/payment-events/evt_reconcile_without_transaction/reconcile",
+        headers={"X-Admin-Key": "test-admin-key-only"},
+    )
+    assert response.status_code == 409
+    assert "transaction ID" in response.json()["detail"]
