@@ -391,6 +391,49 @@ async def customer_portal():
     return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
 
 
+@app.get("/api/v1/account/usage")
+async def get_account_usage(
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return the authenticated license's monthly quota status without exposing its key."""
+    from sqlalchemy import select, func as sql_func
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+
+    used = int((await db.execute(
+        select(sql_func.count(AuditLead.id)).where(
+            AuditLead.license_id == license_obj.id,
+            AuditLead.created_at >= month_start,
+        )
+    )).scalar_one() or 0)
+    pending = int((await db.execute(
+        select(sql_func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == license_obj.id,
+            AuditQuotaReservation.created_at >= month_start,
+            AuditQuotaReservation.expires_at > now,
+        )
+    )).scalar_one() or 0)
+    limit = max(0, int(license_obj.max_monthly_audits or 0))
+    consumed = used + pending
+    return {
+        "tier": str(license_obj.tier or "starter"),
+        "monthly_limit": limit,
+        "used": used,
+        "in_progress": pending,
+        "remaining": max(0, limit - consumed),
+        "usage_percent": min(100, round(consumed * 100 / limit, 1)) if limit else 0,
+        "period_resets_at": next_month.isoformat(),
+        "is_active": bool(license_obj.is_active),
+        "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
+    }
+
+
 @app.get("/api/v1/reports")
 async def list_audit_reports(
     limit: int = Query(20, ge=1, le=100),
