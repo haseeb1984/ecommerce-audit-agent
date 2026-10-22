@@ -213,25 +213,43 @@ def _business_impact_context(finding: dict[str, object]) -> tuple[str, str]:
     category = str(finding.get("category", "")).lower()
     status = str(finding.get("status", "")).lower()
     severity = str(finding.get("severity", "")).lower()
-    if category in {"security", "security_headers", "security_exposure", "security_transport"}:
-        benefit = "Addressing the observed security signal may reduce the specific exposure described; it does not guarantee that the website is secure or prevent every attack."
+    if category in {"security_dependency", "dependency_advisory"}:
+        benefit = "Confirming the deployed package and addressing an applicable advisory can reduce exposure to known vulnerable versions; a detected version string alone does not prove exploitability."
+        risk = "If the affected version is actually served and remains exposed, a known weakness may remain available to attackers. This scan does not establish that exploitation or compromise occurred."
+    elif category in {"security", "security_headers", "security_exposure", "security_transport", "security_cookies", "security_api_documentation", "security_baseline"}:
+        benefit = "Addressing a confirmed security weakness can reduce the specific exposure described; it cannot guarantee that the website is secure or prevent every attack."
         risk = "If the signal is confirmed in context and left unresolved, the website may remain exposed to the weakness described. This audit does not establish that a compromise has occurred."
-    elif category in {"accessibility"}:
-        benefit = "Addressing the observed accessibility signal may make the affected content or interaction easier for more people to use; a complete accessibility outcome requires contextual and assistive-technology testing."
-        risk = "If the issue is confirmed and left unresolved, some visitors may have difficulty understanding or operating the affected content."
-    elif category in {"seo", "technical_seo", "structured_data", "indexing", "crawlability"}:
-        benefit = "Addressing the observed technical signal may help search engines interpret or discover the affected content; ranking or indexing improvements are not guaranteed."
-        risk = "If the issue is confirmed and left unresolved, search engines may have difficulty discovering, interpreting, or presenting the affected content as intended."
-    elif category in {"conversion_paid_traffic", "conversion", "paid_traffic"}:
-        benefit = "Clarifying the observed journey or information may reduce avoidable user uncertainty; conversion rate, CPC, revenue, and attribution impact were not measured."
-        risk = "If the signal reflects a real journey problem and remains unresolved, some visitors may hesitate, abandon the journey, or need extra effort. The audit does not quantify lost sales or ad spend."
+    elif category in {"accessibility", "aria", "aria_alt_text"}:
+        benefit = "Addressing the observed accessibility signal can make the affected control or content easier to identify and use; a complete outcome requires contextual and assistive-technology testing."
+        risk = "If the issue is confirmed and left unresolved, some visitors may have difficulty understanding, navigating, or operating the affected content."
+    elif category in {"trust", "trust_inspector"}:
+        benefit = "Making accurate payment, returns, review, and support information easy to verify can help shoppers understand purchase conditions; detected cues do not verify authenticity or legal adequacy."
+        risk = "If relevant information is difficult to find or conflicts with actual service, shoppers may hesitate or need extra support. This scan does not prove a badge or review is invalid."
+    elif category in {"ecommerce", "ecommerce_category"}:
+        benefit = "Correct, consistent product and category signals can help shoppers understand the offer and help crawlers interpret important catalog pages."
+        risk = "If product details, availability, canonical targets, or category navigation are inconsistent, shoppers and crawlers may encounter confusing or duplicate versions of catalog content."
+    elif category in {"broken_internal_links"}:
+        benefit = "Repairing a confirmed broken internal destination can help visitors reach the intended page and preserve useful navigation paths."
+        risk = "If the destination is genuinely broken and remains so, visitors may hit an error or fail to reach an important product, policy, or support page."
+    elif category in {"content_quality", "duplicate_content"}:
+        benefit = "Reviewing overlapping or thin content can help make each page more useful and distinguishable; content quality still needs human context."
+        risk = "If substantial duplication or missing information is confirmed, visitors may have trouble finding the most useful page and search systems may have less clear page signals."
+    elif category in {"international_seo"}:
+        benefit = "Correct language and regional annotations can help search engines associate localized pages with their intended audiences."
+        risk = "If localization annotations are inconsistent, search systems may have difficulty interpreting the intended language or regional version."
+    elif category in {"seo", "technical_seo", "structured_data", "indexing", "crawlability", "indexability", "robots_txt", "sitemap_xml", "llms_txt"}:
+        benefit = "Addressing the observed discovery or technical signal can help crawlers interpret or discover the affected content; ranking or indexing improvements are not guaranteed."
+        risk = "If the issue is confirmed and left unresolved, crawlers may have difficulty discovering, interpreting, or presenting the affected content as intended."
+    elif category in {"conversion_paid_traffic", "pixel_analytics", "conversion", "paid_traffic"}:
+        benefit = "Clarifying the observed journey or validating tag behavior may reduce avoidable user uncertainty; conversion rate, CPC, revenue, and attribution impact were not measured."
+        risk = "If the signal reflects a real journey or tracking problem and remains unresolved, visitors may face friction or campaign reporting may remain unreliable. Lost sales and ad spend were not quantified."
     elif category in {"performance", "static_performance", "mobile_ux"}:
-        benefit = "Addressing the observed usability or performance signal may reduce friction on affected devices; actual user experience should be confirmed with browser and field measurements."
-        risk = "If confirmed and left unresolved, the affected experience may remain slower or harder to use for some visitors. This static signal alone does not quantify business loss."
+        benefit = "Addressing the observed usability or performance signal can reduce friction on affected devices; actual user experience should be confirmed with browser and field measurements."
+        risk = "If confirmed and left unresolved, the affected experience may remain slower or harder to use for some visitors. This static signal does not quantify business loss."
     else:
         qualifier = "This item requires human review." if status == "manual_review_required" else "The impact has not been measured."
-        benefit = f"Resolving or validating the observation may improve the affected part of the website. {qualifier}"
-        risk = f"If the observation reflects a real issue and remains unresolved, the affected experience or control may continue to underperform. {qualifier}"
+        benefit = f"Validating this observation can help determine whether a targeted change is worthwhile. {qualifier}"
+        risk = f"If the observation reflects a real issue and remains unresolved, its specific effect may persist. {qualifier}"
     if severity == "info" or status in {"not_tested", "insufficient_data"}:
         risk = "No adverse outcome is established by this result. Verify the observation in context before deciding whether action is needed."
     return (
@@ -1064,7 +1082,7 @@ def render_audit_pdf(
             result_color = "#9A6700"
         elif severity == "info":
             result_label = "OBSERVATION — NOT SCORED"
-            result_detail = "A signal was observed. Presence alone does not prove quality or full compliance."
+            result_detail = "Observation only; review the evidence and any required follow-up checks before drawing a conclusion."
             result_color = "#2E83A6"
         else:
             result_label = f"{severity.upper()} SIGNAL"
