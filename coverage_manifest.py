@@ -146,7 +146,7 @@ def build_coverage_manifest(
         "important_note": (
             "category_signal_coverage_pct measures categories with at least one recorded finding. "
             "category_execution_coverage_pct measures category groups whose checker completed, "
-            "including groups that found no issue; neither percentage proves every individual "
+            "including groups that found no issue; this does not prove every individual "
             "check ran or passed. Categories not explicitly marked as executed remain not proven. "
             "Google indexing,             "field Core Web Vitals, full WCAG conformance, complete software composition "
             "analysis, live event attribution, and measured CPC/ROAS/revenue impact require "
