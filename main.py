@@ -439,9 +439,9 @@ async def get_account_usage(
 
 @app.get("/api/v1/reports")
 async def list_audit_reports(
+    response: Response,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
