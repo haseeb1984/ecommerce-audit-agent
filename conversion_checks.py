@@ -477,7 +477,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             f"{name}: {len(matches)} matching occurrences" for name, matches in repeated_tags.items()
         )
         findings.append(_finding(
-            "conversion_paid_traffic", "Repeated marketing tag signatures need review",
+            "pixel_analytics", "Repeated marketing tag signatures need review",
             "manual_review_required", "medium",
             f"Multiple static signatures were detected for the same vendor: {repeated_evidence}.",
             "Repeated tag snippets or hosts can indicate duplicate analytics installation and duplicate event counting, but multiple containers or intentional integrations may be legitimate. Static HTML cannot confirm that events fire more than once.",
@@ -487,7 +487,7 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
         ))
 
     findings.append(_finding(
-        "conversion_paid_traffic", "Publicly detectable marketing tags", "verified" if detected else "manual_review_required",
+        "pixel_analytics", "Publicly detectable marketing tags", "verified" if detected else "manual_review_required",
         "info", tracking_evidence,
         "Tag signatures are only presence signals. They do not prove the tag fires correctly, consent is handled properly, events are configured, or ad platforms attribute conversions. A generic matching word or a tag loaded only after interaction can be missed or misclassified by static inspection. Absence from initial HTML does not prove tracking is absent.",
         "Review each reported host/signature, then use the relevant browser tag debugger and analytics/ad-platform diagnostics to verify page-view and intended conversion events, consent behavior, and duplicate firing. Never infer conversion performance from tag presence alone.",

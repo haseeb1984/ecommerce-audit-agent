@@ -22,6 +22,7 @@ def test_detects_forms_checkout_paths_and_tracking_without_claiming_success():
     assert by_title["Homepage contains HTML form(s)"].status == "verified"
     assert "1 form(s)" in by_title["Homepage contains HTML form(s)"].evidence
     assert "1 same-origin cart/checkout/payment-like link(s)" in by_title["Primary conversion path signals"].evidence
+    assert by_title["Publicly detectable marketing tags"].category == "pixel_analytics"
     assert "Google tag / Analytics" in by_title["Publicly detectable marketing tags"].evidence
     assert "Meta Pixel" in by_title["Publicly detectable marketing tags"].evidence
     assert "script host: www.googletagmanager.com" in by_title["Publicly detectable marketing tags"].evidence
@@ -67,6 +68,7 @@ def test_repeated_marketing_tag_signatures_need_review_not_confirmed_duplicate_f
     findings = inspect_conversion_html(html, "https://shop.example/")
     finding = next(f for f in findings if f.title == "Repeated marketing tag signatures need review")
     assert finding.status == "manual_review_required"
+    assert finding.category == "pixel_analytics"
     assert finding.severity == "medium"
     assert "Google tag / Analytics" in finding.evidence
     assert "cannot confirm" in finding.explanation
