@@ -484,6 +484,36 @@ class FindingInsightInfographic(Flowable):
             "conversion" if any(term in self.category for term in ("conversion", "paid_traffic", "pixel", "ecommerce", "trust")) else
             "check"
         )
+        # Each check gets a title-specific visual motif in addition to its own
+        # finding card. Motifs identify the inspected control; they are not scores.
+        title_key = self.title.lower()
+        check_motifs = (
+            (("title tag", "page title", "title element"), "title"),
+            (("meta description", "description tag"), "description"),
+            (("canonical",), "canonical"),
+            (("heading", "h1"), "heading"),
+            (("image", "alt text", "alt attribute"), "image"),
+            (("internal link", "broken link", "link target"), "link"),
+            (("robots.txt", "robots txt"), "robots"),
+            (("sitemap",), "sitemap"),
+            (("structured data", "schema.org", "json-ld"), "structured"),
+            (("viewport", "mobile layout", "responsive"), "viewport"),
+            (("touch target", "tap target", "button size"), "touch"),
+            (("cookie",), "cookie"),
+            (("tls", "https", "transport security", "certificate"), "transport"),
+            (("security header", "content-security-policy", "strict-transport-security"), "header"),
+            (("dependency", "vulnerable package", "known vulnerability"), "dependency"),
+            (("pixel", "analytics", "tag manager", "tracking"), "analytics"),
+            (("checkout", "cart", "add to cart", "purchase"), "cart"),
+            (("form", "email field", "search field"), "form"),
+            (("payment", "trust badge", "refund policy"), "trust"),
+            (("contrast", "accessible name", "aria", "keyboard", "label"), "accessibility"),
+            (("script", "stylesheet", "render-blocking", "core web vital", "largest contentful", "cumulative layout", "interaction to next"), "performance"),
+        )
+        self.check_glyph = next(
+            (glyph for phrases, glyph in check_motifs if any(phrase in title_key for phrase in phrases)),
+            self.glyph,
+        )
 
     def draw(self):
         c = self.canv
@@ -504,8 +534,130 @@ class FindingInsightInfographic(Flowable):
         c.setStrokeColor(accent)
         c.setFillColor(accent)
         c.setLineWidth(1.25)
-        if self.glyph == "speed":
+        motif = self.check_glyph
+        if motif == "title":
+            c.rect(ix - 3 * mm, iy - 3.5 * mm, 6 * mm, 7 * mm, fill=0, stroke=1)
+            c.line(ix - 2 * mm, iy + 1.5 * mm, ix + 2 * mm, iy + 1.5 * mm)
+            c.line(ix - 2 * mm, iy, ix + 1 * mm, iy)
+            c.line(ix - 2 * mm, iy - 1.5 * mm, ix + 2 * mm, iy - 1.5 * mm)
+        elif motif == "description":
+            c.rect(ix - 3.5 * mm, iy - 3 * mm, 7 * mm, 6 * mm, fill=0, stroke=1)
+            for offset, length in [(1.4, 4.5), (0, 6), (-1.4, 3.5)]:
+                c.line(ix - length / 2 * mm, iy + offset * mm, ix + length / 2 * mm, iy + offset * mm)
+        elif motif == "canonical":
+            c.ellipse(ix - 3.5 * mm, iy - 2.5 * mm, ix + 3.5 * mm, iy + 2.5 * mm, fill=0, stroke=1)
+            c.line(ix - 2 * mm, iy, ix + 2 * mm, iy)
+            c.line(ix + .5 * mm, iy + 1.5 * mm, ix + 2 * mm, iy)
+            c.line(ix + .5 * mm, iy - 1.5 * mm, ix + 2 * mm, iy)
+        elif motif == "heading":
+            c.setFont("Helvetica-Bold", 8)
+            c.drawCentredString(ix, iy - 2.5 * mm, "H1")
+            c.line(ix - 3 * mm, iy + 2 * mm, ix + 3 * mm, iy + 2 * mm)
+        elif motif == "image":
+            c.rect(ix - 3.5 * mm, iy - 2.5 * mm, 7 * mm, 5 * mm, fill=0, stroke=1)
+            c.circle(ix + 1.8 * mm, iy + 1 * mm, .7 * mm, fill=0, stroke=1)
+            p = c.beginPath()
+            p.moveTo(ix - 2.5 * mm, iy - 1.5 * mm)
+            p.lineTo(ix - .5 * mm, iy + .7 * mm)
+            p.lineTo(ix + .7 * mm, iy - .5 * mm)
+            p.lineTo(ix + 2.5 * mm, iy + 1 * mm)
+            c.drawPath(p, fill=0, stroke=1)
+        elif motif == "link":
+            c.ellipse(ix - 4 * mm, iy - 1.5 * mm, ix + .5 * mm, iy + 2 * mm, fill=0, stroke=1)
+            c.ellipse(ix - .5 * mm, iy - 2 * mm, ix + 4 * mm, iy + 1.5 * mm, fill=0, stroke=1)
+        elif motif == "robots":
+            c.setFont("Helvetica-Bold", 6)
+            c.drawCentredString(ix, iy - 1.5 * mm, "ROBOTS")
+            c.line(ix - 3 * mm, iy + 2 * mm, ix + 3 * mm, iy + 2 * mm)
+        elif motif == "sitemap":
+            for x, y in [(0, 2.5), (-2.5, -2), (2.5, -2)]:
+                c.rect(ix + x * mm - .8 * mm, iy + y * mm - .8 * mm, 1.6 * mm, 1.6 * mm, fill=0, stroke=1)
+            c.line(ix, iy + 1.7 * mm, ix, iy - .5 * mm)
+            c.line(ix - 2.5 * mm, iy - .5 * mm, ix + 2.5 * mm, iy - .5 * mm)
+        elif motif == "structured":
+            c.rect(ix - 3 * mm, iy - 3 * mm, 6 * mm, 6 * mm, fill=0, stroke=1)
+            c.line(ix - 1.5 * mm, iy + 1.5 * mm, ix + 1.5 * mm, iy + 1.5 * mm)
+            c.line(ix - 1.5 * mm, iy, ix + 1.5 * mm, iy)
+            c.line(ix - 1.5 * mm, iy - 1.5 * mm, ix + .5 * mm, iy - 1.5 * mm)
+        elif motif == "viewport":
+            c.roundRect(ix - 2.7 * mm, iy - 4 * mm, 5.4 * mm, 8 * mm, 1, fill=0, stroke=1)
+            c.line(ix - 1.7 * mm, iy + 2 * mm, ix + 1.7 * mm, iy + 2 * mm)
+            c.circle(ix, iy - 2.8 * mm, .35 * mm, fill=1, stroke=0)
+        elif motif == "touch":
+            c.circle(ix, iy, 3 * mm, fill=0, stroke=1)
+            c.circle(ix, iy, 1 * mm, fill=0, stroke=1)
+        elif motif == "cookie":
+            c.circle(ix, iy, 3.5 * mm, fill=0, stroke=1)
+            for x, y in [(-1.5, 1.2), (1.4, .8), (-.8, -1.5), (1.7, -1.7)]:
+                c.circle(ix + x * mm, iy + y * mm, .45 * mm, fill=1, stroke=0)
+        elif motif in {"transport", "header", "dependency"}:
+            if motif == "transport":
+                c.arc(ix - 3.5 * mm, iy - 2.5 * mm, ix + 3.5 * mm, iy + 4 * mm, 0, 180)
+                c.rect(ix - 3.5 * mm, iy - 3 * mm, 7 * mm, 4.5 * mm, fill=0, stroke=1)
+            elif motif == "header":
+                c.rect(ix - 3.5 * mm, iy - 3 * mm, 7 * mm, 6 * mm, fill=0, stroke=1)
+                c.line(ix - 2 * mm, iy + 1 * mm, ix + 2 * mm, iy + 1 * mm)
+                c.line(ix - 2 * mm, iy - 1 * mm, ix + 2 * mm, iy - 1 * mm)
+            else:
+                c.circle(ix, iy + 2 * mm, 1.2 * mm, fill=0, stroke=1)
+                c.line(ix, iy + .8 * mm, ix, iy - 3.5 * mm)
+                c.line(ix - 2.5 * mm, iy - 1 * mm, ix + 2.5 * mm, iy - 1 * mm)
+        elif motif == "analytics":
+            for j, h in enumerate([2, 4, 6]):
+                c.rect(ix - 3 * mm + j * 2.3 * mm, iy - 3.5 * mm, 1.4 * mm, h * mm, fill=0, stroke=1)
+        elif motif == "cart":
+            c.line(ix - 3.5 * mm, iy + 2.5 * mm, ix - 2.2 * mm, iy + 2.5 * mm)
+            c.line(ix - 2.2 * mm, iy + 2.5 * mm, ix - 1 * mm, iy - 1.5 * mm)
+            c.line(ix - 1 * mm, iy - 1.5 * mm, ix + 3 * mm, iy - 1.5 * mm)
+            c.line(ix + 3 * mm, iy - 1.5 * mm, ix + 3.8 * mm, iy + 1.2 * mm)
+            c.line(ix - 1.5 * mm, iy + 1.2 * mm, ix + 3.8 * mm, iy + 1.2 * mm)
+            c.circle(ix, iy - 2.8 * mm, .7 * mm, fill=0, stroke=1)
+            c.circle(ix + 2.8 * mm, iy - 2.8 * mm, .7 * mm, fill=0, stroke=1)
+        elif motif == "form":
+            c.rect(ix - 3 * mm, iy - 3.5 * mm, 6 * mm, 7 * mm, fill=0, stroke=1)
+            c.line(ix - 2 * mm, iy + 1.5 * mm, ix + 2 * mm, iy + 1.5 * mm)
+            c.rect(ix - 2 * mm, iy - .5 * mm, 4 * mm, 1.2 * mm, fill=0, stroke=1)
+            c.line(ix - 2 * mm, iy - 2 * mm, ix + 1 * mm, iy - 2 * mm)
+        elif motif == "trust":
+            c.circle(ix, iy, 3.5 * mm, fill=0, stroke=1)
+            c.line(ix - 1.8 * mm, iy, ix - .3 * mm, iy - 1.5 * mm)
+            c.line(ix - .3 * mm, iy - 1.5 * mm, ix + 2 * mm, iy + 1.8 * mm)
+        elif motif == "accessibility":
+            c.circle(ix, iy + 2.7 * mm, 1.1 * mm, fill=0, stroke=1)
+            c.line(ix, iy + 1.4 * mm, ix, iy - 1.5 * mm)
+            c.line(ix - 3 * mm, iy + .5 * mm, ix + 3 * mm, iy + .5 * mm)
+            c.line(ix, iy - 1.5 * mm, ix - 2.5 * mm, iy - 4 * mm)
+            c.line(ix, iy - 1.5 * mm, ix + 2.5 * mm, iy - 4 * mm)
+        elif motif == "speed":
             c.line(ix - 3.5 * mm, iy - 1.5 * mm, ix - 1.5 * mm, iy + 1.5 * mm)
+            c.line(ix - 1.5 * mm, iy + 1.5 * mm, ix + .5 * mm, iy)
+            c.line(ix + .5 * mm, iy, ix + 3.5 * mm, iy + 3 * mm)
+            c.circle(ix + 3.5 * mm, iy + 3 * mm, .7 * mm, fill=1, stroke=0)
+        elif motif == "security":
+            p = c.beginPath()
+            p.moveTo(ix, iy + 4 * mm)
+            p.lineTo(ix + 3.5 * mm, iy + 2.5 * mm)
+            p.lineTo(ix + 2.8 * mm, iy - 2 * mm)
+            p.lineTo(ix, iy - 4 * mm)
+            p.lineTo(ix - 2.8 * mm, iy - 2 * mm)
+            p.lineTo(ix - 3.5 * mm, iy + 2.5 * mm)
+            p.close()
+            c.drawPath(p, fill=0, stroke=1)
+            c.line(ix - 1.8 * mm, iy, ix - .4 * mm, iy - 1.4 * mm)
+            c.line(ix - .4 * mm, iy - 1.4 * mm, ix + 2 * mm, iy + 1.5 * mm)
+        elif motif == "seo":
+            c.circle(ix - 1 * mm, iy + 1 * mm, 2.5 * mm, fill=0, stroke=1)
+            c.line(ix + .8 * mm, iy - .8 * mm, ix + 3.7 * mm, iy - 3.7 * mm)
+        elif motif == "conversion":
+            c.line(ix - 3.5 * mm, iy + 3 * mm, ix + 3.5 * mm, iy + 3 * mm)
+            c.line(ix - 2.5 * mm, iy + .5 * mm, ix + 2.5 * mm, iy + .5 * mm)
+            c.line(ix - 1.2 * mm, iy - 2 * mm, ix + 1.2 * mm, iy - 2 * mm)
+            c.line(ix - 3.5 * mm, iy + 3 * mm, ix - 1.2 * mm, iy - 2 * mm)
+            c.line(ix + 3.5 * mm, iy + 3 * mm, ix + 1.2 * mm, iy - 2 * mm)
+        else:
+            c.rect(ix - 2.5 * mm, iy - 3 * mm, 5 * mm, 6 * mm, fill=0, stroke=1)
+            c.line(ix - 1.4 * mm, iy + 1 * mm, ix + 1.4 * mm, iy + 1 * mm)
+            c.line(ix - 1.4 * mm, iy - 1 * mm, ix + 1.4 * mm, iy - 1 * mm)
             c.line(ix - 1.5 * mm, iy + 1.5 * mm, ix + .5 * mm, iy)
             c.line(ix + .5 * mm, iy, ix + 3.5 * mm, iy + 3 * mm)
             c.circle(ix + 3.5 * mm, iy + 3 * mm, .7 * mm, fill=1, stroke=0)
