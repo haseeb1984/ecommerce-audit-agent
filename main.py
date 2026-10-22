@@ -538,23 +538,26 @@ class PaddleCheckoutRequest(BaseModel):
 
 
 @app.get("/api/v1/billing/plans")
-async def public_billing_plans():
-    """Expose plans only when Paddle API, webhook and license email are configured."""
+async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
+    """Expose active operator-managed plans only when payment delivery is configured."""
     ready = bool(os.getenv("PADDLE_API_KEY", "").strip() and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
                  and os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip())
-    plans = _configured_payment_plans() if ready else []
+    plans = await _db_payment_plans(db, active_only=True) if ready else []
+    plans = [p for p in plans if p.get("price_id")]
     return {"checkout_provider": "Paddle", "configured": bool(plans),
-        "plans": [{key: value for key, value in plan.items() if key != "price_id"} for plan in plans],
+        "plans": [{"tier": p["tier"], "label": p["label"],
+                   "monthly_audit_allowance": p["monthly_audit_allowance"],
+                   "max_concurrent_audits": p["max_concurrent_audits"]} for p in plans],
         "configuration_needed": [] if plans else ["Paddle API key", "Paddle notification destination secret",
             "SMTP host and sender", "Paddle price ID for each enabled plan"]}
 
 
 @app.post("/api/v1/billing/checkout")
-async def create_paddle_checkout(payload: PaddleCheckoutRequest):
-    """Create a transaction using a server-selected price; the client cannot set amounts."""
-    tier = payload.tier.strip().upper()
-    if tier not in {"STARTER", "PRO", "BUSINESS"}: raise HTTPException(status_code=422, detail="Choose a valid plan.")
-    plan = next((p for p in _configured_payment_plans() if p["tier"].upper() == tier), None)
+async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSession = Depends(get_async_db)):
+    """Create a transaction using an active server-managed package price; the client cannot set amounts."""
+    tier = payload.tier.strip().lower()
+    plan = next((p for p in await _db_payment_plans(db, active_only=True)
+                 if p["tier"] == tier and p.get("price_id")), None)
     if plan is None or not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="This Paddle plan is not configured.")
     transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
@@ -569,7 +572,8 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest):
         response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
         url = response.get("data", {}).get("checkout", {}).get("url")
         parsed = urlsplit(url or "")
-        if parsed.scheme != "https" or not parsed.hostname: raise RuntimeError("Paddle did not return a valid checkout URL")
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise RuntimeError("Paddle did not return a valid checkout URL")
         return {"checkout_url": url, "transaction_id": response.get("data", {}).get("id")}
     except Exception as exc:
         logger.error("Paddle checkout creation failed (error_type=%s)", type(exc).__name__)
@@ -607,13 +611,16 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     transaction = event.get("data") or {}
     if transaction.get("status") != "completed": return {"status": "payment_not_complete", "event_id": event_id}
     custom_data = transaction.get("custom_data") or {}
-    tier = str(custom_data.get("license_tier", "")).upper()
-    plans = {p["tier"].upper(): p for p in _configured_payment_plans()}
+    tier = str(custom_data.get("license_tier", "")).strip().lower()
     price_ids = {item.get("price", {}).get("id") for item in (transaction.get("items") or []) if isinstance(item, dict)}
-    plan = plans.get(tier)
-    if plan is None or plan["price_id"] not in price_ids:
-        plan = next((candidate for candidate in plans.values() if candidate["price_id"] in price_ids), None)
-    if plan is None: raise HTTPException(status_code=400, detail="Completed Paddle transaction does not match a configured price.")
+    configured_plans = await _db_payment_plans(db, active_only=False)
+    plans_by_tier = {p["tier"]: p for p in configured_plans}
+    plan = plans_by_tier.get(tier)
+    if plan is None or plan.get("price_id") not in price_ids:
+        plan = next((candidate for candidate in configured_plans
+                     if candidate.get("price_id") in price_ids), None)
+    if plan is None or not plan.get("price_id"):
+        raise HTTPException(status_code=400, detail="Completed Paddle transaction does not match a configured price.")
 
     from sqlalchemy import select
     webhook_event = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id))).scalar_one_or_none()
