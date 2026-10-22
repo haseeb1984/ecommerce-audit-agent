@@ -766,7 +766,7 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
     )).scalars().all()
     total_leads = (await db.execute(select(sql_func.count(AuditLead.id)))).scalar_one()
     total_reports = (await db.execute(select(sql_func.count(AuditReport.id)))).scalar_one()
-    total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)))).scalar_one()
+    total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(\n        AuditQuotaReservation.expires_at > now\n    ))).scalar_one()
     total_webhooks = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)))).scalar_one()
     monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
         AuditLead.created_at >= month_start
