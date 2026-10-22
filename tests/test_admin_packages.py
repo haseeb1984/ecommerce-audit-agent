@@ -62,6 +62,11 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
     assert "package.deactivated" in action_names
     assert "test-admin-key-only" not in actions.text
 
+    operations = await client.get("/api/v1/admin/operations", headers=headers)
+    assert operations.status_code == 200, operations.text
+    assert "audit_and_operation_failures_24h" in operations.json()["counts"]
+    assert "test-admin-key-only" not in operations.text
+
 
 @pytest.mark.asyncio
 async def test_admin_package_validation_rejects_invalid_limits(client, monkeypatch):
