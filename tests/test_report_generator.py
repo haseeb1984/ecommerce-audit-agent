@@ -855,3 +855,31 @@ def test_premium_cover_and_chapter_layout_are_present_in_generated_pdf():
     assert len(pdf) > 1500
     # ReportLab compresses page text streams; content assertions are covered by
     # the report-building flow and the synthetic/live PDF QA steps in CI.
+
+
+
+def test_each_finding_infographic_uses_category_specific_visual_and_real_counts():
+    from report_generator import FindingInsightInfographic
+
+    cases = [
+        ("performance", "PERFORMANCE / SPEED", "speed"),
+        ("accessibility", "ACCESSIBILITY / WCAG", "accessibility"),
+        ("security_headers", "SECURITY HEADERS", "security"),
+        ("technical_seo", "TECHNICAL SEO", "seo"),
+        ("conversion_paid_traffic", "CONVERSION / PAID TRAFFIC", "conversion"),
+        ("mobile_ux", "MOBILE EXPERIENCE", "speed"),
+    ]
+    for category, expected_label, expected_glyph in cases:
+        infographic = FindingInsightInfographic({
+            "category": category,
+            "title": f"Example {category} check",
+            "status": "verified",
+            "severity": "high",
+            "instances": 3,
+            "evidence": ["evidence A", "evidence B"],
+        })
+        assert infographic.category_label == expected_label
+        assert infographic.glyph == expected_glyph
+        assert infographic.instances == 3
+        assert infographic.evidence_count == 2
+        assert infographic.height > 0
