@@ -883,3 +883,39 @@ def test_each_finding_infographic_uses_category_specific_visual_and_real_counts(
         assert infographic.instances == 3
         assert infographic.evidence_count == 2
         assert infographic.height > 0
+
+
+
+def test_individual_checks_receive_check_specific_infographic_motifs():
+    from report_generator import FindingInsightInfographic
+
+    cases = [
+        ("technical_seo", "Title tag is missing", "title"),
+        ("technical_seo", "Meta description is too short", "description"),
+        ("technical_seo", "Canonical URL observed", "canonical"),
+        ("technical_seo", "H1 heading count", "heading"),
+        ("technical_seo", "Image alt text missing", "image"),
+        ("crawl", "Robots.txt directive", "robots"),
+        ("technical_seo", "XML sitemap discovery", "sitemap"),
+        ("mobile_ux", "Viewport meta tag", "viewport"),
+        ("security_headers", "Content-Security-Policy header", "header"),
+        ("security_transport", "TLS certificate and HTTPS", "transport"),
+        ("conversion_paid_traffic", "Checkout form friction", "form"),
+        ("conversion_paid_traffic", "Add to cart journey", "cart"),
+        ("pixel_analytics", "Analytics pixel detected", "analytics"),
+    ]
+    for category, title, expected_motif in cases:
+        infographic = FindingInsightInfographic({
+            "category": category,
+            "title": title,
+            "status": "insufficient_data",
+            "severity": "info",
+            "instances": 1,
+            "evidence": [],
+        })
+        assert infographic.check_glyph == expected_motif, title
+        assert infographic.review is True
+        assert infographic.evidence_count == 0
+        # Infographics expose observed counts, not invented scores or business impact.
+        assert not hasattr(infographic, "score")
+        assert not hasattr(infographic, "revenue_loss")
