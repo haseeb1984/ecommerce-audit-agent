@@ -35,6 +35,7 @@ from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
+from coverage_manifest import build_coverage_manifest
 
 logger = logging.getLogger("audit_service")
 
@@ -213,25 +214,13 @@ async def comprehensive_audit_pdf(
             else render_audit_pdf(result)
         )
 
-        # Persist the exact PDF and an evidence manifest under the owning license.
-        # Finding counts are observations, not a denominator for all possible checks.
-        status_counts = {}
-        category_counts = {}
-        for finding in result.findings:
-            status_counts[finding.status] = status_counts.get(finding.status, 0) + 1
-            category_counts[finding.category] = category_counts.get(finding.category, 0) + 1
-        coverage_manifest = {
-            "schema_version": 1,
-            "coverage_semantics": "observed_findings_not_all_possible_checks",
-            "target_url": target_url,
-            "pages_checked": result.pages_checked,
-            "pages_checked_count": len(result.pages_checked),
-            "findings_total": len(result.findings),
-            "finding_status_counts": status_counts,
-            "finding_category_counts": category_counts,
-            "limitations": list(dict.fromkeys(result.limitations)),
-            "not_a_claim_of_complete_wcag_security_indexing_or_conversion_coverage": True,
-        }
+        # Coverage is category-level evidence, not a claim that every check passed.
+        coverage_manifest = build_coverage_manifest(
+            target_url=target_url,
+            pages_checked=result.pages_checked,
+            findings=result.findings,
+            limitations=result.limitations,
+        )
         report = AuditReport(
             license_id=license_obj.id,
             domain=urlsplit(target_url).hostname or metrics.domain,
