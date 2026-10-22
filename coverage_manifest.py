@@ -70,7 +70,7 @@ def build_coverage_manifest(
         entry = {
             "category": category,
             "label": label,
-            "status": "observed" if count else "not_proven",
+            "status": "recorded" if count else "not_proven",
             "findings_in_category": count,
         }
         (observed if count else not_proven).append(entry)
@@ -117,7 +117,7 @@ def build_coverage_manifest(
         "recorded_observations": recorded_observations,
         "recorded_observations_count": len(recorded_observations),
         "required_categories": total,
-        "categories_with_observed_evidence": len(observed),
+        "categories_with_recorded_findings": len(observed),
         "categories_not_proven": len(not_proven),
         "category_signal_coverage_pct": round(100 * len(observed) / total, 1) if total else None,
         "observed_categories": observed,
