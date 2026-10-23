@@ -532,7 +532,10 @@ def test_pdf_evidence_links_redact_query_fragment_and_credentials():
         getSampleStyleSheet()["BodyText"],
     )
 
-    assert "shop.example/account" in paragraph.text
+    # Credential-bearing URLs are omitted entirely rather than partially
+    # rendered, which avoids leaking userinfo while implying the link is safe.
+    assert "Link omitted (unsupported, unsafe or malformed URL)" in paragraph.text
+    assert "shop.example/account" not in paragraph.text
     assert "password" not in paragraph.text
     assert "token=secret" not in paragraph.text
     assert "email=" not in paragraph.text
