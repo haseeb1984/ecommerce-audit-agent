@@ -40,6 +40,26 @@ REQUIRED_AUDIT_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("dependency_advisory", "Target-side dependency advisories"),
 )
 
+def _safe_evidence_url(value: object) -> str | None:
+    """Keep public URL evidence useful without persisting credentials or query secrets."""
+    try:
+        parts = urlsplit(str(value))
+        scheme = parts.scheme.lower()
+        if scheme not in {"http", "https"} or not parts.hostname:
+            return None
+        if parts.username is not None or parts.password is not None:
+            return None
+        host = parts.hostname.lower()
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        port = parts.port
+        default_port = 80 if scheme == "http" else 443
+        netloc = f"{host}:{port}" if port and port != default_port else host
+        return urlunsplit((scheme, netloc, parts.path or "/", "", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     # Keep ARIA, general accessibility, and image-alt coverage independent; one signal in one group must not imply the others ran.
     "technical_seo": ("technical_seo", "on_page_seo"),
@@ -97,21 +117,7 @@ def build_coverage_manifest(
     for finding in findings:
         category = str(getattr(finding, "category", "unknown"))
         title = str(getattr(finding, "title", "Untitled check"))
-        source_url = getattr(finding, "source_url", None)
-        safe_source_url = None
-        if source_url:
-            try:
-                parts = urlsplit(str(source_url))
-                if parts.scheme in {"http", "https"} and parts.hostname:
-                    host = parts.hostname.lower()
-                    if ":" in host and not host.startswith("["):
-                        host = f"[{host}]"
-                    port = parts.port
-                    if port and port not in (80, 443):
-                        host = f"{host}:{port}"
-                    safe_source_url = urlunsplit((parts.scheme.lower(), host, parts.path or "/", "", ""))
-            except ValueError:
-                safe_source_url = None
+        safe_source_url = _safe_evidence_url(getattr(finding, "source_url", None))
         identity = "|".join((category, title, safe_source_url or ""))
         recorded_observations.append({
             "check_id": hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16],
@@ -122,12 +128,17 @@ def build_coverage_manifest(
             "source_url": safe_source_url,
         })
 
+    safe_target_url = _safe_evidence_url(target_url)
+    safe_pages_checked = list(dict.fromkeys(
+        safe_url for page_url in pages_checked
+        if (safe_url := _safe_evidence_url(page_url)) is not None
+    ))
     return {
         "schema_version": 1,
         "coverage_level": "category_signal_coverage_not_individual_check_coverage",
-        "target_url": target_url,
-        "pages_checked": list(dict.fromkeys(pages_checked)),
-        "pages_checked_count": len(set(pages_checked)),
+        "target_url": safe_target_url,
+        "pages_checked": safe_pages_checked,
+        "pages_checked_count": len(safe_pages_checked),
         "findings_total": len(findings),
         "finding_status_counts": dict(Counter(str(getattr(item, "status", "unknown")) for item in findings)),
         "finding_category_counts": dict(raw_counts),
