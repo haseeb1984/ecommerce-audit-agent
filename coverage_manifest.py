@@ -41,7 +41,7 @@ REQUIRED_AUDIT_CATEGORIES: tuple[tuple[str, str], ...] = (
 )
 
 CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
-    "aria": ("aria", "accessibility", "aria_alt_text"),
+    # Keep ARIA, general accessibility, and image-alt coverage independent; one signal in one group must not imply the others ran.
     "technical_seo": ("technical_seo", "on_page_seo"),
     "crawlability": ("crawl",),
     "indexing": ("indexing",),
