@@ -53,7 +53,7 @@
 
 1. Continue repository-only work on the single `main` branch; do not deploy or trigger CI/workflows while the user is conserving deployment/workflow allowance.
 2. Complete a focused source review of the admin console's account/package/usage controls and reconcile every visible action with an admin-authenticated backend route.
-3. Finish the pending license-email recovery workflow: expose the already-implemented retry endpoint through an admin UI control only after its request/response behavior and authorization are reviewed; add focused regression coverage when permitted. The UI control and integration tests are not yet complete.
+3. Continue license-email recovery acceptance: retry controls now appear in operations diagnostics and client payment history for `email_pending` events with a linked license. Browser behavior, authorization regression tests, and end-to-end delivery still require verification.
 4. Review PDF redaction and metadata behavior for every URL-bearing output location. The sanitizer strips userinfo, query strings and fragments, but the added regression test has not been executed.
 5. Continue filling audit coverage gaps while preserving the audit-only boundary; never execute remediation against customer sites or imply unmeasured conversion/revenue impact.
 6. When testing is authorized, run the targeted unit/API tests first, then the full CI suite and browser QA workflow. Inspect generated PDFs and verify the complete licensed audit → saved PDF → history → ownership isolation → opt-in email journey.
@@ -62,7 +62,7 @@
 ## Admin SaaS controls — current boundaries
 
 - Existing backend/admin UI covers overview diagnostics, client/license account management, plan package CRUD, usage/history inspection, sanitized admin action history, operational event review, payment-event reconciliation, and admin PDF retrieval.
-- The license-email retry endpoint is exposed in the admin console for events in `email_pending` state when a linked license exists. The control calls the admin-authenticated endpoint, disables itself during the request, shows the returned status, and refreshes operations diagnostics. Browser behavior and end-to-end email delivery remain untested; active `email_sending` events do not show the retry control.
+- The license-email retry endpoint is exposed in operations diagnostics and client payment history for events in `email_pending` state when a linked license exists. The controls call the admin-authenticated endpoint, disable themselves during the request, show the returned status, and refresh operations diagnostics. The client-history API now includes the linked license ID in its already license-scoped payment records. Browser behavior and end-to-end email delivery remain untested; active `email_sending` events do not show the retry control.
 - Package removal is a soft deactivation to preserve historical references. Package edits can affect quota settings for clients on that tier; these changes should be treated as privileged administrative actions.
 - The admin key is entered in the browser and held in page memory, not persisted to browser storage. It must never be included in URLs, application logs, or error details.
 - Admin console GET requests now explicitly use browser `cache: "no-store"` for JSON API reads and PDF downloads. After connection succeeds or fails, the password input is cleared; the active key remains only in the page's in-memory variable for the connected session. This is source-level hardening and has not been browser-tested.
