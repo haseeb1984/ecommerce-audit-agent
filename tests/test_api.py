@@ -980,3 +980,55 @@ async def test_paddle_webhook_claims_license_email_delivery_once_for_concurrent_
     first = await first_task
     assert first.status_code == 200 and first.json()["status"] == "provisioned"
     assert len(attempts) == 1
+
+
+
+@pytest.mark.asyncio
+async def test_paddle_webhook_different_event_ids_for_same_transaction_do_not_duplicate_license(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01dedupe123")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setattr(main, "_send_license_email", lambda email, key, tier, quota: None)
+
+    async def deliver(event_id):
+        event = {
+            "event_id": event_id,
+            "event_type": "transaction.completed",
+            "data": {
+                "id": "txn_01samepurchase123",
+                "status": "completed",
+                "custom_data": {"license_tier": "starter"},
+                "customer": {"email": "same-purchase@example.com", "name": "Same Purchase"},
+                "items": [{"price": {"id": "pri_01dedupe123"}, "quantity": 1}],
+            },
+        }
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(
+            secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+        ).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    first = await deliver("evt_same_purchase_original")
+    second = await deliver("evt_same_purchase_redelivered")
+    assert first.status_code == 200 and first.json()["status"] == "provisioned"
+    assert second.status_code == 200 and second.json()["status"] == "already_processed"
+
+    async with AsyncSessionLocal() as db:
+        licenses = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Same Purchase")
+        )).scalars().all()
+        events = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.transaction_id == "txn_01samepurchase123"
+            )
+        )).scalars().all()
+    assert len(licenses) == 1
+    assert len(events) == 1 and events[0].status == "delivered"
