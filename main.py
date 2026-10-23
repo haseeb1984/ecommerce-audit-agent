@@ -927,6 +927,14 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
             ON CONFLICT (tier) DO NOTHING
         """), {"tier": tier, "label": plan["label"], "allowance": plan["monthly_audit_allowance"],
                "concurrency": concurrency, "price_id": plan["price_id"]})
+        # Repair only the legacy default (1) when the explicit environment setting
+        # requests a higher limit. Preserve non-default values set in the admin UI.
+        if concurrency > 1:
+            await db.execute(text("""
+                UPDATE saas_plan_packages
+                SET max_concurrent_audits=:concurrency, updated_at=NOW()
+                WHERE tier=:tier AND max_concurrent_audits=1
+            """), {"tier": tier, "concurrency": concurrency})
     await db.commit()
 
 
