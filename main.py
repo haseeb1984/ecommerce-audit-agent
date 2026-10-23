@@ -694,6 +694,13 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     # by transaction ID so a second notification cannot mint another license.
     transaction_id = str(transaction.get("id") or "")[:100] or None
     if transaction_id:
+        # Serialize provisioning for this purchase before looking up its event.
+        # This closes the race where distinct event IDs arrive simultaneously
+        # before either request inserts a webhook record.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:transaction_id))"),
+            {"transaction_id": transaction_id},
+        )
         prior_transaction_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.transaction_id == transaction_id)
