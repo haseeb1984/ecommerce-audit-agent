@@ -34,6 +34,8 @@
 
 - The admin overview now aggregates monthly audit counts, all-time audit counts/latest-audit timestamps, saved-report counts, and active reservations in four grouped SQL queries rather than issuing up to four additional queries per client. This removes the overview's per-client N+1 query pattern at source level; query-plan/runtime performance and regression tests remain unverified.
 
+- Added a focused API regression test for the admin overview's per-license usage, all-time audit, report, active-reservation, and last-audit fields. It is committed but deliberately not executed while workflow minutes are being conserved.
+
 ## Current evidence-backed matrix
 
 | Workstream | Evidence in current repository | Status | Acceptance gate / next action |
