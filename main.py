@@ -877,7 +877,13 @@ async def email_audit_report(
 
 
 async def _ensure_admin_tables(db: AsyncSession) -> None:
-    """Create narrowly scoped admin tables and bootstrap legacy env-defined plans once."""
+    """Create admin tables and bootstrap plans while serializing concurrent schema setup."""
+    # Multiple cold-start requests can enter this lazy initializer simultaneously.
+    # Serialize DDL + plan seeding within PostgreSQL; the transaction lock is released
+    # by the caller's commit/rollback, preventing CREATE INDEX / INSERT deadlocks.
+    await db.execute(text(
+        "SELECT pg_advisory_xact_lock(hashtext('ecommerce_audit_admin_schema_v1'))"
+    ))
     await db.execute(text("""
         CREATE TABLE IF NOT EXISTS saas_plan_packages (
             tier VARCHAR(50) PRIMARY KEY,
