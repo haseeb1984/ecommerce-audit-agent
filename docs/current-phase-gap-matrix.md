@@ -101,3 +101,10 @@
 
 - Added an admin-authenticated endpoint to retry a recorded pending license email. It uses a short-lived `email_sending` claim to reject concurrent retries, returns already-delivered events without sending again, resets failures to `email_pending`, records a sanitized admin action on success, and never returns the license key in the API response.
 - Admin controls are available in both operations diagnostics and the selected client's payment history for eligible `email_pending` events with a linked license. After a successful retry, diagnostics are refreshed and the client history is refreshed only if that panel was already open; a background refresh failure is reported separately from the email retry result. Source-level presence is verified; browser behavior, auth regression tests, concurrency behavior under load, and actual email delivery remain unverified.
+
+## Latest release verification — 2026-10-23
+
+- Vercel production deployment for commit `74caad9827d301afe3e5f8585baeae479be94205` reached `READY`.
+- The most recent successful GitHub Actions run observed before this entry was for commit `e10138735a91335514e915e2a64ef722dad8c3d4`, not the current `main` commit. The current source therefore still requires a fresh full workflow run before it can be considered verified.
+- URL evidence privacy regression coverage is present in `tests/test_api.py`; it must be confirmed by the full test suite rather than treated as passed based on source inspection.
+- Release acceptance remains incomplete until the latest-commit workflow result and live customer audit/PDF/history/ownership/email-consent journey are reviewed. A `READY` deployment alone does not prove feature correctness.
