@@ -29,6 +29,7 @@
 
 - Admin package creation/editing now validates the tier slug, display-label length, quota/concurrency bounds, and Paddle `pri_` identifier format in the browser before sending the request; backend validation remains authoritative. This reduces avoidable admin errors but has not been browser-tested.
 - Added an explicit admin-console disconnect action that clears the in-memory admin key, client/package/operations/activity/history data, disables authenticated refresh controls, and returns the console to its disconnected state. A failed reconnect also clears previously displayed admin data to avoid leaving a stale sensitive dashboard visible after authentication fails. This is source-reviewed only; browser/session behavior and accessibility have not been tested.
+- The admin client overview now displays each account's expiry timestamp (or `No expiry`) alongside its active/inactive/expired status, making entitlement troubleshooting visible without opening each client record. The table empty-state column span was updated to match the new column. Source-reviewed only; browser rendering is not verified.
 
 ## Current evidence-backed matrix
 
