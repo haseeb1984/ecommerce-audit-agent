@@ -689,6 +689,19 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         raise HTTPException(status_code=400, detail="Completed Paddle transaction does not match a configured price.")
 
     from sqlalchemy import select
+    # Paddle retries normally reuse event_id, but a transaction can also be
+    # delivered under a distinct event ID. Reuse the original provisioning record
+    # by transaction ID so a second notification cannot mint another license.
+    transaction_id = str(transaction.get("id") or "")[:100] or None
+    if transaction_id:
+        prior_transaction_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(PaymentWebhookEvent.transaction_id == transaction_id)
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if prior_transaction_event is not None:
+            event_id = prior_transaction_event.event_id
     webhook_event = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id))).scalar_one_or_none()
     if webhook_event is None:
         customer = transaction.get("customer") or {}
