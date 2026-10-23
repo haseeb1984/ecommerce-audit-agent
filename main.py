@@ -321,6 +321,9 @@ async def comprehensive_audit_pdf(
             headers={
                 "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}.pdf"',
                 "X-Audit-Report-ID": str(report_id),
+                "Cache-Control": "no-store, private",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
             },
         )
     except HTTPException as exc:
