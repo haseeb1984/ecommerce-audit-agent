@@ -425,6 +425,9 @@ async def test_report_history_supports_stable_offset_pagination(client):
 async def test_report_history_requires_authentication(client):
     response = await client.get("/api/v1/reports")
     assert response.status_code == 401
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["x-content-type-options"] == "nosniff"
 
 
 @pytest.mark.asyncio
