@@ -10,6 +10,8 @@ This runbook is intentionally read-only by default. Do not run SQL migrations ag
 4. Open `https://ecommerce-audit-agent.vercel.app/admin`. The console is only useful after an operator-only `ADMIN_API_KEY` is configured in Vercel Production Environment Variables. Do not disable authentication to make the console work.
 5. In the operator console, verify database health, package configuration, pending payment emails, stale quota reservations, and recent operation failures.
 
+For the exact operator steps to configure the missing admin secret without exposing it, follow [`docs/admin-access-setup.md`](admin-access-setup.md). The secret must be generated and entered directly by an authorized operator in Vercel; never commit it or send it through chat.
+
 ## Verify database schema without changing it
 
 Run from the repository root in a controlled environment configured with the same `DATABASE_URL` and `DATABASE_SSL` as production:
