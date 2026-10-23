@@ -56,8 +56,12 @@ function packagePayload(p){
  const c=window.prompt("Concurrent audit limit:",String(p?p.max_concurrent_audits:1));if(c===null)return null;
  const price=window.prompt("Paddle price ID (pri_...), blank disables checkout:",p?(p.price_id||""):"");if(price===null)return null;
  const allowance=Number(a),concurrency=Number(c);
- if(!Number.isInteger(allowance)||allowance<1||!Number.isInteger(concurrency)||concurrency<1){status("Package limits must be positive whole numbers.","error");return null}
- return {tier:tier.trim().toLowerCase(),label:label.trim(),monthly_audit_allowance:allowance,max_concurrent_audits:concurrency,paddle_price_id:price.trim()||null,is_active:p?!!p.is_active:true};
+ const normalizedTier=tier.trim().toLowerCase(),normalizedLabel=label.trim(),normalizedPrice=price.trim();
+ if(!/^[a-z0-9_-]{2,50}$/.test(normalizedTier)){status("Package tier must be 2–50 lowercase letters, numbers, underscores or hyphens.","error");return null}
+ if(!normalizedLabel||normalizedLabel.length>100){status("Package display name must be 1–100 characters.","error");return null}
+ if(!Number.isInteger(allowance)||allowance<1||allowance>10000000||!Number.isInteger(concurrency)||concurrency<1||concurrency>10000){status("Monthly and concurrent limits must be within the supported positive whole-number ranges.","error");return null}
+ if(normalizedPrice&&!/^pri_[A-Za-z0-9]+$/.test(normalizedPrice)){status("Paddle price ID must use the expected pri_ identifier format.","error");return null}
+ return {tier:normalizedTier,label:normalizedLabel,monthly_audit_allowance:allowance,max_concurrent_audits:concurrency,paddle_price_id:normalizedPrice||null,is_active:p?!!p.is_active:true};
 }
 async function addPackage(){
  const p=packagePayload(null);if(!p)return;
