@@ -113,6 +113,19 @@ async def test_account_usage_requires_authentication(client):
 
 
 @pytest.mark.asyncio
+async def test_portal_pages_send_browser_security_headers_and_disable_caching(client):
+    for path in ("/app", "/admin"):
+        response = await client.get(path)
+        assert response.status_code == 200, path
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.headers["pragma"] == "no-cache"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["x-frame-options"] == "DENY"
+        assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+        assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+
+
+@pytest.mark.asyncio
 async def test_root_and_database_health(client):
     root = await client.get("/")
     assert root.status_code == 200
