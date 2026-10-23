@@ -39,7 +39,7 @@ def _safe_public_url(url: str) -> str | None:
         scheme = parts.scheme.lower()
         host = parts.hostname
         port = parts.port  # Access validates malformed and out-of-range ports.
-        if scheme not in {"http", "https"} or not host or parts.username or parts.password:
+        if scheme not in {"http", "https"} or not host or parts.username is not None or parts.password is not None:
             return None
         display_host = f"[{host.lower()}]" if ":" in host else host.lower()
         default_port = 443 if scheme == "https" else 80
