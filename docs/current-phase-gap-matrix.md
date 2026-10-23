@@ -21,6 +21,9 @@
 
 ## Repository-only work completed without deployments/workflow minutes
 
+- Added an isolated API journey regression test that mocks external audit/network work and checks license-authenticated audit quota consumption, persisted PDF retrieval, history/coverage visibility, cross-license isolation, and explicit-consent email delivery without sending real email. The test is committed but **not executed**; production migration, actual SMTP inbox delivery, live crawl coverage, and full browser QA remain separate acceptance gates.
+
+
 - Customer portal now displays a license-scoped monthly quota meter and a report-history summary/filter. The browser keeps the entered credential in memory only.
 - `GET /api/v1/account/usage` reports monthly limit, completed usage, active reservations, remaining quota, reset date, and license active/expiry metadata; it never returns the license key.
 - PDF download object URLs are revoked after a short delay instead of immediately, reducing browser download race conditions.
