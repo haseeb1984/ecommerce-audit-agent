@@ -233,3 +233,67 @@ async def test_admin_client_update_rejects_unknown_package(client, monkeypatch):
     )
     assert response.status_code == 422
     assert "package" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_plan_bootstrap_repairs_legacy_default_concurrency_limits(monkeypatch):
+    """Existing default-1 plan rows should inherit explicitly configured higher limits."""
+    from sqlalchemy import text
+    from database import AsyncSessionLocal
+    import main
+
+    for tier in ("STARTER", "PRO", "BUSINESS"):
+        monkeypatch.setenv(f"PADDLE_PRICE_ID_{tier}", f"pri_test{tier.lower()}")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_STARTER", "1")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_PRO", "3")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_BUSINESS", "10")
+
+    async with AsyncSessionLocal() as db:
+        for tier, label, allowance, price_id in (
+            ("starter", "Starter", 100, "pri_teststarter"),
+            ("pro", "Pro", 500, "pri_testpro"),
+            ("business", "Business", 2000, "pri_testbusiness"),
+        ):
+            await db.execute(text("""
+                INSERT INTO saas_plan_packages
+                    (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+                VALUES (:tier, :label, :allowance, 1, :price_id, TRUE)
+            """), {
+                "tier": tier,
+                "label": label,
+                "allowance": allowance,
+                "price_id": price_id,
+            })
+
+        await main._ensure_admin_tables(db)
+        rows = (await db.execute(text("""
+            SELECT tier, max_concurrent_audits
+            FROM saas_plan_packages
+            ORDER BY tier
+        """))).all()
+
+    assert dict(rows) == {"business": 10, "pro": 3, "starter": 1}
+
+
+@pytest.mark.asyncio
+async def test_plan_bootstrap_preserves_nondefault_admin_concurrency(monkeypatch):
+    """Bootstrap must not overwrite a deliberate non-default limit from the admin UI."""
+    from sqlalchemy import text
+    from database import AsyncSessionLocal
+    import main
+
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_testpro")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_PRO", "3")
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES ('pro', 'Pro', 500, 2, 'pri_testpro', TRUE)
+        """))
+        await main._ensure_admin_tables(db)
+        concurrency = (await db.execute(text("""
+            SELECT max_concurrent_audits FROM saas_plan_packages WHERE tier='pro'
+        """))).scalar_one()
+
+    assert concurrency == 2
