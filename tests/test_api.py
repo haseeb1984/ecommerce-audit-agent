@@ -452,6 +452,9 @@ async def test_admin_overview_aggregates_per_license_metrics(client, monkeypatch
         headers={"X-Admin-Key": "test-admin-overview-key"},
     )
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["x-content-type-options"] == "nosniff"
     payload = response.json()
     row = next(item for item in payload["clients"] if item["id"] == license_id)
     assert row["monthly_used"] == 1
