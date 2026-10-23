@@ -297,3 +297,41 @@ async def test_plan_bootstrap_preserves_nondefault_admin_concurrency(monkeypatch
         """))).scalar_one()
 
     assert concurrency == 2
+
+
+@pytest.mark.asyncio
+async def test_plan_bootstrap_uses_product_concurrency_defaults_without_overrides(monkeypatch):
+    """Published plan tiers retain their intended concurrency even without env overrides."""
+    from sqlalchemy import text
+    from database import AsyncSessionLocal
+    import main
+
+    for tier in ("STARTER", "PRO", "BUSINESS"):
+        monkeypatch.setenv(f"PADDLE_PRICE_ID_{tier}", f"pri_test{tier.lower()}")
+        monkeypatch.delenv(f"LICENSE_MAX_CONCURRENT_AUDITS_{tier}", raising=False)
+
+    async with AsyncSessionLocal() as db:
+        for tier, label, allowance, price_id in (
+            ("starter", "Starter", 100, "pri_teststarter"),
+            ("pro", "Pro", 500, "pri_testpro"),
+            ("business", "Business", 2000, "pri_testbusiness"),
+        ):
+            await db.execute(text("""
+                INSERT INTO saas_plan_packages
+                    (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+                VALUES (:tier, :label, :allowance, 1, :price_id, TRUE)
+            """), {
+                "tier": tier,
+                "label": label,
+                "allowance": allowance,
+                "price_id": price_id,
+            })
+
+        await main._ensure_admin_tables(db)
+        rows = (await db.execute(text("""
+            SELECT tier, max_concurrent_audits
+            FROM saas_plan_packages
+            ORDER BY tier
+        """))).all()
+
+    assert dict(rows) == {"business": 10, "pro": 3, "starter": 1}
