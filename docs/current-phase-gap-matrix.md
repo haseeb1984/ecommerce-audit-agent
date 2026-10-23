@@ -49,13 +49,21 @@
 
 ## Recommended sequence (Vercel infrastructure remains on hold)
 
-1. Finish audit-engine/PDF acceptance review without running quota-consuming production audits.
-2. Verify dependency-check tests and output handling; resolve any failing or missing CI evidence.
-3. Run the browser QA workflow and inspect real-site PDFs for mobile overflow, viewport metadata, and accessibility signals; CI evidence is currently unconfirmed.
-4. Keep homepage HTTP/content-type failures visible in the report rather than silently returning an empty crawl result.
-5. Specify report storage/history and email contracts, including authorization and retention, before coding.
-6. Confirm the intended frontend location and map the marketing → demo → purchase/license → dashboard → audit → report/email journey.
-7. Complete a release checklist with explicit evidence for each gate; ask for approval before any production deployment or destructive operation.
+1. Continue repository-only work on the single `main` branch; do not deploy or trigger CI/workflows while the user is conserving deployment/workflow allowance.
+2. Complete a focused source review of the admin console's account/package/usage controls and reconcile every visible action with an admin-authenticated backend route.
+3. Finish the pending license-email recovery workflow: expose the already-implemented retry endpoint through an admin UI control only after its request/response behavior and authorization are reviewed; add focused regression coverage when permitted. The UI control and integration tests are not yet complete.
+4. Review PDF redaction and metadata behavior for every URL-bearing output location. The sanitizer strips userinfo, query strings and fragments, but the added regression test has not been executed.
+5. Continue filling audit coverage gaps while preserving the audit-only boundary; never execute remediation against customer sites or imply unmeasured conversion/revenue impact.
+6. When testing is authorized, run the targeted unit/API tests first, then the full CI suite and browser QA workflow. Inspect generated PDFs and verify the complete licensed audit → saved PDF → history → ownership isolation → opt-in email journey.
+7. Confirm production migrations and reconcile the previously observed Paddle HTTP 503 against the delivered event without placing another payment. Require explicit approval before production deployment or destructive operations.
+
+## Admin SaaS controls — current boundaries
+
+- Existing backend/admin UI covers overview diagnostics, client/license account management, plan package CRUD, usage/history inspection, sanitized admin action history, operational event review, payment-event reconciliation, and admin PDF retrieval.
+- The license-email retry endpoint is implemented behind admin-key authentication, but it is not yet exposed by a visible dashboard control. Do not describe email retry as fully integrated.
+- Package removal is a soft deactivation to preserve historical references. Package edits can affect quota settings for clients on that tier; these changes should be treated as privileged administrative actions.
+- The admin key is entered in the browser and held in page memory, not persisted to browser storage. It must never be included in URLs, application logs, or error details.
+- Production readiness remains unproven until targeted tests, CI, migrations, and end-to-end ownership/security acceptance are verified.
 
 ## Non-negotiable reporting rules
 
