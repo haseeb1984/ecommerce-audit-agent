@@ -463,6 +463,34 @@ async def test_admin_overview_aggregates_per_license_metrics(client, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_admin_pdf_download_is_private_and_not_cacheable(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-pdf-key")
+    license_id = await create_license(key="admin-pdf-license")
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id, domain="private.example",
+            pdf_bytes=b"%PDF-admin-private", coverage_json="{}",
+            finding_count=1,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    unauthorized = await client.get(f"/api/v1/admin/reports/{report_id}/pdf")
+    assert unauthorized.status_code in (401, 403)
+    response = await client.get(
+        f"/api/v1/admin/reports/{report_id}/pdf",
+        headers={"X-Admin-Key": "test-admin-pdf-key"},
+    )
+    assert response.status_code == 200
+    assert response.content == b"%PDF-admin-private"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
 async def test_customer_portal_is_served(client):
     response = await client.get("/app")
     assert response.status_code == 200
