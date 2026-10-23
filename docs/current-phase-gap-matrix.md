@@ -77,6 +77,7 @@
 - Customer portal clears the previously displayed report list and quota summary when switching credentials, and also clears account data after a failed reconnect, reducing accidental exposure on shared browsers.
 - PDF evidence-source URLs are normalized before inclusion; userinfo, query strings, and fragments are omitted so signed links, reset tokens, tracking values, or email-like query data are not embedded in the evidence index. Added a focused helper test. The report target URL, cover metadata, sampled-page list, and evidence index use the same query/fragment-stripping policy.
 - These changes are committed on `main` with `[skip ci]`; the new tests remain unexecuted under the no-workflow constraint.
+- PDF public-link sanitization now rejects URL userinfo even when the username is empty (for example, `https://@host/`), rather than relying on truthiness of parsed credentials. A regression assertion covers this edge case. Both code and test are committed to `main`; the test has not been run because CI/workflow minutes remain on hold.
 
 - Added an admin-authenticated endpoint to retry a recorded pending license email. It uses a short-lived `email_sending` claim to reject concurrent retries, returns already-delivered events without sending again, resets failures to `email_pending`, records a sanitized admin action on success, and never returns the license key in the API response.
 - The retry route is backend-only at this point; the admin dashboard still needs a visible control and focused integration tests before this workflow is considered complete.
