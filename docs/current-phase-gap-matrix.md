@@ -39,6 +39,7 @@
 - Admin API responses now receive `Cache-Control: no-store, private`, `Pragma: no-cache`, and `X-Content-Type-Options: nosniff` through middleware, including error responses. Admin PDF downloads also declare private no-store headers explicitly. Regression assertions were added for overview and PDF headers; they are committed but not executed under the no-workflow constraint.
 - Newly generated comprehensive-audit PDF downloads now also declare `Cache-Control: no-store, private`, `Pragma: no-cache`, and `X-Content-Type-Options: nosniff`, aligning their response policy with saved customer/admin PDF downloads. This is source-reviewed only; the API tests have not been executed.
 - The no-store middleware now covers customer account and report API paths as well as admin APIs, so report API error responses receive the same privacy headers. Added assertions to the unauthenticated report-history test; committed but not executed.
+- Baseline browser security headers (`nosniff`, frame denial, strict-origin referrer policy, and a restrictive camera/microphone/geolocation permissions policy) are now applied to responses. The customer `/app` and operator `/admin` pages also receive private no-store headers. Added focused portal-header assertions; tests are committed but not executed, and browser compatibility is not yet verified.
 
 ## Current evidence-backed matrix
 
