@@ -62,7 +62,12 @@ agent = UniversalEcommerceAgent()
 async def prevent_admin_api_caching(request: Request, call_next):
     """Prevent shared/private browser caches retaining sensitive operator API responses."""
     response = await call_next(request)
-    if request.url.path.startswith("/api/v1/admin/"):
+    private_api_prefixes = (
+        "/api/v1/admin/",
+        "/api/v1/account/",
+        "/api/v1/reports",
+    )
+    if request.url.path.startswith(private_api_prefixes):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
