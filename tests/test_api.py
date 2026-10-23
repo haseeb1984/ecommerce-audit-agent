@@ -533,6 +533,18 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
     coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=owner_headers)
     assert coverage.status_code == 200
     assert coverage.json()["target_url"] == "https://shop.example/"
+    coverage_categories = {
+        row["category"]: row
+        for key in ("observed_categories", "checked_without_findings_categories", "not_proven_categories")
+        for row in coverage.json()[key]
+    }
+    # The isolated journey mocks every checker to return no findings and therefore
+    # must not claim granular security, ARIA, or trust checker groups ran clean.
+    for category in ("aria", "trust", "security_transport", "security_cookies", "security_api_documentation"):
+        assert coverage_categories[category]["status"] == "not_proven"
+        assert coverage_categories[category]["checker_group_executed"] is False
+    assert coverage_categories["indexing"]["status"] == "recorded"
+    assert coverage_categories["indexing"]["checker_group_executed"] is False
 
     other_headers = {"X-License-Key": other_key}
     for path in (

@@ -1149,7 +1149,7 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
     # record of whether Google has indexed a URL. No Search Console property/API
     # authorization is configured in this public audit path, so report that gap plainly.
     findings.append(_finding(
-        "technical_seo",
+        "indexing",
         "Google indexing status not verified",
         "not_tested",
         "info",

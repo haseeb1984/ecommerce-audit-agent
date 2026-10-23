@@ -257,37 +257,11 @@ async def comprehensive_audit_pdf(
             pages_checked=result.pages_checked,
             findings=result.findings,
             limitations=result.limitations,
-            # These category groups have completed their bounded checker functions.
-            # Google Search Console indexing and backlink/competitor datasets are
-            # intentionally excluded because this run has no authorized data source.
-            executed_categories=[
-                "technical_seo",
-                "crawlability",
-                "broken_internal_links",
-                "robots_txt",
-                "sitemap_xml",
-                "llms_txt",
-                "indexability",
-                "security_transport",
-                "security_headers",
-                "security_exposure",
-                "security_cookies",
-                "security_api_documentation",
-                "security_baseline",
-                "performance",
-                "accessibility",
-                "aria",
-                "aria_alt_text",
-                "trust",
-                "pixel_analytics",
-                "mobile_ux",
-                "ecommerce",
-                "structured_data",
-                "international_seo",
-                "content_quality",
-                "conversion_paid_traffic",
-                "dependency_advisory",
-            ],
+            # Do not infer a clean category from a function being called: individual
+            # checker completion is not yet instrumented end-to-end. Findings emitted
+            # by invoked checkers are recorded below; categories with no finding remain
+            # not_proven until explicit per-checker completion evidence exists.
+            executed_categories=[],
         )
         pdf_bytes = render_audit_pdf(
             result,
