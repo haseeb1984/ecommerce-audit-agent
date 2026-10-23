@@ -93,14 +93,14 @@ def test_completed_checker_group_without_findings_is_not_marked_unproven_or_as_a
     assert performance["status"] == "checked_no_findings"
     assert performance["checker_group_executed"] is True
     assert accessibility["status"] == "checked_no_findings"
-    aria = next(
-        item for item in manifest["checked_without_findings_categories"]
-        if item["category"] == "aria"
-    )
-    assert aria["status"] == "checked_no_findings"
+    # ARIA is a separate category and is not inferred from the general
+    # accessibility checker unless its own checker group is explicitly executed.
+    assert "aria" in {
+        item["category"] for item in manifest["not_proven_categories"]
+    }
     assert "indexing" in {
         item["category"] for item in manifest["not_proven_categories"]
     }
-    assert manifest["categories_checked"] == 4
-    assert manifest["categories_checked_without_findings"] == 3
+    assert manifest["categories_checked"] == 3
+    assert manifest["categories_checked_without_findings"] == 2
     assert manifest["category_execution_coverage_pct"] > manifest["category_signal_coverage_pct"]
