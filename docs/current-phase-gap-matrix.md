@@ -28,6 +28,7 @@
 - These commits use GitHub's `[skip ci]` convention. No Vercel deployment was requested or performed. The latest prior test workflow still needs a future authorized run before these changes can be considered CI-verified.
 
 - Admin package creation/editing now validates the tier slug, display-label length, quota/concurrency bounds, and Paddle `pri_` identifier format in the browser before sending the request; backend validation remains authoritative. This reduces avoidable admin errors but has not been browser-tested.
+- Added an explicit admin-console disconnect action that clears the in-memory admin key, client/package/operations/activity/history data, disables authenticated refresh controls, and returns the console to its disconnected state. A failed reconnect also clears previously displayed admin data to avoid leaving a stale sensitive dashboard visible after authentication fails. This is source-reviewed only; browser/session behavior and accessibility have not been tested.
 
 ## Current evidence-backed matrix
 
