@@ -915,10 +915,16 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
     for plan in _configured_payment_plans():
         tier = plan["tier"]
         env_suffix = tier.upper()
+        # Safe product defaults must match the published plan tiers even when
+        # optional per-tier environment overrides have not been configured.
+        default_concurrency = {"starter": 1, "pro": 3, "business": 10}.get(tier, 1)
         try:
-            concurrency = int(os.getenv(f"LICENSE_MAX_CONCURRENT_AUDITS_{env_suffix}", "1"))
+            concurrency = int(os.getenv(
+                f"LICENSE_MAX_CONCURRENT_AUDITS_{env_suffix}",
+                str(default_concurrency),
+            ))
         except ValueError:
-            concurrency = 1
+            concurrency = default_concurrency
         concurrency = min(10000, max(1, concurrency))
         await db.execute(text("""
             INSERT INTO saas_plan_packages
