@@ -566,7 +566,7 @@ async def test_report_email_uses_configured_sender_only_for_owned_report(client,
 @pytest.mark.asyncio
 async def test_report_email_cannot_send_another_licenses_pdf(client, monkeypatch):
     owner_id = await create_license(key="email-report-private-owner")
-    requester_id = await create_license(key="email-report-private-requester")
+    await create_license(key="email-report-private-requester")
     async with AsyncSessionLocal() as db:
         report = AuditReport(
             license_id=owner_id, domain="private.example",
