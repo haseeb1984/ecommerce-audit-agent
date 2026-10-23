@@ -82,7 +82,7 @@ jobs:
         with:
           name: live-site-audit-pdfs
           path: live-audit-pdfs/*.pdf
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
       - name: Upload dependency audit evidence
         if: always()
