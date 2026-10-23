@@ -27,6 +27,8 @@
 - Added focused API tests for quota accounting and unauthenticated access. These tests were **added but not executed** because workflow minutes were intentionally conserved.
 - These commits use GitHub's `[skip ci]` convention. No Vercel deployment was requested or performed. The latest prior test workflow still needs a future authorized run before these changes can be considered CI-verified.
 
+- Admin package creation/editing now validates the tier slug, display-label length, quota/concurrency bounds, and Paddle `pri_` identifier format in the browser before sending the request; backend validation remains authoritative. This reduces avoidable admin errors but has not been browser-tested.
+
 ## Current evidence-backed matrix
 
 | Workstream | Evidence in current repository | Status | Acceptance gate / next action |
