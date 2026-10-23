@@ -58,6 +58,17 @@ app = FastAPI(
 agent = UniversalEcommerceAgent()
 
 
+@app.middleware("http")
+async def prevent_admin_api_caching(request: Request, call_next):
+    """Prevent shared/private browser caches retaining sensitive operator API responses."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/admin/"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 class ReportEmailRequest(BaseModel):
     recipient_email: str
     recipient_confirmed: bool = False
