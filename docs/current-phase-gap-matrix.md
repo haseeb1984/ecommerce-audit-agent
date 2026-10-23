@@ -31,6 +31,9 @@
 - Added an explicit admin-console disconnect action that clears the in-memory admin key, client/package/operations/activity/history data, disables authenticated refresh controls, and returns the console to its disconnected state. A failed reconnect also clears previously displayed admin data to avoid leaving a stale sensitive dashboard visible after authentication fails. This is source-reviewed only; browser/session behavior and accessibility have not been tested.
 - The admin client overview now displays each account's expiry timestamp (or `No expiry`) alongside its active/inactive/expired status, making entitlement troubleshooting visible without opening each client record. The table empty-state column span was updated to match the new column. Source-reviewed only; browser rendering is not verified.
 
+
+- The admin overview now aggregates monthly audit counts, all-time audit counts/latest-audit timestamps, saved-report counts, and active reservations in four grouped SQL queries rather than issuing up to four additional queries per client. This removes the overview's per-client N+1 query pattern at source level; query-plan/runtime performance and regression tests remain unverified.
+
 ## Current evidence-backed matrix
 
 | Workstream | Evidence in current repository | Status | Acceptance gate / next action |
