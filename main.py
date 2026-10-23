@@ -892,15 +892,41 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
     await db.commit()
 
 
+def _sanitize_admin_log_value(value, *, depth: int = 0):
+    """Bound and redact admin-log payloads before they reach persistent storage."""
+    if depth > 5:
+        return "[nested value omitted]"
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in list(value.items())[:100]:
+            name = str(key)[:100]
+            if re.search(r"(?i)(secret|password|passwd|token|credential|authorization|api.?key|license.?key|private.?key)", name):
+                cleaned[name] = "[REDACTED]"
+            else:
+                cleaned[name] = _sanitize_admin_log_value(item, depth=depth + 1)
+        return cleaned
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_admin_log_value(item, depth=depth + 1) for item in value[:100]]
+    if isinstance(value, str):
+        # Redact secret-shaped assignments even when a caller accidentally places
+        # a credential in an otherwise ordinary diagnostic string.
+        from log_safety import redact_secrets
+        return redact_secrets(value[:2000])
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:500]
+
+
 async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
                            entity_id: str | int | None, details: dict | None = None) -> None:
-    # Never put license keys, API keys, passwords, or secret values in this audit log.
+    # Defense in depth: do not trust each caller to sanitize the audit metadata.
+    safe_details = _sanitize_admin_log_value(details or {})
     await db.execute(text("""
         INSERT INTO saas_admin_action_logs (action, entity_type, entity_id, details_json)
         VALUES (:action, :entity_type, :entity_id, :details_json)
-    """), {"action": action, "entity_type": entity_type,
-           "entity_id": str(entity_id) if entity_id is not None else None,
-           "details_json": json.dumps(details or {}, separators=(",", ":"))})
+    """), {"action": action[:80], "entity_type": entity_type[:50],
+           "entity_id": str(entity_id)[:255] if entity_id is not None else None,
+           "details_json": json.dumps(safe_details, separators=(",", ":"), ensure_ascii=True)})
 
 
 def _safe_diagnostic_host(value: str | None) -> str | None:
