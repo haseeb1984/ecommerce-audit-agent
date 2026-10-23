@@ -100,6 +100,39 @@ def test_coverage_manifest_does_not_infer_aria_or_alt_text_from_general_accessib
     assert categories["aria_alt_text"]["status"] == "not_proven"
 
 
+def test_coverage_manifest_redacts_credentials_query_and_fragment_from_all_urls():
+    finding = SimpleNamespace(
+        category="technical_seo",
+        title="Canonical URL needs review",
+        status="manual_review_required",
+        severity="low",
+        source_url="https://shop.example/products/item?token=private-evidence#section",
+    )
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/?session=secret#checkout",
+        pages_checked=[
+            "https://shop.example/?access_token=secret",
+            "https://shop.example/products/item?token=private-evidence#section",
+            "https://user:password@shop.example/private",
+            "javascript:alert(1)",
+        ],
+        findings=[finding],
+        limitations=[],
+        executed_categories=["technical_seo"],
+    )
+
+    assert manifest["target_url"] == "https://shop.example/"
+    assert manifest["pages_checked"] == [
+        "https://shop.example/",
+        "https://shop.example/products/item",
+    ]
+    assert manifest["pages_checked_count"] == 2
+    serialized = json.dumps(manifest)
+    for secret in ("session=secret", "access_token=secret", "private-evidence", "user:password"):
+        assert secret not in serialized
+    assert manifest["recorded_observations"][0]["source_url"] == "https://shop.example/products/item"
+
+
 @pytest.mark.asyncio
 async def test_account_usage_reports_monthly_quota_without_exposing_license_key(client):
     license_id = await create_license(key="usage-private-license", quota=5)
