@@ -36,6 +36,8 @@
 
 - Added a focused API regression test for the admin overview's per-license usage, all-time audit, report, active-reservation, and last-audit fields. It is committed but deliberately not executed while workflow minutes are being conserved.
 
+- Admin API responses now receive `Cache-Control: no-store, private`, `Pragma: no-cache`, and `X-Content-Type-Options: nosniff` through middleware, including error responses. Admin PDF downloads also declare private no-store headers explicitly. Regression assertions were added for overview and PDF headers; they are committed but not executed under the no-workflow constraint.
+
 ## Current evidence-backed matrix
 
 | Workstream | Evidence in current repository | Status | Acceptance gate / next action |
