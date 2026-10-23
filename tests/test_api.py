@@ -428,6 +428,41 @@ async def test_report_history_requires_authentication(client):
 
 
 @pytest.mark.asyncio
+async def test_admin_overview_aggregates_per_license_metrics(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-overview-key")
+    license_id = await create_license(key="admin-overview-license", quota=5)
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add(AuditLead(
+            license_id=license_id, domain="overview.example", mobile_score=81,
+            speed_index_sec=2.1, created_at=now,
+        ))
+        db.add(AuditReport(
+            license_id=license_id, domain="overview.example", pdf_bytes=b"%PDF-test",
+            coverage_json="{}", finding_count=2, created_at=now,
+        ))
+        db.add(AuditQuotaReservation(
+            license_id=license_id, created_at=now,
+            expires_at=now + timedelta(minutes=10),
+        ))
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/admin/overview",
+        headers={"X-Admin-Key": "test-admin-overview-key"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    row = next(item for item in payload["clients"] if item["id"] == license_id)
+    assert row["monthly_used"] == 1
+    assert row["monthly_remaining"] == 4
+    assert row["total_audits"] == 1
+    assert row["reports_saved"] == 1
+    assert row["active_audit_reservations"] == 1
+    assert row["last_audit_at"]
+
+
+@pytest.mark.asyncio
 async def test_customer_portal_is_served(client):
     response = await client.get("/app")
     assert response.status_code == 200
