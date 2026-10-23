@@ -59,18 +59,24 @@ agent = UniversalEcommerceAgent()
 
 
 @app.middleware("http")
-async def prevent_admin_api_caching(request: Request, call_next):
-    """Prevent shared/private browser caches retaining sensitive operator API responses."""
+async def apply_response_security_headers(request: Request, call_next):
+    """Apply baseline browser protections and prevent caching authenticated/private responses."""
     response = await call_next(request)
-    private_api_prefixes = (
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+
+    private_paths = (
         "/api/v1/admin/",
         "/api/v1/account/",
         "/api/v1/reports",
+        "/admin",
+        "/app",
     )
-    if request.url.path.startswith(private_api_prefixes):
+    if request.url.path.startswith(private_paths):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
-        response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
