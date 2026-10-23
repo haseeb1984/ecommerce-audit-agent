@@ -564,6 +564,34 @@ async def test_report_email_uses_configured_sender_only_for_owned_report(client,
 
 
 @pytest.mark.asyncio
+async def test_report_email_cannot_send_another_licenses_pdf(client, monkeypatch):
+    owner_id = await create_license(key="email-report-private-owner")
+    requester_id = await create_license(key="email-report-private-requester")
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=owner_id, domain="private.example",
+            pdf_bytes=b"%PDF-private", coverage_json="{}", finding_count=1,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    sent = []
+    monkeypatch.setattr(
+        main, "_send_pdf_email",
+        lambda recipient, domain, report_id_arg, pdf_bytes: sent.append(report_id_arg),
+    )
+    response = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers={"X-License-Key": "email-report-private-requester"},
+        json={"recipient_email": "recipient@example.com", "recipient_confirmed": True},
+    )
+    assert response.status_code == 404
+    assert sent == []
+
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_idempotent(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
