@@ -1317,20 +1317,38 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
         AuditLead.created_at >= month_start
     ))).scalar_one()
     active_clients = sum(1 for item in licenses if item.is_active and not (item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now))
+    # Aggregate per-license metrics in bounded queries instead of issuing several
+    # round trips for every client. This keeps the operator overview responsive as
+    # the SaaS customer count grows and avoids an N+1 query pattern.
+    monthly_rows = (await db.execute(
+        select(AuditLead.license_id, sql_func.count(AuditLead.id))
+        .where(AuditLead.created_at >= month_start)
+        .group_by(AuditLead.license_id)
+    )).all()
+    audit_rows = (await db.execute(
+        select(AuditLead.license_id, sql_func.count(AuditLead.id), sql_func.max(AuditLead.created_at))
+        .group_by(AuditLead.license_id)
+    )).all()
+    report_rows = (await db.execute(
+        select(AuditReport.license_id, sql_func.count(AuditReport.id))
+        .group_by(AuditReport.license_id)
+    )).all()
+    reservation_rows = (await db.execute(
+        select(AuditQuotaReservation.license_id, sql_func.count(AuditQuotaReservation.id))
+        .where(AuditQuotaReservation.expires_at > now)
+        .group_by(AuditQuotaReservation.license_id)
+    )).all()
+    monthly_by_license = {row[0]: int(row[1] or 0) for row in monthly_rows}
+    audits_by_license = {row[0]: (int(row[1] or 0), row[2]) for row in audit_rows}
+    reports_by_license = {row[0]: int(row[1] or 0) for row in report_rows}
+    reservations_by_license = {row[0]: int(row[1] or 0) for row in reservation_rows}
+
     client_rows = []
     for item in licenses:
-        used_month = (await db.execute(select(sql_func.count(AuditLead.id)).where(
-            AuditLead.license_id == item.id, AuditLead.created_at >= month_start
-        ))).scalar_one()
-        report_count = (await db.execute(select(sql_func.count(AuditReport.id)).where(
-            AuditReport.license_id == item.id
-        ))).scalar_one()
-        active_runs = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
-            AuditQuotaReservation.license_id == item.id, AuditQuotaReservation.expires_at > now
-        ))).scalar_one()
-        latest_audit = (await db.execute(select(sql_func.max(AuditLead.created_at)).where(
-            AuditLead.license_id == item.id
-        ))).scalar_one()
+        used_month = monthly_by_license.get(item.id, 0)
+        total_audits, latest_audit = audits_by_license.get(item.id, (0, None))
+        report_count = reports_by_license.get(item.id, 0)
+        active_runs = reservations_by_license.get(item.id, 0)
         client_rows.append({
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
             "is_active": bool(item.is_active),
@@ -1338,14 +1356,12 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "expires_at": item.expires_at.isoformat() if item.expires_at else None,
             "monthly_limit": int(item.max_monthly_audits or 0),
-            "monthly_used": int(used_month or 0),
-            "monthly_remaining": max(0, int(item.max_monthly_audits or 0) - int(used_month or 0)),
-            "usage_percent": round(100 * int(used_month or 0) / int(item.max_monthly_audits), 1) if item.max_monthly_audits else 0,
-            "total_audits": int((await db.execute(select(sql_func.count(AuditLead.id)).where(
-                AuditLead.license_id == item.id
-            ))).scalar_one() or 0),
-            "reports_saved": int(report_count or 0),
-            "active_audit_reservations": int(active_runs or 0),
+            "monthly_used": used_month,
+            "monthly_remaining": max(0, int(item.max_monthly_audits or 0) - used_month),
+            "usage_percent": round(100 * used_month / int(item.max_monthly_audits), 1) if item.max_monthly_audits else 0,
+            "total_audits": total_audits,
+            "reports_saved": report_count,
+            "active_audit_reservations": active_runs,
             "last_audit_at": latest_audit.isoformat() if latest_audit else None,
         })
     return {
