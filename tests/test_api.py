@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import time
+import threading
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
@@ -927,3 +928,55 @@ async def test_paddle_webhook_retries_pending_license_email_without_duplicate_li
         )).scalars().all()
     assert len(licenses) == 1
     assert len(events) == 1 and events[0].status == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_paddle_webhook_claims_license_email_delivery_once_for_concurrent_retries(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01concurrent123")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    entered_send = threading.Event()
+    release_send = threading.Event()
+    attempts = []
+
+    def blocking_email(email, key, tier, quota):
+        attempts.append(key)
+        entered_send.set()
+        if not release_send.wait(timeout=5):
+            raise RuntimeError("test email send timed out")
+
+    monkeypatch.setattr(main, "_send_license_email", blocking_email)
+    event = {
+        "event_id": "evt_paddle_concurrent_email",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_01concurrent123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer": {"email": "concurrent-buyer@example.com", "name": "Concurrent Buyer"},
+            "items": [{"price": {"id": "pri_01concurrent123"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    headers = {"Paddle-Signature": f"ts={timestamp};h1={signature}"}
+
+    first_task = asyncio.create_task(client.post(
+        "/api/v1/billing/paddle-webhook", content=body, headers=headers
+    ))
+    try:
+        assert await asyncio.to_thread(entered_send.wait, 3), "first webhook did not start email delivery"
+        second = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
+        assert second.status_code == 200
+        assert second.json()["status"] == "delivery_in_progress"
+    finally:
+        release_send.set()
+    first = await first_task
+    assert first.status_code == 200 and first.json()["status"] == "provisioned"
+    assert len(attempts) == 1
