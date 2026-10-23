@@ -532,7 +532,7 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
 
     coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=owner_headers)
     assert coverage.status_code == 200
-    assert coverage.json()["target_url"] == "https://shop.example"
+    assert coverage.json()["target_url"] == "https://shop.example/"
 
     other_headers = {"X-License-Key": other_key}
     for path in (
