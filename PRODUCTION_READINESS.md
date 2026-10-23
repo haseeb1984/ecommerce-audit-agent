@@ -31,7 +31,7 @@ Before merging/deploying:
 
 - [ ] GitHub Actions test workflow passes.
 - [ ] Apply the quota-reservation migration to production Supabase.
-- [ ] Confirm Vercel production environment has `DATABASE_URL`, `GROQ_API_KEY`, and `GOOGLE_PAGESPEED_API_KEY`.
+- [ ] Confirm Vercel production environment has `DATABASE_URL`, `GROQ_API_KEY`, and `PAGE_SPEED_API_KEY`.
 - [ ] Confirm database TLS remains enabled in production (`DATABASE_SSL` unset or set to `true`).
 - [ ] Confirm `GET /health-check` returns database connectivity.
 - [ ] Run a production concurrency test using a temporary license with monthly quota 1: two overlapping requests should return exactly one 200 and one 429, and save exactly one audit record.

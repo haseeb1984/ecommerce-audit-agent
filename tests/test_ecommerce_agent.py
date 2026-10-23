@@ -108,3 +108,14 @@ async def test_out_of_range_pagespeed_metrics_are_rejected(monkeypatch):
 
     with pytest.raises(RuntimeError, match="out-of-range"):
         await agent.run_audit("shop.example")
+
+
+def test_pagespeed_key_prefers_current_environment_name_and_supports_legacy_fallback(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "synthetic-groq-key")
+    monkeypatch.setattr(ecommerce_agent, "AsyncGroq", lambda api_key: object())
+    monkeypatch.setenv("PAGE_SPEED_API_KEY", "current-pagespeed-key")
+    monkeypatch.setenv("GOOGLE_PAGESPEED_API_KEY", "legacy-pagespeed-key")
+    assert UniversalEcommerceAgent().pagespeed_key == "current-pagespeed-key"
+
+    monkeypatch.delenv("PAGE_SPEED_API_KEY")
+    assert UniversalEcommerceAgent().pagespeed_key == "legacy-pagespeed-key"
