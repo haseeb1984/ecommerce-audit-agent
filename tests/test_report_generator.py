@@ -989,6 +989,7 @@ def test_pdf_evidence_url_redacts_credentials_query_and_fragment():
     from report_generator import _safe_public_url
 
     assert _safe_public_url("https://user:pass@shop.example/products?token=secret#account") is None
+    assert _safe_public_url("https://@shop.example/products") is None
     assert _safe_public_url("https://shop.example/products?token=secret#account") == "https://shop.example/products"
     assert _safe_public_url("javascript:alert(1)") is None
     assert _safe_public_url("https://shop.example:443/") == "https://shop.example/"
