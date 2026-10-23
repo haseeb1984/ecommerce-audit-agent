@@ -22,6 +22,7 @@
 ## Repository-only work completed without deployments/workflow minutes
 
 - Corrected an audit-coverage false-positive: general accessibility findings no longer automatically mark the separate ARIA and image-alt categories as observed. Added a regression test requiring those categories to remain `not_proven` unless their own signals/check execution support them. Test is committed but **not executed**.
+- Coverage manifests now sanitize the target URL, sampled page URLs, and finding evidence URLs through one helper: query strings/fragments are stripped, credential-bearing URLs and non-HTTP(S) values are excluded, and the page count reflects only retained unique safe URLs. A regression test covers token-like query values, fragments, URL userinfo, and a `javascript:` URL. The test is committed but **not executed**.
 
 - Added an isolated API journey regression test that mocks external audit/network work and checks license-authenticated audit quota consumption, persisted PDF retrieval, history/coverage visibility, cross-license isolation, and explicit-consent email delivery without sending real email. The test is committed but **not executed**; production migration, actual SMTP inbox delivery, live crawl coverage, and full browser QA remain separate acceptance gates.
 
