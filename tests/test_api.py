@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import time
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -12,6 +13,7 @@ import main
 from database import AsyncSessionLocal
 from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
+from audit_checks import AuditCheckResult
 
 
 async def create_license(
@@ -402,6 +404,124 @@ async def test_report_history_is_scoped_to_authenticated_license(client):
     forbidden_coverage = await client.get(f"/api/v1/reports/{private_id}/coverage", headers=headers)
     assert forbidden_pdf.status_code == 404
     assert forbidden_coverage.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_in_email(client, monkeypatch):
+    owner_key = "journey-owner-license"
+    other_key = "journey-other-license"
+    owner_id = await create_license(key=owner_key, quota=3)
+    await create_license(key=other_key, quota=3)
+
+    async def fake_run_audit(target_url):
+        return SimpleNamespace(
+            domain="shop.example",
+            mobile_score=82,
+            speed_index_sec=2.1,
+            screenshot_data_uri=None,
+        )
+
+    async def fake_phase_one(target_url):
+        return AuditCheckResult(
+            target_url=target_url,
+            checked_at_utc=datetime.now(timezone.utc).isoformat(),
+            findings=[],
+            pages_checked=[target_url],
+            limitations=["Integration test uses mocked network checks."],
+        )
+
+    async def fake_crawl(target_url):
+        return [], [target_url], ["Crawl mocked for isolated API journey test."]
+
+    async def fake_conversion(target_url):
+        return [], [target_url], ["Conversion checks mocked for isolated API journey test."]
+
+    monkeypatch.setattr(main.agent, "run_audit", fake_run_audit)
+    monkeypatch.setattr(main, "run_phase_one_checks", fake_phase_one)
+    monkeypatch.setattr(main, "run_bounded_site_crawl", fake_crawl)
+    monkeypatch.setattr(main, "run_conversion_paid_traffic_checks", fake_conversion)
+    monkeypatch.setattr(main, "render_audit_pdf", lambda *args, **kwargs: b"%PDF-journey-test")
+
+    owner_headers = {"X-License-Key": owner_key}
+    audit = await client.post(
+        "/api/v1/comprehensive-audit?domain=https%3A%2F%2Fshop.example",
+        headers=owner_headers,
+    )
+    assert audit.status_code == 200, audit.text
+    assert audit.headers["content-type"] == "application/pdf"
+    assert audit.headers["cache-control"] == "no-store, private"
+    assert audit.content == b"%PDF-journey-test"
+    report_id = int(audit.headers["x-audit-report-id"])
+
+    usage = await client.get("/api/v1/account/usage", headers=owner_headers)
+    assert usage.status_code == 200
+    assert usage.json()["used"] == 1
+    assert usage.json()["remaining"] == 2
+
+    history = await client.get("/api/v1/reports", headers=owner_headers)
+    assert history.status_code == 200
+    assert history.json()["total"] == 1
+    assert history.json()["reports"][0]["id"] == report_id
+    assert history.json()["reports"][0]["domain"] == "shop.example"
+
+    stored_pdf = await client.get(f"/api/v1/reports/{report_id}/pdf", headers=owner_headers)
+    assert stored_pdf.status_code == 200
+    assert stored_pdf.content == b"%PDF-journey-test"
+
+    coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=owner_headers)
+    assert coverage.status_code == 200
+    assert coverage.json()["target_url"] == "https://shop.example"
+
+    other_headers = {"X-License-Key": other_key}
+    for path in (
+        "/api/v1/reports",
+        f"/api/v1/reports/{report_id}/pdf",
+        f"/api/v1/reports/{report_id}/coverage",
+    ):
+        response = await client.get(path, headers=other_headers)
+        assert response.status_code == 200 if path == "/api/v1/reports" else response.status_code == 404
+        if path == "/api/v1/reports":
+            assert response.json()["total"] == 0
+            assert response.json()["reports"] == []
+
+    sent = []
+    monkeypatch.setattr(
+        main, "_send_pdf_email",
+        lambda recipient, domain, sent_report_id, pdf_bytes: sent.append(
+            (recipient, domain, sent_report_id, pdf_bytes)
+        ),
+    )
+    no_consent = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers=owner_headers,
+        json={"recipient_email": "recipient@example.com", "recipient_confirmed": False},
+    )
+    assert no_consent.status_code == 422
+    assert sent == []
+
+    foreign_email = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers=other_headers,
+        json={"recipient_email": "recipient@example.com", "recipient_confirmed": True},
+    )
+    assert foreign_email.status_code == 404
+    assert sent == []
+
+    opted_in = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers=owner_headers,
+        json={"recipient_email": "recipient@example.com", "recipient_confirmed": True},
+    )
+    assert opted_in.status_code == 200, opted_in.text
+    assert opted_in.json() == {"status": "sent", "report_id": report_id}
+    assert sent == [("recipient@example.com", "shop.example", report_id, b"%PDF-journey-test")]
+
+    async with AsyncSessionLocal() as db:
+        saved = (await db.execute(
+            select(AuditReport).where(AuditReport.id == report_id, AuditReport.license_id == owner_id)
+        )).scalar_one()
+        assert saved.pdf_bytes == b"%PDF-journey-test"
+        assert await db.scalar(select(func.count(AuditQuotaReservation.id))) == 0
 
 
 @pytest.mark.asyncio
