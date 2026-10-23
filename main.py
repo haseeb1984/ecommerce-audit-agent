@@ -1390,7 +1390,12 @@ async def admin_download_audit_report(report_id: int, request: Request,
     return Response(
         content=report.pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"',
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
