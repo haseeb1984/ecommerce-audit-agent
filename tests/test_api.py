@@ -543,7 +543,8 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
     for category in ("aria", "trust", "security_transport", "security_cookies", "security_api_documentation"):
         assert coverage_categories[category]["status"] == "not_proven"
         assert coverage_categories[category]["checker_group_executed"] is False
-    assert coverage_categories["indexing"]["status"] == "recorded"
+    # The fake phase-one checker emitted no indexing finding in this isolated test.
+    assert coverage_categories["indexing"]["status"] == "not_proven"
     assert coverage_categories["indexing"]["checker_group_executed"] is False
 
     other_headers = {"X-License-Key": other_key}
