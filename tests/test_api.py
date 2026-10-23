@@ -479,10 +479,12 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
         f"/api/v1/reports/{report_id}/coverage",
     ):
         response = await client.get(path, headers=other_headers)
-        assert response.status_code == 200 if path == "/api/v1/reports" else response.status_code == 404
         if path == "/api/v1/reports":
+            assert response.status_code == 200
             assert response.json()["total"] == 0
             assert response.json()["reports"] == []
+        else:
+            assert response.status_code == 404
 
     sent = []
     monkeypatch.setattr(
