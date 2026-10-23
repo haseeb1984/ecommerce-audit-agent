@@ -723,13 +723,51 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         webhook_event.transaction_id = str(transaction.get("id") or "")[:100] or None
     if not webhook_event.subscription_id:
         webhook_event.subscription_id = str(transaction.get("subscription_id") or "")[:100] or None
+    await db.commit()
+
+    # Claim email delivery atomically so simultaneous Paddle retries cannot send
+    # the same license email twice. A stale claim can be recovered after a worker
+    # crash; normal SMTP retries remain immediately available after a failed send.
+    from datetime import timedelta
+    from sqlalchemy import or_, update
+    now = datetime.now(timezone.utc)
+    stale_before = now - timedelta(minutes=5)
+    claimed = await db.execute(
+        update(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.event_id == event_id,
+            or_(
+                PaymentWebhookEvent.status == "email_pending",
+                (PaymentWebhookEvent.status == "email_sending")
+                & (PaymentWebhookEvent.updated_at < stale_before),
+            ),
+        )
+        .values(status="email_sending", updated_at=now)
+        .returning(PaymentWebhookEvent.event_id)
+    )
+    if claimed.scalar_one_or_none() is None:
+        current = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if current is not None and current.status == "delivered":
+            return {"status": "already_processed", "event_id": event_id}
+        return {"status": "delivery_in_progress", "event_id": event_id}
+    await db.commit()
+
     license_obj = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == webhook_event.license_id))).scalar_one_or_none()
-    if license_obj is None: raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
+    if license_obj is None:
+        webhook_event.status = "email_pending"
+        webhook_event.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
     try:
         await asyncio.to_thread(_send_license_email, webhook_event.recipient_email, license_obj.license_key,
             license_obj.tier, license_obj.max_monthly_audits)
     except Exception as exc:
         logger.error("License email delivery failed (error_type=%s)", type(exc).__name__)
+        webhook_event.status = "email_pending"
+        webhook_event.updated_at = datetime.now(timezone.utc)
+        await db.commit()
         raise HTTPException(status_code=502, detail="Payment was recorded; license email is pending SMTP delivery retry.") from exc
     webhook_event.status = "delivered"
     webhook_event.updated_at = datetime.now(timezone.utc)
