@@ -1016,10 +1016,16 @@ async def test_paddle_webhook_different_event_ids_for_same_transaction_do_not_du
             headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
         )
 
-    first = await deliver("evt_same_purchase_original")
-    second = await deliver("evt_same_purchase_redelivered")
-    assert first.status_code == 200 and first.json()["status"] == "provisioned"
-    assert second.status_code == 200 and second.json()["status"] == "already_processed"
+    # Simulate Paddle delivering two event IDs for one purchase at the same time.
+    first, second = await asyncio.gather(
+        deliver("evt_same_purchase_original"),
+        deliver("evt_same_purchase_redelivered"),
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert sorted([first.json()["status"], second.json()["status"]]) == [
+        "already_processed", "provisioned"
+    ]
 
     async with AsyncSessionLocal() as db:
         licenses = (await db.execute(
