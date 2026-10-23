@@ -872,3 +872,58 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
     assert captured["payload"]["items"] == [{"price_id": "pri_01abc123", "quantity": 1}]
     assert captured["payload"]["custom_data"]["license_tier"] == "starter"
     assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up"})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_paddle_webhook_retries_pending_license_email_without_duplicate_license(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01retry123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    attempts = []
+
+    def flaky_email(email, key, tier, quota):
+        attempts.append((email, key, tier, quota))
+        if len(attempts) == 1:
+            raise RuntimeError("simulated SMTP outage")
+
+    monkeypatch.setattr(main, "_send_license_email", flaky_email)
+    event = {
+        "event_id": "evt_paddle_email_retry",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_01retry123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer": {"email": "retry-buyer@example.com", "name": "Retry Buyer"},
+            "items": [{"price": {"id": "pri_01retry123"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    headers = {"Paddle-Signature": f"ts={timestamp};h1={signature}"}
+
+    first = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
+    assert first.status_code == 502
+    assert "pending SMTP delivery retry" in first.json()["detail"]
+
+    retry = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "provisioned"
+    assert len(attempts) == 2
+    assert attempts[0][1] == attempts[1][1]  # The same license key is retried.
+    async with AsyncSessionLocal() as db:
+        licenses = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Retry Buyer")
+        )).scalars().all()
+        events = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_paddle_email_retry")
+        )).scalars().all()
+    assert len(licenses) == 1
+    assert len(events) == 1 and events[0].status == "delivered"
