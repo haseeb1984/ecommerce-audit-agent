@@ -14,6 +14,7 @@ from database import AsyncSessionLocal
 from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
+from coverage_manifest import build_coverage_manifest
 
 
 async def create_license(
@@ -69,6 +70,34 @@ def mock_process_lead(monkeypatch):
 
     monkeypatch.setattr(main.agent, "process_lead", fake_process_lead)
     return fake_process_lead
+
+
+def test_coverage_manifest_does_not_infer_aria_or_alt_text_from_general_accessibility():
+    finding = SimpleNamespace(
+        category="accessibility",
+        title="Form controls may lack accessible labels",
+        status="manual_review_required",
+        severity="medium",
+        source_url="https://shop.example/",
+    )
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/",
+        pages_checked=["https://shop.example/"],
+        findings=[finding],
+        limitations=[],
+        executed_categories=["accessibility"],
+    )
+    categories = {
+        item["category"]: item
+        for item in (
+            manifest["observed_categories"]
+            + manifest["checked_without_findings_categories"]
+            + manifest["not_proven_categories"]
+        )
+    }
+    assert categories["accessibility"]["status"] == "recorded"
+    assert categories["aria"]["status"] == "not_proven"
+    assert categories["aria_alt_text"]["status"] == "not_proven"
 
 
 @pytest.mark.asyncio
