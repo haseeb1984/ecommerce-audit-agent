@@ -47,6 +47,7 @@ async def main() -> int:
         return 2
 
     missing: list[str] = []
+    missing_configuration: list[str] = []
     async with AsyncSessionLocal() as db:
         await db.execute(text("SELECT 1"))
         rows = (await db.execute(text("""
@@ -79,8 +80,12 @@ async def main() -> int:
         if group == "smtp_delivery":
             ready = all(os.getenv(name, "").strip() for name in candidates)
         print(f"configuration_{group}: {'PASS' if ready else 'FAIL'}")
+        if not ready:
+            missing_configuration.append(group)
 
-    return 1 if missing else 0
+    for group in missing_configuration:
+        print(f"missing_configuration_group: {group}")
+    return 1 if missing or missing_configuration else 0
 
 
 if __name__ == "__main__":
