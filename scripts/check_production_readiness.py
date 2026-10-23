@@ -12,7 +12,6 @@ import sys
 
 from sqlalchemy import text
 
-from database import AsyncSessionLocal
 
 REQUIRED_COLUMNS = {
     "software_licenses": {"id", "license_key", "tier", "max_monthly_audits", "is_active"},
@@ -42,9 +41,14 @@ REQUIRED_ENV_GROUPS = {
 
 
 async def main() -> int:
+    # Import database.py only after validating DATABASE_URL. That module builds
+    # its SQLAlchemy engine at import time; importing it first masks this clear
+    # configuration error with a lower-level URL parsing exception.
     if not os.getenv("DATABASE_URL", "").strip():
         print("FAIL database_url: DATABASE_URL is not configured.")
         return 2
+
+    from database import AsyncSessionLocal
 
     missing: list[str] = []
     missing_configuration: list[str] = []
