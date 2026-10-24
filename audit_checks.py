@@ -387,7 +387,7 @@ def record_homepage_outcomes(
     response_charset = ""
     for key, value in headers.items():
         if key.lower() == "content-type":
-            match = re.search(r"charset\\s*=\\s*([a-zA-Z0-9._-]+)", value, re.I)
+            match = re.search(r"charset\s*=\s*([a-zA-Z0-9._-]+)", value, re.I)
             if match:
                 response_charset = match.group(1).strip().lower()
             break
