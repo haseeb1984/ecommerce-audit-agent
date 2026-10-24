@@ -41,12 +41,25 @@ class AuditFinding(BaseModel):
     risk_if_unresolved: str | None = None
 
 
+class CheckOutcome(BaseModel):
+    """An explicit result from a checker that actually evaluated a page."""
+    check_id: str
+    category: str
+    page_url: str
+    outcome: str  # pass, issue, warning, not_assessed, error
+    observed_at_utc: str
+    method: str
+    evidence: str
+    evidence_ref: str | None = None
+
+
 class AuditCheckResult(BaseModel):
     target_url: str
     checked_at_utc: str
     findings: list[AuditFinding] = Field(default_factory=list)
     pages_checked: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    check_outcomes: list[CheckOutcome] = Field(default_factory=list)
 
 
 def normalize_target(value: str) -> str:
@@ -336,6 +349,53 @@ def _finding(category: str, title: str, status: str, severity: str,
         evidence=evidence, explanation=explanation, recommendation=recommendation,
         verification_steps=steps, source_url=source_url,
     )
+
+
+def record_homepage_outcomes(
+    html: str, final_url: str, headers: dict[str, str], observed_at_utc: str
+) -> list[CheckOutcome]:
+    """Record explicit outcomes only for source checks evaluated successfully."""
+    parser = _PageParser()
+    parser.feed(html)
+    outcomes: list[CheckOutcome] = []
+
+    def record(check_id: str, category: str, passed: bool, evidence: str) -> None:
+        outcomes.append(CheckOutcome(
+            check_id=check_id,
+            category=category,
+            page_url=final_url,
+            outcome="pass" if passed else "issue",
+            observed_at_utc=observed_at_utc,
+            method="bounded static HTML source inspection",
+            evidence=evidence,
+            evidence_ref=f"{check_id}:{final_url}",
+        ))
+
+    record("html.document_language", "accessibility", bool(parser.document_language),
+           f"Root html lang attribute: {parser.document_language!r}.")
+    record("html.title_present", "on_page_seo", bool(parser.title_text),
+           f"Title element count: {parser.title_count}; extracted title: {parser.title_text[:160]!r}.")
+    record("html.meta_description_present", "on_page_seo", bool(parser.meta_description),
+           f"Meta description count: {parser.meta_description_count}; non-empty description present: {bool(parser.meta_description)}.")
+    record("html.h1_present", "on_page_seo", parser.h1_count > 0,
+           f"H1 element count: {parser.h1_count}; empty H1 count: {parser.empty_h1_count}.")
+    record("html.viewport_present", "mobile_ux", bool(parser.viewport),
+           f"Viewport declaration: {parser.viewport[:160]!r}.")
+    record("html.main_landmark_present", "accessibility", parser.main_landmark_count > 0,
+           f"Main landmark count in returned HTML: {parser.main_landmark_count}.")
+
+    response_charset = ""
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            match = re.search(r"charset\\s*=\\s*([a-zA-Z0-9._-]+)", value, re.I)
+            if match:
+                response_charset = match.group(1).strip().lower()
+            break
+    declared_charsets = [value.strip().lower() for value in parser.charset_declarations if value.strip()]
+    has_charset = bool(response_charset or declared_charsets)
+    record("html.charset_declared", "technical_seo", has_charset,
+           f"HTTP charset: {response_charset or 'not declared'}; HTML charset declaration(s): {', '.join(declared_charsets) or 'none'}.")
+    return outcomes
 
 
 def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list[AuditFinding]:
@@ -1293,6 +1353,7 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
     parsed = urlsplit(normalized)
     findings: list[AuditFinding] = []
     pages_checked: list[str] = []
+    check_outcomes: list[CheckOutcome] = []
     limitations = [
         "A bounded same-origin sample of up to 12 page responses is checked alongside common discovery files; this is not a full-site crawl.",
         "HTML source checks do not prove the rendered mobile layout, full accessibility, Google indexing, or legal compliance.",
@@ -1323,6 +1384,8 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     ["Repeat the request with a browser and an HTTP status checker."], final_url,
                 ))
             else:
+                observed_at_utc = datetime.now(timezone.utc).isoformat()
+                check_outcomes.extend(record_homepage_outcomes(html, final_url, headers, observed_at_utc))
                 findings.extend(inspect_homepage(html, final_url, headers))
                 # Fetch the conventional sitemap once and reuse its response both for
                 # semantic reporting and as bounded seeds for the page crawl.
@@ -1455,4 +1518,5 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
         findings=findings,
         pages_checked=pages_checked,
         limitations=limitations,
+        check_outcomes=check_outcomes,
     )
