@@ -359,29 +359,38 @@ def record_homepage_outcomes(
     parser.feed(html)
     outcomes: list[CheckOutcome] = []
 
-    def record(check_id: str, category: str, passed: bool, evidence: str) -> None:
+    def record(check_id: str, category: str, outcome: str, evidence: str) -> None:
         outcomes.append(CheckOutcome(
             check_id=check_id,
             category=category,
             page_url=final_url,
-            outcome="pass" if passed else "issue",
+            outcome=outcome,
             observed_at_utc=observed_at_utc,
             method="bounded static HTML source inspection",
             evidence=evidence,
             evidence_ref=f"{check_id}:{final_url}",
         ))
 
-    record("html.document_language", "accessibility", bool(parser.document_language),
-           f"Root html lang attribute: {parser.document_language!r}.")
-    record("html.title_present", "on_page_seo", bool(parser.title_text),
+    lang_value = parser.document_language.strip()
+    if not lang_value:
+        lang_outcome = "issue"
+        lang_evidence = "Root html lang attribute is missing or empty."
+    elif not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", lang_value):
+        lang_outcome = "warning"
+        lang_evidence = f"Root html lang value {lang_value[:80]!r} does not match the conservative syntax pattern; semantic validity is not established."
+    else:
+        lang_outcome = "pass"
+        lang_evidence = f"Root html lang attribute: {lang_value!r}; syntax pattern matched, but actual page language is not independently verified."
+    record("html.document_language", "accessibility", lang_outcome, lang_evidence)
+    record("html.title_present", "on_page_seo", "pass" if parser.title_text else "issue",
            f"Title element count: {parser.title_count}; extracted title: {parser.title_text[:160]!r}.")
-    record("html.meta_description_present", "on_page_seo", bool(parser.meta_description),
+    record("html.meta_description_present", "on_page_seo", "pass" if parser.meta_description else "issue",
            f"Meta description count: {parser.meta_description_count}; non-empty description present: {bool(parser.meta_description)}.")
-    record("html.h1_present", "on_page_seo", parser.h1_count > parser.empty_h1_count,
+    record("html.h1_present", "on_page_seo", "pass" if parser.h1_count > parser.empty_h1_count else "issue",
            f"H1 element count: {parser.h1_count}; empty H1 count: {parser.empty_h1_count}.")
-    record("html.viewport_present", "mobile_ux", bool(parser.viewport),
+    record("html.viewport_present", "mobile_ux", "pass" if parser.viewport else "issue",
            f"Viewport declaration: {parser.viewport[:160]!r}.")
-    record("html.main_landmark_present", "accessibility", parser.main_landmark_count > 0,
+    record("html.main_landmark_present", "accessibility", "pass" if parser.main_landmark_count > 0 else "issue",
            f"Main landmark count in returned HTML: {parser.main_landmark_count}.")
 
     response_charset = ""
@@ -393,8 +402,10 @@ def record_homepage_outcomes(
             break
     declared_charsets = [value.strip().lower() for value in parser.charset_declarations if value.strip()]
     has_charset = bool(response_charset or declared_charsets)
-    record("html.charset_declared", "technical_seo", has_charset,
-           f"HTTP charset: {response_charset or 'not declared'}; HTML charset declaration(s): {', '.join(declared_charsets) or 'none'}.")
+    charset_mismatch = bool(response_charset and declared_charsets and any(value != response_charset for value in declared_charsets))
+    charset_outcome = "warning" if charset_mismatch else "pass" if has_charset else "issue"
+    record("html.charset_declared", "technical_seo", charset_outcome,
+           f"HTTP charset: {response_charset or 'not declared'}; HTML charset declaration(s): {', '.join(declared_charsets) or 'none'}; declaration mismatch: {charset_mismatch}.")
     return outcomes
 
 
