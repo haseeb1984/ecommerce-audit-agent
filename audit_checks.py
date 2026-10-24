@@ -1461,7 +1461,16 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     status, body, _, final_url = sitemap_cache
                 else:
                     status, body, _, final_url = await _safe_get(client, file_url)
+                observed_at_utc = datetime.now(timezone.utc).isoformat()
+                check_id = "discovery." + category + ".availability"
                 if 200 <= status < 300:
+                    check_outcomes.append(CheckOutcome(
+                        check_id=check_id, category=category, page_url=final_url,
+                        outcome="pass", observed_at_utc=observed_at_utc,
+                        method="bounded public HTTP GET and status inspection",
+                        evidence=f"GET {final_url} returned HTTP {status}; response size {len(body.encode('utf-8'))} bytes.",
+                        evidence_ref=final_url,
+                    ))
                     findings.append(_finding(
                         category, f"{description} availability", "verified", "info",
                         f"GET {final_url} returned HTTP {status}; response size {len(body.encode('utf-8'))} bytes.",
@@ -1482,6 +1491,15 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     # absent. Access-denied, rate-limit, and server-error responses do
                     # not prove absence and must not trigger a publish-file recommendation.
                     is_not_found = status == 404
+                    check_outcomes.append(CheckOutcome(
+                        check_id="discovery." + category + ".availability",
+                        category=category, page_url=final_url,
+                        outcome=("issue" if is_not_found and category != "llms_txt" else "warning"),
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded public HTTP GET and status inspection",
+                        evidence=f"GET {final_url} returned HTTP {status}; status alone does not establish configuration correctness.",
+                        evidence_ref=final_url,
+                    ))
                     findings.append(_finding(
                         category, f"{description} availability",
                         "verified" if is_not_found else "not_tested",
@@ -1502,6 +1520,14 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                         final_url,
                     ))
             except Exception as exc:
+                check_outcomes.append(CheckOutcome(
+                    check_id="discovery." + category + ".availability",
+                    category=category, page_url=file_url, outcome="error",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded public HTTP GET; request failed before reliable status/content evaluation",
+                    evidence=f"Request failed safely with {type(exc).__name__}; no availability conclusion is inferred.",
+                    evidence_ref=file_url,
+                ))
                 findings.append(_finding(
                     category, f"{description} could not be checked", "not_tested", "info",
                     f"Check stopped safely: {type(exc).__name__}: {str(exc)[:200]}",
