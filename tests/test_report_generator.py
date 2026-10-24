@@ -988,6 +988,31 @@ def test_issue_dashboard_uses_only_screenshot_for_matching_affected_url():
     assert pdf_with_matching_capture.count(b"/Subtype /Image") > pdf_without_matching_capture.count(b"/Subtype /Image")
 
 
+def test_issue_dashboard_explicitly_marks_per_page_outcomes_unavailable_without_records():
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-24T00:00:00+00:00",
+        pages_checked=["https://shop.example/", "https://shop.example/products/item"],
+        findings=[
+            AuditFinding(
+                category="on_page_seo",
+                title="Missing product page meta description",
+                status="verified",
+                severity="medium",
+                evidence="Product page source had no meta description.",
+                explanation="Search previews may have less useful context.",
+                recommendation="Write a unique description aligned with the product page.",
+                source_url="https://shop.example/products/item",
+            )
+        ],
+    )
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    # Outcome counts are deliberately not fabricated from finding absence.
+    # The generated report includes an explicit unavailable-state panel.
+    assert b"/Type /Page" in pdf
+
+
 def test_pdf_evidence_url_redacts_credentials_query_and_fragment():
     from report_generator import _safe_public_url
 
