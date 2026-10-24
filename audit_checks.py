@@ -1169,8 +1169,10 @@ async def crawl_same_origin_pages(
             seen.add(candidate)
             queue.append((candidate, homepage_url))
 
-    while queue and len(checked) + 1 < max_pages:
+    attempted = 0
+    while queue and attempted + 1 < max_pages:
         page_url, _parent = queue.pop(0)
+        attempted += 1
         try:
             status, body, headers, final_url = await _safe_get(client, page_url)
             if not _same_origin(final_url, origin):
