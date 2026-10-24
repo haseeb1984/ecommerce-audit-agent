@@ -1398,6 +1398,36 @@ def render_audit_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
         story.extend([dashboard, Spacer(1, 1.5 * mm)])
+        # The current runner stores findings but not explicit per-check/per-page
+        # pass/issue/warning/not-assessed/error records. Never derive a pass rate
+        # from the absence of a finding; make this acceptance gap visible.
+        outcome_notice = Table(
+            [[
+                Paragraph("<b>PAGE OUTCOME BREAKDOWN</b>", small_style),
+                Paragraph(
+                    "Unavailable — explicit per-page check outcomes are not recorded yet. "
+                    "No pass percentage is inferred from missing findings. "
+                    f"Audit sampled {len(set(result.pages_checked))} page(s) overall; "
+                    "the tested-page denominator and unassessed-page count for this specific check are not available.",
+                    body_style,
+                ),
+            ]],
+            colWidths=[42 * mm, 132 * mm],
+            hAlign="LEFT",
+        )
+        outcome_notice.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF8E7")),
+            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#D9C38A")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.extend([
+            outcome_notice,
+            Spacer(1, 1.5 * mm),
+        ])
         if urls:
             page_rows = [[_p("AFFECTED PAGE", small_style), _p("EVIDENCE REF", small_style)]]
             for affected_url in urls:
