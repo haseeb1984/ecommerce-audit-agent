@@ -1155,9 +1155,49 @@ def _crawl_candidate(href: str, page_url: str, origin_url: str) -> str | None:
         return None
 
 
+def extract_same_origin_sitemap_urls(xml_body: str, sitemap_url: str, origin_url: str) -> tuple[list[str], list[str]]:
+    """Extract a bounded set of safe same-origin URLs from a fetched sitemap URL set."""
+    urls: list[str] = []
+    limitations: list[str] = []
+    try:
+        root = ET.fromstring(xml_body)
+    except (ET.ParseError, ValueError):
+        return [], ["Sitemap URL discovery was skipped because the sitemap XML could not be parsed."]
+    root_name = root.tag.rsplit("}", 1)[-1].lower()
+    if root_name == "sitemapindex":
+        return [], ["Sitemap URL discovery found a sitemap index; nested sitemap files are not followed in this bounded crawl."]
+    if root_name != "urlset":
+        return [], ["Sitemap URL discovery was skipped because the XML root was not a urlset."]
+    seen: set[str] = set()
+    loc_count = 0
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1].lower() != "loc" or not element.text:
+            continue
+        loc_count += 1
+        if loc_count > MAX_DISCOVERED_LINKS:
+            limitations.append(f"Sitemap URL discovery was capped at {MAX_DISCOVERED_LINKS} loc entries.")
+            break
+        raw_url = element.text.strip()
+        try:
+            candidate = normalize_target(raw_url)
+        except (ValueError, TypeError):
+            limitations.append("One or more sitemap locations were excluded because they were not valid supported public HTTP(S) URLs.")
+            continue
+        if not _same_origin(candidate, origin_url):
+            limitations.append("One or more sitemap locations on another origin were excluded from this crawl.")
+            continue
+        # Sitemap entries are absolute by convention; require the source to be
+        # same-origin too, then normalize through the same candidate filter.
+        candidate = _crawl_candidate(candidate, sitemap_url, origin_url)
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            urls.append(candidate)
+    return urls, list(dict.fromkeys(limitations))
+
+
 async def crawl_same_origin_pages(
     client: aiohttp.ClientSession, homepage_url: str, homepage_html: str,
-    max_pages: int = MAX_CRAWL_PAGES,
+    max_pages: int = MAX_CRAWL_PAGES, seed_urls: list[str] | None = None,
 ) -> tuple[list[str], list[AuditFinding], list[str]]:
     """Crawl a small same-origin HTML sample and report page-specific source findings."""
     checked: list[str] = []
@@ -1171,6 +1211,13 @@ async def crawl_same_origin_pages(
         parser.feed(homepage_html)
     except Exception:
         return checked, findings, ["Same-origin crawling was skipped because homepage links could not be parsed safely."]
+    # Sitemap URLs are lower-priority seeds; the same origin, URL, and page
+    # budgets apply to them as to ordinary homepage links.
+    for seed in (seed_urls or [])[:MAX_DISCOVERED_LINKS]:
+        candidate = _crawl_candidate(seed, homepage_url, origin)
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            queue.append((candidate, "sitemap"))
     for href in parser.link_hrefs[:MAX_DISCOVERED_LINKS]:
         candidate = _crawl_candidate(href, homepage_url, origin)
         if candidate and candidate not in seen:
@@ -1276,10 +1323,28 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                 ))
             else:
                 findings.extend(inspect_homepage(html, final_url, headers))
-                # Crawl a small same-origin sample so product/category-style routes are
-                # checked too; dependency checks remain homepage-only to avoid duplicate work.
+                # Fetch the conventional sitemap once and reuse its response both for
+                # semantic reporting and as bounded seeds for the page crawl.
+                sitemap_url = urljoin(f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}/", "sitemap.xml")
+                sitemap_cache: tuple[int, str, dict[str, str], str] | None = None
+                sitemap_seeds: list[str] = []
+                try:
+                    sitemap_cache = await _safe_get(client, sitemap_url, allowed_origin=final_url)
+                    sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = sitemap_cache
+                    if 200 <= sitemap_status < 300:
+                        sitemap_type = sitemap_headers.get("content-type", "").lower()
+                        if not sitemap_type or "xml" in sitemap_type or "text/plain" in sitemap_type:
+                            sitemap_seeds, sitemap_seed_limits = extract_same_origin_sitemap_urls(
+                                sitemap_body, sitemap_final_url, final_url
+                            )
+                            limitations.extend(sitemap_seed_limits)
+                        else:
+                            limitations.append("Sitemap URL discovery was skipped because the sitemap response did not advertise an XML-compatible content type.")
+                except Exception as sitemap_exc:
+                    limitations.append(f"Sitemap URL discovery could not fetch the conventional sitemap safely ({type(sitemap_exc).__name__}).")
+                # Crawl a small same-origin sample; sitemap seeds share the same strict page budget.
                 crawled_pages, crawl_findings, crawl_limitations = await crawl_same_origin_pages(
-                    client, final_url, html, max_pages=MAX_CRAWL_PAGES
+                    client, final_url, html, max_pages=MAX_CRAWL_PAGES, seed_urls=sitemap_seeds
                 )
                 pages_checked.extend(crawled_pages)
                 findings.extend(crawl_findings)
@@ -1311,7 +1376,10 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
         ]:
             file_url = urljoin(origin + "/", filename)
             try:
-                status, body, _, final_url = await _safe_get(client, file_url)
+                if filename == "sitemap.xml" and sitemap_cache is not None:
+                    status, body, _, final_url = sitemap_cache
+                else:
+                    status, body, _, final_url = await _safe_get(client, file_url)
                 if 200 <= status < 300:
                     findings.append(_finding(
                         category, f"{description} availability", "verified", "info",
