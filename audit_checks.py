@@ -220,10 +220,26 @@ class _PageParser(HTMLParser):
         self.jsonld_scripts: list[str] = []
         self._in_jsonld_script = False
         self._jsonld_parts: list[str] = []
+        self.document_language = ""
+        self.charset_declarations: list[str] = []
+        self.main_landmark_count = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
+        if tag == "html":
+            self.document_language = values.get("lang", "").strip()
+        elif tag == "meta":
+            charset = values.get("charset", "").strip()
+            if charset:
+                self.charset_declarations.append(charset)
+            elif values.get("http-equiv", "").strip().lower() == "content-type":
+                content_type = values.get("content", "")
+                match = re.search(r"charset\s*=\s*([a-zA-Z0-9._-]+)", content_type, re.I)
+                if match:
+                    self.charset_declarations.append(match.group(1))
+        elif tag == "main":
+            self.main_landmark_count += 1
         if tag == "title":
             self.title_count += 1
             self._in_title = True
@@ -317,7 +333,64 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     parser.feed(html)
     findings: list[AuditFinding] = []
 
-    # Validate embedded JSON-LD syntax and flag Product entities without a name.
+    # Basic document semantics: directly observed source facts, not a conformance claim.
+    if not parser.document_language:
+        findings.append(_finding(
+            "accessibility", "HTML document language is not declared", "verified", "medium",
+            f"The root <html> element has no non-empty lang attribute. URL: {final_url}",
+            "Assistive technology and language-aware tools use the document language to choose pronunciation and text processing. This source check does not assess language changes within the page.",
+            "Set the root html lang attribute to the primary language of the page, using a valid BCP 47 language tag.",
+            ["Inspect the root html element in the page source.", "Confirm the declared language matches the page's primary human language."],
+            final_url,
+        ))
+    elif not re.fullmatch(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*", parser.document_language):
+        findings.append(_finding(
+            "accessibility", "HTML document language tag needs review", "manual_review_required", "low",
+            f"The root html lang value is {parser.document_language[:80]!r}. URL: {final_url}",
+            "The language attribute is present, but this conservative syntax check cannot confirm that the tag accurately identifies the page language.",
+            "Verify the lang value against the page's actual primary language and a BCP 47 language-tag reference.",
+            ["Review the visible page language.", "Validate the chosen language tag against BCP 47 guidance."],
+            final_url,
+        ))
+
+    response_charset = ""
+    for header_name, header_value in headers.items():
+        if header_name.lower() == "content-type":
+            match = re.search(r"charset\s*=\s*([a-zA-Z0-9._-]+)", header_value, re.I)
+            if match:
+                response_charset = match.group(1).strip().lower()
+            break
+    declared_charsets = {value.strip().lower() for value in parser.charset_declarations if value.strip()}
+    if not response_charset and not declared_charsets:
+        findings.append(_finding(
+            "technical_seo", "Character encoding is not explicitly declared", "verified", "low",
+            f"No charset parameter was found in the HTTP Content-Type header and no meta charset declaration was found in the HTML source. URL: {final_url}",
+            "An explicit character encoding helps browsers decode text consistently, especially international product names and symbols.",
+            "Serve HTML as UTF-8 and declare the charset in the HTTP Content-Type header or early in the document head.",
+            ["Inspect the response Content-Type header.", "Inspect the document head for a meta charset declaration.", "Check international characters in a browser after updating."],
+            final_url,
+        ))
+    elif response_charset and declared_charsets and response_charset not in declared_charsets:
+        findings.append(_finding(
+            "technical_seo", "HTTP and HTML character encoding declarations differ", "manual_review_required", "medium",
+            f"HTTP charset={response_charset}; HTML meta charset value(s)={', '.join(sorted(declared_charsets))}. URL: {final_url}",
+            "Different encoding declarations can cause inconsistent text decoding. Browser handling depends on the exact document and response.",
+            "Align the HTTP Content-Type charset and HTML declaration, preferably using UTF-8, then inspect international characters in a browser.",
+            ["Compare the final HTTP response header with the HTML meta declaration.", "Validate the page after aligning both declarations."],
+            final_url,
+        ))
+
+    if parser.main_landmark_count == 0:
+        findings.append(_finding(
+            "accessibility", "Main content landmark not detected", "manual_review_required", "low",
+            f"No <main> element was found in the inspected HTML source. URL: {final_url}",
+            "A main landmark can help assistive-technology users navigate directly to primary page content. Some pages use other valid landmark patterns, so this observation requires contextual review.",
+            "Review the page structure and add one appropriate main landmark around the primary content if no equivalent semantic landmark exists.",
+            ["Inspect the page's landmark structure.", "Confirm there is a clear route to primary content for keyboard and screen-reader users."],
+            final_url,
+        ))
+
+    # Validate embedded JSON-LD structured data syntax and flag Product entities without a name.
     # This is a bounded source check, not a complete Schema.org validator.
     product_entities: list[dict[str, Any]] = []
     malformed_jsonld = 0
