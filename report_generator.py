@@ -1398,19 +1398,50 @@ def render_audit_pdf(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
         story.extend([dashboard, Spacer(1, 1.5 * mm)])
-        # The current runner stores findings but not explicit per-check/per-page
-        # pass/issue/warning/not-assessed/error records. Never derive a pass rate
-        # from the absence of a finding; make this acceptance gap visible.
+        # Only show counts when an explicit runner outcome matches this exact check.
+        # Findings alone are never used to infer a pass or denominator.
+        title_key = str(item.get("title", "")).strip().lower()
+        check_id_by_title = {
+            "html document language is not declared": "html.document_language",
+            "html document language tag needs review": "html.document_language",
+            "page title": "html.title_present",
+            "meta description": "html.meta_description_present",
+            "primary heading (h1)": "html.h1_present",
+            "mobile viewport": "html.viewport_present",
+            "character encoding is not explicitly declared": "html.charset_declared",
+            "http and html character encoding declarations differ": "html.charset_declared",
+            "main content landmark not detected": "html.main_landmark_present",
+        }
+        expected_check_id = check_id_by_title.get(title_key)
+        recorded_outcomes = [
+            outcome for outcome in getattr(result, "check_outcomes", [])
+            if expected_check_id
+            and outcome.check_id == expected_check_id
+            and outcome.page_url in urls
+        ]
+        if recorded_outcomes:
+            outcome_counts = {
+                key: sum(1 for outcome in recorded_outcomes if outcome.outcome == key)
+                for key in ("pass", "issue", "warning", "not_assessed", "error")
+            }
+            denominator = len(recorded_outcomes)
+            outcome_text = (
+                f"Recorded outcomes for this check: tested-page denominator {denominator}; "
+                f"pass {outcome_counts['pass']}, issue {outcome_counts['issue']}, "
+                f"warning {outcome_counts['warning']}, not assessed {outcome_counts['not_assessed']}, "
+                f"error {outcome_counts['error']}. "
+                "Counts include only pages with explicit outcome records; they do not imply full-site coverage."
+            )
+        else:
+            outcome_text = (
+                "Unavailable for this specific check — no matching explicit per-page outcome record was found. "
+                "No pass percentage is inferred from missing findings. "
+                f"Audit sampled {len(set(result.pages_checked))} page(s) overall, but that is not this check's denominator."
+            )
         outcome_notice = Table(
             [[
                 Paragraph("<b>PAGE OUTCOME BREAKDOWN</b>", small_style),
-                Paragraph(
-                    "Unavailable — explicit per-page check outcomes are not recorded yet. "
-                    "No pass percentage is inferred from missing findings. "
-                    f"Audit sampled {len(set(result.pages_checked))} page(s) overall; "
-                    "the tested-page denominator and unassessed-page count for this specific check are not available.",
-                    body_style,
-                ),
+                Paragraph(outcome_text, body_style),
             ]],
             colWidths=[42 * mm, 132 * mm],
             hAlign="LEFT",
