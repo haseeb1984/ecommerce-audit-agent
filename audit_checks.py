@@ -377,7 +377,7 @@ def record_homepage_outcomes(
            f"Title element count: {parser.title_count}; extracted title: {parser.title_text[:160]!r}.")
     record("html.meta_description_present", "on_page_seo", bool(parser.meta_description),
            f"Meta description count: {parser.meta_description_count}; non-empty description present: {bool(parser.meta_description)}.")
-    record("html.h1_present", "on_page_seo", parser.h1_count > 0,
+    record("html.h1_present", "on_page_seo", parser.h1_count > parser.empty_h1_count,
            f"H1 element count: {parser.h1_count}; empty H1 count: {parser.empty_h1_count}.")
     record("html.viewport_present", "mobile_ux", bool(parser.viewport),
            f"Viewport declaration: {parser.viewport[:160]!r}.")
