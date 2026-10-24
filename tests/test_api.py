@@ -1023,9 +1023,13 @@ async def test_paddle_webhook_different_event_ids_for_same_transaction_do_not_du
     )
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
-    assert sorted([first.json()["status"], second.json()["status"]]) == [
-        "already_processed", "provisioned"
-    ]
+    # The duplicate may observe the committed event while the first request
+    # is still sending the license email, or after delivery has completed.
+    statuses = [first.json()["status"], second.json()["status"]]
+    assert "provisioned" in statuses
+    assert len(statuses) == 2
+    assert all(status in {"provisioned", "already_processed", "delivery_in_progress"} for status in statuses)
+    assert sum(status == "provisioned" for status in statuses) == 1
 
     async with AsyncSessionLocal() as db:
         licenses = (await db.execute(
