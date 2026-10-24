@@ -1310,6 +1310,7 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
         headers={"User-Agent": USER_AGENT},
         trust_env=False,
     ) as client:
+        sitemap_cache: tuple[int, str, dict[str, str], str] | None = None
         try:
             status, html, headers, final_url = await _safe_get(client, normalized)
             pages_checked.append(final_url)
@@ -1326,7 +1327,6 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                 # Fetch the conventional sitemap once and reuse its response both for
                 # semantic reporting and as bounded seeds for the page crawl.
                 sitemap_url = urljoin(f"{urlsplit(final_url).scheme}://{urlsplit(final_url).netloc}/", "sitemap.xml")
-                sitemap_cache: tuple[int, str, dict[str, str], str] | None = None
                 sitemap_seeds: list[str] = []
                 try:
                     sitemap_cache = await _safe_get(client, sitemap_url, allowed_origin=final_url)
