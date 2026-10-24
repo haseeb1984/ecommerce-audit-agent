@@ -1400,7 +1400,7 @@ def render_audit_pdf(
         story.extend([dashboard, Spacer(1, 1.5 * mm)])
         # Only show counts when an explicit runner outcome matches this exact check.
         # Findings alone are never used to infer a pass or denominator.
-        title_key = str(item.get("title", "")).strip().lower()
+        title_key = str(finding.get("title", "")).strip().lower()
         check_id_by_title = {
             "html document language is not declared": "html.document_language",
             "html document language tag needs review": "html.document_language",
@@ -1417,7 +1417,7 @@ def render_audit_pdf(
             outcome for outcome in getattr(result, "check_outcomes", [])
             if expected_check_id
             and outcome.check_id == expected_check_id
-            and outcome.page_url in urls
+            and outcome.page_url in finding.get("source_urls", [])
         ]
         if recorded_outcomes:
             outcome_counts = {
