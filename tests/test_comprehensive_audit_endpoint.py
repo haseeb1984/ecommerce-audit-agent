@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 import main
-from audit_checks import AuditCheckResult, AuditFinding
+from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome
 from ecommerce_agent import StoreAuditMetrics
 
 
@@ -55,6 +55,18 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
         findings=[indexing_finding],
         pages_checked=["https://shop.example/"],
         limitations=["Homepage-only phase one."],
+        check_outcomes=[
+            CheckOutcome(
+                check_id="html.title_present",
+                category="on_page_seo",
+                page_url="https://shop.example/",
+                outcome="pass",
+                observed_at_utc="2026-10-17T00:00:00+00:00",
+                method="bounded static HTML source inspection",
+                evidence="Title element count: 1; extracted title: 'Shop'.",
+                evidence_ref="html.title_present:https://shop.example/",
+            )
+        ],
     )))
     monkeypatch.setattr(main, "run_bounded_site_crawl", AsyncMock(return_value=([], [], ["Bounded crawl test."])))
     monkeypatch.setattr(main, "run_conversion_paid_traffic_checks", AsyncMock(return_value=([], [], ["Conversion checks test."])))
@@ -89,7 +101,11 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
         assert any("Homepage-only phase one." in item for item in reported.limitations)
         assert len(db.added) == 2
         assert any(getattr(item, "source_channel", None) == "comprehensive_audit" for item in db.added)
-        assert any(item.__class__.__name__ == "AuditReport" for item in db.added)
+        saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
+        persisted_metadata = __import__("json").loads(saved_report.coverage_json)
+        assert persisted_metadata["check_outcomes"][0]["check_id"] == "html.title_present"
+        assert persisted_metadata["check_outcomes"][0]["outcome"] == "pass"
+        assert persisted_metadata["check_outcomes"][0]["evidence_ref"] == "html.title_present:https://shop.example/"
         db.commit.assert_awaited_once()
         main.reserve_audit_slot.assert_awaited_once_with(db, license_obj.id) if hasattr(main.reserve_audit_slot, "assert_awaited_once_with") else None
     finally:
