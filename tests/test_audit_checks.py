@@ -1031,3 +1031,43 @@ def test_product_aggregate_rating_checks_numeric_shape_and_bounds(aggregate_rati
         assert matches[0].source_url == "https://shop.example/product"
         assert "cannot confirm that reviews are genuine" in matches[0].explanation
         assert matches[0].verification_steps
+
+
+
+def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence():
+    html = """
+    <html lang="en"><head><title>Example shop</title>
+    <meta name="description" content="Shop products">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8"></head>
+    <body><main><h1>Products</h1></main></body></html>
+    """
+    outcomes = audit_checks.record_homepage_outcomes(
+        html,
+        "https://shop.example/",
+        {"content-type": "text/html; charset=utf-8"},
+        "2026-10-24T00:00:00+00:00",
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert len(by_id) == 7
+    assert by_id["html.title_present"].outcome == "pass"
+    assert by_id["html.meta_description_present"].outcome == "pass"
+    assert by_id["html.document_language"].outcome == "pass"
+    assert by_id["html.charset_declared"].outcome == "pass"
+    assert all(item.page_url == "https://shop.example/" for item in outcomes)
+    assert all(item.observed_at_utc == "2026-10-24T00:00:00+00:00" for item in outcomes)
+    assert all(item.method and item.evidence and item.evidence_ref for item in outcomes)
+
+
+def test_homepage_outcomes_record_issue_instead_of_inferring_pass_from_missing_elements():
+    outcomes = audit_checks.record_homepage_outcomes(
+        "<html><head></head><body><p>Shop</p></body></html>",
+        "https://shop.example/",
+        {"content-type": "text/html"},
+        "2026-10-24T00:00:00+00:00",
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["html.title_present"].outcome == "issue"
+    assert by_id["html.meta_description_present"].outcome == "issue"
+    assert by_id["html.h1_present"].outcome == "issue"
+    assert by_id["html.viewport_present"].outcome == "issue"
