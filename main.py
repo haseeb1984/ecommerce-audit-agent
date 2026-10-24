@@ -268,11 +268,17 @@ async def comprehensive_audit_pdf(
             screenshot_data_uri=metrics.screenshot_data_uri,
             coverage_manifest=coverage_manifest,
         )
+        # Persist the explicit bounded outcome records beside the conservative
+        # coverage manifest so saved-report history retains the evidence behind PDF counts.
+        report_metadata = {
+            **coverage_manifest,
+            "check_outcomes": [outcome.dict() for outcome in result.check_outcomes],
+        }
         report = AuditReport(
             license_id=license_id,
             domain=urlsplit(target_url).hostname or metrics.domain,
             pdf_bytes=pdf_bytes,
-            coverage_json=json.dumps(coverage_manifest, separators=(",", ":")),
+            coverage_json=json.dumps(report_metadata, separators=(",", ":")),
             finding_count=len(result.findings),
             created_at=reserved_at,
         )
