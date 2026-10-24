@@ -142,8 +142,13 @@ async def _resolve_public_host(host: str) -> None:
     await PublicOnlyResolver().resolve(host, 443, socket.AF_UNSPEC)
 
 
-async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, dict[str, str], str]:
-    """Fetch a public URL with pinned public DNS answers, bounded bytes, and safe redirects."""
+async def _safe_get(
+    client: aiohttp.ClientSession, url: str, allowed_origin: str | None = None
+) -> tuple[int, str, dict[str, str], str]:
+    """Fetch a public URL with bounded bytes and safe redirects.
+
+    If allowed_origin is supplied, redirect targets must remain on that origin.
+    """
     current = normalize_target(url)
     for redirect_count in range(MAX_REDIRECTS + 1):
         async with client.get(current, allow_redirects=False) as response:
@@ -166,7 +171,10 @@ async def _safe_get(client: aiohttp.ClientSession, url: str) -> tuple[int, str, 
                     return response.status, "", headers, current
                 if redirect_count >= MAX_REDIRECTS:
                     raise ValueError("The website exceeded the redirect limit.")
-                current = normalize_target(urljoin(current, location))
+                next_url = normalize_target(urljoin(current, location))
+                if allowed_origin and not _same_origin(next_url, allowed_origin):
+                    raise ValueError("Redirect left the permitted same-origin crawl boundary.")
+                current = next_url
                 continue
             content_length = headers.get("content-length")
             if content_length is not None:
@@ -1174,7 +1182,9 @@ async def crawl_same_origin_pages(
         page_url, _parent = queue.pop(0)
         attempted += 1
         try:
-            status, body, headers, final_url = await _safe_get(client, page_url)
+            status, body, headers, final_url = await _safe_get(
+                client, page_url, allowed_origin=origin
+            )
             if not _same_origin(final_url, origin):
                 limitations.append("A same-origin link redirected to another origin and was excluded from page analysis.")
                 continue
@@ -1196,7 +1206,12 @@ async def crawl_same_origin_pages(
             if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
                 continue
             checked.append(final_url)
-            findings.extend(inspect_homepage(body, final_url, headers))
+            page_findings = inspect_homepage(body, final_url, headers)
+            # Reuse source checks on internal pages, but label findings accurately.
+            for finding in page_findings:
+                if "Homepage" in finding.title:
+                    finding.title = finding.title.replace("Homepage", "Page")
+            findings.extend(page_findings)
             page_parser = _PageParser()
             try:
                 page_parser.feed(body)
