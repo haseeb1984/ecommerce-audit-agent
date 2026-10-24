@@ -1415,9 +1415,7 @@ def render_audit_pdf(
         expected_check_id = check_id_by_title.get(title_key)
         recorded_outcomes = [
             outcome for outcome in getattr(result, "check_outcomes", [])
-            if expected_check_id
-            and outcome.check_id == expected_check_id
-            and outcome.page_url in finding.get("source_urls", [])
+            if expected_check_id and outcome.check_id == expected_check_id
         ]
         if recorded_outcomes:
             outcome_counts = {
