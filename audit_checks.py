@@ -1258,6 +1258,7 @@ def extract_same_origin_sitemap_urls(xml_body: str, sitemap_url: str, origin_url
 async def crawl_same_origin_pages(
     client: aiohttp.ClientSession, homepage_url: str, homepage_html: str,
     max_pages: int = MAX_CRAWL_PAGES, seed_urls: list[str] | None = None,
+    outcome_records: list[CheckOutcome] | None = None,
 ) -> tuple[list[str], list[AuditFinding], list[str]]:
     """Crawl a small same-origin HTML sample and report page-specific source findings."""
     checked: list[str] = []
@@ -1313,6 +1314,11 @@ async def crawl_same_origin_pages(
             if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
                 continue
             checked.append(final_url)
+            if outcome_records is not None:
+                from datetime import datetime, timezone
+                outcome_records.extend(record_homepage_outcomes(
+                    body, final_url, headers, datetime.now(timezone.utc).isoformat()
+                ))
             page_findings = inspect_homepage(body, final_url, headers)
             # Reuse source checks on internal pages, but label findings accurately.
             for finding in page_findings:
@@ -1407,7 +1413,8 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     limitations.append(f"Sitemap URL discovery could not fetch the conventional sitemap safely ({type(sitemap_exc).__name__}).")
                 # Crawl a small same-origin sample; sitemap seeds share the same strict page budget.
                 crawled_pages, crawl_findings, crawl_limitations = await crawl_same_origin_pages(
-                    client, final_url, html, max_pages=MAX_CRAWL_PAGES, seed_urls=sitemap_seeds
+                    client, final_url, html, max_pages=MAX_CRAWL_PAGES,
+                    seed_urls=sitemap_seeds, outcome_records=check_outcomes,
                 )
                 pages_checked.extend(crawled_pages)
                 findings.extend(crawl_findings)
