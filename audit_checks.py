@@ -215,6 +215,7 @@ class _PageParser(HTMLParser):
         self.images_missing_alt = 0
         self.images_empty_alt = 0
         self.links = 0
+        self.link_hrefs: list[str] = []
         self._title_parts: list[str] = []
         self._h1_parts: list[str] = []
         self.jsonld_scripts: list[str] = []
@@ -288,6 +289,7 @@ class _PageParser(HTMLParser):
                 self.images_empty_alt += 1
         elif tag == "a" and values.get("href"):
             self.links += 1
+            self.link_hrefs.append(values.get("href", "").strip())
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
@@ -1104,6 +1106,121 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
     return []
 
 
+MAX_CRAWL_PAGES = 12
+MAX_DISCOVERED_LINKS = 250
+
+
+def _same_origin(left: str, right: str) -> bool:
+    """Compare web origins conservatively; scheme, hostname, and effective port must match."""
+    try:
+        a, b = urlsplit(left), urlsplit(right)
+        a_port = a.port or (443 if a.scheme.lower() == "https" else 80)
+        b_port = b.port or (443 if b.scheme.lower() == "https" else 80)
+        return (
+            a.scheme.lower() == b.scheme.lower()
+            and (a.hostname or "").lower().rstrip(".") == (b.hostname or "").lower().rstrip(".")
+            and a_port == b_port
+        )
+    except ValueError:
+        return False
+
+
+def _crawl_candidate(href: str, page_url: str, origin_url: str) -> str | None:
+    """Resolve a link and keep only bounded, same-origin HTML-page candidates."""
+    raw = (href or "").strip()
+    if not raw or len(raw) > 2048 or raw.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
+        return None
+    try:
+        absolute = urljoin(page_url, raw)
+        parsed = urlsplit(absolute)
+        if parsed.scheme.lower() not in {"http", "https"} or not _same_origin(absolute, origin_url):
+            return None
+        candidate = normalize_target(urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, "")))
+        path = urlsplit(candidate).path.lower()
+        if path.endswith((
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico", ".css", ".js",
+            ".pdf", ".zip", ".xml", ".json", ".woff", ".woff2", ".ttf", ".mp4", ".webm",
+        )):
+            return None
+        return candidate
+    except (ValueError, UnicodeError):
+        return None
+
+
+async def crawl_same_origin_pages(
+    client: aiohttp.ClientSession, homepage_url: str, homepage_html: str,
+    max_pages: int = MAX_CRAWL_PAGES,
+) -> tuple[list[str], list[AuditFinding], list[str]]:
+    """Crawl a small same-origin HTML sample and report page-specific source findings."""
+    checked: list[str] = []
+    findings: list[AuditFinding] = []
+    limitations: list[str] = []
+    origin = homepage_url
+    queue: list[tuple[str, str]] = []
+    seen = {homepage_url}
+    parser = _PageParser()
+    try:
+        parser.feed(homepage_html)
+    except Exception:
+        return checked, findings, ["Same-origin crawling was skipped because homepage links could not be parsed safely."]
+    for href in parser.link_hrefs[:MAX_DISCOVERED_LINKS]:
+        candidate = _crawl_candidate(href, homepage_url, origin)
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            queue.append((candidate, homepage_url))
+
+    while queue and len(checked) + 1 < max_pages:
+        page_url, _parent = queue.pop(0)
+        try:
+            status, body, headers, final_url = await _safe_get(client, page_url)
+            if not _same_origin(final_url, origin):
+                limitations.append("A same-origin link redirected to another origin and was excluded from page analysis.")
+                continue
+            if final_url in checked or final_url == homepage_url:
+                continue
+            if not (200 <= status < 300):
+                findings.append(_finding(
+                    "crawl", "Discovered page returned a non-success HTTP status", "verified",
+                    "high" if status >= 500 else "medium",
+                    f"Same-origin link {page_url} returned HTTP {status}; final URL: {final_url}.",
+                    "A discovered internal link did not return a successful response to this audit request. Authentication, bot rules, and transient errors can affect the result.",
+                    "Check the URL in a browser, confirm its intended status, and repair internal links or server responses where appropriate.",
+                    ["Open the URL without an authenticated session.", "Confirm the intended HTTP status and redirect target."],
+                    final_url,
+                ))
+                checked.append(final_url)
+                continue
+            content_type = headers.get("content-type", "").lower()
+            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                continue
+            checked.append(final_url)
+            findings.extend(inspect_homepage(body, final_url, headers))
+            page_parser = _PageParser()
+            try:
+                page_parser.feed(body)
+            except Exception:
+                limitations.append(f"Links on {final_url} could not be parsed; that page was still counted as fetched.")
+                continue
+            for href in page_parser.link_hrefs[:MAX_DISCOVERED_LINKS]:
+                candidate = _crawl_candidate(href, final_url, origin)
+                if candidate and candidate not in seen and len(seen) < MAX_DISCOVERED_LINKS:
+                    seen.add(candidate)
+                    queue.append((candidate, final_url))
+        except Exception as exc:
+            findings.append(_finding(
+                "crawl", "Discovered page could not be inspected", "not_tested", "info",
+                f"Safe fetch of {page_url} stopped: {type(exc).__name__}: {str(exc)[:180]}",
+                "The page was discovered in a same-origin link but could not be fetched reliably; this is not proof that the page is broken for normal visitors.",
+                "Check the URL and server response, then rerun the audit.",
+                ["Open the URL in a browser.", "Review redirect, TLS, DNS, and access-control behavior."],
+                page_url,
+            ))
+    if queue:
+        limitations.append(f"Same-origin crawl budget reached: inspected at most {max_pages} page responses including the homepage; remaining discovered URLs were not checked.")
+    limitations.append("Crawl coverage is a bounded sample of discoverable same-origin links, not a complete inventory of product, category, checkout, or JavaScript-rendered routes.")
+    return checked, findings, limitations
+
+
 async def run_phase_one_checks(target: str) -> AuditCheckResult:
     """Run bounded, unauthenticated checks against a public site's homepage and common files."""
     from datetime import datetime, timezone
@@ -1113,7 +1230,7 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
     findings: list[AuditFinding] = []
     pages_checked: list[str] = []
     limitations = [
-        "Only the public homepage and common discovery files are checked in this phase; this is not a full-site crawl.",
+        "A bounded same-origin sample of up to 12 page responses is checked alongside common discovery files; this is not a full-site crawl.",
         "HTML source checks do not prove the rendered mobile layout, full accessibility, Google indexing, or legal compliance.",
         "Security-header checks are passive observations and do not constitute penetration testing.",
     ]
@@ -1142,6 +1259,14 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                 ))
             else:
                 findings.extend(inspect_homepage(html, final_url, headers))
+                # Crawl a small same-origin sample so product/category-style routes are
+                # checked too; dependency checks remain homepage-only to avoid duplicate work.
+                crawled_pages, crawl_findings, crawl_limitations = await crawl_same_origin_pages(
+                    client, final_url, html, max_pages=MAX_CRAWL_PAGES
+                )
+                pages_checked.extend(crawled_pages)
+                findings.extend(crawl_findings)
+                limitations.extend(crawl_limitations)
                 # Reuse the safely fetched homepage HTML; do not make a second request to the target.
                 from dependency_checks import inspect_client_dependency_versions
 
