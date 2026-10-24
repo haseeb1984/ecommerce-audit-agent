@@ -870,6 +870,38 @@ def test_robots_txt_detects_wildcard_full_site_block(robots, should_flag):
         assert matches[0].verification_steps
 
 
+def test_sitemap_seed_extraction_keeps_only_valid_same_origin_urls():
+    xml = (
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://shop.example/products/one</loc></url>'
+        '<url><loc>https://other.example/products/two</loc></url>'
+        '<url><loc>http://127.0.0.1/private</loc></url>'
+        '<url><loc>https://shop.example/products/one</loc></url>'
+        '</urlset>'
+    )
+    urls, limitations = audit_checks.extract_same_origin_sitemap_urls(
+        xml, "https://shop.example/sitemap.xml", "https://shop.example/"
+    )
+    assert urls == ["https://shop.example/products/one"]
+    assert any("another origin" in item for item in limitations)
+    assert any("valid supported public" in item for item in limitations)
+
+
+def test_sitemap_seed_extraction_reports_invalid_xml_and_sitemap_index():
+    urls, limitations = audit_checks.extract_same_origin_sitemap_urls(
+        "<urlset><url>", "https://shop.example/sitemap.xml", "https://shop.example/"
+    )
+    assert urls == []
+    assert any("could not be parsed" in item for item in limitations)
+
+    urls, limitations = audit_checks.extract_same_origin_sitemap_urls(
+        '<sitemapindex><sitemap><loc>https://shop.example/nested.xml</loc></sitemap></sitemapindex>',
+        "https://shop.example/sitemap.xml", "https://shop.example/"
+    )
+    assert urls == []
+    assert any("sitemap index" in item for item in limitations)
+
+
 def test_sitemap_reports_duplicate_exact_loc_entries():
     sitemap = (
         '<?xml version="1.0" encoding="UTF-8"?>'
