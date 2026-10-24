@@ -1071,3 +1071,16 @@ def test_homepage_outcomes_record_issue_instead_of_inferring_pass_from_missing_e
     assert by_id["html.meta_description_present"].outcome == "issue"
     assert by_id["html.h1_present"].outcome == "issue"
     assert by_id["html.viewport_present"].outcome == "issue"
+
+
+
+def test_homepage_outcome_does_not_pass_for_only_empty_h1_elements():
+    outcomes = audit_checks.record_homepage_outcomes(
+        "<html lang='en'><head><title>Shop</title></head><body><h1>   </h1></body></html>",
+        "https://shop.example/",
+        {"content-type": "text/html; charset=utf-8"},
+        "2026-10-24T00:00:00+00:00",
+    )
+    h1_outcome = next(item for item in outcomes if item.check_id == "html.h1_present")
+    assert h1_outcome.outcome == "issue"
+    assert "empty H1 count: 1" in h1_outcome.evidence
