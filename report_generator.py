@@ -1171,7 +1171,7 @@ def render_audit_pdf(
     story.append(PhaseScorecardInfographic(consolidated_findings))
     story.append(Spacer(1, 4 * mm))
     story.append(_p(
-        "The phase percentage is the share of recorded findings marked verified, not a check pass rate. A verified finding means the observation was confirmed; it can describe either a positive signal or an issue. This audit result schema does not yet record every executed check and its pass/fail outcome, so true check success rate and execution coverage are not available here. A phase with no recorded findings is shown as not recorded, never as 100% passed.",
+        "The phase percentage is the share of recorded findings marked verified, not a check pass rate. A verified finding means the observation was confirmed; it can describe either a positive signal or an issue. Explicit per-page pass/issue/warning/error outcomes are currently recorded only for the documented static HTML source checks; other executed check families are not represented in a complete outcome ledger, so a site-wide check success rate or complete execution-coverage percentage is unavailable. A phase with no recorded findings is shown as not recorded, never as 100% passed.",
         small_style,
     ))
 
