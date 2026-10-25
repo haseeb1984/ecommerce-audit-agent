@@ -1050,7 +1050,7 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 11
+    assert len(by_id) == 12
     assert by_id["html.images_alt_attribute"].outcome == "pass"
     assert by_id["html.images_empty_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
@@ -1195,3 +1195,25 @@ def test_viewport_configuration_outcome_is_separate_from_responsive_testing(view
     outcome = next(item for item in outcomes if item.check_id == "mobile.viewport_configuration")
     assert outcome.outcome == expected
     assert "does not test rendered responsiveness" in outcome.evidence
+
+
+
+@pytest.mark.parametrize(
+    ("markup", "headers", "expected"),
+    [
+        ('<meta name="robots" content="noindex,follow">', {"content-type": "text/html; charset=utf-8"}, "warning"),
+        ("", {"content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex"}, "warning"),
+        ('<meta name="robots" content="index,follow">', {"content-type": "text/html; charset=utf-8"}, "pass"),
+    ],
+)
+def test_indexing_signal_outcome_includes_meta_and_response_header(markup, headers, expected):
+    html = f'<html lang="en"><head><title>Shop</title>{markup}</head><body></body></html>'
+    outcomes = audit_checks.record_homepage_outcomes(
+        html,
+        "https://shop.example/",
+        headers,
+        "2026-10-25T00:00:00+00:00",
+    )
+    outcome = next(item for item in outcomes if item.check_id == "html.meta_robots_noindex")
+    assert outcome.outcome == expected
+    assert "not proof of actual search-engine index status" in outcome.evidence
