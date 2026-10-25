@@ -23,6 +23,7 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
+    TableOfContents,
 )
 
 from audit_checks import (
@@ -1067,6 +1068,28 @@ def _conversion_paid_traffic_findings(findings: list[dict[str, object]]) -> list
     ]
 
 
+class AuditPDFDocTemplate(SimpleDocTemplate):
+    """Simple document template that adds PDF bookmarks and a generated contents list."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._outline_counter = 0
+
+    def afterFlowable(self, flowable):
+        if not isinstance(flowable, Paragraph):
+            return
+        style_name = getattr(flowable.style, "name", "")
+        if style_name != "AuditSection":
+            return
+        title = flowable.getPlainText().strip()
+        if not title:
+            return
+        self._outline_counter += 1
+        key = f"audit-section-{self._outline_counter}"
+        self.canv.bookmarkPage(key)
+        self.canv.addOutlineEntry(title[:120], key, level=0, closed=False)
+        self.notify("TOCEntry", (0, title, self.page, key))
+
+
 def render_audit_pdf(
     result: AuditCheckResult,
     screenshot_data_uri: str | None = None,
@@ -1077,7 +1100,7 @@ def render_audit_pdf(
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
     safe_target_url = _safe_public_url(result.target_url) or "Target URL omitted (unsupported or unsafe URL)"
-    doc = SimpleDocTemplate(
+    doc = AuditPDFDocTemplate(
         buffer,
         pagesize=A4,
         rightMargin=18 * mm,
@@ -1161,6 +1184,19 @@ def render_audit_pdf(
     ]))
     story.extend([phase_table, Spacer(1, 3 * mm)])
     story.append(PageBreak())
+    toc = TableOfContents()
+    toc.levelStyles = [
+        ParagraphStyle(
+            "AuditTOCLevel0", fontName="Helvetica", fontSize=9,
+            leftIndent=0, firstLineIndent=0, leading=13, spaceBefore=2,
+        )
+    ]
+    story.extend([
+        Paragraph("Contents", base["Heading1"]),
+        _p("Select a PDF bookmark or use these page references to navigate the report.", small_style),
+        toc,
+        PageBreak(),
+    ])
 
     # Validate screenshots at the PDF boundary; only actual browser captures are accepted.
     def _screenshot_flowable(data_uri: str | None):
@@ -1800,5 +1836,5 @@ def render_audit_pdf(
         canvas.drawRightString(A4[0] - 18 * mm, 8 * mm, f"Page {document.page}")
         canvas.restoreState()
 
-    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    doc.multiBuild(story, onFirstPage=footer, onLaterPages=footer)
     return buffer.getvalue()
