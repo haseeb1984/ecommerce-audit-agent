@@ -1329,6 +1329,16 @@ async def crawl_same_origin_pages(
             if final_url in checked or final_url == homepage_url:
                 continue
             if not (200 <= status < 300):
+                if outcome_records is not None and _parent == "sitemap":
+                    from datetime import datetime, timezone
+                    outcome_records.append(CheckOutcome(
+                        check_id="discovery.sitemap_xml.listed_url_status",
+                        category="sitemap_xml", page_url=final_url, outcome="issue",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded HTTP status inspection of a same-origin sitemap-listed URL",
+                        evidence=f"Sitemap-listed URL {page_url} returned HTTP {status}; authentication, bot rules, and transient errors can affect this request.",
+                        evidence_ref=final_url,
+                    ))
                 findings.append(_finding(
                     "crawl", "Discovered page returned a non-success HTTP status", "verified",
                     "high" if status >= 500 else "medium",
@@ -1341,7 +1351,19 @@ async def crawl_same_origin_pages(
                 checked.append(final_url)
                 continue
             content_type = headers.get("content-type", "").lower()
-            if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+            is_html = "text/html" in content_type or "application/xhtml+xml" in content_type
+            if outcome_records is not None and _parent == "sitemap":
+                from datetime import datetime, timezone
+                outcome_records.append(CheckOutcome(
+                    check_id="discovery.sitemap_xml.listed_url_status",
+                    category="sitemap_xml", page_url=final_url,
+                    outcome="pass" if is_html else "warning",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded HTTP status and content-type inspection of a same-origin sitemap-listed URL",
+                    evidence=f"Sitemap-listed URL {page_url} returned HTTP {status}; content type: {content_type or 'not declared'}. A successful response does not prove canonicality or indexability.",
+                    evidence_ref=final_url,
+                ))
+            if not is_html:
                 continue
             checked.append(final_url)
             if outcome_records is not None:
@@ -1367,6 +1389,16 @@ async def crawl_same_origin_pages(
                     seen.add(candidate)
                     queue.append((candidate, final_url))
         except Exception as exc:
+            if outcome_records is not None and _parent == "sitemap":
+                from datetime import datetime, timezone
+                outcome_records.append(CheckOutcome(
+                    check_id="discovery.sitemap_xml.listed_url_status",
+                    category="sitemap_xml", page_url=page_url, outcome="error",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded fetch of a same-origin sitemap-listed URL failed before reliable status evaluation",
+                    evidence=f"Request failed with {type(exc).__name__}; no URL-status conclusion is inferred.",
+                    evidence_ref=page_url,
+                ))
             findings.append(_finding(
                 "crawl", "Discovered page could not be inspected", "not_tested", "info",
                 f"Safe fetch of {page_url} stopped: {type(exc).__name__}: {str(exc)[:180]}",
