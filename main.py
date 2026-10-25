@@ -330,7 +330,49 @@ async def comprehensive_audit_pdf(
         # coverage manifest so saved-report history retains the evidence behind PDF counts.
         report_metadata = {
             **coverage_manifest,
-            "check_outcomes": [outcome.dict() for outcome in result.check_outcomes],
+            "check_outcomes": [
+                {
+                    **outcome.dict(),
+                    "page_url": _safe_audit_metadata_url(outcome.page_url),
+                    "evidence": _redact_audit_metadata_text(outcome.evidence, limit=2000),
+                    "evidence_ref": _redact_audit_metadata_text(outcome.evidence_ref, limit=300),
+                }
+                for outcome in result.check_outcomes[:500]
+            ],
+            "findings": [
+                {
+                    "finding_id": finding.finding_id,
+                    "category": finding.category,
+                    "title": _redact_audit_metadata_text(finding.title, limit=240),
+                    "status": finding.status,
+                    "severity": finding.severity,
+                    "evidence": _redact_audit_metadata_text(finding.evidence, limit=2000),
+                    "explanation": _redact_audit_metadata_text(finding.explanation, limit=1200),
+                    "recommendation": _redact_audit_metadata_text(finding.recommendation, limit=1200),
+                    "verification_steps": [
+                        _redact_audit_metadata_text(step, limit=500)
+                        for step in finding.verification_steps[:12]
+                    ],
+                    "source_url": _safe_audit_metadata_url(finding.source_url),
+                    "observed_at_utc": finding.observed_at_utc,
+                    "test_method": _redact_audit_metadata_text(finding.test_method, limit=300),
+                    "evidence_confidence": finding.evidence_confidence,
+                    "standard_references": [
+                        _safe_audit_metadata_url(reference)
+                        for reference in finding.standard_references[:8]
+                        if _safe_audit_metadata_url(reference)
+                    ],
+                    "estimated_effort": finding.estimated_effort,
+                    "effort_basis": _redact_audit_metadata_text(finding.effort_basis, limit=300),
+                }
+                for finding in result.findings[:150]
+            ],
+            "evidence_storage_limits": {
+                "max_check_outcomes": 500,
+                "max_findings": 150,
+                "max_evidence_text_chars": 2000,
+                "query_strings_and_fragments_removed_from_evidence_urls": True,
+            },
         }
         report = AuditReport(
             license_id=license_id,
@@ -1069,6 +1111,39 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
     """), {"action": action[:80], "entity_type": entity_type[:50],
            "entity_id": str(entity_id)[:255] if entity_id is not None else None,
            "details_json": json.dumps(safe_details, separators=(",", ":"), ensure_ascii=True)})
+
+
+def _safe_audit_metadata_url(value: str | None) -> str | None:
+    """Persist only public HTTP(S) URLs without userinfo, query strings or fragments."""
+    if not value:
+        return None
+    try:
+        parts = urlsplit(str(value))
+        if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+            return None
+        if parts.username is not None or parts.password is not None:
+            return None
+        host = parts.hostname.lower()
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        port = parts.port
+        default_port = 80 if parts.scheme.lower() == "http" else 443
+        netloc = f"{host}:{port}" if port and port != default_port else host
+        return parts._replace(scheme=parts.scheme.lower(), netloc=netloc, query="", fragment="").geturl()
+    except (TypeError, ValueError, UnicodeError):
+        return None
+
+
+def _redact_audit_metadata_text(value: object, *, limit: int = 2000) -> str:
+    """Bound stored evidence and remove common credential-like assignments."""
+    import re
+    text_value = str(value or "")[:limit]
+    text_value = re.sub(
+        r"(?i)(authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)(\s*[:=]\s*)([^\s,;]+)",
+        r"\1\2[REDACTED]",
+        text_value,
+    )
+    return text_value
 
 
 def _safe_diagnostic_host(value: str | None) -> str | None:
