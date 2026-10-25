@@ -226,7 +226,7 @@ async def comprehensive_audit_pdf(
             result.limitations.extend(crawl_limitations)
         except Exception as crawl_exc:
             result.findings.append(AuditFinding(
-                category="crawlability",
+                category="crawl",
                 title="Bounded crawl could not be completed",
                 status="not_tested",
                 severity="info",
