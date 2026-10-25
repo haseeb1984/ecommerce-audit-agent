@@ -41,6 +41,7 @@
 <div id="reports" class="reports" aria-live="polite"><p class="muted">Connect to load reports for your license.</p></div>
 <p id="reportPaginationStatus" class="muted" aria-live="polite"></p>
 <button id="loadMoreReports" class="secondary" type="button" hidden>Load more reports</button>
+<div id="savedEvidence" class="status" hidden aria-live="polite" aria-label="Saved report evidence"><strong id="savedEvidenceTitle">Saved report evidence</strong><p id="savedEvidenceSummary" class="muted"></p><div id="savedEvidenceItems" class="reports"></div><div class="report-actions"><button id="previousEvidencePage" class="secondary" type="button" disabled>Previous evidence page</button><button id="nextEvidencePage" class="secondary" type="button" disabled>Next evidence page</button><button id="closeEvidence" class="secondary" type="button">Close evidence</button></div></div>
 </section>
 <p class="muted">Coverage notes: observed findings and crawl limits are shown as evidence; a missing finding is not automatically a pass. Public checks do not establish full WCAG conformance, Google indexing status, complete vulnerability coverage, event attribution, or measured revenue loss.</p>
 </main>
@@ -53,6 +54,12 @@
   let reportsTotal = 0;
   const reportPageSize = 50;
   let reportsLoading = false;
+  let activeEvidenceReportId = null;
+  let evidenceKind = "findings";
+  let evidenceOffset = 0;
+  let evidenceTotal = 0;
+  const evidencePageSize = 20;
+  let evidenceLoading = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -173,23 +180,13 @@
       });
       const evidence = document.createElement("button"); evidence.type = "button"; evidence.className = "secondary"; evidence.textContent = "View saved findings";
       evidence.addEventListener("click", async () => {
-        evidence.disabled = true;
-        try {
-          const [findingsResponse, outcomesResponse] = await Promise.all([
-            api("/api/v1/reports/" + item.id + "/evidence?kind=findings&limit=20&offset=0"),
-            api("/api/v1/reports/" + item.id + "/evidence?kind=check_outcomes&limit=20&offset=0")
-          ]);
-          const [findings, outcomes] = await Promise.all([findingsResponse.json(), outcomesResponse.json()]);
-          setStatus("auditStatus", JSON.stringify({
-            report_id: item.id,
-            findings_total: findings.total,
-            findings_page: findings.items,
-            check_outcomes_total: outcomes.total,
-            check_outcomes_page: outcomes.items,
-            note: "Showing the first 20 records of each type. Use the paginated evidence API for later records."
-          }, null, 2));
-        } catch (e) { setStatus("auditStatus", e.message, "error"); }
-        finally { evidence.disabled = false; }
+        activeEvidenceReportId = item.id;
+        evidenceKind = "findings";
+        evidenceOffset = 0;
+        $("savedEvidence").hidden = false;
+        $("savedEvidenceTitle").textContent = "Saved evidence · report #" + item.id;
+        await loadEvidencePage();
+        $("savedEvidence").scrollIntoView({behavior:"smooth", block:"nearest"});
       });
       const emailbox = document.createElement("div"); emailbox.className = "emailbox";
       const recipient = document.createElement("input"); recipient.type = "email"; recipient.required = true; recipient.maxLength = 254; recipient.placeholder = "Recipient email"; recipient.setAttribute("aria-label", "Report recipient email");
@@ -210,6 +207,85 @@
       actions.append(download, coverage, evidence, emailbox); card.append(meta, actions); container.append(card);
     }
   }
+  async function loadEvidencePage() {
+    if (evidenceLoading || activeEvidenceReportId === null) return;
+    evidenceLoading = true;
+    const previous = $("previousEvidencePage");
+    const next = $("nextEvidencePage");
+    previous.disabled = true; next.disabled = true;
+    $("savedEvidenceItems").replaceChildren();
+    const loading = document.createElement("p"); loading.className = "muted"; loading.textContent = "Loading saved evidence…";
+    $("savedEvidenceItems").append(loading);
+    try {
+      const response = await api("/api/v1/reports/" + encodeURIComponent(activeEvidenceReportId) +
+        "/evidence?kind=" + encodeURIComponent(evidenceKind) + "&limit=" + evidencePageSize + "&offset=" + evidenceOffset);
+      const data = await response.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      evidenceTotal = Math.max(0, Number(data.total) || 0);
+      evidenceOffset = Math.max(0, Number(data.offset) || 0);
+      $("savedEvidenceItems").replaceChildren();
+      const switcher = document.createElement("div"); switcher.className = "report-actions";
+      for (const [kind, label] of [["findings", "Findings"], ["check_outcomes", "Check outcomes"]]) {
+        const button = document.createElement("button"); button.type = "button";
+        button.className = kind === evidenceKind ? "" : "secondary"; button.textContent = label;
+        button.setAttribute("aria-pressed", String(kind === evidenceKind));
+        button.addEventListener("click", async () => { if (kind === evidenceKind) return; evidenceKind = kind; evidenceOffset = 0; await loadEvidencePage(); });
+        switcher.append(button);
+      }
+      $("savedEvidenceItems").append(switcher);
+      $("savedEvidenceSummary").textContent = (evidenceKind === "findings" ? "Findings" : "Check outcomes") +
+        " · showing " + (items.length ? evidenceOffset + 1 : 0) + "–" + (evidenceOffset + items.length) + " of " + evidenceTotal +
+        ". Missing findings are not treated as passing checks.";
+      if (!items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No saved records on this page."; $("savedEvidenceItems").append(empty);
+      }
+      for (const record of items) {
+        const card = document.createElement("article"); card.className = "report";
+        const body = document.createElement("div");
+        const heading = document.createElement("strong");
+        heading.textContent = String(record.title || record.check_name || record.check_id || record.category || record.outcome || "Evidence record");
+        const details = document.createElement("small");
+        const fields = [];
+        for (const key of ["category", "outcome", "status", "severity", "source_url", "page_url", "observed_at_utc", "test_method", "evidence_confidence"]) {
+          const value = record[key];
+          if (value !== undefined && value !== null && String(value).trim()) fields.push(key.replaceAll("_", " ") + ": " + String(value));
+        }
+        details.textContent = fields.join(" · ");
+        const evidenceText = document.createElement("p"); evidenceText.className = "muted";
+        evidenceText.textContent = String(record.evidence || record.message || record.detail || record.notes || "");
+        body.append(heading, details);
+        if (evidenceText.textContent) body.append(evidenceText);
+        card.append(body); $("savedEvidenceItems").append(card);
+      }
+      previous.disabled = evidenceOffset <= 0;
+      next.disabled = evidenceOffset + items.length >= evidenceTotal || items.length === 0;
+    } catch (error) {
+      $("savedEvidenceItems").replaceChildren();
+      const failure = document.createElement("p"); failure.className = "error"; failure.textContent = error.message;
+      $("savedEvidenceItems").append(failure);
+      $("savedEvidenceSummary").textContent = "Unable to load this evidence page.";
+    } finally {
+      evidenceLoading = false;
+      previous.disabled = evidenceLoading || evidenceOffset <= 0;
+      next.disabled = evidenceLoading || evidenceOffset + evidencePageSize >= evidenceTotal;
+    }
+  }
+  $("previousEvidencePage").addEventListener("click", async () => {
+    if (evidenceOffset <= 0) return;
+    evidenceOffset = Math.max(0, evidenceOffset - evidencePageSize);
+    await loadEvidencePage();
+  });
+  $("nextEvidencePage").addEventListener("click", async () => {
+    if (evidenceOffset + evidencePageSize >= evidenceTotal) return;
+    evidenceOffset += evidencePageSize;
+    await loadEvidencePage();
+  });
+  $("closeEvidence").addEventListener("click", () => {
+    $("savedEvidence").hidden = true;
+    activeEvidenceReportId = null;
+    $("savedEvidenceItems").replaceChildren();
+  });
   $("reportFilter").addEventListener("input", renderReports);
   $("loadMoreReports").addEventListener("click", async () => {
     try { await loadReports({reset:false}); }
@@ -218,6 +294,9 @@
   function clearAccountView() {
     loadedReports = [];
     reportsTotal = 0;
+    activeEvidenceReportId = null;
+    $("savedEvidence").hidden = true;
+    $("savedEvidenceItems").replaceChildren();
     $("reportCount").textContent = "0 / 0";
     $("findingCount").textContent = "0";
     $("reportPaginationStatus").textContent = "Connect to load reports for this credential.";
