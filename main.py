@@ -420,6 +420,7 @@ async def comprehensive_audit_pdf(
                     "title": _redact_audit_metadata_text(finding.title, limit=240),
                     "status": finding.status,
                     "severity": finding.severity,
+                    "severity_rationale": _redact_audit_metadata_text(finding.severity_rationale, limit=500),
                     "evidence": _redact_audit_metadata_text(finding.evidence, limit=2000),
                     "explanation": _redact_audit_metadata_text(finding.explanation, limit=1200),
                     "recommendation": _redact_audit_metadata_text(finding.recommendation, limit=1200),
