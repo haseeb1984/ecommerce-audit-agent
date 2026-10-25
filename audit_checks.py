@@ -49,6 +49,7 @@ class AuditFinding(BaseModel):
     standard_references: list[str] = Field(default_factory=list)
     estimated_effort: str = "Not estimated"
     effort_basis: str = "No implementation-specific estimate recorded"
+    dependencies: list[str] = Field(default_factory=list)
 
     @root_validator(skip_on_failure=True)
     def ensure_stable_finding_id(cls, values):
@@ -73,6 +74,33 @@ class AuditFinding(BaseModel):
             values["severity_rationale"] = rationale_by_severity.get(
                 severity, "Severity is a triage label, not a measured business impact."
             )
+        dependencies = values.get("dependencies") or []
+        if not dependencies:
+            category = str(values.get("category") or "").lower()
+            dependency_by_category = {
+                "technical_seo": ["Confirm the canonical URL/template owner and intended indexable URL."],
+                "on_page_seo": ["Confirm the CMS/template owner and intended page metadata."],
+                "robots_txt": ["Confirm search-crawl policy with the site owner before changing directives."],
+                "sitemap_xml": ["Confirm the sitemap generator and intended canonical/indexable URL set."],
+                "performance": ["Identify the theme/app/script owner; retest after each material change."],
+                "accessibility": ["Confirm the affected template owner and complete manual keyboard/assistive-technology review."],
+                "aria": ["Confirm the interactive component owner and test with keyboard/screen reader."],
+                "aria_alt_text": ["Request contextual review from the content owner for meaningful versus decorative images."],
+                "security_transport": ["Confirm hosting/DNS control and schedule a TLS configuration retest."],
+                "security_headers": ["Confirm application/edge configuration ownership and regression-test security policy changes."],
+                "security_exposure": ["Verify the exposure safely before changes; involve the system owner and security lead if confirmed."],
+                "mobile_ux": ["Confirm affected template/device scope and retest in real browsers after changes."],
+                "ecommerce": ["Confirm product/catalog data ownership and the number of affected templates or SKUs."],
+                "structured_data": ["Confirm schema ownership and validate representative product/category templates after changes."],
+                "international_seo": ["Confirm supported locales, URL strategy and CMS hreflang generation."],
+                "pixel_analytics": ["Obtain authorized analytics/tag-manager access and use a safe test environment."],
+                "conversion_paid_traffic": ["Obtain authorized test access and analytics/ad-platform context; never use real customer data or submit real orders."],
+                "trust": ["Confirm the accuracy and owner of policy, payment, review and support information before changing presentation."],
+                "content_quality": ["Confirm editorial ownership and review affected pages before merging or removing content."],
+                "broken_internal_links": ["Confirm whether destinations moved, were intentionally removed, or require a redirect."],
+            }
+            if category in dependency_by_category:
+                values["dependencies"] = dependency_by_category[category]
         effort = str(values.get("estimated_effort") or "").strip()
         if not effort or effort == "Not estimated":
             status = str(values.get("status") or "").lower()
