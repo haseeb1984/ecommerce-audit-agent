@@ -25,7 +25,11 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from audit_checks import AuditCheckResult, AuditFinding
+from audit_checks import (
+    AuditCheckResult, AuditFinding, MAX_RESPONSE_BYTES, MAX_REDIRECTS,
+    REQUEST_TIMEOUT_SECONDS, USER_AGENT,
+)
+from crawl_checks import MAX_CRAWL_PAGES, MAX_LINKS_FROM_HOME, MAX_URLS_FROM_SITEMAP
 
 
 def _format_check_outcome_summary(recorded_outcomes: list[object]) -> str:
@@ -1683,6 +1687,18 @@ def render_audit_pdf(
         Paragraph("Methodology and independent verification", section_style),
         _p(
             "The audit evaluates bounded public HTTP responses and source-level signals. It does not automatically prove how a page behaves after JavaScript execution, after login, in every browser or region, or in Google Search. Recheck each finding using the listed verification steps and an independent tool appropriate to the issue; record the date, tested URL, environment and outcome. For example, performance observations can be compared with Google PageSpeed Insights, structured data with Google's Rich Results Test where applicable, and accessibility signals with a manual keyboard/screen-reader review plus an accessibility checker. Tool output can differ by run and does not replace expert review.",
+            body_style,
+        ),
+        Paragraph("Run scope and collection limits", section_style),
+        _p(
+            f"Audit timestamp (UTC): {escape(str(result.checked_at_utc))}. "
+            f"HTTP user agent: {escape(USER_AGENT)}. "
+            f"Request timeout: {REQUEST_TIMEOUT_SECONDS:g} seconds. "
+            f"Maximum response body: {MAX_RESPONSE_BYTES:,} bytes. "
+            f"Redirect limit: {MAX_REDIRECTS}. "
+            f"Same-origin crawl page cap: {MAX_CRAWL_PAGES}; homepage link cap: {MAX_LINKS_FROM_HOME}; "
+            f"sitemap URL cap: {MAX_URLS_FROM_SITEMAP}. "
+            "These are configured collection limits, not a claim that every limit was reached or every URL was tested.",
             body_style,
         ),
         Paragraph("Plain-language glossary", section_style),
