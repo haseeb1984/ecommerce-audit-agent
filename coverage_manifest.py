@@ -161,7 +161,8 @@ def build_coverage_manifest(
             "including groups that found no issue; this does not prove every individual "
             "check ran or passed. Categories not explicitly marked as executed remain not proven. "
             "Google indexing, field Core Web Vitals, full WCAG conformance, complete software composition "
-            "analysis, live event attribution, and measured CPC/ROAS/revenue impact require "
-            "additional authorized data or separate testing."
+            "analysis, backlink/competitor datasets, rendered-browser console/network diagnostics, "
+            "authenticated checkout behavior, live event attribution, and measured CPC/ROAS/revenue impact "
+            "require additional authorized data or separate testing."
         ),
     }
