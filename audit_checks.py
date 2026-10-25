@@ -390,10 +390,16 @@ def record_homepage_outcomes(
     record("html.document_language", "accessibility", lang_outcome, lang_evidence)
     record("html.title_present", "on_page_seo", "pass" if parser.title_text else "issue",
            f"Title element count: {parser.title_count}; extracted title: {parser.title_text[:160]!r}.")
+    record("html.title_count", "on_page_seo", "warning" if parser.title_count > 1 else "pass",
+           f"Title element count: {parser.title_count}; multiple title elements can create ambiguous source signals.")
     record("html.meta_description_present", "on_page_seo", "pass" if parser.meta_description else "issue",
            f"Meta description count: {parser.meta_description_count}; non-empty description present: {bool(parser.meta_description)}.")
+    record("html.meta_description_count", "on_page_seo", "warning" if parser.meta_description_count > 1 else "pass",
+           f"Meta description element count: {parser.meta_description_count}; empty declaration count: {parser.meta_description_empty_count}. This check does not assess snippet selection.")
     record("html.h1_present", "on_page_seo", "pass" if parser.h1_count > parser.empty_h1_count else "issue",
            f"H1 element count: {parser.h1_count}; empty H1 count: {parser.empty_h1_count}.")
+    record("html.h1_count", "on_page_seo", "warning" if parser.h1_count > 1 else "pass",
+           f"H1 element count: {parser.h1_count}; source inspection does not determine the ideal heading structure for this page.")
     record("html.viewport_present", "mobile_ux", "pass" if parser.viewport else "issue",
            f"Viewport declaration: {parser.viewport[:160]!r}.")
     viewport_tokens = {
