@@ -284,6 +284,9 @@ async def comprehensive_audit_pdf(
                 "Compare the mobile strategy, test time, score, Speed Index, and available field data.",
             ],
             source_url=target_url,
+            test_method="Google PageSpeed Insights API mobile Lighthouse lab run",
+            evidence_confidence="moderate",
+            standard_references=["https://web.dev/articles/vitals", "https://pagespeed.web.dev/"],
         ))
         if not metrics.screenshot_data_uri:
             result.limitations.append(
