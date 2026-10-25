@@ -406,6 +406,25 @@ def record_homepage_outcomes(
     charset_outcome = "warning" if charset_mismatch else "pass" if has_charset else "issue"
     record("html.charset_declared", "technical_seo", charset_outcome,
            f"HTTP charset: {response_charset or 'not declared'}; HTML charset declaration(s): {', '.join(declared_charsets) or 'none'}; declaration mismatch: {charset_mismatch}.")
+    record(
+        "html.images_alt_attribute", "aria_alt_text",
+        "issue" if parser.images_missing_alt else "pass",
+        f"Image elements: {parser.images}; elements missing an alt attribute: {parser.images_missing_alt}. "
+        "This source check does not determine whether supplied alternative text is meaningful or appropriate.",
+    )
+    if parser.jsonld_scripts:
+        malformed_jsonld = 0
+        for script in parser.jsonld_scripts:
+            try:
+                json.loads(script)
+            except (json.JSONDecodeError, TypeError):
+                malformed_jsonld += 1
+        record(
+            "structured_data.jsonld_parseability", "structured_data",
+            "issue" if malformed_jsonld else "pass",
+            f"JSON-LD script blocks: {len(parser.jsonld_scripts)}; blocks that failed JSON parsing: {malformed_jsonld}. "
+            "Valid JSON syntax does not establish Schema.org validity or rich-result eligibility.",
+        )
     return outcomes
 
 
