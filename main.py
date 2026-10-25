@@ -213,14 +213,50 @@ async def comprehensive_audit_pdf(
         # Keep this call strict rather than writing fabricated placeholder metrics.
         metrics = await agent.run_audit(target_url)
         result = await run_phase_one_checks(target_url)
-        crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
-        result.findings.extend(crawl_findings)
-        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
-        result.limitations.extend(crawl_limitations)
-        conversion_findings, conversion_pages, conversion_limitations = await run_conversion_paid_traffic_checks(target_url)
-        result.findings.extend(conversion_findings)
-        result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
-        result.limitations.extend(conversion_limitations)
+
+        # Keep the audit modular: a failure in an additional checker must not erase
+        # valid results already collected by the core page/discovery checks.
+        try:
+            crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
+            result.findings.extend(crawl_findings)
+            result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
+            result.limitations.extend(crawl_limitations)
+        except Exception as crawl_exc:
+            result.findings.append(AuditFinding(
+                category="crawlability",
+                title="Bounded crawl could not be completed",
+                status="not_tested",
+                severity="info",
+                evidence=f"The optional bounded crawl stopped with {type(crawl_exc).__name__}; no crawl result is inferred.",
+                explanation="The core audit may still contain valid homepage and discovery-file observations, but the additional page crawl did not complete.",
+                recommendation="Retry the audit and review the site's availability, response limits, and crawl restrictions if the issue persists.",
+                verification_steps=["Retry the audit.", "Review the affected public URLs and HTTP responses."],
+                source_url=target_url,
+            ))
+            result.limitations.append(
+                f"Bounded same-origin crawl results are unavailable for this run ({type(crawl_exc).__name__}); other completed checks are retained."
+            )
+
+        try:
+            conversion_findings, conversion_pages, conversion_limitations = await run_conversion_paid_traffic_checks(target_url)
+            result.findings.extend(conversion_findings)
+            result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
+            result.limitations.extend(conversion_limitations)
+        except Exception as conversion_exc:
+            result.findings.append(AuditFinding(
+                category="conversion_paid_traffic",
+                title="Conversion and paid-traffic checks could not be completed",
+                status="not_tested",
+                severity="info",
+                evidence=f"The conversion/paid-traffic checker stopped with {type(conversion_exc).__name__}; no campaign or checkout outcome is inferred.",
+                explanation="This module could not complete, so its absence of findings must not be interpreted as a healthy checkout, working analytics, or efficient campaigns.",
+                recommendation="Retry the audit. Use authorized test access for checkout and event-flow verification; public tag detection alone cannot confirm attribution.",
+                verification_steps=["Retry the audit.", "Where authorized, verify checkout and analytics events in a test environment without submitting real orders."],
+                source_url=target_url,
+            ))
+            result.limitations.append(
+                f"Conversion and paid-traffic checks are unavailable for this run ({type(conversion_exc).__name__}); other completed checks are retained."
+            )
         result.findings.insert(0, AuditFinding(
             category="performance",
             title="Google PageSpeed mobile performance snapshot",
