@@ -168,9 +168,14 @@ class UniversalEcommerceAgent:
                 .get("numericValue")
             )
 
-            if performance_score is None or speed_index_ms is None:
+            if (
+                performance_score is None
+                or speed_index_ms is None
+                or isinstance(performance_score, bool)
+                or isinstance(speed_index_ms, bool)
+            ):
                 raise RuntimeError(
-                    "Google PageSpeed Lighthouse report is missing performance score "
+                    "Google PageSpeed Lighthouse report is missing or malformed for performance score "
                     "or Speed Index."
                 )
 
