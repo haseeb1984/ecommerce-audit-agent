@@ -1492,7 +1492,8 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     if category == "robots_txt":
                         summary = next((item for item in content_findings if item.title == "robots.txt directive summary"), None)
                         if summary is not None:
-                            has_agents = "User-agent" in summary.evidence and not summary.evidence.startswith("Parsed 0")
+                            agent_match = re.search(r":\s*(\d+)\s+User-agent\b", summary.evidence)
+                            has_agents = bool(agent_match and int(agent_match.group(1)) > 0)
                             check_outcomes.append(CheckOutcome(
                                 check_id="discovery.robots_txt.directives",
                                 category=category, page_url=final_url,
@@ -1503,15 +1504,19 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                                 evidence_ref=final_url,
                             ))
                         blocking = next((item for item in content_findings if item.title == "robots.txt may block the entire site"), None)
-                        if blocking is not None:
-                            check_outcomes.append(CheckOutcome(
-                                check_id="discovery.robots_txt.wildcard_block",
-                                category=category, page_url=final_url, outcome="issue",
-                                observed_at_utc=observed_at_utc,
-                                method="inspection of parsed User-agent: * group and Disallow: / directive",
-                                evidence=blocking.evidence,
-                                evidence_ref=final_url,
-                            ))
+                        check_outcomes.append(CheckOutcome(
+                            check_id="discovery.robots_txt.wildcard_block",
+                            category=category, page_url=final_url,
+                            outcome="issue" if blocking is not None else "pass",
+                            observed_at_utc=observed_at_utc,
+                            method="inspection of parsed User-agent: * group and Disallow: / directive",
+                            evidence=(
+                                blocking.evidence if blocking is not None else
+                                "No parsed User-agent: * group with an exact Disallow: / directive was detected. "
+                                "This does not validate every robots rule or prove that important URLs are crawlable."
+                            ),
+                            evidence_ref=final_url,
+                        ))
                     elif category == "sitemap_xml":
                         parse_finding = next((item for item in content_findings if item.title == "Sitemap XML parsing"), None)
                         structure = next((item for item in content_findings if item.title == "Sitemap XML structure"), None)
