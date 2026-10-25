@@ -1085,3 +1085,30 @@ def test_homepage_outcome_does_not_pass_for_only_empty_h1_elements():
     h1_outcome = next(item for item in outcomes if item.check_id == "html.h1_present")
     assert h1_outcome.outcome == "issue"
     assert "empty H1 count: 1" in h1_outcome.evidence
+
+
+
+@pytest.mark.parametrize(
+    ("jsonld", "expected"),
+    [
+        ('{"@type":"Product","name":"Widget"}', "pass"),
+        ('{"@type":"Product",', "issue"),
+    ],
+)
+def test_homepage_outcomes_record_jsonld_parseability(jsonld, expected):
+    html = (
+        "<html><head><title>Shop</title>"
+        '<script type="application/ld+json">' + jsonld + "</script>"
+        "</head><body><h1>Shop</h1></body></html>"
+    )
+    outcomes = audit_checks.record_homepage_outcomes(
+        html,
+        "https://shop.example/",
+        {"content-type": "text/html; charset=utf-8"},
+        "2026-10-25T00:00:00+00:00",
+    )
+    outcome = next(item for item in outcomes if item.check_id == "structured_data.jsonld_parseability")
+    assert outcome.outcome == expected
+    assert "JSON-LD script blocks: 1" in outcome.evidence
+    assert outcome.method
+    assert outcome.evidence_ref
