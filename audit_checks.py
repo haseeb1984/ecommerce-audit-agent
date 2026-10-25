@@ -60,6 +60,43 @@ class AuditFinding(BaseModel):
             str(values.get("source_url") or "").strip(),
         ))
         values["finding_id"] = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+        effort = str(values.get("estimated_effort") or "").strip()
+        if not effort or effort == "Not estimated":
+            status = str(values.get("status") or "").lower()
+            severity = str(values.get("severity") or "").lower()
+            category = str(values.get("category") or "").lower()
+            if status != "verified" or severity == "info":
+                values["estimated_effort"] = "Not applicable until an actionable issue is confirmed"
+                values["effort_basis"] = "This record is informational, unavailable, or requires manual review; no remediation estimate is implied."
+            else:
+                effort_by_category = {
+                    "technical_seo": ("0.5–3 developer hours", "Rough estimate for a single metadata/canonical/link change; template and CMS scope may increase effort."),
+                    "on_page_seo": ("0.5–3 developer hours", "Rough estimate for a single on-page change; template and CMS scope may increase effort."),
+                    "robots_txt": ("0.5–2 developer hours", "Rough estimate for a scoped robots directive correction, excluding broader indexing analysis."),
+                    "sitemap_xml": ("1–4 developer hours", "Rough estimate for a sitemap-generation or URL-inclusion correction; catalog size may increase effort."),
+                    "performance": ("2–8 developer hours for initial remediation", "Initial estimate only; root cause, third-party scripts, theme/app constraints and retesting can materially change effort."),
+                    "accessibility": ("1–4 developer hours per affected template", "Initial estimate for a bounded template-level fix; manual assistive-technology review and repeated components may increase effort."),
+                    "aria": ("1–4 developer hours per affected template", "Initial estimate for a bounded accessible-name/ARIA fix; interaction and screen-reader review may increase effort."),
+                    "aria_alt_text": ("0.5–3 content/developer hours", "Initial estimate for a bounded image group; editorial context and catalog size may increase effort."),
+                    "security_transport": ("1–4 developer hours for configuration review", "Estimate assumes control of hosting/DNS configuration; certificate or platform issues may require provider work."),
+                    "security_headers": ("1–4 developer hours for configuration review", "Estimate assumes control of application or edge configuration; CSP tuning and regression checks may increase effort."),
+                    "security_exposure": ("2–8 developer hours for verification and remediation", "Estimate excludes incident response and depends on whether exposure is confirmed and which system owns the path."),
+                    "mobile_ux": ("2–8 developer hours per affected template", "Initial estimate for a bounded responsive-layout issue; device/browser coverage and theme complexity may increase effort."),
+                    "ecommerce": ("1–6 developer hours per affected template", "Initial estimate for product/category data or navigation changes; catalog-wide changes may require additional work."),
+                    "structured_data": ("1–4 developer hours per affected template", "Estimate excludes large-scale catalog migrations and post-deployment validation across all product types."),
+                    "international_seo": ("1–6 developer hours per template/locale group", "Estimate depends on the number of locales, URL strategy, and CMS support."),
+                    "pixel_analytics": ("1–6 developer hours for instrumentation review", "Estimate excludes ad-platform account access, consent implementation, and conversion-event QA."),
+                    "conversion_paid_traffic": ("2–8 developer hours for a bounded review", "Estimate excludes authenticated checkout testing, campaign account analysis, and any platform-specific deployment."),
+                    "trust": ("1–4 developer hours per affected template", "Estimate covers a bounded presentation/content change, not verification of business legitimacy or legal policy compliance."),
+                    "content_quality": ("1–4 editorial hours per affected page group", "Estimate assumes editorial access and a bounded duplicate/thin-content set; large catalogs require separate scoping."),
+                    "broken_internal_links": ("0.5–4 developer hours", "Estimate assumes a bounded set of internal destinations; redirects, CMS data and bulk catalog corrections may increase effort."),
+                }
+                selected = effort_by_category.get(category)
+                if selected:
+                    values["estimated_effort"], values["effort_basis"] = selected
+                else:
+                    values["estimated_effort"] = "Needs technical scoping before a reliable estimate"
+                    values["effort_basis"] = "Public evidence does not reveal the implementation owner, codebase, or affected-template count."
         return values
 
 
