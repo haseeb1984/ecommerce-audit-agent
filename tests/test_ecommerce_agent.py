@@ -86,6 +86,13 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
                         "INTERACTION_TO_NEXT_PAINT": {"percentile": 180, "category": "GOOD"},
                     }
                 },
+                "originLoadingExperience": {
+                    "id": "https://shop.example",
+                    "overall_category": "GOOD",
+                    "metrics": {
+                        "LARGEST_CONTENTFUL_PAINT_MS": {"percentile": 1900, "category": "GOOD"}
+                    }
+                },
                 "lighthouseResult": {
                     "lighthouseVersion": "12.8.0",
                     "fetchTime": "2026-10-25T10:00:00.000Z",
@@ -114,6 +121,9 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
     assert result.ttfb_ms == 350
     assert result.field_metrics["url:LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 2400
     assert result.field_metrics["url:INTERACTION_TO_NEXT_PAINT"]["category"] == "GOOD"
+    assert result.field_metrics["url:CUMULATIVE_LAYOUT_SHIFT_SCORE"]["normalized_value"] == 0.012
+    assert result.field_metrics["origin:LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 1900
+    assert result.field_data_context["origin_overall_category"] == "GOOD"
     assert result.lighthouse_version == "12.8.0"
     assert result.form_factor == "mobile"
     assert result.is_slow is False
