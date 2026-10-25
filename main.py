@@ -314,7 +314,7 @@ async def comprehensive_audit_pdf(
                     f"Lighthouse version: {getattr(metrics, 'lighthouse_version', None)}; "
                     f"fetch time: {getattr(metrics, 'page_fetch_time', None)}; "
                     f"form factor: {getattr(metrics, 'form_factor', None)}; "
-                    f"final displayed URL: {getattr(metrics, 'final_url', None)}. "
+                    f"final displayed URL: {_safe_audit_metadata_url(getattr(metrics, 'final_url', None)) or 'not available'}. "
                     if getattr(metrics, "lighthouse_version", None) or getattr(metrics, "page_fetch_time", None)
                     else ""
                 )
@@ -1216,6 +1216,14 @@ def _redact_audit_metadata_text(value: object, *, limit: int = 2000) -> str:
         r"(?i)(authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)(\s*[:=]\s*)([^\s,;]+)",
         r"\1\2[REDACTED]",
         text_value,
+    )
+    # Evidence excerpts may contain full request URLs. Keep useful path context but
+    # never persist query parameters, fragments, or credential-bearing URLs.
+    text_value = re.sub(
+        r"https?://[^\s\"'<>]+",
+        lambda match: _safe_audit_metadata_url(match.group(0).rstrip(".,;")) or "[URL OMITTED]",
+        text_value,
+        flags=re.IGNORECASE,
     )
     return text_value
 
