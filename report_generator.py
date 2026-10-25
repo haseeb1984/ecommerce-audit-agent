@@ -257,6 +257,44 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
 
 
 
+def _service_offer_for_finding(finding: dict[str, object]) -> str | None:
+    """Offer relevant help only for evidence-backed observations; never imply guaranteed outcomes."""
+    if str(finding.get("status", "")).lower() != "verified":
+        return None
+    category = str(finding.get("category", "")).strip().lower()
+    service_by_category = {
+        "performance": "PageSpeed diagnostics and performance optimization planning",
+        "technical_seo": "Technical SEO and on-page remediation review",
+        "on_page_seo": "Technical SEO and on-page remediation review",
+        "broken_internal_links": "Internal-link and crawl-path remediation",
+        "accessibility": "Accessibility remediation and manual WCAG review",
+        "aria": "Accessible-name and ARIA remediation review",
+        "aria_alt_text": "Image alternative-text and accessibility review",
+        "security_transport": "SSL/TLS and transport-configuration remediation",
+        "security_headers": "Security-header configuration review",
+        "security_exposure": "Safe public-exposure verification and remediation planning",
+        "security_cookies": "Cookie security-attribute review",
+        "trust": "Trust-signal and policy-information implementation review",
+        "trust_inspector": "Trust-signal and policy-information implementation review",
+        "pixel_analytics": "Analytics tag and event instrumentation troubleshooting",
+        "mobile_ux": "Responsive and mobile usability remediation",
+        "ecommerce": "Product/category technical SEO and catalog UX review",
+        "ecommerce_category": "Product/category technical SEO and catalog UX review",
+        "structured_data": "Structured-data validation and implementation review",
+        "international_seo": "Hreflang and international SEO remediation review",
+        "conversion_paid_traffic": "Conversion journey and analytics instrumentation review",
+        "content_quality": "Duplicate-content and content-structure remediation review",
+        "duplicate_content": "Duplicate-content and content-structure remediation review",
+    }
+    service = service_by_category.get(category)
+    if not service:
+        return None
+    return (
+        "Optional JunctionTools support: " + service
+        + ". This is an optional service discussion, not a claim that work is required or that any ranking, conversion, security, or compliance outcome is guaranteed."
+    )
+
+
 def _business_impact_context(finding: dict[str, object]) -> tuple[str, str]:
     """Supply cautious category-level impact context when a check has no custom wording.
 
@@ -1578,6 +1616,12 @@ def render_audit_pdf(
             Paragraph("<b>Recommended solution</b>", body_style),
             _p(finding["recommendation"], body_style),
         ])
+        service_offer = _service_offer_for_finding(finding)
+        if service_offer:
+            blocks.extend([
+                Paragraph("<b>Optional implementation support</b>", body_style),
+                _p(service_offer, small_style),
+            ])
         # Every finding gets an impact explanation, but fallback language stays cautious:
         # no conversion/revenue gains are presented as measured or guaranteed outcomes.
         potential_benefit, risk_if_unresolved = _business_impact_context(finding)
