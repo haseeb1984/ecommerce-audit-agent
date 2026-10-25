@@ -156,3 +156,22 @@ def test_pagespeed_key_prefers_current_environment_name_and_supports_legacy_fall
 
     monkeypatch.delenv("PAGE_SPEED_API_KEY")
     assert UniversalEcommerceAgent().pagespeed_key == "legacy-pagespeed-key"
+
+
+
+@pytest.mark.asyncio
+async def test_pagespeed_rejects_non_finite_remote_metrics(monkeypatch):
+    agent = make_agent(
+        monkeypatch,
+        FakeResponse(
+            payload={
+                "lighthouseResult": {
+                    "categories": {"performance": {"score": 0.8}},
+                    "audits": {"speed-index": {"numericValue": float("inf")}},
+                }
+            }
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="out-of-range"):
+        await agent.run_audit("shop.example")
