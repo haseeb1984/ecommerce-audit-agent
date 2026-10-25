@@ -233,9 +233,17 @@
         switcher.append(button);
       }
       $("savedEvidenceItems").append(switcher);
+      const outcomeSummary = data.outcome_summary;
+      let outcomeText = "";
+      if (evidenceKind === "check_outcomes" && outcomeSummary && outcomeSummary.denominator) {
+        const counts = outcomeSummary.counts || {};
+        outcomeText = " · explicit outcomes: " + ["pass","issue","warning","not_assessed","error"]
+          .map(state => state.replace("_", " ") + " " + (Number(counts[state]) || 0))
+          .join(" · ") + " (denominator " + outcomeSummary.denominator + ")";
+      }
       $("savedEvidenceSummary").textContent = (evidenceKind === "findings" ? "Findings" : "Check outcomes") +
         " · showing " + (items.length ? evidenceOffset + 1 : 0) + "–" + (evidenceOffset + items.length) + " of " + evidenceTotal +
-        ". Missing findings are not treated as passing checks.";
+        outcomeText + ". Missing findings are not treated as passing checks.";
       if (!items.length) {
         const empty = document.createElement("p"); empty.className = "muted";
         empty.textContent = "No saved records on this page."; $("savedEvidenceItems").append(empty);
