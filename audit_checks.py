@@ -466,6 +466,19 @@ def record_homepage_outcomes(
             f"HTTP(S) destination shape valid: {canonical_valid}. This does not prove canonical correctness or search-engine selection."
         )
     record("html.canonical_declaration", "technical_seo", canonical_outcome, canonical_evidence)
+    meta_robots_tokens = {
+        token.strip().lower()
+        for token in re.split(r"[,;\\s]+", parser.meta_robots)
+        if token.strip()
+    }
+    has_meta_noindex = "noindex" in meta_robots_tokens
+    record(
+        "html.meta_robots_noindex",
+        "indexing_signals",
+        "warning" if has_meta_noindex else "pass",
+        f"Meta robots directives observed: {parser.meta_robots[:200]!r}; noindex token present: {has_meta_noindex}. "
+        "This checks only HTML meta robots; response headers, rendered DOM, robots.txt, and actual search-engine index status are separate.",
+    )
     if parser.jsonld_scripts:
         malformed_jsonld = 0
         for script in parser.jsonld_scripts:
