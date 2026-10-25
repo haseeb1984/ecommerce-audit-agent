@@ -1422,6 +1422,8 @@ def render_audit_pdf(
             "llms.txt basic format needs review": "discovery.llms_txt.basic_format",
             "images missing alt attributes": "html.images_alt_attribute",
             "images have empty alt text": "html.images_empty_alt_attribute",
+            "multiple canonical link elements": "html.canonical_declaration",
+            "canonical link missing href": "html.canonical_declaration",
             "malformed json-ld structured data": "structured_data.jsonld_parseability",
             "sitemap-listed url returned a non-success http status": "discovery.sitemap_xml.listed_url_status",
         }
