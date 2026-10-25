@@ -41,7 +41,7 @@ from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
-from audit_checks import AuditFinding, normalize_target, run_phase_one_checks
+from audit_checks import AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -232,6 +232,16 @@ async def comprehensive_audit_pdf(
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
             result.limitations.extend(crawl_limitations)
         except Exception as crawl_exc:
+            result.check_outcomes.append(CheckOutcome(
+                check_id="crawl.bounded_crawl",
+                category="crawlability",
+                page_url=target_url,
+                outcome="error",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="bounded same-origin crawl",
+                evidence=f"The crawler stopped with {type(crawl_exc).__name__}; no page-level pass or issue is inferred.",
+                evidence_ref="crawl.bounded_crawl",
+            ))
             result.findings.append(AuditFinding(
                 category="crawl",
                 title="Bounded crawl could not be completed",
@@ -254,6 +264,16 @@ async def comprehensive_audit_pdf(
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
             result.limitations.extend(conversion_limitations)
         except Exception as conversion_exc:
+            result.check_outcomes.append(CheckOutcome(
+                check_id="conversion_paid_traffic.checker",
+                category="conversion_paid_traffic",
+                page_url=target_url,
+                outcome="error",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="bounded public HTML conversion/paid-traffic checks",
+                evidence=f"The checker stopped with {type(conversion_exc).__name__}; checkout success and attribution are not inferred.",
+                evidence_ref="conversion_paid_traffic.checker",
+            ))
             result.findings.append(AuditFinding(
                 category="conversion_paid_traffic",
                 title="Conversion and paid-traffic checks could not be completed",
@@ -349,6 +369,16 @@ async def comprehensive_audit_pdf(
                     "the report uses explanatory vector illustrations only and does not fabricate website screenshots."
                 )
         else:
+            result.check_outcomes.append(CheckOutcome(
+                check_id="performance.pagespeed_api",
+                category="performance",
+                page_url=target_url,
+                outcome="error",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="Google PageSpeed Insights API request",
+                evidence="No usable Lighthouse measurement was returned; no performance score or Core Web Vital is inferred.",
+                evidence_ref="performance.pagespeed_api",
+            ))
             result.findings.insert(0, AuditFinding(
                 category="performance",
                 title="Google PageSpeed performance measurements unavailable",
@@ -373,7 +403,7 @@ async def comprehensive_audit_pdf(
         # was evaluated; it does not imply every check in that category passed.
         executed_categories = {
             outcome.category for outcome in result.check_outcomes
-            if outcome.category
+            if outcome.category and outcome.outcome not in {"error", "not_assessed"}
         }
         # These functions returned normally above, so their bounded checker groups
         # completed. Keep their coverage labels separate from unrelated audit groups.
