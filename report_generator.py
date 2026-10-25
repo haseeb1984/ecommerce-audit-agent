@@ -1903,7 +1903,8 @@ def render_audit_pdf(
             f"Redirect limit: {MAX_REDIRECTS}. "
             f"Same-origin crawl page cap: {MAX_CRAWL_PAGES}; homepage link cap: {MAX_LINKS_FROM_HOME}; "
             f"sitemap URL cap: {MAX_URLS_FROM_SITEMAP}. "
-            "These are configured collection limits, not a claim that every limit was reached or every URL was tested.",
+            "These are configured collection limits, not a claim that every limit was reached or every URL was tested. "
+            "The PDF uses selectable text and bookmarks; tagged-PDF structure and assistive-technology reading order are not certified by this renderer and should be reviewed separately.",
             body_style,
         ),
         Paragraph("Security testing scope", section_style),
