@@ -1,3 +1,4 @@
+import asyncio
 from urllib.parse import urlsplit
 
 import pytest
@@ -1112,3 +1113,24 @@ def test_homepage_outcomes_record_jsonld_parseability(jsonld, expected):
     assert "JSON-LD script blocks: 1" in outcome.evidence
     assert outcome.method
     assert outcome.evidence_ref
+
+
+
+def test_sitemap_seed_http_failure_records_explicit_url_status(monkeypatch):
+    async def fake_safe_get(client, url, allowed_origin=None):
+        return 404, "not found", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(audit_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    checked, findings, limitations = asyncio.run(audit_checks.crawl_same_origin_pages(
+        client=object(),
+        homepage_url="https://shop.example/",
+        homepage_html="<html><head></head><body><h1>Shop</h1></body></html>",
+        max_pages=3,
+        seed_urls=["https://shop.example/products/missing"],
+        outcome_records=outcomes,
+    ))
+    status_outcome = next(item for item in outcomes if item.check_id == "discovery.sitemap_xml.listed_url_status")
+    assert status_outcome.outcome == "issue"
+    assert status_outcome.page_url == "https://shop.example/products/missing"
+    assert any(item.title == "Sitemap-listed URL returned a non-success HTTP status" for item in findings)
