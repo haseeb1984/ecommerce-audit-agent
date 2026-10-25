@@ -77,9 +77,26 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
         monkeypatch,
         FakeResponse(
             payload={
+                "loadingExperience": {
+                    "metrics": {
+                        "LARGEST_CONTENTFUL_PAINT_MS": {"percentile": 2400, "category": "AVERAGE"},
+                        "CUMULATIVE_LAYOUT_SHIFT_SCORE": {"percentile": 12, "category": "GOOD"},
+                        "INTERACTION_TO_NEXT_PAINT": {"percentile": 180, "category": "GOOD"},
+                    }
+                },
                 "lighthouseResult": {
+                    "lighthouseVersion": "12.8.0",
+                    "fetchTime": "2026-10-25T10:00:00.000Z",
+                    "finalDisplayedUrl": "https://shop.example/",
+                    "configSettings": {"formFactor": "mobile"},
                     "categories": {"performance": {"score": 0.876}},
-                    "audits": {"speed-index": {"numericValue": 1234}},
+                    "audits": {
+                        "speed-index": {"numericValue": 1234},
+                        "largest-contentful-paint": {"numericValue": 2400},
+                        "cumulative-layout-shift": {"numericValue": 0.12},
+                        "total-blocking-time": {"numericValue": 125},
+                        "server-response-time": {"numericValue": 350},
+                    },
                 }
             }
         ),
@@ -89,6 +106,14 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
     assert result.domain == "shop.example"
     assert result.mobile_score == 88
     assert result.speed_index_sec == 1.23
+    assert result.lcp_sec == 2.4
+    assert result.cls_score == 0.12
+    assert result.tbt_ms == 125
+    assert result.ttfb_ms == 350
+    assert result.field_metrics["LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 2400
+    assert result.field_metrics["INTERACTION_TO_NEXT_PAINT"]["category"] == "GOOD"
+    assert result.lighthouse_version == "12.8.0"
+    assert result.form_factor == "mobile"
     assert result.is_slow is False
 
 
