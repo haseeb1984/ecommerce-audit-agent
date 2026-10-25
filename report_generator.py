@@ -216,6 +216,7 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
                 "potential_benefit": finding.potential_benefit,
                 "risk_if_unresolved": finding.risk_if_unresolved,
                 "evidence": [],
+                "affected_pages": [],
                 "verification_steps": [],
                 "source_urls": [],
                 "instances": 0,
@@ -235,6 +236,16 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
         evidence = str(finding.evidence or "").strip()
         if evidence and evidence not in item["evidence"]:
             item["evidence"].append(evidence)
+        if finding.source_url:
+            affected_url = _safe_public_url(finding.source_url)
+            affected_record = {
+                "url": affected_url,
+                "observed_value": evidence[:600],
+                "outcome": finding.status,
+                "severity": finding.severity,
+            }
+            if affected_url and affected_record not in item["affected_pages"]:
+                item["affected_pages"].append(affected_record)
         observed_at = str(getattr(finding, "observed_at_utc", "") or "").strip()
         if observed_at and observed_at not in item["observed_at_utc"]:
             item["observed_at_utc"].append(observed_at)
@@ -1651,6 +1662,42 @@ def render_audit_pdf(
                 blocks.append(_p("• " + evidence_item, body_style))
         else:
             blocks.append(_p("No specific evidence text was recorded.", body_style))
+        affected_pages = finding.get("affected_pages") or []
+        blocks.append(Paragraph("<b>Affected pages and observed outcomes</b>", body_style))
+        if affected_pages:
+            affected_rows = [[
+                _p("Affected URL", small_style),
+                _p("Observed outcome", small_style),
+                _p("Observed value / evidence", small_style),
+            ]]
+            for affected in affected_pages[:25]:
+                affected_rows.append([
+                    _p(affected.get("url") or "URL not available", small_style),
+                    _p(
+                        str(affected.get("outcome") or "not_tested")
+                        + " / " + str(affected.get("severity") or "info"),
+                        small_style,
+                    ),
+                    _p(affected.get("observed_value") or "No specific value recorded", small_style),
+                ])
+            affected_table = Table(
+                affected_rows, colWidths=[49 * mm, 31 * mm, 88 * mm],
+                repeatRows=1, hAlign="LEFT",
+            )
+            affected_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFE8")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            blocks.append(affected_table)
+            if len(affected_pages) > 25:
+                blocks.append(_p(f"{len(affected_pages) - 25} additional affected-page record(s) are omitted from this compact table; see the saved evidence endpoint.", small_style))
+        else:
+            blocks.append(_p("Affected URL or page-level observed value was not recorded for this finding.", small_style))
         blocks.extend([
             Paragraph("<b>What this means</b>", body_style),
             _p(finding["explanation"], body_style),
