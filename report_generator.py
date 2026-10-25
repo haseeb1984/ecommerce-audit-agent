@@ -209,6 +209,7 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
                 "title": finding.title,
                 "status": finding.status,
                 "severity": finding.severity,
+                "severity_rationale": finding.severity_rationale,
                 "explanation": finding.explanation,
                 "recommendation": finding.recommendation,
                 "potential_benefit": finding.potential_benefit,
@@ -1603,6 +1604,8 @@ def render_audit_pdf(
             blocks.append(_p("Test method: " + "; ".join(finding["test_methods"][:2]), small_style))
         if finding.get("evidence_confidences"):
             blocks.append(_p("Evidence confidence: " + ", ".join(finding["evidence_confidences"]), small_style))
+        if finding.get("severity_rationale"):
+            blocks.append(_p("Severity rationale: " + str(finding["severity_rationale"]), small_style))
         blocks.append(Paragraph("<b>What was observed</b>", body_style))
         if evidence_items:
             # Keep observations distinct instead of flattening them into one long
