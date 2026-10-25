@@ -28,6 +28,28 @@ from reportlab.platypus import (
 from audit_checks import AuditCheckResult, AuditFinding
 
 
+def _format_check_outcome_summary(recorded_outcomes: list[object]) -> str:
+    """Summarize only explicit outcome records; never infer missing pages as passes."""
+    counts = {
+        key: sum(1 for outcome in recorded_outcomes if getattr(outcome, "outcome", None) == key)
+        for key in ("pass", "issue", "warning", "not_assessed", "error")
+    }
+    denominator = len(recorded_outcomes)
+    if denominator == 0:
+        return (
+            "Unavailable for this specific check — no matching explicit per-page outcome record was found. "
+            "No pass percentage is inferred from missing findings."
+        )
+    states = ", ".join(
+        f"{key.replace('_', ' ')} {counts[key]} ({counts[key] / denominator * 100:.1f}%)"
+        for key in ("pass", "issue", "warning", "not_assessed", "error")
+    )
+    return (
+        f"Recorded outcomes for this check: tested-page denominator {denominator}; {states}. "
+        "Counts include only pages with explicit outcome records; they do not imply full-site coverage."
+    )
+
+
 def _p(value: object, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape(str(value or "Not available")), style)
 
@@ -1443,24 +1465,11 @@ def render_audit_pdf(
             outcome for outcome in getattr(result, "check_outcomes", [])
             if expected_check_id and outcome.check_id == expected_check_id
         ]
-        if recorded_outcomes:
-            outcome_counts = {
-                key: sum(1 for outcome in recorded_outcomes if outcome.outcome == key)
-                for key in ("pass", "issue", "warning", "not_assessed", "error")
-            }
-            denominator = len(recorded_outcomes)
-            outcome_text = (
-                f"Recorded outcomes for this check: tested-page denominator {denominator}; "
-                f"pass {outcome_counts['pass']}, issue {outcome_counts['issue']}, "
-                f"warning {outcome_counts['warning']}, not assessed {outcome_counts['not_assessed']}, "
-                f"error {outcome_counts['error']}. "
-                "Counts include only pages with explicit outcome records; they do not imply full-site coverage."
-            )
-        else:
-            outcome_text = (
-                "Unavailable for this specific check — no matching explicit per-page outcome record was found. "
-                "No pass percentage is inferred from missing findings. "
-                f"Audit sampled {len(set(result.pages_checked))} page(s) overall, but that is not this check's denominator."
+        outcome_text = _format_check_outcome_summary(recorded_outcomes)
+        if not recorded_outcomes:
+            outcome_text += (
+                f" Audit sampled {len(set(result.pages_checked))} page(s) overall, "
+                "but that is not this check's denominator."
             )
         outcome_notice = Table(
             [[
