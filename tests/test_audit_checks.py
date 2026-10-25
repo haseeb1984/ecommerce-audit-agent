@@ -1096,7 +1096,7 @@ def test_duplicate_title_description_and_h1_outcomes_are_warnings():
     assert by_id["html.title_count"].outcome == "warning"
     assert by_id["html.meta_description_count"].outcome == "warning"
     assert by_id["html.h1_count"].outcome == "warning"
-    assert "does not determine" in by_id["html.meta_description_count"].evidence
+    assert "does not assess snippet selection" in by_id["html.meta_description_count"].evidence
 
 
 def test_homepage_outcomes_record_issue_instead_of_inferring_pass_from_missing_elements():
