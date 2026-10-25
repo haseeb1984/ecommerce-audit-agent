@@ -1485,7 +1485,77 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                         [f"Open {final_url} directly.", "Review the response content and compare it with the intended site configuration."],
                         final_url,
                     ))
-                    findings.extend(inspect_discovery_contents(category, body, final_url))
+                    content_findings = inspect_discovery_contents(category, body, final_url)
+                    findings.extend(content_findings)
+                    # Record content-level outcomes separately from HTTP availability.
+                    # A successful GET must never be treated as proof that file content is valid.
+                    if category == "robots_txt":
+                        summary = next((item for item in content_findings if item.title == "robots.txt directive summary"), None)
+                        if summary is not None:
+                            has_agents = "User-agent" in summary.evidence and not summary.evidence.startswith("Parsed 0")
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.robots_txt.directives",
+                                category=category, page_url=final_url,
+                                outcome="pass" if has_agents else "warning",
+                                observed_at_utc=observed_at_utc,
+                                method="bounded line-based robots.txt directive inspection",
+                                evidence=summary.evidence + " This is a lightweight syntax signal, not a complete robots protocol validation.",
+                                evidence_ref=final_url,
+                            ))
+                        blocking = next((item for item in content_findings if item.title == "robots.txt may block the entire site"), None)
+                        if blocking is not None:
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.robots_txt.wildcard_block",
+                                category=category, page_url=final_url, outcome="issue",
+                                observed_at_utc=observed_at_utc,
+                                method="inspection of parsed User-agent: * group and Disallow: / directive",
+                                evidence=blocking.evidence,
+                                evidence_ref=final_url,
+                            ))
+                    elif category == "sitemap_xml":
+                        parse_finding = next((item for item in content_findings if item.title == "Sitemap XML parsing"), None)
+                        structure = next((item for item in content_findings if item.title == "Sitemap XML structure"), None)
+                        duplicate = next((item for item in content_findings if item.title == "Duplicate URLs in sitemap"), None)
+                        if parse_finding is not None:
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.parseability",
+                                category=category, page_url=final_url, outcome="issue",
+                                observed_at_utc=observed_at_utc,
+                                method="Python XML parser on bounded fetched sitemap response",
+                                evidence=parse_finding.evidence,
+                                evidence_ref=final_url,
+                            ))
+                        elif structure is not None:
+                            structure_outcome = "pass" if structure.status == "verified" else "warning"
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.structure",
+                                category=category, page_url=final_url, outcome=structure_outcome,
+                                observed_at_utc=observed_at_utc,
+                                method="XML root, loc-entry presence, and absolute HTTP(S) URL shape inspection",
+                                evidence=structure.evidence + " Canonicality, indexability, and search-engine acceptance are not established.",
+                                evidence_ref=final_url,
+                            ))
+                        if duplicate is not None:
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.duplicate_urls",
+                                category=category, page_url=final_url, outcome="issue",
+                                observed_at_utc=observed_at_utc,
+                                method="exact-string duplicate detection over non-empty sitemap loc entries",
+                                evidence=duplicate.evidence,
+                                evidence_ref=final_url,
+                            ))
+                    elif category == "llms_txt":
+                        text_lines = [line.strip() for line in body.splitlines() if line.strip()]
+                        looks_like_markdown = bool(text_lines) and any(line.startswith("#") for line in text_lines)
+                        check_outcomes.append(CheckOutcome(
+                            check_id="discovery.llms_txt.basic_format",
+                            category=category, page_url=final_url,
+                            outcome="pass" if looks_like_markdown else "warning",
+                            observed_at_utc=observed_at_utc,
+                            method="basic non-empty text and Markdown heading signal inspection",
+                            evidence=f"Non-empty lines: {len(text_lines)}; Markdown heading present: {looks_like_markdown}. This is only a lightweight format signal for a proposed convention, not a ranking or discovery assessment.",
+                            evidence_ref=final_url,
+                        ))
                 else:
                     # Only a clear 404 supports a finding that the conventional file is
                     # absent. Access-denied, rate-limit, and server-error responses do
