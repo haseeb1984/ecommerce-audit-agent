@@ -1,4 +1,4 @@
-from audit_checks import AuditCheckResult, AuditFinding
+from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome
 from report_generator import render_audit_pdf
 
 
@@ -1021,3 +1021,61 @@ def test_pdf_evidence_url_redacts_credentials_query_and_fragment():
     assert _safe_public_url("https://shop.example/products?token=secret#account") == "https://shop.example/products"
     assert _safe_public_url("javascript:alert(1)") is None
     assert _safe_public_url("https://shop.example:443/") == "https://shop.example/"
+
+
+
+def test_pdf_discovery_findings_accept_explicit_content_outcomes():
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-25T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        findings=[
+            AuditFinding(
+                category="robots_txt",
+                title="robots.txt may block the entire site",
+                status="verified",
+                severity="high",
+                evidence="A User-agent: * group contains Disallow: /.",
+                explanation="The directive asks compliant crawlers to avoid crawling URL paths.",
+                recommendation="Confirm the rule is intentional for this environment.",
+                verification_steps=["Review the complete robots.txt file."],
+                source_url="https://shop.example/robots.txt",
+            ),
+            AuditFinding(
+                category="llms_txt",
+                title="llms.txt basic format needs review",
+                status="manual_review_required",
+                severity="low",
+                evidence="Markdown heading present: False.",
+                explanation="This is a proposed convention and the check is intentionally lightweight.",
+                recommendation="If used, publish accurate public resources in a concise Markdown structure.",
+                verification_steps=["Review the public file content."],
+                source_url="https://shop.example/llms.txt",
+            ),
+        ],
+        check_outcomes=[
+            CheckOutcome(
+                check_id="discovery.robots_txt.wildcard_block",
+                category="robots_txt",
+                page_url="https://shop.example/robots.txt",
+                outcome="issue",
+                observed_at_utc="2026-10-25T00:00:00+00:00",
+                method="parsed wildcard group inspection",
+                evidence="A User-agent: * group contains Disallow: /.",
+                evidence_ref="https://shop.example/robots.txt",
+            ),
+            CheckOutcome(
+                check_id="discovery.llms_txt.basic_format",
+                category="llms_txt",
+                page_url="https://shop.example/llms.txt",
+                outcome="warning",
+                observed_at_utc="2026-10-25T00:00:00+00:00",
+                method="basic Markdown heading signal inspection",
+                evidence="Markdown heading present: False.",
+                evidence_ref="https://shop.example/llms.txt",
+            ),
+        ],
+    )
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1000
