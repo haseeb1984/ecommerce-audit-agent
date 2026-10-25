@@ -390,6 +390,26 @@ def record_homepage_outcomes(
            f"H1 element count: {parser.h1_count}; empty H1 count: {parser.empty_h1_count}.")
     record("html.viewport_present", "mobile_ux", "pass" if parser.viewport else "issue",
            f"Viewport declaration: {parser.viewport[:160]!r}.")
+    viewport_tokens = {
+        key.strip().lower(): value.strip().lower()
+        for token in parser.viewport.split(",")
+        if "=" in token
+        for key, value in [token.split("=", 1)]
+    }
+    viewport_config_ok = (
+        viewport_tokens.get("width") == "device-width"
+        and viewport_tokens.get("initial-scale") == "1"
+    )
+    viewport_config_outcome = (
+        "not_assessed" if not parser.viewport
+        else "pass" if viewport_config_ok
+        else "warning"
+    )
+    record(
+        "mobile.viewport_configuration", "mobile_ux", viewport_config_outcome,
+        f"Viewport declaration: {parser.viewport[:200]!r}; width=device-width: {viewport_tokens.get('width') == 'device-width'}; "
+        f"initial-scale=1: {viewport_tokens.get('initial-scale') == '1'}. This source-only check does not test rendered responsiveness or zoom behavior.",
+    )
     record("html.main_landmark_present", "accessibility", "pass" if parser.main_landmark_count > 0 else "issue",
            f"Main landmark count in returned HTML: {parser.main_landmark_count}.")
 
