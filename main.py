@@ -209,10 +209,17 @@ async def comprehensive_audit_pdf(
     try:
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
-        # Existing PageSpeed metric fields are required by the current audit_leads schema.
-        # Keep this call strict rather than writing fabricated placeholder metrics.
-        metrics = await agent.run_audit(target_url)
+        # Start with the bounded public-page audit. PageSpeed is an independent provider;
+        # its outage must not erase other evidence already collected.
         result = await run_phase_one_checks(target_url)
+        metrics = None
+        try:
+            metrics = await agent.run_audit(target_url)
+        except Exception as pagespeed_exc:
+            result.limitations.append(
+                f"Google PageSpeed metrics were unavailable for this run ({type(pagespeed_exc).__name__}); "
+                "performance measurements are not inferred and other audit modules continue."
+            )
 
         # Keep the audit modular: a failure in an additional checker must not erase
         # valid results already collected by the core page/discovery checks.
@@ -261,84 +268,104 @@ async def comprehensive_audit_pdf(
             result.limitations.append(
                 f"Conversion and paid-traffic checks are unavailable for this run ({type(conversion_exc).__name__}); other completed checks are retained."
             )
-        lab_metric_parts = [
-            f"Mobile Lighthouse performance score: {metrics.mobile_score}/100",
-            f"Speed Index: {metrics.speed_index_sec} seconds",
-        ]
-        for metric_label, metric_value, unit in (
-            ("Largest Contentful Paint (LCP)", getattr(metrics, "lcp_sec", None), "seconds"),
-            ("Cumulative Layout Shift (CLS)", getattr(metrics, "cls_score", None), ""),
-            ("Total Blocking Time (TBT)", getattr(metrics, "tbt_ms", None), "ms"),
-            ("Time to First Byte (TTFB)", getattr(metrics, "ttfb_ms", None), "ms"),
-        ):
-            if isinstance(metric_value, (int, float)):
-                lab_metric_parts.append(f"{metric_label}: {metric_value}{(' ' + unit) if unit else ''}")
-        field_metric_parts = []
-        field_data_context = getattr(metrics, "field_data_context", {}) or {}
-        if isinstance(field_data_context, dict):
-            for context_name, context_value in field_data_context.items():
-                if context_name.endswith("_overall_category") and isinstance(context_value, str):
-                    field_metric_parts.append(f"{context_name}: {context_value}")
-        field_metrics = getattr(metrics, "field_metrics", {}) or {}
-        if isinstance(field_metrics, dict):
-            for metric_name, metric_data in field_metrics.items():
-                if not isinstance(metric_data, dict):
-                    continue
-                percentile = metric_data.get("percentile")
-                normalized_value = metric_data.get("normalized_value", percentile)
-                unit = metric_data.get("unit")
-                category = metric_data.get("category")
-                if isinstance(percentile, (int, float)):
-                    field_metric_parts.append(
-                        f"{metric_name}: p75={normalized_value}"
-                        + (f" {unit}" if isinstance(unit, str) else "")
-                        + (f", category={category}" if isinstance(category, str) else "")
-                    )
-        performance_evidence = (
-            "Google PageSpeed Insights lab measurements: " + "; ".join(lab_metric_parts) + ". "
-            + (
-                "Available PageSpeed loadingExperience field metrics: " + "; ".join(field_metric_parts) + ". "
-                if field_metric_parts else
-                "No PageSpeed loadingExperience field metrics were returned for this URL/run. "
+        performance_completed = metrics is not None
+        if metrics is not None:
+            lab_metric_parts = [
+                f"Mobile Lighthouse performance score: {metrics.mobile_score}/100",
+                f"Speed Index: {metrics.speed_index_sec} seconds",
+            ]
+            for metric_label, metric_value, unit in (
+                ("Largest Contentful Paint (LCP)", getattr(metrics, "lcp_sec", None), "seconds"),
+                ("Cumulative Layout Shift (CLS)", getattr(metrics, "cls_score", None), ""),
+                ("Total Blocking Time (TBT)", getattr(metrics, "tbt_ms", None), "ms"),
+                ("Time to First Byte (TTFB)", getattr(metrics, "ttfb_ms", None), "ms"),
+            ):
+                if isinstance(metric_value, (int, float)):
+                    lab_metric_parts.append(f"{metric_label}: {metric_value}{(' ' + unit) if unit else ''}")
+            field_metric_parts = []
+            field_data_context = getattr(metrics, "field_data_context", {}) or {}
+            if isinstance(field_data_context, dict):
+                for context_name, context_value in field_data_context.items():
+                    if context_name.endswith("_overall_category") and isinstance(context_value, str):
+                        field_metric_parts.append(f"{context_name}: {context_value}")
+            field_metrics = getattr(metrics, "field_metrics", {}) or {}
+            if isinstance(field_metrics, dict):
+                for metric_name, metric_data in field_metrics.items():
+                    if not isinstance(metric_data, dict):
+                        continue
+                    percentile = metric_data.get("percentile")
+                    normalized_value = metric_data.get("normalized_value", percentile)
+                    unit = metric_data.get("unit")
+                    category = metric_data.get("category")
+                    if isinstance(percentile, (int, float)):
+                        field_metric_parts.append(
+                            f"{metric_name}: p75={normalized_value}"
+                            + (f" {unit}" if isinstance(unit, str) else "")
+                            + (f", category={category}" if isinstance(category, str) else "")
+                        )
+            performance_evidence = (
+                "Google PageSpeed Insights lab measurements: " + "; ".join(lab_metric_parts) + ". "
+                + (
+                    "Available URL-level and/or origin-level PageSpeed field metrics: " + "; ".join(field_metric_parts) + ". "
+                    if field_metric_parts else
+                    "No PageSpeed loadingExperience field metrics were returned for this URL/origin in this run. "
+                )
+                + (
+                    f"Lighthouse version: {getattr(metrics, 'lighthouse_version', None)}; "
+                    f"fetch time: {getattr(metrics, 'page_fetch_time', None)}; "
+                    f"form factor: {getattr(metrics, 'form_factor', None)}; "
+                    f"final displayed URL: {getattr(metrics, 'final_url', None)}. "
+                    if getattr(metrics, "lighthouse_version", None) or getattr(metrics, "page_fetch_time", None)
+                    else ""
+                )
+                + "Lab measurements are not field measurements; unavailable field metrics must not be inferred."
             )
-            + (
-                f"Lighthouse version: {getattr(metrics, 'lighthouse_version', None)}; "
-                f"fetch time: {getattr(metrics, 'page_fetch_time', None)}; "
-                f"form factor: {getattr(metrics, 'form_factor', None)}; "
-                f"final displayed URL: {getattr(metrics, 'final_url', None)}. "
-                if getattr(metrics, "lighthouse_version", None) or getattr(metrics, "page_fetch_time", None)
-                else ""
-            )
-            + "Lab measurements are not field measurements; unavailable field metrics must not be inferred."
-        )
-        result.findings.insert(0, AuditFinding(
-            category="performance",
-            title="Google PageSpeed mobile performance snapshot",
-            status="verified",
-            severity="medium" if metrics.mobile_score < 50 else "low" if metrics.mobile_score < 90 else "info",
-            evidence=performance_evidence,
-            explanation=(
-                "The performance score summarizes a Lighthouse lab run and is not a direct "
-                "measurement of revenue, conversion rate, or search ranking."
-            ),
-            recommendation=(
-                "Review the full PageSpeed Insights report for opportunities relevant to this page, "
-                "then prioritize changes based on measured diagnostics and retest."
-            ),
-            verification_steps=[
-                "Open https://pagespeed.web.dev/ and test the exact target URL.",
-                "Compare the mobile strategy, test time, score, Speed Index, and available field data.",
-            ],
-            source_url=target_url,
-            test_method="Google PageSpeed Insights API mobile Lighthouse lab run",
-            evidence_confidence="moderate",
-            standard_references=["https://web.dev/articles/vitals", "https://pagespeed.web.dev/"],
-        ))
-        if not metrics.screenshot_data_uri:
-            result.limitations.append(
-                "No usable actual-page screenshot was supplied by the Google PageSpeed response for this run; "
-                "the report uses explanatory vector illustrations only and does not fabricate website screenshots."
-            )
+            result.findings.insert(0, AuditFinding(
+                category="performance",
+                title="Google PageSpeed mobile performance snapshot",
+                status="verified",
+                severity="medium" if metrics.mobile_score < 50 else "low" if metrics.mobile_score < 90 else "info",
+                evidence=performance_evidence,
+                explanation=(
+                    "The performance score summarizes a Lighthouse lab run and is not a direct "
+                    "measurement of revenue, conversion rate, or search ranking."
+                ),
+                recommendation=(
+                    "Review the full PageSpeed Insights report for opportunities relevant to this page, "
+                    "then prioritize changes based on measured diagnostics and retest."
+                ),
+                verification_steps=[
+                    "Open https://pagespeed.web.dev/ and test the exact target URL.",
+                    "Compare the mobile strategy, test time, score, Speed Index, and available field data.",
+                ],
+                source_url=target_url,
+                test_method="Google PageSpeed Insights API mobile Lighthouse lab run",
+                evidence_confidence="moderate",
+                standard_references=["https://web.dev/articles/vitals", "https://pagespeed.web.dev/"],
+            ))
+            if not metrics.screenshot_data_uri:
+                result.limitations.append(
+                    "No usable actual-page screenshot was supplied by the Google PageSpeed response for this run; "
+                    "the report uses explanatory vector illustrations only and does not fabricate website screenshots."
+                )
+        else:
+            result.findings.insert(0, AuditFinding(
+                category="performance",
+                title="Google PageSpeed performance measurements unavailable",
+                status="not_tested",
+                severity="info",
+                evidence="The PageSpeed provider did not return a usable Lighthouse measurement for this run. No score, Core Web Vital, or speed value is inferred.",
+                explanation="Performance results are unavailable for this run. Other completed audit modules remain valid within their stated scope.",
+                recommendation="Retry PageSpeed Insights for the same URL and compare lab results with available URL-level and origin-level field data.",
+                verification_steps=[
+                    "Open https://pagespeed.web.dev/ and test the exact target URL.",
+                    "Check provider availability and API quota if the failure persists.",
+                ],
+                source_url=target_url,
+                test_method="PageSpeed API request attempted; no usable metrics returned",
+                evidence_confidence="limited",
+                standard_references=["https://web.dev/articles/vitals", "https://pagespeed.web.dev/"],
+            ))
         # Calculate coverage before PDF rendering so the same manifest appears in the PDF,
         # the saved report metadata, and the customer dashboard.
         # Derive completed coverage only from explicit outcome records and checker
@@ -350,7 +377,8 @@ async def comprehensive_audit_pdf(
         }
         # These functions returned normally above, so their bounded checker groups
         # completed. Keep their coverage labels separate from unrelated audit groups.
-        executed_categories.add("performance")
+        if performance_completed:
+            executed_categories.add("performance")
         if crawl_completed:
             executed_categories.add("crawlability")
         if conversion_completed:
@@ -369,7 +397,7 @@ async def comprehensive_audit_pdf(
         )
         pdf_bytes = render_audit_pdf(
             result,
-            screenshot_data_uri=metrics.screenshot_data_uri,
+            screenshot_data_uri=getattr(metrics, "screenshot_data_uri", None),
             coverage_manifest=coverage_manifest,
         )
         # Persist the explicit bounded outcome records beside the conservative
@@ -422,7 +450,7 @@ async def comprehensive_audit_pdf(
         }
         report = AuditReport(
             license_id=license_id,
-            domain=urlsplit(target_url).hostname or metrics.domain,
+            domain=urlsplit(target_url).hostname or (metrics.domain if metrics else "website"),
             pdf_bytes=pdf_bytes,
             coverage_json=json.dumps(report_metadata, separators=(",", ":")),
             finding_count=len(result.findings),
@@ -435,8 +463,8 @@ async def comprehensive_audit_pdf(
         db.add(AuditLead(
             license_id=license_id,
             domain=urlsplit(target_url).hostname or metrics.domain,
-            mobile_score=metrics.mobile_score,
-            speed_index_sec=metrics.speed_index_sec,
+            mobile_score=metrics.mobile_score if metrics is not None else None,
+            speed_index_sec=metrics.speed_index_sec if metrics is not None else None,
             contact_email=None,
             revenue_leak_hypothesis=None,
             email_subject=None,
