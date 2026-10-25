@@ -1547,15 +1547,29 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                     elif category == "llms_txt":
                         text_lines = [line.strip() for line in body.splitlines() if line.strip()]
                         looks_like_markdown = bool(text_lines) and any(line.startswith("#") for line in text_lines)
+                        format_evidence = (
+                            f"Non-empty lines: {len(text_lines)}; Markdown heading present: {looks_like_markdown}. "
+                            "This is only a lightweight format signal for a proposed convention, not a ranking or discovery assessment."
+                        )
                         check_outcomes.append(CheckOutcome(
                             check_id="discovery.llms_txt.basic_format",
                             category=category, page_url=final_url,
                             outcome="pass" if looks_like_markdown else "warning",
                             observed_at_utc=observed_at_utc,
                             method="basic non-empty text and Markdown heading signal inspection",
-                            evidence=f"Non-empty lines: {len(text_lines)}; Markdown heading present: {looks_like_markdown}. This is only a lightweight format signal for a proposed convention, not a ranking or discovery assessment.",
+                            evidence=format_evidence,
                             evidence_ref=final_url,
                         ))
+                        if not looks_like_markdown:
+                            findings.append(_finding(
+                                category, "llms.txt basic format needs review",
+                                "manual_review_required", "low",
+                                format_evidence + f" Source: {final_url}",
+                                "llms.txt is a proposed convention rather than a guaranteed indexing, ranking, or AI-citation control. This simple check only looks for a non-empty response with a Markdown heading.",
+                                "If you choose to publish llms.txt, review its content for accuracy and consider using a concise Markdown structure with a heading and relevant public resources. Do not publish confidential or access-restricted URLs.",
+                                ["Review the public file content.", "Confirm all listed resources are accurate, intended to be public, and current."],
+                                final_url,
+                            ))
                 else:
                     # Only a clear 404 supports a finding that the conventional file is
                     # absent. Access-denied, rate-limit, and server-error responses do
