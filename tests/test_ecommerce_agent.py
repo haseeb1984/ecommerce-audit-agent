@@ -78,6 +78,8 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
         FakeResponse(
             payload={
                 "loadingExperience": {
+                    "id": "https://shop.example/",
+                    "overall_category": "AVERAGE",
                     "metrics": {
                         "LARGEST_CONTENTFUL_PAINT_MS": {"percentile": 2400, "category": "AVERAGE"},
                         "CUMULATIVE_LAYOUT_SHIFT_SCORE": {"percentile": 12, "category": "GOOD"},
@@ -110,8 +112,8 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
     assert result.cls_score == 0.12
     assert result.tbt_ms == 125
     assert result.ttfb_ms == 350
-    assert result.field_metrics["LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 2400
-    assert result.field_metrics["INTERACTION_TO_NEXT_PAINT"]["category"] == "GOOD"
+    assert result.field_metrics["url:LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 2400
+    assert result.field_metrics["url:INTERACTION_TO_NEXT_PAINT"]["category"] == "GOOD"
     assert result.lighthouse_version == "12.8.0"
     assert result.form_factor == "mobile"
     assert result.is_slow is False
