@@ -508,6 +508,10 @@ async def comprehensive_audit_pdf(
                     ],
                     "estimated_effort": finding.estimated_effort,
                     "effort_basis": _redact_audit_metadata_text(finding.effort_basis, limit=300),
+                    "dependencies": [
+                        _redact_audit_metadata_text(dependency, limit=500)
+                        for dependency in finding.dependencies[:8]
+                    ],
                 }
                 for finding in result.findings[:150]
             ],
