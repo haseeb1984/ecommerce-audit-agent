@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal, InvalidOperation
 import ipaddress
+import hashlib
 import json
 import re
 import socket
@@ -27,6 +28,7 @@ USER_AGENT = "EcommerceAuditBot/1.0 (+https://junctiontools.com)"
 
 
 class AuditFinding(BaseModel):
+    finding_id: str = ""
     category: str
     title: str
     status: str  # verified, manual_review_required, not_tested, insufficient_data
@@ -344,7 +346,11 @@ class _PageParser(HTMLParser):
 def _finding(category: str, title: str, status: str, severity: str,
              evidence: str, explanation: str, recommendation: str,
              steps: list[str], source_url: str | None = None) -> AuditFinding:
+    """Build a finding with a stable, evidence-location-specific identifier."""
+    identity = "|".join((category.strip().lower(), title.strip().lower(), (source_url or "").strip()))
+    finding_id = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
     return AuditFinding(
+        finding_id=finding_id,
         category=category, title=title, status=status, severity=severity,
         evidence=evidence, explanation=explanation, recommendation=recommendation,
         verification_steps=steps, source_url=source_url,
