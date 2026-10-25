@@ -432,6 +432,37 @@ async def comprehensive_audit_pdf(
                 evidence_confidence="limited",
                 standard_references=["https://web.dev/articles/vitals", "https://pagespeed.web.dev/"],
             ))
+        # Convert each emitted finding into a durable explicit outcome record. This
+        # records observed issues/review-needed/not-assessed states only; absence of a
+        # finding is never converted into a pass. Checker-specific positive outcomes
+        # must still be emitted by the checker that actually evaluated that condition.
+        existing_finding_outcome_refs = {
+            outcome.evidence_ref for outcome in result.check_outcomes if outcome.evidence_ref
+        }
+        for finding in result.findings:
+            outcome_ref = f"finding.{finding.finding_id}"
+            if outcome_ref in existing_finding_outcome_refs:
+                continue
+            finding_status = str(finding.status or "").casefold()
+            finding_severity = str(finding.severity or "").casefold()
+            if finding_status in {"not_tested", "not tested", "insufficient_data"}:
+                explicit_outcome = "not_assessed"
+            elif finding_status == "manual_review_required" or finding_severity == "info":
+                explicit_outcome = "warning"
+            else:
+                explicit_outcome = "issue"
+            result.check_outcomes.append(CheckOutcome(
+                check_id=outcome_ref,
+                category=finding.category or "uncategorized",
+                page_url=finding.source_url or target_url,
+                outcome=explicit_outcome,
+                observed_at_utc=finding.observed_at_utc or datetime.now(timezone.utc).isoformat(),
+                method=finding.test_method or "finding evidence emitted by the responsible audit checker",
+                evidence=(finding.evidence or "Finding emitted without additional evidence text.")[:2000],
+                evidence_ref=outcome_ref,
+            ))
+            existing_finding_outcome_refs.add(outcome_ref)
+
         # Calculate coverage before PDF rendering so the same manifest appears in the PDF,
         # the saved report metadata, and the customer dashboard.
         # Derive completed coverage only from explicit outcome records and checker
