@@ -261,16 +261,54 @@ async def comprehensive_audit_pdf(
             result.limitations.append(
                 f"Conversion and paid-traffic checks are unavailable for this run ({type(conversion_exc).__name__}); other completed checks are retained."
             )
+        lab_metric_parts = [
+            f"Mobile Lighthouse performance score: {metrics.mobile_score}/100",
+            f"Speed Index: {metrics.speed_index_sec} seconds",
+        ]
+        for metric_label, metric_value, unit in (
+            ("Largest Contentful Paint (LCP)", getattr(metrics, "lcp_sec", None), "seconds"),
+            ("Cumulative Layout Shift (CLS)", getattr(metrics, "cls_score", None), ""),
+            ("Total Blocking Time (TBT)", getattr(metrics, "tbt_ms", None), "ms"),
+            ("Time to First Byte (TTFB)", getattr(metrics, "ttfb_ms", None), "ms"),
+        ):
+            if isinstance(metric_value, (int, float)):
+                lab_metric_parts.append(f"{metric_label}: {metric_value}{(' ' + unit) if unit else ''}")
+        field_metric_parts = []
+        field_metrics = getattr(metrics, "field_metrics", {}) or {}
+        if isinstance(field_metrics, dict):
+            for metric_name, metric_data in field_metrics.items():
+                if not isinstance(metric_data, dict):
+                    continue
+                percentile = metric_data.get("percentile")
+                category = metric_data.get("category")
+                if isinstance(percentile, (int, float)):
+                    field_metric_parts.append(
+                        f"{metric_name}: p75={percentile}"
+                        + (f", category={category}" if isinstance(category, str) else "")
+                    )
+        performance_evidence = (
+            "Google PageSpeed Insights lab measurements: " + "; ".join(lab_metric_parts) + ". "
+            + (
+                "Available PageSpeed loadingExperience field metrics: " + "; ".join(field_metric_parts) + ". "
+                if field_metric_parts else
+                "No PageSpeed loadingExperience field metrics were returned for this URL/run. "
+            )
+            + (
+                f"Lighthouse version: {getattr(metrics, 'lighthouse_version', None)}; "
+                f"fetch time: {getattr(metrics, 'page_fetch_time', None)}; "
+                f"form factor: {getattr(metrics, 'form_factor', None)}; "
+                f"final displayed URL: {getattr(metrics, 'final_url', None)}. "
+                if getattr(metrics, "lighthouse_version", None) or getattr(metrics, "page_fetch_time", None)
+                else ""
+            )
+            + "Lab measurements are not field measurements; unavailable field metrics must not be inferred."
+        )
         result.findings.insert(0, AuditFinding(
             category="performance",
             title="Google PageSpeed mobile performance snapshot",
             status="verified",
             severity="medium" if metrics.mobile_score < 50 else "low" if metrics.mobile_score < 90 else "info",
-            evidence=(
-                f"Google PageSpeed Insights reported a mobile Lighthouse performance score "
-                f"of {metrics.mobile_score}/100 and Speed Index of {metrics.speed_index_sec} seconds. "
-                "These are lab results; field experience can differ."
-            ),
+            evidence=performance_evidence,
             explanation=(
                 "The performance score summarizes a Lighthouse lab run and is not a direct "
                 "measurement of revenue, conversion rate, or search ranking."
