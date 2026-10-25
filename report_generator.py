@@ -77,6 +77,23 @@ def _safe_public_url(url: str) -> str | None:
         return None
 
 
+def _sanitize_report_text(value: object, limit: int = 4000) -> str:
+    """Escape-safe, bounded report text with credential-like values and URL secrets removed."""
+    text_value = str(value or "")[:limit]
+    text_value = re.sub(
+        r"(?i)(authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)(\s*[:=]\s*)([^\s,;]+)",
+        r"\1\2[REDACTED]",
+        text_value,
+    )
+    text_value = re.sub(
+        r"https?://[^\s\"'<>]+",
+        lambda match: _safe_public_url(match.group(0).rstrip(".,;")) or "[URL OMITTED]",
+        text_value,
+        flags=re.IGNORECASE,
+    )
+    return text_value
+
+
 def _link(url: str, style: ParagraphStyle) -> Paragraph:
     """Render a validated public HTTP(S) link without URL credentials or secret query data."""
     clean_url = _safe_public_url(url)
@@ -211,10 +228,10 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
                 "status": finding.status,
                 "severity": finding.severity,
                 "severity_rationale": finding.severity_rationale,
-                "explanation": finding.explanation,
-                "recommendation": finding.recommendation,
-                "potential_benefit": finding.potential_benefit,
-                "risk_if_unresolved": finding.risk_if_unresolved,
+                "explanation": _sanitize_report_text(finding.explanation, limit=3000),
+                "recommendation": _sanitize_report_text(finding.recommendation, limit=3000),
+                "potential_benefit": _sanitize_report_text(finding.potential_benefit, limit=1200),
+                "risk_if_unresolved": _sanitize_report_text(finding.risk_if_unresolved, limit=1200),
                 "evidence": [],
                 "affected_pages": [],
                 "verification_steps": [],
@@ -233,7 +250,7 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
         finding_id = str(getattr(finding, "finding_id", "") or "").strip()
         if finding_id and finding_id not in item["finding_ids"]:
             item["finding_ids"].append(finding_id)
-        evidence = str(finding.evidence or "").strip()
+        evidence = _sanitize_report_text(finding.evidence, limit=4000).strip()
         if evidence and evidence not in item["evidence"]:
             item["evidence"].append(evidence)
         if finding.source_url:
@@ -259,8 +276,9 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
             if reference not in item["standard_references"] and _safe_public_url(reference):
                 item["standard_references"].append(reference)
         for step in finding.verification_steps:
-            if step not in item["verification_steps"]:
-                item["verification_steps"].append(step)
+            safe_step = _sanitize_report_text(step, limit=1000)
+            if safe_step not in item["verification_steps"]:
+                item["verification_steps"].append(safe_step)
         if finding.source_url:
             # Never place URL credentials, query tokens, email addresses or fragments in a PDF.
             safe_source_url = _safe_public_url(finding.source_url)
