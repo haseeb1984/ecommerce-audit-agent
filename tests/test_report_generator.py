@@ -1212,3 +1212,45 @@ def test_issue_service_offer_only_appears_for_verified_actionable_findings():
         "severity": "info",
         "category": "performance",
     }) is None
+
+
+
+def test_affected_page_table_links_only_explicit_matching_outcomes():
+    from report_generator import _consolidate_findings
+
+    finding = AuditFinding(
+        category="accessibility",
+        title="Document language missing",
+        status="verified",
+        severity="medium",
+        evidence="Root html lang attribute is missing.",
+        explanation="The document language is not declared.",
+        recommendation="Declare the correct document language.",
+        verification_steps=["Inspect the root html element."],
+        source_url="https://shop.example/",
+    )
+    matching = CheckOutcome(
+        check_id="html.document_language",
+        category="accessibility",
+        page_url="https://shop.example/",
+        outcome="issue",
+        observed_at_utc="2026-10-25T00:00:00+00:00",
+        method="bounded static HTML source inspection",
+        evidence="Root html lang attribute is missing.",
+        evidence_ref="html.document_language:https://shop.example/",
+    )
+    unrelated = CheckOutcome(
+        check_id="html.title_present",
+        category="technical_seo",
+        page_url="https://shop.example/",
+        outcome="pass",
+        observed_at_utc="2026-10-25T00:00:00+00:00",
+        method="bounded static HTML source inspection",
+        evidence="Title is present.",
+    )
+
+    consolidated = _consolidate_findings([finding], [matching, unrelated])
+    page = consolidated[0]["affected_pages"][0]
+    assert page["url"] == "https://shop.example/"
+    assert [outcome["check_id"] for outcome in page["check_outcomes"]] == ["html.document_language"]
+    assert page["check_outcomes"][0]["outcome"] == "issue"
