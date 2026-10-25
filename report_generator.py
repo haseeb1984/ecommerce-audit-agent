@@ -247,6 +247,7 @@ def _consolidate_findings(
                 "standard_references": [],
                 "estimated_effort": finding.estimated_effort,
                 "effort_basis": finding.effort_basis,
+                "dependencies": [],
             }
         item = groups[key]
         item["instances"] = int(item["instances"]) + 1
@@ -299,6 +300,10 @@ def _consolidate_findings(
         for reference in getattr(finding, "standard_references", []) or []:
             if reference not in item["standard_references"] and _safe_public_url(reference):
                 item["standard_references"].append(reference)
+        for dependency in getattr(finding, "dependencies", []) or []:
+            safe_dependency = _sanitize_report_text(dependency, limit=500)
+            if safe_dependency and safe_dependency not in item["dependencies"]:
+                item["dependencies"].append(safe_dependency)
         for step in finding.verification_steps:
             safe_step = _sanitize_report_text(step, limit=1000)
             if safe_step not in item["verification_steps"]:
@@ -1373,6 +1378,15 @@ def render_audit_pdf(
                     small_style,
                 ),
                 _p(str(action["recommendation"]), body_style),
+                _p(
+                    "Estimated effort: " + str(action.get("estimated_effort") or "Needs scoping")
+                    + ". Basis: " + str(action.get("effort_basis") or "Site-specific complexity is unknown."),
+                    small_style,
+                ),
+                *[
+                    _p("Dependency: " + str(dependency), small_style)
+                    for dependency in (action.get("dependencies") or [])[:3]
+                ],
                 Spacer(1, 2 * mm),
             ]))
         if len(priority_actions) > 8:
@@ -1779,6 +1793,11 @@ def render_audit_pdf(
             blocks.append(Paragraph("<b>Standards and authoritative references</b>", body_style))
             for reference in references[:5]:
                 blocks.append(_link(str(reference), small_style))
+        dependencies = finding.get("dependencies") or []
+        if dependencies:
+            blocks.append(Paragraph("<b>Dependencies / prerequisites</b>", body_style))
+            for dependency in dependencies[:8]:
+                blocks.append(_p("• " + dependency, small_style))
         blocks.append(_p(
             "Estimated effort: " + str(finding.get("estimated_effort") or "Not estimated")
             + ". Basis: " + str(finding.get("effort_basis") or "No implementation-specific estimate recorded"),
