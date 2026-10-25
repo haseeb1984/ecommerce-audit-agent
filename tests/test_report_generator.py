@@ -1137,3 +1137,45 @@ def test_pdf_discovery_findings_accept_explicit_content_outcomes():
     pdf = render_audit_pdf(result)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+def test_check_outcome_summary_uses_explicit_denominator_and_percentages():
+    from report_generator import _format_check_outcome_summary
+
+    outcomes = [
+        CheckOutcome(
+            check_id="html.title_present",
+            category="on_page_seo",
+            page_url="https://shop.example/",
+            outcome="pass",
+            observed_at_utc="2026-10-25T00:00:00+00:00",
+            method="static HTML source inspection",
+            evidence="One title element was observed.",
+        ),
+        CheckOutcome(
+            check_id="html.title_present",
+            category="on_page_seo",
+            page_url="https://shop.example/product",
+            outcome="issue",
+            observed_at_utc="2026-10-25T00:00:00+00:00",
+            method="static HTML source inspection",
+            evidence="No title element was observed.",
+        ),
+    ]
+
+    summary = _format_check_outcome_summary(outcomes)
+    assert "tested-page denominator 2" in summary
+    assert "pass 1 (50.0%)" in summary
+    assert "issue 1 (50.0%)" in summary
+    assert "warning 0 (0.0%)" in summary
+    assert "not assessed 0 (0.0%)" in summary
+    assert "error 0 (0.0%)" in summary
+    assert "do not imply full-site coverage" in summary
+
+
+def test_check_outcome_summary_does_not_infer_pass_for_missing_records():
+    from report_generator import _format_check_outcome_summary
+
+    summary = _format_check_outcome_summary([])
+    assert "Unavailable for this specific check" in summary
+    assert "No pass percentage is inferred" in summary
