@@ -260,7 +260,9 @@ async def comprehensive_audit_pdf(
         conversion_completed = False
         try:
             crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
-            crawl_completed = True
+            # A normal return can still mean the homepage was non-HTML/unavailable;
+            # count the bounded crawl as completed only when it recorded a page.
+            crawl_completed = bool(crawl_pages)
             result.findings.extend(crawl_findings)
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
             result.limitations.extend(crawl_limitations)
@@ -446,7 +448,11 @@ async def comprehensive_audit_pdf(
             executed_categories.add("crawlability")
         if conversion_completed:
             executed_categories.add("conversion_paid_traffic")
-        if any(
+        if crawl_completed:
+            # The dependency version checker is invoked as part of the successful
+            # homepage crawl even when no advisory signal is found.
+            executed_categories.add("dependency_advisory")
+        elif any(
             finding.category in {"dependency_advisory", "security_dependency"}
             for finding in result.findings
         ):
