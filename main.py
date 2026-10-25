@@ -41,7 +41,7 @@ from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
-from audit_checks import AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
+from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -209,9 +209,42 @@ async def comprehensive_audit_pdf(
     try:
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
-        # Start with the bounded public-page audit. PageSpeed is an independent provider;
-        # its outage must not erase other evidence already collected.
-        result = await run_phase_one_checks(target_url)
+        # Run audit families independently. A failure in the phase-one checker must not
+        # discard findings from the bounded crawl, conversion checks, or PageSpeed.
+        try:
+            result = await run_phase_one_checks(target_url)
+        except Exception as phase_one_exc:
+            result = AuditCheckResult(
+                target_url=target_url,
+                checked_at_utc=datetime.now(timezone.utc).isoformat(),
+                findings=[],
+                pages_checked=[],
+                limitations=[
+                    f"Core homepage/discovery checks were unavailable ({type(phase_one_exc).__name__}); other audit families were attempted independently."
+                ],
+                check_outcomes=[],
+            )
+            result.check_outcomes.append(CheckOutcome(
+                check_id="phase_one.core",
+                category="technical_seo",
+                page_url=target_url,
+                outcome="error",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="bounded homepage and discovery-file checks",
+                evidence=f"The phase-one checker stopped with {type(phase_one_exc).__name__}; no pass or issue is inferred.",
+                evidence_ref="phase_one.core",
+            ))
+            result.findings.append(AuditFinding(
+                category="technical_seo",
+                title="Core homepage and discovery checks could not be completed",
+                status="not_tested",
+                severity="info",
+                evidence=f"The core checker stopped with {type(phase_one_exc).__name__}; no homepage SEO or discovery-file result is inferred.",
+                explanation="The audit will retain results from independent checker families where available. This failure does not imply that the site passed or failed the skipped checks.",
+                recommendation="Retry the audit. If the failure persists, review public endpoint availability and the audit service's bounded request logs.",
+                verification_steps=["Retry the audit.", "Check the public homepage and robots.txt/sitemap responses independently."],
+                source_url=target_url,
+            ))
         metrics = None
         try:
             metrics = await agent.run_audit(target_url)
