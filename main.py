@@ -493,6 +493,8 @@ async def comprehensive_audit_pdf(
                     "evidence": _redact_audit_metadata_text(finding.evidence, limit=2000),
                     "explanation": _redact_audit_metadata_text(finding.explanation, limit=1200),
                     "recommendation": _redact_audit_metadata_text(finding.recommendation, limit=1200),
+                    "potential_benefit": _redact_audit_metadata_text(finding.potential_benefit, limit=1000),
+                    "risk_if_unresolved": _redact_audit_metadata_text(finding.risk_if_unresolved, limit=1000),
                     "verification_steps": [
                         _redact_audit_metadata_text(step, limit=500)
                         for step in finding.verification_steps[:12]
