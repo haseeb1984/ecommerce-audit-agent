@@ -1413,6 +1413,7 @@ def render_audit_pdf(
             "multiple title elements": "html.title_count",
             "meta description": "html.meta_description_present",
             "multiple meta description elements": "html.meta_description_count",
+            "empty meta description content": "html.meta_description_content",
             "primary heading (h1)": "html.h1_present",
             "mobile viewport": "html.viewport_present",
             "character encoding is not explicitly declared": "html.charset_declared",
