@@ -6,6 +6,7 @@ It performs conservative public-page checks and reports limitations explicitly.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import ipaddress
 import hashlib
@@ -41,6 +42,12 @@ class AuditFinding(BaseModel):
     # Optional, evidence-backed business context. Never inferred by the renderer.
     potential_benefit: str | None = None
     risk_if_unresolved: str | None = None
+    observed_at_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    test_method: str = "Not specified by the individual checker"
+    evidence_confidence: str = "limited"
+    standard_references: list[str] = Field(default_factory=list)
+    estimated_effort: str = "Not estimated"
+    effort_basis: str = "No implementation-specific estimate recorded"
 
 
 class CheckOutcome(BaseModel):
@@ -349,11 +356,38 @@ def _finding(category: str, title: str, status: str, severity: str,
     """Build a finding with a stable, evidence-location-specific identifier."""
     identity = "|".join((category.strip().lower(), title.strip().lower(), (source_url or "").strip()))
     finding_id = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+    normalized_category = category.strip().lower()
+    reference_map = {
+        "technical_seo": ["https://developers.google.com/search/docs/crawling-indexing"],
+        "on_page_seo": ["https://developers.google.com/search/docs/appearance/title-link"],
+        "robots_txt": ["https://developers.google.com/search/docs/crawling-indexing/robots/intro"],
+        "sitemap_xml": ["https://www.sitemaps.org/protocol.html"],
+        "llms_txt": ["https://llmstxt.org/"],
+        "accessibility": ["https://www.w3.org/TR/WCAG22/"],
+        "aria": ["https://www.w3.org/WAI/ARIA/apg/"],
+        "aria_alt_text": ["https://www.w3.org/WAI/tutorials/images/"],
+        "structured_data": ["https://developers.google.com/search/docs/appearance/structured-data/intro-structured-data"],
+        "security_transport": ["https://developer.mozilla.org/en-US/docs/Web/Security/Transport_Layer_Security"],
+        "security_headers": ["https://owasp.org/www-project-secure-headers/"],
+        "performance": ["https://web.dev/articles/vitals"],
+        "mobile_ux": ["https://www.w3.org/TR/WCAG22/#reflow"],
+        "international_seo": ["https://developers.google.com/search/docs/specialty/international/localized-versions"],
+        "conversion_paid_traffic": ["https://support.google.com/analytics/answer/9322688"],
+    }
+    confidence = (
+        "limited" if status in {"not_tested", "insufficient_data", "manual_review_required"}
+        else "moderate" if source_url and evidence.strip()
+        else "limited"
+    )
     return AuditFinding(
         finding_id=finding_id,
         category=category, title=title, status=status, severity=severity,
         evidence=evidence, explanation=explanation, recommendation=recommendation,
         verification_steps=steps, source_url=source_url,
+        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+        test_method="Bounded passive public-page check; see finding-specific evidence and limitations",
+        evidence_confidence=confidence,
+        standard_references=reference_map.get(normalized_category, []),
     )
 
 
