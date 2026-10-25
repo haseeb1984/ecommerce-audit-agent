@@ -42,6 +42,7 @@ class AuditFinding(BaseModel):
     # Optional, evidence-backed business context. Never inferred by the renderer.
     potential_benefit: str | None = None
     risk_if_unresolved: str | None = None
+    severity_rationale: str = "Severity is a triage label, not a measured business impact."
     observed_at_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     test_method: str = "Not specified by the individual checker"
     evidence_confidence: str = "limited"
@@ -59,6 +60,19 @@ class AuditFinding(BaseModel):
                 str(values.get("source_url") or "").strip(),
             ))
             values["finding_id"] = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+        rationale = str(values.get("severity_rationale") or "").strip()
+        if not rationale or rationale == "Severity is a triage label, not a measured business impact.":
+            severity = str(values.get("severity") or "").lower()
+            rationale_by_severity = {
+                "critical": "Highest triage priority under the checker rule because the observed condition may have material impact; verify scope and exploitability before action.",
+                "high": "High triage priority under the checker rule because the observed condition may materially affect technical behavior or users; business impact is not measured.",
+                "medium": "Moderate triage priority under the checker rule; confirm scope and affected templates before estimating business impact.",
+                "low": "Lower triage priority under the checker rule; prioritize against other verified work and site context.",
+                "info": "Informational or unavailable state; this label does not by itself recommend remediation.",
+            }
+            values["severity_rationale"] = rationale_by_severity.get(
+                severity, "Severity is a triage label, not a measured business impact."
+            )
         effort = str(values.get("estimated_effort") or "").strip()
         if not effort or effort == "Not estimated":
             status = str(values.get("status") or "").lower()
