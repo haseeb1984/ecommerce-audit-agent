@@ -699,7 +699,49 @@ async def get_audit_report_coverage(
         raise HTTPException(status_code=404, detail="Audit report not found")
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return json.loads(row.coverage_json)
+    payload = json.loads(row.coverage_json)
+    # Keep the common coverage request small. Detailed evidence is separately paginated
+    # so large crawls do not flood the customer dashboard or serverless response body.
+    findings = payload.pop("findings", [])
+    outcomes = payload.pop("check_outcomes", [])
+    payload["stored_findings_count"] = len(findings) if isinstance(findings, list) else 0
+    payload["stored_check_outcomes_count"] = len(outcomes) if isinstance(outcomes, list) else 0
+    payload["evidence_endpoint"] = f"/api/v1/reports/{report_id}/evidence"
+    return payload
+
+
+@app.get("/api/v1/reports/{report_id}/evidence")
+async def get_audit_report_evidence(
+    report_id: int,
+    response: Response,
+    kind: str = Query("findings", pattern="^(findings|check_outcomes)$"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded page of saved evidence, isolated to the owning license."""
+    from sqlalchemy import select
+    row = (await db.execute(select(AuditReport).where(
+        AuditReport.id == report_id,
+        AuditReport.license_id == license_obj.id,
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audit report not found")
+    metadata = json.loads(row.coverage_json)
+    collection = metadata.get("findings" if kind == "findings" else "check_outcomes", [])
+    if not isinstance(collection, list):
+        collection = []
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "report_id": report_id,
+        "kind": kind,
+        "total": len(collection),
+        "limit": limit,
+        "offset": offset,
+        "items": collection[offset:offset + limit],
+    }
 
 
 
