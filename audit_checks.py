@@ -856,6 +856,26 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
          "Provide a clear primary page heading in the page's semantic HTML.",
          ["Inspect the rendered page and heading outline; confirm the main heading is meaningful."]),
     ]
+    viewport_values = {
+        key.strip().lower(): value.strip().lower()
+        for token in parser.viewport.split(",")
+        if "=" in token
+        for key, value in [token.split("=", 1)]
+    }
+    if parser.viewport and (
+        viewport_values.get("width") != "device-width"
+        or viewport_values.get("initial-scale") != "1"
+    ):
+        findings.append(_finding(
+            "mobile_ux", "Viewport configuration needs review",
+            "manual_review_required", "low",
+            f"Viewport declaration: {parser.viewport[:200]!r}; width=device-width: {viewport_values.get('width') == 'device-width'}; initial-scale=1: {viewport_values.get('initial-scale') == '1'}. URL: {final_url}",
+            "A viewport declaration can influence the initial mobile layout, but this source check does not test responsive rendering, zoom, clipping, or touch usability.",
+            "Review the viewport configuration against the site's intended responsive behavior. Do not disable user zoom; test representative narrow, tablet, and desktop widths in a real browser.",
+            ["Inspect the page at 320, 360, 375, 390, and 414 CSS-pixel widths.", "Check portrait and landscape layouts, browser zoom, and horizontal overflow.", "Confirm the declaration does not restrict user scaling."],
+            final_url,
+        ))
+
     for passed, title, evidence, recommendation, steps in checks:
         if passed:
             recommendation = {
