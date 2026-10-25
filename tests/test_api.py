@@ -494,7 +494,7 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
         )
 
     async def fake_crawl(target_url):
-        return [], [target_url], ["Crawl mocked for isolated API journey test."]
+        raise TimeoutError("simulated optional crawl timeout")
 
     async def fake_conversion(target_url):
         return [], [target_url], ["Conversion checks mocked for isolated API journey test."]
@@ -547,6 +547,12 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
     # The fake phase-one checker emitted no indexing finding in this isolated test.
     assert coverage_categories["indexing"]["status"] == "not_proven"
     assert coverage_categories["indexing"]["checker_group_executed"] is False
+    # An optional crawl timeout is retained as not-tested evidence and must not
+    # discard the PDF, saved report, quota accounting, or completed conversion checker.
+    assert coverage_categories["crawlability"]["status"] == "recorded"
+    assert coverage_categories["crawlability"]["checker_group_executed"] is False
+    assert coverage_categories["conversion_paid_traffic"]["status"] == "checked_no_findings"
+    assert coverage_categories["conversion_paid_traffic"]["checker_group_executed"] is True
 
     other_headers = {"X-License-Key": other_key}
     for path in (
