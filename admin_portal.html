@@ -38,7 +38,7 @@ async function manageClient(c){
 }
 let currentHistoryId=null;
 async function history(id){currentHistoryId=id;try{const d=await api("/api/v1/admin/clients/"+id+"/history");$("historyPanel").hidden=false;$("historyTitle").textContent="History: "+d.client.client_name+" (#"+id+")";$("historyMeta").textContent="Package "+String(d.client.tier).toUpperCase()+" · Monthly limit "+d.client.monthly_limit+" · "+(d.client.is_active?"Active":"Inactive")+" · Created "+date(d.client.created_at);$("history").replaceChildren(
-box("Audit activity",d.audits,a=>[a.domain,"#"+a.id+" · "+date(a.created_at)+" · Mobile score "+a.mobile_score+" · Speed Index "+a.speed_index_sec+"s · "+a.source]),
+box("Audit activity",d.audits,a=>[a.domain,"#"+a.id+" · "+date(a.created_at)+" · Mobile score "+(a.mobile_score==null?"Not measured":a.mobile_score+"/100")+" · Speed Index "+(a.speed_index_sec==null?"Not measured":a.speed_index_sec+"s")+" · "+a.source]),
 reportBox(d.reports),
 box("Quota reservations",d.reservations,r=>["Reservation #"+r.id,r.status+" · Started "+date(r.created_at)+" · Expires "+date(r.expires_at)]),
 paymentBox(d.payments));$("historyPanel").scrollIntoView({behavior:"smooth"})}catch(e){status(e.message,"error")}}
