@@ -462,7 +462,7 @@ async def comprehensive_audit_pdf(
 
         db.add(AuditLead(
             license_id=license_id,
-            domain=urlsplit(target_url).hostname or metrics.domain,
+            domain=urlsplit(target_url).hostname or (metrics.domain if metrics else "website"),
             mobile_score=metrics.mobile_score if metrics is not None else None,
             speed_index_sec=metrics.speed_index_sec if metrics is not None else None,
             contact_email=None,
