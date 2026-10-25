@@ -1050,7 +1050,7 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 10
+    assert len(by_id) == 11
     assert by_id["html.images_alt_attribute"].outcome == "pass"
     assert by_id["html.images_empty_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
@@ -1172,3 +1172,26 @@ def test_canonical_declaration_outcomes_are_conservative(canonical_markup, expec
     assert outcome.outcome == expected
     assert outcome.method == "bounded static HTML source inspection"
     assert outcome.evidence_ref
+
+
+
+@pytest.mark.parametrize(
+    ("viewport", "expected"),
+    [
+        ("width=device-width, initial-scale=1", "pass"),
+        ("width=980, initial-scale=1", "warning"),
+        ("width=device-width", "warning"),
+        ("", "not_assessed"),
+    ],
+)
+def test_viewport_configuration_outcome_is_separate_from_responsive_testing(viewport, expected):
+    html = f'<html lang="en"><head><title>Shop</title><meta name="viewport" content="{viewport}"></head><body></body></html>'
+    outcomes = audit_checks.record_homepage_outcomes(
+        html,
+        "https://shop.example/",
+        {"content-type": "text/html; charset=utf-8"},
+        "2026-10-25T00:00:00+00:00",
+    )
+    outcome = next(item for item in outcomes if item.check_id == "mobile.viewport_configuration")
+    assert outcome.outcome == expected
+    assert "does not test rendered responsiveness" in outcome.evidence
