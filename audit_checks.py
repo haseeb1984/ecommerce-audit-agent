@@ -396,6 +396,14 @@ def record_homepage_outcomes(
            f"Meta description count: {parser.meta_description_count}; non-empty description present: {bool(parser.meta_description)}.")
     record("html.meta_description_count", "on_page_seo", "warning" if parser.meta_description_count > 1 else "pass",
            f"Meta description element count: {parser.meta_description_count}; empty declaration count: {parser.meta_description_empty_count}. This check does not assess snippet selection.")
+    empty_description_outcome = (
+        "not_assessed" if parser.meta_description_count == 0
+        else "issue" if parser.meta_description_empty_count == parser.meta_description_count
+        else "warning" if parser.meta_description_empty_count > 0
+        else "pass"
+    )
+    record("html.meta_description_content", "on_page_seo", empty_description_outcome,
+           f"Meta description element count: {parser.meta_description_count}; empty declaration count: {parser.meta_description_empty_count}. Non-empty content presence is checked only; quality and search snippet selection are not assessed.")
     record("html.h1_present", "on_page_seo", "pass" if parser.h1_count > parser.empty_h1_count else "issue",
            f"H1 element count: {parser.h1_count}; empty H1 count: {parser.empty_h1_count}.")
     record("html.h1_count", "on_page_seo", "warning" if parser.h1_count > 1 else "pass",
