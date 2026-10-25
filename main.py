@@ -274,6 +274,11 @@ async def comprehensive_audit_pdf(
             if isinstance(metric_value, (int, float)):
                 lab_metric_parts.append(f"{metric_label}: {metric_value}{(' ' + unit) if unit else ''}")
         field_metric_parts = []
+        field_data_context = getattr(metrics, "field_data_context", {}) or {}
+        if isinstance(field_data_context, dict):
+            for context_name, context_value in field_data_context.items():
+                if context_name.endswith("_overall_category") and isinstance(context_value, str):
+                    field_metric_parts.append(f"{context_name}: {context_value}")
         field_metrics = getattr(metrics, "field_metrics", {}) or {}
         if isinstance(field_metrics, dict):
             for metric_name, metric_data in field_metrics.items():
