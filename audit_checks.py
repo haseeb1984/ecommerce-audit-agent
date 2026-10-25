@@ -412,6 +412,12 @@ def record_homepage_outcomes(
         f"Image elements: {parser.images}; elements missing an alt attribute: {parser.images_missing_alt}. "
         "This source check does not determine whether supplied alternative text is meaningful or appropriate.",
     )
+    record(
+        "html.images_empty_alt_attribute", "aria_alt_text",
+        "warning" if parser.images_empty_alt else "pass",
+        f"Image elements: {parser.images}; elements with explicitly empty alt attributes: {parser.images_empty_alt}. "
+        "Empty alt is appropriate for decorative images, but context is needed to judge product or informative images.",
+    )
     if parser.jsonld_scripts:
         malformed_jsonld = 0
         for script in parser.jsonld_scripts:
