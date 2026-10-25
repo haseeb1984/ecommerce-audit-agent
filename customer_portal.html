@@ -171,6 +171,26 @@
         try { const r = await api(item.coverage_url); const data = await r.json(); setStatus("auditStatus", JSON.stringify(data, null, 2)); }
         catch (e) { setStatus("auditStatus", e.message, "error"); }
       });
+      const evidence = document.createElement("button"); evidence.type = "button"; evidence.className = "secondary"; evidence.textContent = "View saved findings";
+      evidence.addEventListener("click", async () => {
+        evidence.disabled = true;
+        try {
+          const [findingsResponse, outcomesResponse] = await Promise.all([
+            api("/api/v1/reports/" + item.id + "/evidence?kind=findings&limit=20&offset=0"),
+            api("/api/v1/reports/" + item.id + "/evidence?kind=check_outcomes&limit=20&offset=0")
+          ]);
+          const [findings, outcomes] = await Promise.all([findingsResponse.json(), outcomesResponse.json()]);
+          setStatus("auditStatus", JSON.stringify({
+            report_id: item.id,
+            findings_total: findings.total,
+            findings_page: findings.items,
+            check_outcomes_total: outcomes.total,
+            check_outcomes_page: outcomes.items,
+            note: "Showing the first 20 records of each type. Use the paginated evidence API for later records."
+          }, null, 2));
+        } catch (e) { setStatus("auditStatus", e.message, "error"); }
+        finally { evidence.disabled = false; }
+      });
       const emailbox = document.createElement("div"); emailbox.className = "emailbox";
       const recipient = document.createElement("input"); recipient.type = "email"; recipient.required = true; recipient.maxLength = 254; recipient.placeholder = "Recipient email"; recipient.setAttribute("aria-label", "Report recipient email");
       const consentLabel = document.createElement("label");
@@ -187,7 +207,7 @@
         finally { send.disabled = false; }
       });
       emailbox.append(recipient, consentLabel, send);
-      actions.append(download, coverage, emailbox); card.append(meta, actions); container.append(card);
+      actions.append(download, coverage, evidence, emailbox); card.append(meta, actions); container.append(card);
     }
   }
   $("reportFilter").addEventListener("input", renderReports);
