@@ -212,7 +212,10 @@ def calculate_security_assessment(findings: list[AuditFinding], limitations: lis
     }
 
 
-def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object]]:
+def _consolidate_findings(
+    findings: list[AuditFinding],
+    check_outcomes: list[object] | None = None,
+) -> list[dict[str, object]]:
     """Merge repeated instances of the same actionable issue across inspected pages."""
     groups: dict[tuple[str, str, str, str, str, str, str, str], dict[str, object]] = {}
     for finding in findings:
@@ -255,11 +258,31 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
             item["evidence"].append(evidence)
         if finding.source_url:
             affected_url = _safe_public_url(finding.source_url)
+            category_aliases = {
+                "technical_seo": {"technical_seo", "on_page_seo"},
+                "crawlability": {"crawl", "crawlability"},
+                "ecommerce": {"ecommerce", "ecommerce_category"},
+                "trust": {"trust", "trust_inspector"},
+                "security_baseline": {"security", "security_baseline"},
+                "content_quality": {"content_quality", "duplicate_content"},
+            }
+            accepted_categories = category_aliases.get(finding.category, {finding.category})
+            matched_outcomes = []
+            for outcome_record in check_outcomes or []:
+                outcome_url = _safe_public_url(str(getattr(outcome_record, "page_url", "") or ""))
+                if outcome_url != affected_url or getattr(outcome_record, "category", None) not in accepted_categories:
+                    continue
+                matched_outcomes.append({
+                    "check_id": str(getattr(outcome_record, "check_id", "") or ""),
+                    "outcome": str(getattr(outcome_record, "outcome", "not_assessed")),
+                    "evidence": _sanitize_report_text(getattr(outcome_record, "evidence", ""), limit=500),
+                })
             affected_record = {
                 "url": affected_url,
                 "observed_value": evidence[:600],
                 "outcome": finding.status,
                 "severity": finding.severity,
+                "check_outcomes": matched_outcomes,
             }
             if affected_url and affected_record not in item["affected_pages"]:
                 item["affected_pages"].append(affected_record)
@@ -1163,7 +1186,7 @@ def render_audit_pdf(
         textColor=colors.HexColor("#555555"),
     )
 
-    cover_findings = _consolidate_findings(result.findings)
+    cover_findings = _consolidate_findings(result.findings, result.check_outcomes)
     cover_priority_count = sum(
         1 for finding in cover_findings
         if str(finding.get("severity", "")).lower() in {"critical", "high"}
@@ -1313,7 +1336,7 @@ def render_audit_pdf(
 
     story.append(PageBreak())
 
-    consolidated_findings = _consolidate_findings(result.findings)
+    consolidated_findings = _consolidate_findings(result.findings, result.check_outcomes)
     story.append(ExecutiveSummaryInfographic(consolidated_findings, len(set(result.pages_checked))))
     story.append(Spacer(1, 4 * mm))
     story.extend([
@@ -1692,8 +1715,16 @@ def render_audit_pdf(
                 affected_rows.append([
                     _p(affected.get("url") or "URL not available", small_style),
                     _p(
-                        str(affected.get("outcome") or "not_tested")
-                        + " / " + str(affected.get("severity") or "info"),
+                        "Finding: " + str(affected.get("outcome") or "not_tested")
+                        + " / " + str(affected.get("severity") or "info")
+                        + (
+                            "; checks: " + ", ".join(
+                                str(record.get("check_id")) + "=" + str(record.get("outcome"))
+                                for record in affected.get("check_outcomes", [])[:6]
+                            )
+                            if affected.get("check_outcomes")
+                            else "; no linked explicit per-check outcome"
+                        ),
                         small_style,
                     ),
                     _p(affected.get("observed_value") or "No specific value recorded", small_style),
