@@ -261,6 +261,8 @@ def _service_offer_for_finding(finding: dict[str, object]) -> str | None:
     """Offer relevant help only for evidence-backed observations; never imply guaranteed outcomes."""
     if str(finding.get("status", "")).lower() != "verified":
         return None
+    if str(finding.get("severity", "")).lower() == "info":
+        return None
     category = str(finding.get("category", "")).strip().lower()
     service_by_category = {
         "performance": "PageSpeed diagnostics and performance optimization planning",
