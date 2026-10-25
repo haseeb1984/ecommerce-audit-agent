@@ -52,14 +52,13 @@ class AuditFinding(BaseModel):
     @root_validator
     def ensure_stable_finding_id(cls, values):
         """Every finding, including synthetic unavailable states, gets a stable ID."""
-        if str(values.get("finding_id") or "").strip():
-            return values
-        identity = "|".join((
-            str(values.get("category") or "").strip().lower(),
-            str(values.get("title") or "").strip().lower(),
-            str(values.get("source_url") or "").strip(),
-        ))
-        values["finding_id"] = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+        if not str(values.get("finding_id") or "").strip():
+            identity = "|".join((
+                str(values.get("category") or "").strip().lower(),
+                str(values.get("title") or "").strip().lower(),
+                str(values.get("source_url") or "").strip(),
+            ))
+            values["finding_id"] = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
         effort = str(values.get("estimated_effort") or "").strip()
         if not effort or effort == "Not estimated":
             status = str(values.get("status") or "").lower()
