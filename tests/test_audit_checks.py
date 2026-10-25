@@ -1050,8 +1050,9 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 8
+    assert len(by_id) == 9
     assert by_id["html.images_alt_attribute"].outcome == "pass"
+    assert by_id["html.images_empty_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
     assert by_id["html.meta_description_present"].outcome == "pass"
     assert by_id["html.document_language"].outcome == "pass"
@@ -1134,3 +1135,16 @@ def test_sitemap_seed_http_failure_records_explicit_url_status(monkeypatch):
     assert status_outcome.outcome == "issue"
     assert status_outcome.page_url == "https://shop.example/products/missing"
     assert any(item.title == "Sitemap-listed URL returned a non-success HTTP status" for item in findings)
+
+
+
+def test_empty_image_alt_is_warning_not_automatic_accessibility_failure():
+    outcomes = audit_checks.record_homepage_outcomes(
+        '<html lang="en"><head><title>Shop</title></head><body><img src="/decorative.svg" alt=""></body></html>',
+        "https://shop.example/",
+        {"content-type": "text/html; charset=utf-8"},
+        "2026-10-25T00:00:00+00:00",
+    )
+    outcome = next(item for item in outcomes if item.check_id == "html.images_empty_alt_attribute")
+    assert outcome.outcome == "warning"
+    assert "context is needed" in outcome.evidence
