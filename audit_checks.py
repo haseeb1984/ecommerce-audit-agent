@@ -15,7 +15,7 @@ import re
 import socket
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
@@ -118,7 +118,7 @@ class CheckOutcome(BaseModel):
     check_id: str
     category: str
     page_url: str
-    outcome: str  # pass, issue, warning, not_assessed, error
+    outcome: Literal["pass", "issue", "warning", "not_assessed", "error"]
     observed_at_utc: str
     method: str
     evidence: str
