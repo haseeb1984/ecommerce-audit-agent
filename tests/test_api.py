@@ -570,6 +570,7 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
         "/api/v1/reports",
         f"/api/v1/reports/{report_id}/pdf",
         f"/api/v1/reports/{report_id}/coverage",
+        f"/api/v1/reports/{report_id}/evidence",
     ):
         response = await client.get(path, headers=other_headers)
         if path == "/api/v1/reports":
