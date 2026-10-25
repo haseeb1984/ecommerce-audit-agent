@@ -191,9 +191,13 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
                 "verification_steps": [],
                 "source_urls": [],
                 "instances": 0,
+                "finding_ids": [],
             }
         item = groups[key]
         item["instances"] = int(item["instances"]) + 1
+        finding_id = str(getattr(finding, "finding_id", "") or "").strip()
+        if finding_id and finding_id not in item["finding_ids"]:
+            item["finding_ids"].append(finding_id)
         evidence = str(finding.evidence or "").strip()
         if evidence and evidence not in item["evidence"]:
             item["evidence"].append(evidence)
@@ -1346,6 +1350,7 @@ def render_audit_pdf(
             Spacer(1, 2 * mm),
             header,
             Spacer(1, 1.5 * mm),
+            *([_p("Finding ID(s): " + ", ".join(str(value) for value in finding["finding_ids"]), small_style)] if finding.get("finding_ids") else []),
             FindingInsightInfographic(finding),
             Spacer(1, 1.5 * mm),
             category_line,
