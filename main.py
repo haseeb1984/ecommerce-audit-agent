@@ -280,10 +280,13 @@ async def comprehensive_audit_pdf(
                 if not isinstance(metric_data, dict):
                     continue
                 percentile = metric_data.get("percentile")
+                normalized_value = metric_data.get("normalized_value", percentile)
+                unit = metric_data.get("unit")
                 category = metric_data.get("category")
                 if isinstance(percentile, (int, float)):
                     field_metric_parts.append(
-                        f"{metric_name}: p75={percentile}"
+                        f"{metric_name}: p75={normalized_value}"
+                        + (f" {unit}" if isinstance(unit, str) else "")
                         + (f", category={category}" if isinstance(category, str) else "")
                     )
         performance_evidence = (
