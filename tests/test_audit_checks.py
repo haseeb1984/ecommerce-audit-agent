@@ -1068,7 +1068,7 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 12
+    assert len(by_id) == 15
     assert by_id["html.images_alt_attribute"].outcome == "pass"
     assert by_id["html.images_empty_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
@@ -1078,6 +1078,25 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
     assert all(item.page_url == "https://shop.example/" for item in outcomes)
     assert all(item.observed_at_utc == "2026-10-24T00:00:00+00:00" for item in outcomes)
     assert all(item.method and item.evidence and item.evidence_ref for item in outcomes)
+
+
+def test_duplicate_title_description_and_h1_outcomes_are_warnings():
+    html = """
+    <html lang="en"><head>
+    <title>One</title><title>Two</title>
+    <meta name="description" content="First">
+    <meta name="description" content="Second">
+    </head><body><h1>First</h1><h1>Second</h1></body></html>
+    """
+    outcomes = audit_checks.record_homepage_outcomes(
+        html, "https://shop.example/duplicates", {},
+        "2026-10-25T00:00:00+00:00",
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["html.title_count"].outcome == "warning"
+    assert by_id["html.meta_description_count"].outcome == "warning"
+    assert by_id["html.h1_count"].outcome == "warning"
+    assert "does not determine" in by_id["html.meta_description_count"].evidence
 
 
 def test_homepage_outcomes_record_issue_instead_of_inferring_pass_from_missing_elements():
