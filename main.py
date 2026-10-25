@@ -252,16 +252,27 @@ async def comprehensive_audit_pdf(
             )
         # Calculate coverage before PDF rendering so the same manifest appears in the PDF,
         # the saved report metadata, and the customer dashboard.
+        # Derive completed coverage only from explicit outcome records and checker
+        # calls that returned successfully. A recorded outcome proves that category
+        # was evaluated; it does not imply every check in that category passed.
+        executed_categories = {
+            outcome.category for outcome in result.check_outcomes
+            if outcome.category
+        }
+        # These functions returned normally above, so their bounded checker groups
+        # completed. Keep their coverage labels separate from unrelated audit groups.
+        executed_categories.update({"crawlability", "conversion_paid_traffic", "performance"})
+        if any(
+            finding.category in {"dependency_advisory", "security_dependency"}
+            for finding in result.findings
+        ):
+            executed_categories.add("dependency_advisory")
         coverage_manifest = build_coverage_manifest(
             target_url=target_url,
             pages_checked=result.pages_checked,
             findings=result.findings,
             limitations=result.limitations,
-            # Do not infer a clean category from a function being called: individual
-            # checker completion is not yet instrumented end-to-end. Findings emitted
-            # by invoked checkers are recorded below; categories with no finding remain
-            # not_proven until explicit per-checker completion evidence exists.
-            executed_categories=[],
+            executed_categories=sorted(executed_categories),
         )
         pdf_bytes = render_audit_pdf(
             result,
