@@ -841,9 +841,32 @@ async def get_audit_report_evidence(
         collection = []
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
+    outcome_summary = None
+    if kind == "check_outcomes":
+        # Count only stored explicit outcome records. These counts describe saved
+        # evidence, not every possible check on the website.
+        states = ("pass", "issue", "warning", "not_assessed", "error")
+        counts = {
+            state: sum(
+                1 for item in collection
+                if isinstance(item, dict) and item.get("outcome") == state
+            )
+            for state in states
+        }
+        denominator = len(collection)
+        outcome_summary = {
+            "denominator": denominator,
+            "counts": counts,
+            "percentages": {
+                state: round(count / denominator * 100, 1) if denominator else None
+                for state, count in counts.items()
+            },
+            "scope_note": "Only saved explicit outcomes are counted; missing outcomes are not passes and this is not full-site coverage.",
+        }
     return {
         "report_id": report_id,
         "kind": kind,
+        "outcome_summary": outcome_summary,
         "total": len(collection),
         "limit": limit,
         "offset": offset,
