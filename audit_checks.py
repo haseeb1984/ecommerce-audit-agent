@@ -50,7 +50,7 @@ class AuditFinding(BaseModel):
     estimated_effort: str = "Not estimated"
     effort_basis: str = "No implementation-specific estimate recorded"
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def ensure_stable_finding_id(cls, values):
         """Every finding, including synthetic unavailable states, gets a stable ID."""
         if not str(values.get("finding_id") or "").strip():
