@@ -23,8 +23,8 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
-    TableOfContents,
 )
+from reportlab.platypus.tableofcontents import TableOfContents
 
 from audit_checks import (
     AuditCheckResult, AuditFinding, MAX_RESPONSE_BYTES, MAX_REDIRECTS,
