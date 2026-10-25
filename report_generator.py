@@ -214,6 +214,12 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
                 "source_urls": [],
                 "instances": 0,
                 "finding_ids": [],
+                "observed_at_utc": [],
+                "test_methods": [],
+                "evidence_confidences": [],
+                "standard_references": [],
+                "estimated_effort": finding.estimated_effort,
+                "effort_basis": finding.effort_basis,
             }
         item = groups[key]
         item["instances"] = int(item["instances"]) + 1
@@ -223,6 +229,18 @@ def _consolidate_findings(findings: list[AuditFinding]) -> list[dict[str, object
         evidence = str(finding.evidence or "").strip()
         if evidence and evidence not in item["evidence"]:
             item["evidence"].append(evidence)
+        observed_at = str(getattr(finding, "observed_at_utc", "") or "").strip()
+        if observed_at and observed_at not in item["observed_at_utc"]:
+            item["observed_at_utc"].append(observed_at)
+        test_method = str(getattr(finding, "test_method", "") or "").strip()
+        if test_method and test_method not in item["test_methods"]:
+            item["test_methods"].append(test_method)
+        confidence = str(getattr(finding, "evidence_confidence", "") or "").strip()
+        if confidence and confidence not in item["evidence_confidences"]:
+            item["evidence_confidences"].append(confidence)
+        for reference in getattr(finding, "standard_references", []) or []:
+            if reference not in item["standard_references"] and _safe_public_url(reference):
+                item["standard_references"].append(reference)
         for step in finding.verification_steps:
             if step not in item["verification_steps"]:
                 item["verification_steps"].append(step)
@@ -1535,6 +1553,12 @@ def render_audit_pdf(
         if urls:
             refs = ", ".join(evidence_ids[url] for url in urls)
             blocks.append(_p(f"Evidence references: {refs}", small_style))
+        if finding.get("observed_at_utc"):
+            blocks.append(_p("Observed at (UTC): " + "; ".join(finding["observed_at_utc"][:3]), small_style))
+        if finding.get("test_methods"):
+            blocks.append(_p("Test method: " + "; ".join(finding["test_methods"][:2]), small_style))
+        if finding.get("evidence_confidences"):
+            blocks.append(_p("Evidence confidence: " + ", ".join(finding["evidence_confidences"]), small_style))
         blocks.append(Paragraph("<b>What was observed</b>", body_style))
         if evidence_items:
             # Keep observations distinct instead of flattening them into one long
@@ -1564,6 +1588,16 @@ def render_audit_pdf(
         ])
         for step in finding["verification_steps"]:
             blocks.append(_p("• " + step, body_style))
+        references = finding.get("standard_references") or []
+        if references:
+            blocks.append(Paragraph("<b>Standards and authoritative references</b>", body_style))
+            for reference in references[:5]:
+                blocks.append(_link(str(reference), small_style))
+        blocks.append(_p(
+            "Estimated effort: " + str(finding.get("estimated_effort") or "Not estimated")
+            + ". Basis: " + str(finding.get("effort_basis") or "No implementation-specific estimate recorded"),
+            small_style,
+        ))
         blocks.append(Spacer(1, 3 * mm))
         # Let ReportLab split long findings across pages. Keeping every paragraph
         # in one indivisible group can raise LayoutError for a verbose finding.
