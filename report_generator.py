@@ -261,6 +261,7 @@ def _consolidate_findings(
             category_aliases = {
                 "technical_seo": {"technical_seo", "on_page_seo"},
                 "crawlability": {"crawl", "crawlability"},
+                "crawl": {"crawl", "crawlability"},
                 "ecommerce": {"ecommerce", "ecommerce_category"},
                 "trust": {"trust", "trust_inspector"},
                 "security_baseline": {"security", "security_baseline"},
