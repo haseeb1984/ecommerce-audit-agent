@@ -42,4 +42,4 @@ def test_finding_contract_defaults_are_explicit_for_manual_findings():
     assert finding.test_method == "Not specified by the individual checker"
     assert finding.evidence_confidence == "limited"
     assert finding.standard_references == []
-    assert finding.estimated_effort == "Not estimated"
+    assert finding.estimated_effort == "Not applicable until an actionable issue is confirmed"
