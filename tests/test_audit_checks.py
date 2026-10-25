@@ -1050,7 +1050,7 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 9
+    assert len(by_id) == 10
     assert by_id["html.images_alt_attribute"].outcome == "pass"
     assert by_id["html.images_empty_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
@@ -1148,3 +1148,27 @@ def test_empty_image_alt_is_warning_not_automatic_accessibility_failure():
     outcome = next(item for item in outcomes if item.check_id == "html.images_empty_alt_attribute")
     assert outcome.outcome == "warning"
     assert "context is needed" in outcome.evidence
+
+
+
+@pytest.mark.parametrize(
+    ("canonical_markup", "expected"),
+    [
+        ('<link rel="canonical" href="https://shop.example/product">', "pass"),
+        ('<link rel="canonical" href="javascript:alert(1)">', "issue"),
+        ('<link rel="canonical" href="/one"><link rel="canonical" href="/two">', "issue"),
+        ("", "warning"),
+    ],
+)
+def test_canonical_declaration_outcomes_are_conservative(canonical_markup, expected):
+    html = f'<html lang="en"><head><title>Shop</title>{canonical_markup}</head><body></body></html>'
+    outcomes = audit_checks.record_homepage_outcomes(
+        html,
+        "https://shop.example/product",
+        {"content-type": "text/html; charset=utf-8"},
+        "2026-10-25T00:00:00+00:00",
+    )
+    outcome = next(item for item in outcomes if item.check_id == "html.canonical_declaration")
+    assert outcome.outcome == expected
+    assert outcome.method == "bounded static HTML source inspection"
+    assert outcome.evidence_ref
