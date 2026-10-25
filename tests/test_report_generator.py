@@ -29,6 +29,27 @@ def test_render_audit_pdf_returns_pdf_with_evidence_and_limitations():
     assert len(pdf) > 1000
 
 
+def test_consolidated_findings_retain_stable_ids_for_pdf_cards():
+    from report_generator import _consolidate_findings
+
+    finding = AuditFinding(
+        finding_id="F-ABC123DEF456",
+        category="on_page_seo",
+        title="Multiple title elements",
+        status="verified",
+        severity="medium",
+        evidence="Found two title elements.",
+        explanation="Duplicate titles create ambiguous source signals.",
+        recommendation="Keep one intentional title element.",
+        verification_steps=["Inspect source."],
+        source_url="https://shop.example/",
+    )
+    consolidated = _consolidate_findings([finding, finding])
+    assert len(consolidated) == 1
+    assert consolidated[0]["finding_ids"] == ["F-ABC123DEF456"]
+    assert consolidated[0]["instances"] == 2
+
+
 def test_render_audit_pdf_handles_html_special_characters():
     result = AuditCheckResult(
         target_url="https://shop.example/?a=1&b=2",
