@@ -418,6 +418,34 @@ def record_homepage_outcomes(
         f"Image elements: {parser.images}; elements with explicitly empty alt attributes: {parser.images_empty_alt}. "
         "Empty alt is appropriate for decorative images, but context is needed to judge product or informative images.",
     )
+    if parser.canonical_count == 0:
+        canonical_outcome = "warning"
+        canonical_evidence = "No canonical link element was found in the returned HTML; some pages intentionally omit it."
+    elif parser.canonical_count > 1:
+        canonical_outcome = "issue"
+        canonical_evidence = f"Canonical link elements: {parser.canonical_count}; multiple declarations may conflict."
+    elif parser.canonical_missing_href_count:
+        canonical_outcome = "issue"
+        canonical_evidence = "A canonical link element was found without a usable href."
+    else:
+        try:
+            canonical_target = urljoin(final_url, parser.canonical_href)
+            canonical_parts = urlsplit(canonical_target)
+            canonical_valid = (
+                canonical_parts.scheme.lower() in {"http", "https"}
+                and bool(canonical_parts.hostname)
+                and canonical_parts.username is None
+                and canonical_parts.password is None
+            )
+        except ValueError:
+            canonical_valid = False
+            canonical_target = ""
+        canonical_outcome = "pass" if canonical_valid else "issue"
+        canonical_evidence = (
+            f"Canonical href: {parser.canonical_href!r}; resolved destination: {canonical_target!r}; "
+            f"HTTP(S) destination shape valid: {canonical_valid}. This does not prove canonical correctness or search-engine selection."
+        )
+    record("html.canonical_declaration", "technical_seo", canonical_outcome, canonical_evidence)
     if parser.jsonld_scripts:
         malformed_jsonld = 0
         for script in parser.jsonld_scripts:
