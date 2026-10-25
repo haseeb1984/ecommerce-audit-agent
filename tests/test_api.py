@@ -536,9 +536,15 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
     assert coverage.json()["target_url"] == "https://shop.example/"
     assert coverage.json()["evidence_storage_limits"]["max_findings"] == 150
     assert coverage.json()["evidence_storage_limits"]["query_strings_and_fragments_removed_from_evidence_urls"] is True
-    assert coverage.json()["findings"]
-    assert coverage.json()["findings"][0]["category"] == "performance"
-    assert coverage.json()["findings"][0]["test_method"] == "Google PageSpeed Insights API mobile Lighthouse lab run"
+    assert coverage.json()["stored_findings_count"] >= 1
+    findings_response = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?kind=findings&limit=20&offset=0",
+        headers=owner_headers,
+    )
+    assert findings_response.status_code == 200
+    assert findings_response.json()["total"] >= 1
+    assert findings_response.json()["items"][0]["category"] == "performance"
+    assert findings_response.json()["items"][0]["test_method"] == "Google PageSpeed Insights API mobile Lighthouse lab run"
     coverage_categories = {
         row["category"]: row
         for key in ("observed_categories", "checked_without_findings_categories", "not_proven_categories")
@@ -1152,8 +1158,14 @@ async def test_pagespeed_provider_failure_still_saves_partial_audit_without_fake
 
     coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=headers)
     assert coverage.status_code == 200
+    assert coverage.json()["stored_findings_count"] >= 1
+    evidence_response = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?kind=findings&limit=20&offset=0",
+        headers=headers,
+    )
+    assert evidence_response.status_code == 200
     performance = next(
-        row for row in coverage.json()["findings"]
+        row for row in evidence_response.json()["items"]
         if row["category"] == "performance"
     )
     assert performance["status"] == "not_tested"
