@@ -1424,6 +1424,7 @@ def render_audit_pdf(
             "images have empty alt text": "html.images_empty_alt_attribute",
             "multiple canonical link elements": "html.canonical_declaration",
             "canonical link missing href": "html.canonical_declaration",
+            "viewport configuration needs review": "mobile.viewport_configuration",
             "malformed json-ld structured data": "structured_data.jsonld_parseability",
             "sitemap-listed url returned a non-success http status": "discovery.sitemap_xml.listed_url_status",
         }
