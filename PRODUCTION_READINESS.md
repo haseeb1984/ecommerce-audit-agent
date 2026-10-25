@@ -12,6 +12,8 @@ The new flow creates a short-lived quota reservation in a short transaction, com
 
 Run the SQL in `migrations/001_audit_quota_reservations.sql` once. It creates `audit_quota_reservations` and its indexes. The statement is safe to re-run.
 
+Before deploying the partial-audit/PageSpeed-fallback change, also apply `migrations/20261025_optional_pagespeed_metrics.sql`. It allows the legacy `audit_leads.mobile_score` and `audit_leads.speed_index_sec` columns to be NULL when an external PageSpeed measurement is unavailable. NULL means “not measured”; do not backfill missing results with zero or other synthetic values.
+
 ## Automated tests
 
 Run:
@@ -31,6 +33,7 @@ Before merging/deploying:
 
 - [ ] GitHub Actions test workflow passes.
 - [ ] Apply the quota-reservation migration to production Supabase.
+- [ ] Apply `migrations/20261025_optional_pagespeed_metrics.sql` before deploying code that permits PageSpeed-unavailable partial reports.
 - [ ] Confirm Vercel production environment has `DATABASE_URL`, `GROQ_API_KEY`, and `PAGE_SPEED_API_KEY`.
 - [ ] Confirm database TLS remains enabled in production (`DATABASE_SSL` unset or set to `true`).
 - [ ] Confirm `GET /health-check` returns database connectivity.
