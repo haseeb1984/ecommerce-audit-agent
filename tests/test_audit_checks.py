@@ -1049,7 +1049,8 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 7
+    assert len(by_id) == 8
+    assert by_id["html.images_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
     assert by_id["html.meta_description_present"].outcome == "pass"
     assert by_id["html.document_language"].outcome == "pass"
