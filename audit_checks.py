@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 
 
 MAX_RESPONSE_BYTES = 1_000_000
@@ -48,6 +48,19 @@ class AuditFinding(BaseModel):
     standard_references: list[str] = Field(default_factory=list)
     estimated_effort: str = "Not estimated"
     effort_basis: str = "No implementation-specific estimate recorded"
+
+    @root_validator
+    def ensure_stable_finding_id(cls, values):
+        """Every finding, including synthetic unavailable states, gets a stable ID."""
+        if str(values.get("finding_id") or "").strip():
+            return values
+        identity = "|".join((
+            str(values.get("category") or "").strip().lower(),
+            str(values.get("title") or "").strip().lower(),
+            str(values.get("source_url") or "").strip(),
+        ))
+        values["finding_id"] = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+        return values
 
 
 class CheckOutcome(BaseModel):
