@@ -22,6 +22,7 @@ def test_finding_factory_records_reproducibility_metadata():
     assert finding.evidence_confidence in {"limited", "moderate"}
     assert "triage priority" in finding.severity_rationale.lower()
     assert finding.estimated_effort != "Not estimated"
+    assert finding.dependencies
     assert "https://developers.google.com/search/docs/crawling-indexing" in finding.standard_references
     assert finding.source_url == "https://shop.example/products/item"
 
