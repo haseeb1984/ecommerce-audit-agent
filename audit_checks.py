@@ -988,6 +988,15 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             ["Inspect the raw HTML and confirm there is exactly one title element.", "Check the browser tab title and compare it with the intended page title."],
             final_url,
         ))
+    if parser.meta_description_empty_count > 0:
+        findings.append(_finding(
+            "on_page_seo", "Empty meta description content", "verified", "low",
+            f"Found {parser.meta_description_empty_count} empty meta description declaration(s) among {parser.meta_description_count} total on {final_url}.",
+            "An empty meta description does not provide a page-specific summary in the source. Search engines may generate a snippet from page content; this check does not predict the displayed snippet.",
+            "Remove empty description declarations and retain one accurate, page-specific non-empty description where appropriate.",
+            ["Inspect all meta name=description elements in the raw HTML.", "Ensure empty declarations are removed and review the page snippet separately where search data is available."],
+            final_url,
+        ))
     if parser.meta_description_count > 1:
         findings.append(_finding(
             "on_page_seo", "Multiple meta description elements", "verified", "low",
