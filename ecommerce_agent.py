@@ -3,7 +3,7 @@ import json
 import logging
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from groq import AsyncGroq
 
 
@@ -21,6 +21,15 @@ class StoreAuditMetrics(BaseModel):
     is_slow: bool
     # Transient PageSpeed screenshot data URI; never persisted in the lead database.
     screenshot_data_uri: str | None = None
+    lcp_sec: float | None = None
+    cls_score: float | None = None
+    tbt_ms: float | None = None
+    ttfb_ms: float | None = None
+    field_metrics: dict[str, object] = Field(default_factory=dict)
+    lighthouse_version: str | None = None
+    page_fetch_time: str | None = None
+    final_url: str | None = None
+    form_factor: str | None = None
 
 
 class ContactInfo(BaseModel):
@@ -173,6 +182,50 @@ class UniversalEcommerceAgent:
             score = round(performance_score * 100)
             speed_index = speed_index_ms / 1000.0
 
+            audits = lighthouse.get("audits", {}) if isinstance(lighthouse.get("audits"), dict) else {}
+            def _metric_ms(audit_id: str) -> float | None:
+                audit = audits.get(audit_id, {})
+                value = audit.get("numericValue") if isinstance(audit, dict) else None
+                try:
+                    parsed = float(value)
+                    return round(parsed, 2) if parsed >= 0 else None
+                except (TypeError, ValueError):
+                    return None
+
+            lcp_ms = _metric_ms("largest-contentful-paint")
+            cls_value = _metric_ms("cumulative-layout-shift")
+            tbt_ms = _metric_ms("total-blocking-time")
+            ttfb_ms = _metric_ms("server-response-time")
+            loading_experience = data.get("loadingExperience", {})
+            loading_metrics = (
+                loading_experience.get("metrics", {})
+                if isinstance(loading_experience, dict) else {}
+            )
+            field_metrics: dict[str, object] = {}
+            if isinstance(loading_metrics, dict):
+                for metric_name in (
+                    "LARGEST_CONTENTFUL_PAINT_MS",
+                    "CUMULATIVE_LAYOUT_SHIFT_SCORE",
+                    "INTERACTION_TO_NEXT_PAINT",
+                    "FIRST_CONTENTFUL_PAINT_MS",
+                    "EXPERIMENTAL_TIME_TO_FIRST_BYTE",
+                ):
+                    metric = loading_metrics.get(metric_name)
+                    if not isinstance(metric, dict):
+                        continue
+                    percentile = metric.get("percentile")
+                    category = metric.get("category")
+                    if isinstance(percentile, (int, float)) and not isinstance(percentile, bool):
+                        field_metrics[metric_name] = {
+                            "percentile": percentile,
+                            "category": category if isinstance(category, str) else None,
+                            "source": "PageSpeed loadingExperience field data",
+                        }
+            lighthouse_version = lighthouse.get("lighthouseVersion")
+            page_fetch_time = lighthouse.get("fetchTime")
+            final_url = lighthouse.get("finalDisplayedUrl") or lighthouse.get("finalUrl")
+            form_factor = lighthouse.get("configSettings", {}).get("formFactor") if isinstance(lighthouse.get("configSettings"), dict) else None
+
             # Lighthouse may provide a real rendered final screenshot as a data URI.
             # Treat it as optional, strictly bound its size/type, and never fail the audit
             # merely because the screenshot is absent or malformed.
@@ -207,6 +260,15 @@ class UniversalEcommerceAgent:
                 speed_index_sec=round(speed_index, 2),
                 is_slow=score < 60,
                 screenshot_data_uri=screenshot_data_uri,
+                lcp_sec=round(lcp_ms / 1000.0, 2) if lcp_ms is not None else None,
+                cls_score=cls_value,
+                tbt_ms=tbt_ms,
+                ttfb_ms=ttfb_ms,
+                field_metrics=field_metrics,
+                lighthouse_version=lighthouse_version if isinstance(lighthouse_version, str) else None,
+                page_fetch_time=page_fetch_time if isinstance(page_fetch_time, str) else None,
+                final_url=final_url if isinstance(final_url, str) else None,
+                form_factor=form_factor if isinstance(form_factor, str) else None,
             )
         except RuntimeError:
             raise
