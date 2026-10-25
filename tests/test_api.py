@@ -1163,3 +1163,14 @@ async def test_pagespeed_provider_failure_still_saves_partial_audit_without_fake
     usage = await client.get("/api/v1/account/usage", headers=headers)
     assert usage.status_code == 200
     assert usage.json()["used"] == 1
+
+
+def test_persisted_audit_evidence_redacts_query_parameters_and_credentials():
+    value = (
+        "Fetched https://shop.example/products/item?access_token=private#section "
+        "with api_key=synthetic-secret"
+    )
+    safe = main._redact_audit_metadata_text(value)
+    assert "access_token=private" not in safe
+    assert "synthetic-secret" not in safe
+    assert "https://shop.example/products/item" in safe
