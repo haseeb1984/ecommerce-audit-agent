@@ -1045,6 +1045,43 @@ def test_pdf_evidence_url_redacts_credentials_query_and_fragment():
 
 
 
+def test_pdf_empty_meta_description_finding_maps_to_recorded_outcome():
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-25T00:00:00+00:00",
+        findings=[
+            AuditFinding(
+                category="on_page_seo",
+                title="Empty meta description content",
+                status="verified",
+                severity="low",
+                evidence="Found 1 empty meta description declaration.",
+                explanation="An empty declaration provides no summary.",
+                recommendation="Remove empty declarations.",
+                verification_steps=["Inspect raw HTML."],
+                source_url="https://shop.example/",
+            )
+        ],
+        pages_checked=["https://shop.example/"],
+        limitations=[],
+        check_outcomes=[
+            CheckOutcome(
+                check_id="html.meta_description_content",
+                category="on_page_seo",
+                page_url="https://shop.example/",
+                outcome="issue",
+                observed_at_utc="2026-10-25T00:00:00+00:00",
+                method="bounded static HTML source inspection",
+                evidence="Meta description element count: 1; empty declaration count: 1.",
+                evidence_ref="html.meta_description_content:https://shop.example/",
+            )
+        ],
+    )
+    pdf = render_audit_pdf(result)
+    assert pdf.startswith(b"%PDF-")
+    assert b"html.meta_description_content" in pdf
+
+
 def test_pdf_discovery_findings_accept_explicit_content_outcomes():
     result = AuditCheckResult(
         target_url="https://shop.example/",
