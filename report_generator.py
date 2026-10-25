@@ -1643,7 +1643,9 @@ def render_audit_pdf(
     story.append(Paragraph("Coverage and limitations", section_style))
     if coverage_manifest:
         coverage_pct = coverage_manifest.get("category_signal_coverage_pct")
+        execution_pct = coverage_manifest.get("category_execution_coverage_pct")
         observed_count = coverage_manifest.get("categories_with_recorded_findings", 0)
+        execution_count = coverage_manifest.get("categories_checked", 0)
         category_total = coverage_manifest.get("required_categories", 0)
         story.append(Paragraph("Audit category evidence coverage", base["Heading2"]))
         story.append(_p(
@@ -1651,11 +1653,20 @@ def render_audit_pdf(
             body_style,
         ))
         story.append(_p(
+            f"Checker-group execution coverage: {execution_pct}% ({execution_count} of {category_total} category groups explicitly completed). "
+            "Execution means the checker group returned; it does not mean every individual check passed.",
+            body_style,
+        ))
+        story.append(_p(
             str(coverage_manifest.get("important_note", "Coverage is a conservative summary of recorded signals, not proof that every check ran or passed.")),
             small_style,
         ))
         coverage_rows = [[_p("Audit category", body_style), _p("Evidence status", body_style), _p("Recorded findings", body_style)]]
-        for item in [*coverage_manifest.get("observed_categories", []), *coverage_manifest.get("not_proven_categories", [])]:
+        for item in [
+            *coverage_manifest.get("observed_categories", []),
+            *coverage_manifest.get("checked_without_findings_categories", []),
+            *coverage_manifest.get("not_proven_categories", []),
+        ]:
             coverage_rows.append([
                 _p(item.get("label", item.get("category", "Unknown")), small_style),
                 _p(item.get("status", "not_proven").replace("_", " "), small_style),
