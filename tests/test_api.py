@@ -1171,6 +1171,18 @@ async def test_pagespeed_provider_failure_still_saves_partial_audit_without_fake
     )
     assert performance["status"] == "not_tested"
     assert "no score" in performance["evidence"].lower()
+    performance_category = next(
+        row for key in ("observed_categories", "checked_without_findings_categories", "not_proven_categories")
+        for row in coverage.json()[key]
+        if row["category"] == "performance"
+    )
+    assert performance_category["checker_group_executed"] is False
+    outcomes_response = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?kind=check_outcomes&limit=20&offset=0",
+        headers=headers,
+    )
+    assert any(item["check_id"] == "performance.pagespeed_api" and item["outcome"] == "error"
+               for item in outcomes_response.json()["items"])
     assert coverage.json()["category_execution_coverage_pct"] is not None
 
     usage = await client.get("/api/v1/account/usage", headers=headers)
