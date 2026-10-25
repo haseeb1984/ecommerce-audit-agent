@@ -1906,6 +1906,12 @@ def render_audit_pdf(
             "These are configured collection limits, not a claim that every limit was reached or every URL was tested.",
             body_style,
         ),
+        Paragraph("Security testing scope", section_style),
+        _p(
+            "Security checks in this report are passive, public and non-destructive. OWASP Top 10:2025 is referenced only as a risk-awareness taxonomy; this report is not an OWASP assessment, penetration test, vulnerability certification, or proof that the site is secure. Active testing requires explicit authorization and a separate agreed scope.",
+            body_style,
+        ),
+        _link("https://owasp.org/www-project-top-ten/", small_style),
         Paragraph("Plain-language glossary", section_style),
         _p(
             "Verified: the stated observation was seen in the sampled response. Manual review required: context or a person is needed before confirming a defect. Not tested / insufficient data: no conclusion can be drawn. Evidence reference: a URL recorded for an observation. Source-level check: inspection of returned HTML or headers, not a full browser interaction. Severity: a triage label, not a measured financial impact.",
