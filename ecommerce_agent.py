@@ -26,6 +26,7 @@ class StoreAuditMetrics(BaseModel):
     tbt_ms: float | None = None
     ttfb_ms: float | None = None
     field_metrics: dict[str, object] = Field(default_factory=dict)
+    field_data_context: dict[str, object] = Field(default_factory=dict)
     lighthouse_version: str | None = None
     page_fetch_time: str | None = None
     final_url: str | None = None
@@ -196,21 +197,34 @@ class UniversalEcommerceAgent:
             cls_value = _metric_ms("cumulative-layout-shift")
             tbt_ms = _metric_ms("total-blocking-time")
             ttfb_ms = _metric_ms("server-response-time")
-            loading_experience = data.get("loadingExperience", {})
-            loading_metrics = (
-                loading_experience.get("metrics", {})
-                if isinstance(loading_experience, dict) else {}
-            )
             field_metrics: dict[str, object] = {}
-            if isinstance(loading_metrics, dict):
-                for metric_name in (
-                    "LARGEST_CONTENTFUL_PAINT_MS",
-                    "CUMULATIVE_LAYOUT_SHIFT_SCORE",
-                    "INTERACTION_TO_NEXT_PAINT",
-                    "FIRST_CONTENTFUL_PAINT_MS",
-                    "EXPERIMENTAL_TIME_TO_FIRST_BYTE",
-                ):
-                    metric = loading_metrics.get(metric_name)
+            field_data_context: dict[str, object] = {}
+            metric_names = (
+                "LARGEST_CONTENTFUL_PAINT_MS",
+                "CUMULATIVE_LAYOUT_SHIFT_SCORE",
+                "INTERACTION_TO_NEXT_PAINT",
+                "FIRST_CONTENTFUL_PAINT_MS",
+                "EXPERIMENTAL_TIME_TO_FIRST_BYTE",
+            )
+            for scope_key, scope_label in (
+                ("loadingExperience", "url"),
+                ("originLoadingExperience", "origin"),
+            ):
+                experience = data.get(scope_key, {})
+                if not isinstance(experience, dict):
+                    continue
+                overall_category = experience.get("overall_category")
+                if isinstance(overall_category, str):
+                    field_data_context[f"{scope_label}_overall_category"] = overall_category
+                experience_id = experience.get("id")
+                if isinstance(experience_id, str):
+                    # Store only the provider's public URL/origin identity, never request credentials.
+                    field_data_context[f"{scope_label}_data_id"] = experience_id[:300]
+                metrics = experience.get("metrics", {})
+                if not isinstance(metrics, dict):
+                    continue
+                for metric_name in metric_names:
+                    metric = metrics.get(metric_name)
                     if not isinstance(metric, dict):
                         continue
                     percentile = metric.get("percentile")
@@ -224,12 +238,12 @@ class UniversalEcommerceAgent:
                             }
                             else "provider unit"
                         )
-                        field_metrics[metric_name] = {
+                        field_metrics[f"{scope_label}:{metric_name}"] = {
                             "percentile": percentile,
                             "normalized_value": normalized_value,
                             "unit": unit,
                             "category": category if isinstance(category, str) else None,
-                            "source": "PageSpeed loadingExperience field data",
+                            "source": f"PageSpeed {scope_key} field data",
                         }
             lighthouse_version = lighthouse.get("lighthouseVersion")
             page_fetch_time = lighthouse.get("fetchTime")
@@ -275,6 +289,7 @@ class UniversalEcommerceAgent:
                 tbt_ms=tbt_ms,
                 ttfb_ms=ttfb_ms,
                 field_metrics=field_metrics,
+                field_data_context=field_data_context,
                 lighthouse_version=lighthouse_version if isinstance(lighthouse_version, str) else None,
                 page_fetch_time=page_fetch_time if isinstance(page_fetch_time, str) else None,
                 final_url=final_url if isinstance(final_url, str) else None,
