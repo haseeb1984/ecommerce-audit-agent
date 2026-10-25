@@ -37,6 +37,7 @@ def test_finding_contract_defaults_are_explicit_for_manual_findings():
         source_url="https://shop.example/checkout",
     )
 
+    assert finding.finding_id.startswith("F-")
     assert datetime.fromisoformat(finding.observed_at_utc).tzinfo is not None
     assert finding.test_method == "Not specified by the individual checker"
     assert finding.evidence_confidence == "limited"
