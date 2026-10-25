@@ -1419,6 +1419,7 @@ def render_audit_pdf(
             "sitemap xml structure": "discovery.sitemap_xml.structure",
             "duplicate urls in sitemap": "discovery.sitemap_xml.duplicate_urls",
             "llms.txt availability": "discovery.llms_txt.availability",
+            "llms.txt basic format needs review": "discovery.llms_txt.basic_format",
         }
         expected_check_id = check_id_by_title.get(title_key)
         recorded_outcomes = [
