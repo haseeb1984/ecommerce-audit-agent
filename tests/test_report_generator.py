@@ -1179,3 +1179,36 @@ def test_check_outcome_summary_does_not_infer_pass_for_missing_records():
     summary = _format_check_outcome_summary([])
     assert "Unavailable for this specific check" in summary
     assert "No pass percentage is inferred" in summary
+
+
+
+def test_report_text_sanitizer_removes_query_secrets_and_bounds_content():
+    from report_generator import _sanitize_report_text
+
+    sanitized = _sanitize_report_text(
+        "Evidence URL https://shop.example/item?token=private#details api_key=synthetic-secret",
+        limit=200,
+    )
+    assert "token=private" not in sanitized
+    assert "synthetic-secret" not in sanitized
+    assert "https://shop.example/item" in sanitized
+
+
+def test_issue_service_offer_only_appears_for_verified_actionable_findings():
+    from report_generator import _service_offer_for_finding
+
+    assert _service_offer_for_finding({
+        "status": "verified",
+        "severity": "medium",
+        "category": "accessibility",
+    }).startswith("Optional JunctionTools support:")
+    assert _service_offer_for_finding({
+        "status": "not_tested",
+        "severity": "high",
+        "category": "security_transport",
+    }) is None
+    assert _service_offer_for_finding({
+        "status": "verified",
+        "severity": "info",
+        "category": "performance",
+    }) is None
