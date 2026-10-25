@@ -534,6 +534,11 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
     coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=owner_headers)
     assert coverage.status_code == 200
     assert coverage.json()["target_url"] == "https://shop.example/"
+    assert coverage.json()["evidence_storage_limits"]["max_findings"] == 150
+    assert coverage.json()["evidence_storage_limits"]["query_strings_and_fragments_removed_from_evidence_urls"] is True
+    assert coverage.json()["findings"]
+    assert coverage.json()["findings"][0]["category"] == "performance"
+    assert coverage.json()["findings"][0]["test_method"] == "Google PageSpeed Insights API mobile Lighthouse lab run"
     coverage_categories = {
         row["category"]: row
         for key in ("observed_categories", "checked_without_findings_categories", "not_proven_categories")
