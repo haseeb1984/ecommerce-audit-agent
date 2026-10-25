@@ -362,6 +362,7 @@ async def comprehensive_audit_pdf(
                 "Google PageSpeed Insights lab measurements: " + "; ".join(lab_metric_parts) + ". "
                 + (
                     "Available URL-level and/or origin-level PageSpeed field metrics: " + "; ".join(field_metric_parts) + ". "
+                    "These are provider-reported field percentiles/categories; the response does not include a precise sample count or collection-window boundaries in this report. "
                     if field_metric_parts else
                     "No PageSpeed loadingExperience field metrics were returned for this URL/origin in this run. "
                 )
