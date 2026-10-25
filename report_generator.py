@@ -1780,6 +1780,18 @@ def render_audit_pdf(
 
     story.extend([
         Spacer(1, 3 * mm),
+        Paragraph("Manual review checklist — not performed by this automated run", section_style),
+        _p(
+            "These items are provided as a repeatable human-review checklist. They are not marked passed by this public source scan; complete them in the relevant browser, device, assistive technology and user context.",
+            body_style,
+        ),
+        _p("Not tested — complete keyboard-only navigation, logical focus order, visible focus, and focus not obscured by sticky UI.", body_style),
+        _p("Not tested — zoom and reflow at 200%/400% and narrow viewport widths including 320 CSS px; verify no loss of content or two-dimensional scrolling except where essential.", body_style),
+        _p("Not tested — contrast, text resizing, text spacing, motion/animation preferences, and readable error/help text.", body_style),
+        _p("Not tested — screen-reader names, roles, states, status messages, form labels, validation errors and dynamic content announcements.", body_style),
+        _p("Not tested — target size and spacing, touch operation, drag alternatives, orientation changes, and sticky elements obscuring controls.", body_style),
+        _p("Not tested — checkout and account journeys with keyboard and assistive technology using authorized test accounts; no real orders or payments are submitted.", body_style),
+        _link("https://www.w3.org/TR/WCAG22/", small_style),
         Paragraph("Methodology and independent verification", section_style),
         _p(
             "The audit evaluates bounded public HTTP responses and source-level signals. It does not automatically prove how a page behaves after JavaScript execution, after login, in every browser or region, or in Google Search. Recheck each finding using the listed verification steps and an independent tool appropriate to the issue; record the date, tested URL, environment and outcome. For example, performance observations can be compared with Google PageSpeed Insights, structured data with Google's Rich Results Test where applicable, and accessibility signals with a manual keyboard/screen-reader review plus an accessibility checker. Tool output can differ by run and does not replace expert review.",
