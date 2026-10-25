@@ -216,8 +216,11 @@ async def comprehensive_audit_pdf(
 
         # Keep the audit modular: a failure in an additional checker must not erase
         # valid results already collected by the core page/discovery checks.
+        crawl_completed = False
+        conversion_completed = False
         try:
             crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
+            crawl_completed = True
             result.findings.extend(crawl_findings)
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
             result.limitations.extend(crawl_limitations)
@@ -239,6 +242,7 @@ async def comprehensive_audit_pdf(
 
         try:
             conversion_findings, conversion_pages, conversion_limitations = await run_conversion_paid_traffic_checks(target_url)
+            conversion_completed = True
             result.findings.extend(conversion_findings)
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
             result.limitations.extend(conversion_limitations)
@@ -297,7 +301,11 @@ async def comprehensive_audit_pdf(
         }
         # These functions returned normally above, so their bounded checker groups
         # completed. Keep their coverage labels separate from unrelated audit groups.
-        executed_categories.update({"crawlability", "conversion_paid_traffic", "performance"})
+        executed_categories.add("performance")
+        if crawl_completed:
+            executed_categories.add("crawlability")
+        if conversion_completed:
+            executed_categories.add("conversion_paid_traffic")
         if any(
             finding.category in {"dependency_advisory", "security_dependency"}
             for finding in result.findings
