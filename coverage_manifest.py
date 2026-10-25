@@ -134,7 +134,7 @@ def build_coverage_manifest(
         if (safe_url := _safe_evidence_url(page_url)) is not None
     ))
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "coverage_level": "category_signal_coverage_not_individual_check_coverage",
         "target_url": safe_target_url,
         "pages_checked": safe_pages_checked,
