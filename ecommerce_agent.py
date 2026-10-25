@@ -216,8 +216,18 @@ class UniversalEcommerceAgent:
                     percentile = metric.get("percentile")
                     category = metric.get("category")
                     if isinstance(percentile, (int, float)) and not isinstance(percentile, bool):
+                        normalized_value = percentile / 1000.0 if metric_name == "CUMULATIVE_LAYOUT_SHIFT_SCORE" else percentile
+                        unit = (
+                            "score" if metric_name == "CUMULATIVE_LAYOUT_SHIFT_SCORE"
+                            else "ms" if metric_name.endswith("_MS") or metric_name in {
+                                "INTERACTION_TO_NEXT_PAINT", "EXPERIMENTAL_TIME_TO_FIRST_BYTE"
+                            }
+                            else "provider unit"
+                        )
                         field_metrics[metric_name] = {
                             "percentile": percentile,
+                            "normalized_value": normalized_value,
+                            "unit": unit,
                             "category": category if isinstance(category, str) else None,
                             "source": "PageSpeed loadingExperience field data",
                         }
