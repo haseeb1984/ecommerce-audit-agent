@@ -1111,3 +1111,55 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
     assert final_package["max_concurrent_audits"] == 6
     assert final_package["is_active"] is False
 
+
+
+@pytest.mark.asyncio
+async def test_pagespeed_provider_failure_still_saves_partial_audit_without_fake_metrics(client, monkeypatch):
+    license_key = "partial-audit-pagespeed-failure"
+    await create_license(key=license_key, quota=2)
+
+    async def failed_pagespeed(target_url):
+        raise RuntimeError("synthetic provider timeout")
+
+    async def fake_phase_one(target_url):
+        return AuditCheckResult(
+            target_url=target_url,
+            checked_at_utc=datetime.now(timezone.utc).isoformat(),
+            findings=[],
+            pages_checked=[target_url],
+            limitations=[],
+        )
+
+    async def fake_crawl(target_url):
+        return [], [target_url], []
+
+    async def fake_conversion(target_url):
+        return [], [target_url], []
+
+    monkeypatch.setattr(main.agent, "run_audit", failed_pagespeed)
+    monkeypatch.setattr(main, "run_phase_one_checks", fake_phase_one)
+    monkeypatch.setattr(main, "run_bounded_site_crawl", fake_crawl)
+    monkeypatch.setattr(main, "run_conversion_paid_traffic_checks", fake_conversion)
+    monkeypatch.setattr(main, "render_audit_pdf", lambda *args, **kwargs: b"%PDF-partial-audit")
+
+    headers = {"X-License-Key": license_key}
+    response = await client.post(
+        "/api/v1/comprehensive-audit?domain=https%3A%2F%2Fpartial.example",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    report_id = int(response.headers["x-audit-report-id"])
+
+    coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=headers)
+    assert coverage.status_code == 200
+    performance = next(
+        row for row in coverage.json()["findings"]
+        if row["category"] == "performance"
+    )
+    assert performance["status"] == "not_tested"
+    assert "no score" in performance["evidence"].lower()
+    assert coverage.json()["category_execution_coverage_pct"] is not None
+
+    usage = await client.get("/api/v1/account/usage", headers=headers)
+    assert usage.status_code == 200
+    assert usage.json()["used"] == 1
