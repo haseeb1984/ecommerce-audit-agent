@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import math
 
 import httpx
 from pydantic import BaseModel, Field
@@ -175,7 +176,12 @@ class UniversalEcommerceAgent:
 
             performance_score = float(performance_score)
             speed_index_ms = float(speed_index_ms)
-            if not 0 <= performance_score <= 1 or speed_index_ms < 0:
+            if (
+                not math.isfinite(performance_score)
+                or not math.isfinite(speed_index_ms)
+                or not 0 <= performance_score <= 1
+                or speed_index_ms < 0
+            ):
                 raise RuntimeError(
                     "Google PageSpeed returned out-of-range performance metrics."
                 )
@@ -189,7 +195,7 @@ class UniversalEcommerceAgent:
                 value = audit.get("numericValue") if isinstance(audit, dict) else None
                 try:
                     parsed = float(value)
-                    return round(parsed, 2) if parsed >= 0 else None
+                    return round(parsed, 2) if math.isfinite(parsed) and parsed >= 0 else None
                 except (TypeError, ValueError):
                     return None
 
@@ -229,7 +235,12 @@ class UniversalEcommerceAgent:
                         continue
                     percentile = metric.get("percentile")
                     category = metric.get("category")
-                    if isinstance(percentile, (int, float)) and not isinstance(percentile, bool):
+                    if (
+                        isinstance(percentile, (int, float))
+                        and not isinstance(percentile, bool)
+                        and math.isfinite(float(percentile))
+                        and percentile >= 0
+                    ):
                         normalized_value = percentile / 1000.0 if metric_name == "CUMULATIVE_LAYOUT_SHIFT_SCORE" else percentile
                         unit = (
                             "score" if metric_name == "CUMULATIVE_LAYOUT_SHIFT_SCORE"
