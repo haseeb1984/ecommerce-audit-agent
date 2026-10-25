@@ -1411,6 +1411,14 @@ def render_audit_pdf(
             "character encoding is not explicitly declared": "html.charset_declared",
             "http and html character encoding declarations differ": "html.charset_declared",
             "main content landmark not detected": "html.main_landmark_present",
+            "robots.txt availability": "discovery.robots_txt.availability",
+            "robots.txt directive summary": "discovery.robots_txt.directives",
+            "robots.txt may block the entire site": "discovery.robots_txt.wildcard_block",
+            "sitemap.xml availability": "discovery.sitemap_xml.availability",
+            "sitemap xml parsing": "discovery.sitemap_xml.parseability",
+            "sitemap xml structure": "discovery.sitemap_xml.structure",
+            "duplicate urls in sitemap": "discovery.sitemap_xml.duplicate_urls",
+            "llms.txt availability": "discovery.llms_txt.availability",
         }
         expected_check_id = check_id_by_title.get(title_key)
         recorded_outcomes = [
