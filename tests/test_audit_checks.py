@@ -1068,7 +1068,7 @@ def test_homepage_outcomes_record_explicit_pass_and_issue_states_with_evidence()
         "2026-10-24T00:00:00+00:00",
     )
     by_id = {item.check_id: item for item in outcomes}
-    assert len(by_id) == 15
+    assert len(by_id) == 16
     assert by_id["html.images_alt_attribute"].outcome == "pass"
     assert by_id["html.images_empty_alt_attribute"].outcome == "pass"
     assert by_id["html.title_present"].outcome == "pass"
@@ -1095,8 +1095,21 @@ def test_duplicate_title_description_and_h1_outcomes_are_warnings():
     by_id = {item.check_id: item for item in outcomes}
     assert by_id["html.title_count"].outcome == "warning"
     assert by_id["html.meta_description_count"].outcome == "warning"
+    assert by_id["html.meta_description_content"].outcome == "pass"
     assert by_id["html.h1_count"].outcome == "warning"
     assert "does not assess snippet selection" in by_id["html.meta_description_count"].evidence
+
+
+def test_empty_meta_description_content_is_distinguished_from_missing_declaration():
+    outcomes = audit_checks.record_homepage_outcomes(
+        '<html><head><meta name="description" content=""></head><body></body></html>',
+        "https://shop.example/empty-description", {},
+        "2026-10-25T00:00:00+00:00",
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["html.meta_description_present"].outcome == "issue"
+    assert by_id["html.meta_description_content"].outcome == "issue"
+    assert "empty declaration count: 1" in by_id["html.meta_description_content"].evidence
 
 
 def test_homepage_outcomes_record_issue_instead_of_inferring_pass_from_missing_elements():
