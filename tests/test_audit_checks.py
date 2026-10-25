@@ -10,6 +10,24 @@ def test_normalize_target_adds_https_and_drops_fragment():
     assert audit_checks.normalize_target("Example.COM/path#section") == "https://example.com/path"
 
 
+def test_finding_ids_are_stable_and_distinguish_affected_urls():
+    first = audit_checks._finding(
+        "technical_seo", "Page title", "verified", "low", "Evidence A",
+        "Explanation", "Recommendation", ["Retest"], "https://shop.example/a"
+    )
+    repeated = audit_checks._finding(
+        "technical_seo", "Page title", "verified", "low", "Different later evidence",
+        "Explanation", "Recommendation", ["Retest"], "https://shop.example/a"
+    )
+    other_page = audit_checks._finding(
+        "technical_seo", "Page title", "verified", "low", "Evidence A",
+        "Explanation", "Recommendation", ["Retest"], "https://shop.example/b"
+    )
+    assert first.finding_id.startswith("F-")
+    assert first.finding_id == repeated.finding_id
+    assert first.finding_id != other_page.finding_id
+
+
 @pytest.mark.parametrize(
     "target",
     [
