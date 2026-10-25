@@ -1340,8 +1340,10 @@ async def crawl_same_origin_pages(
                         evidence_ref=final_url,
                     ))
                 findings.append(_finding(
-                    "crawl", "Discovered page returned a non-success HTTP status", "verified",
-                    "high" if status >= 500 else "medium",
+                    "sitemap_xml" if _parent == "sitemap" else "crawl",
+                    "Sitemap-listed URL returned a non-success HTTP status" if _parent == "sitemap"
+                    else "Discovered page returned a non-success HTTP status",
+                    "verified", "high" if status >= 500 else "medium",
                     f"Same-origin link {page_url} returned HTTP {status}; final URL: {final_url}.",
                     "A discovered internal link did not return a successful response to this audit request. Authentication, bot rules, and transient errors can affect the result.",
                     "Check the URL in a browser, confirm its intended status, and repair internal links or server responses where appropriate.",
