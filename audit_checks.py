@@ -2238,6 +2238,59 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                             ),
                             evidence_ref=final_url,
                         ))
+                        sitemap_references = []
+                        for raw_line in body.splitlines():
+                            line = raw_line.split("#", 1)[0].strip()
+                            if ":" not in line:
+                                continue
+                            key, value = line.split(":", 1)
+                            if key.strip().lower() == "sitemap" and value.strip():
+                                sitemap_references.append(value.strip())
+                        invalid_sitemap_references = []
+                        for reference in sitemap_references:
+                            try:
+                                sitemap_parsed = urlsplit(reference)
+                                _ = sitemap_parsed.port
+                                valid_reference = (
+                                    sitemap_parsed.scheme.lower() in {"http", "https"}
+                                    and bool(sitemap_parsed.hostname)
+                                    and sitemap_parsed.username is None
+                                    and sitemap_parsed.password is None
+                                    and not any(ord(ch) < 32 for ch in reference)
+                                )
+                            except (ValueError, UnicodeError):
+                                valid_reference = False
+                            if not valid_reference:
+                                invalid_sitemap_references.append(reference[:160])
+                        if not sitemap_references:
+                            sitemap_reference_outcome = "not_assessed"
+                            sitemap_reference_evidence = (
+                                "No non-empty Sitemap directive was found in robots.txt. A sitemap may still be discoverable "
+                                "through other means; absence of this directive alone is not a failure."
+                            )
+                        elif invalid_sitemap_references:
+                            sitemap_reference_outcome = "issue"
+                            sitemap_reference_evidence = (
+                                f"Found {len(sitemap_references)} Sitemap directive(s); "
+                                f"{len(invalid_sitemap_references)} had an invalid absolute HTTP(S) URL or URL credentials. "
+                                f"Examples: {invalid_sitemap_references[:3]!r}."
+                            )
+                        else:
+                            sitemap_reference_outcome = "pass"
+                            sitemap_reference_evidence = (
+                                f"Found {len(sitemap_references)} Sitemap directive(s), each with an absolute HTTP(S) URL "
+                                "and no embedded credentials. This does not prove the referenced sitemap is reachable, valid, "
+                                "same-origin, or accepted by a search engine."
+                            )
+                        check_outcomes.append(CheckOutcome(
+                            check_id="discovery.robots_txt.sitemap_references",
+                            category=category, page_url=final_url,
+                            outcome=sitemap_reference_outcome,
+                            observed_at_utc=observed_at_utc,
+                            method="bounded line-based extraction and absolute HTTP(S) URL-shape validation of Sitemap directives",
+                            evidence=sitemap_reference_evidence,
+                            evidence_ref=final_url,
+                        ))
                     elif category == "sitemap_xml":
                         parse_finding = next((item for item in content_findings if item.title == "Sitemap XML parsing"), None)
                         structure = next((item for item in content_findings if item.title == "Sitemap XML structure"), None)
