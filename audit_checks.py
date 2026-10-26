@@ -328,6 +328,8 @@ class _PageParser(HTMLParser):
         self.canonical_href = ""
         self.canonical_count = 0
         self.canonical_missing_href_count = 0
+        self.hreflang_entries: list[tuple[str, str]] = []
+        self.hreflang_missing_href_count = 0
         self.h1_count = 0
         self.empty_h1_count = 0
         self.h1_text = ""
@@ -398,6 +400,12 @@ class _PageParser(HTMLParser):
                     self.canonical_missing_href_count += 1
                 elif not self.canonical_href:
                     self.canonical_href = href
+            if "alternate" in rel_tokens and values.get("hreflang", "").strip():
+                language = values.get("hreflang", "").strip()
+                href = values.get("href", "").strip()
+                self.hreflang_entries.append((language, href))
+                if not href:
+                    self.hreflang_missing_href_count += 1
         elif tag == "h1":
             self.h1_count += 1
             self._in_h1 = True
@@ -626,6 +634,22 @@ def record_homepage_outcomes(
             f"HTTP(S) destination shape valid: {canonical_valid}. This does not prove canonical correctness or search-engine selection."
         )
     record("html.canonical_declaration", "technical_seo", canonical_outcome, canonical_evidence)
+    if not parser.hreflang_entries:
+        record(
+            "international_seo.hreflang_links", "international_seo", "not_assessed",
+            "No link rel=alternate hreflang declarations were found in the returned HTML. This does not establish whether the site needs international targeting or uses sitemap/HTTP-header hreflang.",
+        )
+    else:
+        invalid_hreflang = [
+            language for language, _ in parser.hreflang_entries
+            if not re.fullmatch(r"(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|x-default)", language)
+        ]
+        invalid_href_count = sum(1 for _, href in parser.hreflang_entries if not href)
+        hreflang_outcome = "issue" if invalid_href_count else "warning" if invalid_hreflang else "pass"
+        record(
+            "international_seo.hreflang_links", "international_seo", hreflang_outcome,
+            f"HTML hreflang declarations: {len(parser.hreflang_entries)}; missing href: {invalid_href_count}; values outside conservative language-tag syntax: {len(invalid_hreflang)}. This source check does not validate reciprocal links, target status, locale correctness, or Google selection.",
+        )
     robots_header = headers.get("x-robots-tag", "")
     robots_signal = f"{parser.meta_robots}, {robots_header}"
     robots_tokens = {
