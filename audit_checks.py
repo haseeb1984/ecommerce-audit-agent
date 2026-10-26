@@ -718,7 +718,11 @@ def record_homepage_outcomes(
         elif isinstance(value, dict):
             raw_type = value.get("@type", [])
             types = raw_type if isinstance(raw_type, list) else [raw_type]
-            if any(isinstance(item, str) and item.lower() == "product" for item in types):
+            if any(
+                isinstance(item, str)
+                and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "product"
+                for item in types
+            ):
                 product_entities.append(value)
             if "@graph" in value:
                 collect_product_entities(value["@graph"])
@@ -809,7 +813,7 @@ def record_homepage_outcomes(
         for offer in offer_objects:
             offer_types = offer.get("@type", [])
             offer_types = offer_types if isinstance(offer_types, list) else [offer_types]
-            aggregate = any(isinstance(t, str) and t.lower() == "aggregateoffer" for t in offer_types)
+            aggregate = any(isinstance(t, str) and t.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "aggregateoffer" for t in offer_types)
             if aggregate:
                 if parse_source_price(offer.get("lowPrice")) is None and parse_source_price(offer.get("highPrice")) is None:
                     missing_price += 1
@@ -931,7 +935,11 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
         elif isinstance(value, dict):
             raw_type = value.get("@type", [])
             types = raw_type if isinstance(raw_type, list) else [raw_type]
-            if any(isinstance(item, str) and item.lower() == "product" for item in types):
+            if any(
+                isinstance(item, str)
+                and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "product"
+                for item in types
+            ):
                 product_entities.append(value)
             graph = value.get("@graph")
             if graph is not None:
