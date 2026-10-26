@@ -1875,6 +1875,64 @@ def render_audit_pdf(
             f"Denominator: {outcome_denominator} explicit saved outcome records. These counts describe recorded outcomes only, not every required control or every page. Missing outcomes are not passes.",
             small_style,
         ))
+        # Show how recorded outcomes are distributed across audit categories so
+        # a large category cannot hide behind the overall run-wide denominator.
+        category_outcomes: dict[str, dict[str, int]] = {}
+        for outcome in explicit_outcomes:
+            category_name = str(getattr(outcome, "category", "") or "uncategorized")
+            state = str(getattr(outcome, "outcome", "") or "")
+            if state not in outcome_states:
+                continue
+            bucket = category_outcomes.setdefault(
+                category_name, {**{key: 0 for key in outcome_states}, "total": 0}
+            )
+            bucket[state] += 1
+            bucket["total"] += 1
+        if category_outcomes:
+            story.append(Paragraph("Recorded outcomes by audit category", base["Heading3"]))
+            category_rows = [[
+                _p("Category", small_style), _p("Records", small_style),
+                _p("Pass", small_style), _p("Issue", small_style),
+                _p("Warning", small_style), _p("Not assessed", small_style),
+                _p("Error", small_style),
+            ]]
+            for category_name, counts in sorted(
+                category_outcomes.items(), key=lambda item: (-item[1]["total"], item[0])
+            )[:28]:
+                category_rows.append([
+                    _p(category_name.replace("_", " ").title(), small_style),
+                    _p(str(counts["total"]), small_style),
+                    _p(f'{counts["pass"]} ({counts["pass"] / counts["total"] * 100:.0f}%)', small_style),
+                    _p(f'{counts["issue"]} ({counts["issue"] / counts["total"] * 100:.0f}%)', small_style),
+                    _p(f'{counts["warning"]} ({counts["warning"] / counts["total"] * 100:.0f}%)', small_style),
+                    _p(f'{counts["not_assessed"]} ({counts["not_assessed"] / counts["total"] * 100:.0f}%)', small_style),
+                    _p(f'{counts["error"]} ({counts["error"] / counts["total"] * 100:.0f}%)', small_style),
+                ])
+            category_table = Table(
+                category_rows,
+                colWidths=[34 * mm, 15 * mm, 20 * mm, 20 * mm, 22 * mm, 26 * mm, 17 * mm],
+                repeatRows=1, hAlign="LEFT",
+            )
+            category_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            story.extend([category_table, Spacer(1, 2 * mm)])
+            if len(category_outcomes) > 28:
+                story.append(_p(
+                    f"Showing 28 of {len(category_outcomes)} categories, sorted by recorded outcome count. Percentages use each category's own recorded outcomes as denominator; missing checks are not inferred.",
+                    small_style,
+                ))
+            else:
+                story.append(_p(
+                    "Percentages use each category's own recorded outcomes as denominator. These are recorded outcomes, not complete category pass rates; missing checks are not inferred.",
+                    small_style,
+                ))
     else:
         story.append(_p(
             "Outcome distribution unavailable: this run contains no explicit check outcome records. No pass rate is inferred.",
