@@ -193,6 +193,71 @@ def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFind
         ))
     return findings
 
+def inspect_ecommerce_catalog_navigation(html: str, page_url: str) -> list[AuditFinding]:
+    """Inventory source-level signals for variants, faceted URLs and listing pagination."""
+    findings: list[AuditFinding] = []
+    try:
+        parsed_url = urlsplit(page_url)
+        path_segments = {segment.lower() for segment in parsed_url.path.split("/") if segment}
+    except (ValueError, UnicodeError):
+        return findings
+
+    likely_product = bool(PRODUCT_DETAIL_PATH.search(parsed_url.path))
+    likely_listing = bool(
+        path_segments.intersection({"collections", "collection", "category", "categories", "catalog", "shop"})
+    )
+    lower = html[:500_000].lower()
+
+    if likely_product:
+        variant_signals = [
+            label for label, pattern in (
+                ("variant query parameter", re.compile(r"[?&](?:variant|variant_id|sku|option|attribute)=", re.I)),
+                ("variant selector attributes", re.compile(r"(?:name|id|data-)[^>]{0,100}(?:variant|option|size|colour|color)", re.I)),
+                ("size/colour option labels", re.compile(r"(?:select a size|choose a size|select colour|select color|available sizes|product variants)", re.I)),
+            ) if pattern.search(html[:500_000])
+        ]
+        if variant_signals:
+            findings.append(_finding(
+                "ecommerce_catalog", "Product variant controls or URL signals detected",
+                "manual_review_required", "info",
+                f"Source-level variant signals on {page_url}: {', '.join(variant_signals)}.",
+                "These signatures suggest variant selection may exist but do not establish that every variant is crawlable, selectable, in stock, or consistent with Product/Offer structured data.",
+                "Review representative variants and ensure each selectable option has accurate price, availability, SKU/GTIN where applicable, canonical/indexing behavior, and structured data. Do not submit orders or change inventory during this audit.",
+                ["Inspect each available size/colour/variant in an authorized browser session.", "Compare visible selected-variant price and stock state with structured data and variant URLs.", "Confirm invalid or unavailable variant URLs fail safely and do not advertise stale availability."],
+                page_url,
+            ))
+
+    if likely_listing:
+        navigation_signals = []
+        if re.search(r"<link\\b[^>]*\\brel\\s*=\\s*['\"][^'\"]*\\bnext\\b", lower, re.I):
+            navigation_signals.append("rel=next link")
+        if re.search(r"(?:aria-label|class|id|rel)\\s*=\\s*['\"][^'\"]*(?:pagination|page-next|next-page|load-more|loadmore)", lower, re.I):
+            navigation_signals.append("pagination/load-more label or attribute")
+        if re.search(r"[?&](?:page|p|offset|cursor|sort_by|filter|filter\.|facet|vendor|type|availability)=", html[:500_000], re.I):
+            navigation_signals.append("pagination/filter/sort query parameters")
+        if navigation_signals:
+            findings.append(_finding(
+                "ecommerce_catalog", "Category pagination or faceted-navigation signals detected",
+                "manual_review_required", "info",
+                f"Detected listing-navigation signatures on {page_url}: {', '.join(navigation_signals)}.",
+                "Source signatures do not prove that pagination works, all products are discoverable, or filtered URLs avoid duplicate-content and crawl-budget problems. JavaScript-only load-more controls may not be represented in initial HTML.",
+                "Manually check first/next/last listing pages, load-more behavior, filter combinations, canonical targets, and internal links to important products. Avoid blanket noindex/canonical changes without confirming the site's intended indexing strategy.",
+                ["Follow listing pagination and confirm product sets change as expected.", "Inspect a small representative sample of filter/sort URLs and their canonical/noindex directives.", "Confirm important products remain reachable through ordinary links without interacting with checkout."],
+                page_url,
+            ))
+        else:
+            findings.append(_finding(
+                "ecommerce_catalog", "Listing pagination and faceted navigation not confirmed from source",
+                "manual_review_required", "info",
+                f"The URL path resembles an ecommerce collection/category, but no supported pagination or filter signatures were detected in the inspected HTML for {page_url}.",
+                "Pagination and filters may be implemented with JavaScript, buttons without recognizable labels, or platform-specific markup. Absence of these source signatures does not prove the listing lacks navigation.",
+                "Review the rendered listing and verify pagination, load-more, filters, and sorting work and expose an appropriate crawlable URL strategy where required.",
+                ["Inspect the rendered category/collection on desktop and mobile.", "Test pagination, load-more, filters and sort controls without entering checkout.", "Review canonical and indexability signals for representative filtered URLs."],
+                page_url,
+            ))
+    return findings
+
+
 def inspect_product_page_schema_presence(html: str, page_url: str) -> list[AuditFinding]:
     """Prompt review when a likely product-detail URL has no detectable Product JSON-LD.
 
@@ -1383,6 +1448,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                         continue
 
             findings.extend(inspect_product_page_schema_presence(body, final_url))
+            findings.extend(inspect_ecommerce_catalog_navigation(body, final_url))
             findings.extend(inspect_sensitive_get_forms(body, final_url))
             findings.extend(inspect_canonical_declaration(body, final_url))
 
