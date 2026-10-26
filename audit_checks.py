@@ -2047,7 +2047,48 @@ async def crawl_same_origin_pages(
                 page_parser.feed(body)
             except Exception:
                 limitations.append(f"Links on {final_url} could not be parsed; that page was still counted as fetched.")
+                if outcome_records is not None and _parent == "sitemap":
+                    from datetime import datetime, timezone
+                    outcome_records.append(CheckOutcome(
+                        check_id="discovery.sitemap_xml.canonical_consistency",
+                        category="sitemap_xml", page_url=final_url, outcome="error",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded HTML parser; parsing failed before canonical comparison",
+                        evidence="Sitemap-listed page was fetched, but its HTML could not be parsed for canonical comparison. No canonical consistency conclusion is inferred.",
+                        evidence_ref=final_url,
+                    ))
                 continue
+            if outcome_records is not None and _parent == "sitemap":
+                from datetime import datetime, timezone
+                canonical_href = (page_parser.canonical_href or "").strip()
+                if not canonical_href:
+                    canonical_outcome = "warning"
+                    canonical_evidence = (
+                        f"Sitemap-listed URL {page_url} resolved to {final_url}; no canonical link href was found by the static HTML parser. "
+                        "A missing canonical is not always invalid, and rendered JavaScript may alter the final DOM."
+                    )
+                else:
+                    try:
+                        canonical_url = normalize_target(urljoin(final_url, canonical_href))
+                        canonical_outcome = "pass" if canonical_url == normalize_target(final_url) else "issue"
+                        canonical_evidence = (
+                            f"Sitemap-listed URL {page_url} resolved to {final_url}; declared canonical resolves to {canonical_url}. "
+                            "This is a normalized URL-string comparison only; it does not prove canonical acceptance by a search engine."
+                        )
+                    except (ValueError, TypeError, UnicodeError):
+                        canonical_outcome = "issue"
+                        canonical_evidence = (
+                            f"Sitemap-listed URL {page_url} resolved to {final_url}; canonical href could not be normalized as a supported public HTTP(S) URL. "
+                            "No canonical target was fetched."
+                        )
+                outcome_records.append(CheckOutcome(
+                    check_id="discovery.sitemap_xml.canonical_consistency",
+                    category="sitemap_xml", page_url=final_url, outcome=canonical_outcome,
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="static HTML canonical href resolution and normalized URL-string comparison for a sitemap-listed page",
+                    evidence=canonical_evidence,
+                    evidence_ref=final_url,
+                ))
             for href in page_parser.link_hrefs[:MAX_DISCOVERED_LINKS]:
                 candidate = _crawl_candidate(href, final_url, origin)
                 if candidate and candidate not in seen and len(seen) < MAX_DISCOVERED_LINKS:
