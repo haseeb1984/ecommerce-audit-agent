@@ -1595,14 +1595,23 @@ async def crawl_same_origin_pages(
             if final_url in checked or final_url == homepage_url:
                 continue
             if not (200 <= status < 300):
-                if outcome_records is not None and _parent == "sitemap":
+                if outcome_records is not None:
                     from datetime import datetime, timezone
                     outcome_records.append(CheckOutcome(
-                        check_id="discovery.sitemap_xml.listed_url_status",
-                        category="sitemap_xml", page_url=final_url, outcome="issue",
+                        check_id=(
+                            "discovery.sitemap_xml.listed_url_status"
+                            if _parent == "sitemap" else "crawl.discovered_url_http_status"
+                        ),
+                        category="sitemap_xml" if _parent == "sitemap" else "crawlability",
+                        page_url=final_url,
+                        outcome="issue",
                         observed_at_utc=datetime.now(timezone.utc).isoformat(),
-                        method="bounded HTTP status inspection of a same-origin sitemap-listed URL",
-                        evidence=f"Sitemap-listed URL {page_url} returned HTTP {status}; authentication, bot rules, and transient errors can affect this request.",
+                        method="bounded same-origin HTTP status inspection",
+                        evidence=(
+                            f"Discovered URL {page_url} returned HTTP {status}; "
+                            "authentication, bot rules, and transient errors can affect this request. "
+                            "This is the observed response for this audit request, not proof of search-engine treatment."
+                        ),
                         evidence_ref=final_url,
                     ))
                 findings.append(_finding(
@@ -1632,6 +1641,22 @@ async def crawl_same_origin_pages(
                     evidence_ref=final_url,
                 ))
             if not is_html:
+                if outcome_records is not None:
+                    from datetime import datetime, timezone
+                    outcome_records.append(CheckOutcome(
+                        check_id="crawl.discovered_url_html_content_type",
+                        category="crawlability",
+                        page_url=final_url,
+                        outcome="warning",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded same-origin HTTP content-type inspection",
+                        evidence=(
+                            f"Discovered URL returned HTTP {status} with content type "
+                            f"{content_type or 'not declared'}; HTML-specific checks were not run. "
+                            "Non-HTML responses may be intentional."
+                        ),
+                        evidence_ref=final_url,
+                    ))
                 continue
             checked.append(final_url)
             if outcome_records is not None:
@@ -1657,14 +1682,19 @@ async def crawl_same_origin_pages(
                     seen.add(candidate)
                     queue.append((candidate, final_url))
         except Exception as exc:
-            if outcome_records is not None and _parent == "sitemap":
+            if outcome_records is not None:
                 from datetime import datetime, timezone
                 outcome_records.append(CheckOutcome(
-                    check_id="discovery.sitemap_xml.listed_url_status",
-                    category="sitemap_xml", page_url=page_url, outcome="error",
+                    check_id=(
+                        "discovery.sitemap_xml.listed_url_status"
+                        if _parent == "sitemap" else "crawl.discovered_url_fetch"
+                    ),
+                    category="sitemap_xml" if _parent == "sitemap" else "crawlability",
+                    page_url=page_url,
+                    outcome="error",
                     observed_at_utc=datetime.now(timezone.utc).isoformat(),
-                    method="bounded fetch of a same-origin sitemap-listed URL failed before reliable status evaluation",
-                    evidence=f"Request failed with {type(exc).__name__}; no URL-status conclusion is inferred.",
+                    method="bounded same-origin page fetch failed before reliable status evaluation",
+                    evidence=f"Request failed with {type(exc).__name__}; no URL status, HTML quality, or indexability conclusion is inferred.",
                     evidence_ref=page_url,
                 ))
             findings.append(_finding(
