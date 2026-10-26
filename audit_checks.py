@@ -2450,6 +2450,53 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                                 evidence="No exact-string duplicate non-empty loc entries were detected. This does not establish URL canonicality or indexability.",
                                 evidence_ref=final_url,
                             ))
+                        try:
+                            sitemap_root = ET.fromstring(body)
+                            lastmod_values = [
+                                (element.text or "").strip()
+                                for element in sitemap_root.iter()
+                                if element.tag.rsplit("}", 1)[-1].lower() == "lastmod"
+                            ]
+                            invalid_lastmods = []
+                            for value in lastmod_values:
+                                try:
+                                    datetime.fromisoformat(value.replace("Z", "+00:00"))
+                                except (ValueError, TypeError):
+                                    invalid_lastmods.append(value[:80])
+                            if not lastmod_values:
+                                lastmod_outcome = "not_assessed"
+                                lastmod_evidence = "No lastmod elements were present; this optional field's absence alone is not an error."
+                            elif invalid_lastmods:
+                                lastmod_outcome = "warning"
+                                lastmod_evidence = (
+                                    f"Found {len(lastmod_values)} lastmod element(s), with {len(invalid_lastmods)} value(s) "
+                                    f"not accepted by the basic ISO date/datetime parser; examples: {invalid_lastmods[:3]!r}. "
+                                    "This is a format heuristic, not a freshness or crawl-priority assessment."
+                                )
+                            else:
+                                lastmod_outcome = "pass"
+                                lastmod_evidence = (
+                                    f"All {len(lastmod_values)} lastmod value(s) matched the basic ISO date/datetime parser. "
+                                    "The audit does not verify that timestamps are accurate or that search engines use them."
+                                )
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.lastmod_format",
+                                category=category, page_url=final_url,
+                                outcome=lastmod_outcome,
+                                observed_at_utc=observed_at_utc,
+                                method="bounded XML extraction and Python ISO date/datetime parsing of sitemap lastmod values",
+                                evidence=lastmod_evidence,
+                                evidence_ref=final_url,
+                            ))
+                        except (ET.ParseError, ValueError):
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.lastmod_format",
+                                category=category, page_url=final_url, outcome="not_assessed",
+                                observed_at_utc=observed_at_utc,
+                                method="bounded XML extraction and Python ISO date/datetime parsing of sitemap lastmod values",
+                                evidence="Sitemap XML could not be parsed for lastmod values; no format conclusion is inferred.",
+                                evidence_ref=final_url,
+                            ))
                     elif category == "llms_txt":
                         text_lines = [line.strip() for line in body.splitlines() if line.strip()]
                         looks_like_markdown = bool(text_lines) and any(line.startswith("#") for line in text_lines)
