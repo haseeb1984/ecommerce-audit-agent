@@ -237,8 +237,10 @@
       let outcomeText = "";
       if (evidenceKind === "check_outcomes" && outcomeSummary && outcomeSummary.denominator) {
         const counts = outcomeSummary.counts || {};
+        const percentages = outcomeSummary.percentages || {};
         outcomeText = " · explicit outcomes: " + ["pass","issue","warning","not_assessed","error"]
-          .map(state => state.replace("_", " ") + " " + (Number(counts[state]) || 0))
+          .map(state => state.replace("_", " ") + " " + (Number(counts[state]) || 0) +
+            (Number.isFinite(Number(percentages[state])) ? " (" + Number(percentages[state]).toFixed(1) + "%)" : " (n/a)"))
           .join(" · ") + " (denominator " + outcomeSummary.denominator + ")";
       }
       $("savedEvidenceSummary").textContent = (evidenceKind === "findings" ? "Findings" : "Check outcomes") +
