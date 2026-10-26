@@ -858,6 +858,66 @@ def record_homepage_outcomes(
                 "This is a markup-shape check only; real-time inventory, fulfillment, and visible stock consistency are not verified.",
             )
 
+    # ProductGroup/hasVariant is evaluated separately from single Product
+    # properties. Absence is not an issue because not every product uses variants.
+    product_groups: list[dict[str, Any]] = []
+
+    def collect_product_groups(value: Any) -> None:
+        if isinstance(value, list):
+            for child in value:
+                collect_product_groups(child)
+        elif isinstance(value, dict):
+            raw_type = value.get("@type", [])
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            if any(
+                isinstance(item, str)
+                and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "productgroup"
+                for item in types
+            ):
+                product_groups.append(value)
+            if "@graph" in value:
+                collect_product_groups(value["@graph"])
+
+    for script in parser.jsonld_scripts:
+        try:
+            collect_product_groups(json.loads(script))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if not product_groups:
+        record(
+            "structured_data.product_group_variants", "structured_data", "not_assessed",
+            "No parseable ProductGroup entity was found in returned HTML JSON-LD. This does not mean the product requires variant markup; non-product pages and products without variants are not failures.",
+        )
+    else:
+        missing_variant_list = 0
+        malformed_variant_list = 0
+        variant_count = 0
+        for group in product_groups:
+            raw_variants = group.get("hasVariant")
+            variants = raw_variants if isinstance(raw_variants, list) else [raw_variants]
+            variants = [variant for variant in variants if variant is not None]
+            if not variants:
+                missing_variant_list += 1
+                continue
+            if any(
+                not isinstance(variant, dict)
+                and not (isinstance(variant, str) and variant.strip())
+                for variant in variants
+            ):
+                malformed_variant_list += 1
+            variant_count += len(variants)
+        variant_outcome = (
+            "issue" if malformed_variant_list
+            else "warning" if missing_variant_list
+            else "pass"
+        )
+        record(
+            "structured_data.product_group_variants", "structured_data", variant_outcome,
+            f"ProductGroup entities: {len(product_groups)}; entities without hasVariant entries: {missing_variant_list}; entries inspected: {variant_count}; malformed primitive entries: {malformed_variant_list}. "
+            "This checks only source shape; it does not verify variant URLs, SKU/GTIN consistency, selectable UI behavior, or price/availability synchronization.",
+        )
+
     return outcomes
 
 
