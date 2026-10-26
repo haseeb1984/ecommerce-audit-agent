@@ -674,7 +674,7 @@ def record_homepage_outcomes(
     robots_signal = f"{parser.meta_robots}, {robots_header}"
     robots_tokens = {
         token.strip().lower()
-        for token in re.split(r"[,;\\s]+", robots_signal)
+        for token in re.split(r"[,;\s]+", robots_signal)
         if token.strip()
     }
     has_meta_noindex = "noindex" in robots_tokens
@@ -2021,11 +2021,11 @@ async def crawl_same_origin_pages(
                 meta_robots = " ".join(
                     match.group(1)
                     for match in re.finditer(
-                        r"<meta[^>]+name\\s*=\\s*['\"](?:robots|googlebot|googlebot-news)['\"][^>]+content\\s*=\\s*['\"]([^'\"]*)['\"][^>]*>",
+                        r"<meta[^>]+name\s*=\s*['\"](?:robots|googlebot|googlebot-news)['\"][^>]+content\s*=\s*['\"]([^'\"]*)['\"][^>]*>",
                         body, re.I
                     )
                 )
-                noindex_signal = bool(re.search(r"(?:^|[,\\s])noindex(?:$|[,\\s])", x_robots + " " + meta_robots, re.I))
+                noindex_signal = bool(re.search(r"(?:^|[,\s])noindex(?:$|[,\s])", x_robots + " " + meta_robots, re.I))
                 outcome_records.append(CheckOutcome(
                     check_id="discovery.sitemap_xml.obvious_non_indexable",
                     category="sitemap_xml", page_url=final_url,
