@@ -128,6 +128,55 @@ def inspect_sensitive_get_forms(html: str, page_url: str) -> list[AuditFinding]:
 
 
 
+
+def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFinding]:
+    """Detect source-visible tracking and consent UI signals without claiming events fire."""
+    findings: list[AuditFinding] = []
+    lower = html.lower()
+    tracking_patterns = {
+        "Google Tag Manager": re.compile(r"(?:googletagmanager\\.com/gtm\\.js|gtm-[a-z0-9]{4,})", re.I),
+        "Google Analytics / gtag": re.compile(r"(?:googletagmanager\\.com/gtag/js|google-analytics\\.com/analytics\\.js|\\bgtag\\s*\\()", re.I),
+        "Meta Pixel": re.compile(r"(?:connect\\.facebook\\.net/.*/fbevents\\.js|\\bfbq\\s*\\()", re.I),
+        "TikTok Pixel": re.compile(r"(?:analytics\\.tiktok\\.com|\\bttq\\.load\\s*\\()", re.I),
+        "Microsoft Clarity": re.compile(r"(?:clarity\\.ms/tag|\\bclarity\\s*\\(\\s*['\"]set['\"])", re.I),
+        "Pinterest Tag": re.compile(r"(?:s\\.pinimg\\.com/ct/core\\.js|\\bpinterest\\.tag\\s*\\()", re.I),
+    }
+    detected = [name for name, pattern in tracking_patterns.items() if pattern.search(html)]
+    if detected:
+        findings.append(_finding(
+            "pixel_analytics", "Tracking technology references detected in page source",
+            "verified", "info",
+            f"Detected source-level references consistent with: {', '.join(detected)}. Page: {page_url}",
+            "This is a source inspection only. It does not verify that network requests succeed, events fire correctly, consent is respected, or conversions are attributed.",
+            "Compare detected tags with the site's approved analytics inventory. Use browser network tools and an authorized test environment to verify requests, event payloads, and consent-dependent behavior without submitting real customer data.",
+            ["Inspect browser network requests on a representative page.", "Trigger only safe test events and confirm expected event names and parameters in the relevant analytics debugger.", "Repeat before and after each observable consent choice where applicable."],
+            page_url,
+        ))
+
+    consent_patterns = (
+        r"cookie-consent", r"cookie_consent", r"consent-manager", r"consentmanager",
+        r"onetrust", r"cookiebot", r"iubenda", r"didomi", r"usercentrics",
+        r"privacy-banner", r"cookie-banner", r"accept all cookies",
+        r"reject all cookies", r"manage preferences", r"cookie settings",
+    )
+    consent_detected = any(re.search(pattern, lower, re.I) for pattern in consent_patterns)
+    if detected or consent_detected:
+        consent_evidence = (
+            f"Consent/banner-related source signals were detected on {page_url}."
+            if consent_detected else
+            f"Tracking references were detected on {page_url}, but no recognizable consent/banner signal was found in the returned HTML."
+        )
+        findings.append(_finding(
+            "pixel_analytics", "Review consent controls and tracking behavior",
+            "manual_review_required", "medium",
+            consent_evidence + f" Tracking references detected: {', '.join(detected) if detected else 'none from the supported source patterns'}.",
+            "Static HTML cannot determine whether a consent interface is visible, whether optional requests are blocked before consent, or whether behavior satisfies applicable law. Consent may also be managed by scripts or a tag manager not visible in this response.",
+            "Manually test the rendered consent interface in an authorized browser session. Confirm accept, reject, and preferences choices have observable effects on optional tracking; obtain jurisdiction-specific legal review where needed.",
+            ["Open a fresh browser session with storage cleared.", "Record optional tracking requests before a choice and after accept/reject/preferences.", "Confirm the UI offers understandable choices and that the saved preference persists as intended."],
+            page_url,
+        ))
+    return findings
+
 def inspect_product_page_schema_presence(html: str, page_url: str) -> list[AuditFinding]:
     """Prompt review when a likely product-detail URL has no detectable Product JSON-LD.
 
@@ -1336,6 +1385,8 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             findings.extend(inspect_static_accessibility_signals(body, final_url))
             # Trust inventory is source-level only and explicitly avoids authenticity claims.
             findings.extend(inspect_trust_signals(body, final_url))
+            # Detect source-visible tags and consent signals; never infer event success or legal compliance.
+            findings.extend(inspect_privacy_tracking_signals(body, final_url))
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
