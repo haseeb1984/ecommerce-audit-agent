@@ -11,11 +11,13 @@ PATTERNS = {
     "guarantee": re.compile(r"money[- ]back|money back guarantee|satisfaction guarantee|free returns|easy returns|refund policy|warranty", re.I),
     "reviews": re.compile(r"customer reviews?|verified reviews?|testimonials?|trustpilot|reviews\.io|yotpo|judge\.me", re.I),
     "support": re.compile(r"contact us|customer support|help center|shipping policy|returns policy|privacy policy|terms and conditions", re.I),
+    "security": re.compile(r"ssl.?secure|secure site|security badge|verified secure|secure shopping|protected by|norton secured|mcafee secure|trust seal|security seal", re.I),
 }
 ASSET_HINTS = {
     "payment": re.compile(r"visa|mastercard|amex|paypal|apple.?pay|google.?pay|klarna|payment|stripe", re.I),
     "guarantee": re.compile(r"guarantee|money.?back|refund|warranty|return.?policy|secure.?checkout", re.I),
     "reviews": re.compile(r"review|testimonial|trustpilot|yotpo|judge.?me|rating|stars?", re.I),
+    "security": re.compile(r"ssl.?secure|secure|security|norton|mcafee|trust.?seal|verified|protection|badge", re.I),
 }
 class _TrustSignalParser(HTMLParser):
     def __init__(self):
@@ -64,6 +66,7 @@ def inspect_trust_signals(html: str, source_url: str) -> list[AuditFinding]:
         ("guarantee", "Guarantee/returns cues"),
         ("reviews", "Review/testimonial cues"),
         ("support", "Support and policy cues"),
+        ("security", "Security-badge cues"),
     ):
         text_match = bool(PATTERNS[key].search(visible_text))
         asset_match = key in ASSET_HINTS and bool(ASSET_HINTS[key].search(assets))
