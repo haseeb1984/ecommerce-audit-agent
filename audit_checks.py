@@ -743,6 +743,7 @@ def record_homepage_outcomes(
             ("structured_data.product_name", "Product name property"),
             ("structured_data.product_description", "Product description property"),
             ("structured_data.product_image", "Product image property"),
+            ("structured_data.product_identifiers", "Product identifiers"),
             ("structured_data.product_offers", "Product offer information"),
             ("structured_data.offer_price", "Offer price"),
             ("structured_data.offer_currency", "Offer currency"),
@@ -775,6 +776,29 @@ def record_homepage_outcomes(
                 f"Parseable Product entities: {len(product_entities)}; entities missing a usable {property_name} property: {missing_count}. "
                 "This checks source presence/shape only; it does not verify visible-content consistency, image reachability, or rich-result eligibility.",
             )
+
+        # Product identifiers are useful catalog signals, but not every
+        # legitimate Product entity exposes every identifier. Report missing
+        # identifier fields as a warning, never as a definitive schema failure.
+        identifier_fields = ("sku", "gtin", "gtin8", "gtin12", "gtin13", "gtin14", "mpn")
+        products_with_identifier = 0
+        products_without_identifier = 0
+        for product in product_entities:
+            has_identifier = any(
+                (isinstance(product.get(field), str) and bool(product[field].strip()))
+                or (isinstance(product.get(field), (int, float)) and not isinstance(product.get(field), bool))
+                for field in identifier_fields
+            )
+            if has_identifier:
+                products_with_identifier += 1
+            else:
+                products_without_identifier += 1
+        record(
+            "structured_data.product_identifiers", "structured_data",
+            "warning" if products_without_identifier else "pass",
+            f"Parseable Product entities: {len(product_entities)}; entities with at least one non-empty SKU/GTIN/MPN identifier: {products_with_identifier}; entities without one of these source fields: {products_without_identifier}. "
+            "Identifier requirements depend on product type and destination; this check does not validate identifier authenticity, uniqueness, or correspondence to the physical product.",
+        )
 
         offer_objects: list[dict[str, Any]] = []
         products_without_offers = 0
