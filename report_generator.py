@@ -55,6 +55,25 @@ def _format_check_outcome_summary(recorded_outcomes: list[object]) -> str:
     )
 
 
+def _format_check_outcome_summary_from_dicts(recorded_outcomes: list[dict[str, object]]) -> str:
+    """Summarize serialized, URL-linked outcomes without inferring unrecorded checks."""
+    counts = {
+        key: sum(1 for outcome in recorded_outcomes if outcome.get("outcome") == key)
+        for key in ("pass", "issue", "warning", "not_assessed", "error")
+    }
+    denominator = len(recorded_outcomes)
+    if not denominator:
+        return "Unavailable — no matching explicit outcome records."
+    states = ", ".join(
+        f"{key.replace('_', ' ')} {counts[key]} ({counts[key] / denominator * 100:.1f}%)"
+        for key in ("pass", "issue", "warning", "not_assessed", "error")
+    )
+    return (
+        f"Related explicit outcome records: denominator {denominator}; {states}. "
+        "The denominator includes only linked records, not every page on the site."
+    )
+
+
 def _p(value: object, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape(str(value or "Not available")), style)
 
@@ -1719,6 +1738,26 @@ def render_audit_pdf(
         else:
             blocks.append(_p("No specific evidence text was recorded.", body_style))
         affected_pages = finding.get("affected_pages") or []
+        # Summarize only explicit outcomes already linked to this finding's
+        # affected URLs/category. These are related category checks, not a claim
+        # that every row directly tests the exact defect described by the finding.
+        related_outcomes = []
+        for affected in affected_pages:
+            for outcome_record in affected.get("check_outcomes", []):
+                related_outcomes.append(outcome_record)
+        blocks.append(Paragraph("<b>Recorded check outcomes for affected pages</b>", body_style))
+        blocks.append(_p(
+            _format_check_outcome_summary_from_dicts(related_outcomes)
+            if related_outcomes
+            else "Unavailable for this finding: no explicit check outcome could be linked to its affected URL and category. No pass rate is inferred. "
+                 "Finding evidence remains separate from check-outcome records.",
+            small_style,
+        ))
+        if related_outcomes:
+            blocks.append(_p(
+                "Scope note: these are related checks recorded for the same affected URL/category; they are not necessarily a direct pass/fail measurement of this exact finding.",
+                small_style,
+            ))
         blocks.append(Paragraph("<b>Affected pages and observed outcomes</b>", body_style))
         if affected_pages:
             affected_rows = [[
