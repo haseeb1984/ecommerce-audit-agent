@@ -167,6 +167,21 @@
       const detail = document.createElement("small");
       detail.textContent = new Date(item.created_at).toLocaleString() + " · " + item.finding_count + " findings · report #" + item.id;
       meta.append(name, detail);
+      const outcomeSummary = item.check_outcome_summary;
+      if (outcomeSummary && Number(outcomeSummary.denominator) > 0 && outcomeSummary.counts) {
+        const outcomeLine = document.createElement("small");
+        const states = ["pass", "issue", "warning", "not_assessed", "error"];
+        outcomeLine.textContent = "Recorded checks (" + outcomeSummary.denominator + "): " +
+          states.map(state => state.replace("_", " ") + " " + (Number(outcomeSummary.counts[state]) || 0)).join(" · ");
+        outcomeLine.title = outcomeSummary.scope_note || "Only saved explicit outcomes are counted; missing outcomes are not passes.";
+        outcomeLine.className = "muted";
+        meta.append(outcomeLine);
+      } else {
+        const outcomeLine = document.createElement("small");
+        outcomeLine.textContent = "Recorded check outcome summary unavailable";
+        outcomeLine.className = "muted";
+        meta.append(outcomeLine);
+      }
       const actions = document.createElement("div"); actions.className = "report-actions";
       const download = document.createElement("button"); download.type = "button"; download.textContent = "Download PDF";
       download.addEventListener("click", async () => {
