@@ -882,6 +882,48 @@ def record_homepage_outcomes(
                 "This is a markup-shape check only; real-time inventory, fulfillment, and visible stock consistency are not verified.",
             )
 
+    # Breadcrumb and Organization are presence-only checks. Missing markup
+    # is not treated as a failure because applicability varies by page/site.
+    entity_type_counts = {"breadcrumblist": 0, "organization": 0}
+    jsonld_parse_failures = 0
+
+    def collect_relevant_entity_types(value: Any) -> None:
+        if isinstance(value, list):
+            for child in value:
+                collect_relevant_entity_types(child)
+        elif isinstance(value, dict):
+            raw_type = value.get("@type", [])
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            for item in types:
+                if isinstance(item, str):
+                    normalized_type = item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower()
+                    if normalized_type in entity_type_counts:
+                        entity_type_counts[normalized_type] += 1
+            if "@graph" in value:
+                collect_relevant_entity_types(value["@graph"])
+
+    for script in parser.jsonld_scripts:
+        try:
+            collect_relevant_entity_types(json.loads(script))
+        except (json.JSONDecodeError, TypeError):
+            jsonld_parse_failures += 1
+
+    for entity_type, check_id, label in (
+        ("breadcrumblist", "structured_data.breadcrumb_markup", "BreadcrumbList"),
+        ("organization", "structured_data.organization_markup", "Organization"),
+    ):
+        entity_count = entity_type_counts[entity_type]
+        outcome = (
+            "pass" if entity_count
+            else "not_assessed" if jsonld_parse_failures or not parser.jsonld_scripts
+            else "not_assessed"
+        )
+        record(
+            check_id, "structured_data", outcome,
+            f"Parseable JSON-LD entity count for {label}: {entity_count}; JSON-LD blocks that failed parsing: {jsonld_parse_failures}. "
+            "This records presence only; it does not validate required properties, accuracy, eligibility, or whether this page/site should expose this entity type.",
+        )
+
     # ProductGroup/hasVariant is evaluated separately from single Product
     # properties. Absence is not an issue because not every product uses variants.
     product_groups: list[dict[str, Any]] = []
