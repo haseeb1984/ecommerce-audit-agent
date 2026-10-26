@@ -2497,6 +2497,95 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                                 evidence="Sitemap XML could not be parsed for lastmod values; no format conclusion is inferred.",
                                 evidence_ref=final_url,
                             ))
+                        try:
+                            sitemap_root = ET.fromstring(body)
+                            changefreq_values = [
+                                (element.text or "").strip().lower()
+                                for element in sitemap_root.iter()
+                                if element.tag.rsplit("}", 1)[-1].lower() == "changefreq"
+                            ]
+                            allowed_changefreq = {
+                                "always", "hourly", "daily", "weekly",
+                                "monthly", "yearly", "never",
+                            }
+                            invalid_changefreq = [
+                                value for value in changefreq_values
+                                if value not in allowed_changefreq
+                            ]
+                            if not changefreq_values:
+                                changefreq_outcome = "not_assessed"
+                                changefreq_evidence = "No changefreq elements were present; this optional hint's absence is not an error."
+                            elif invalid_changefreq:
+                                changefreq_outcome = "warning"
+                                changefreq_evidence = (
+                                    f"{len(invalid_changefreq)} of {len(changefreq_values)} changefreq value(s) were outside "
+                                    f"the standard enumerated values; examples: {invalid_changefreq[:3]!r}. "
+                                    "This does not establish whether crawlers use the hint."
+                                )
+                            else:
+                                changefreq_outcome = "pass"
+                                changefreq_evidence = (
+                                    f"All {len(changefreq_values)} changefreq value(s) matched the expected enumeration. "
+                                    "This checks format only; it does not verify the real update frequency or crawler behavior."
+                                )
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.changefreq_format",
+                                category=category, page_url=final_url,
+                                outcome=changefreq_outcome,
+                                observed_at_utc=observed_at_utc,
+                                method="bounded XML extraction and enumeration validation of sitemap changefreq values",
+                                evidence=changefreq_evidence,
+                                evidence_ref=final_url,
+                            ))
+                            priority_values = [
+                                (element.text or "").strip()
+                                for element in sitemap_root.iter()
+                                if element.tag.rsplit("}", 1)[-1].lower() == "priority"
+                            ]
+                            invalid_priorities = []
+                            for value in priority_values:
+                                try:
+                                    numeric_priority = Decimal(value)
+                                    if not numeric_priority.is_finite() or not Decimal("0.0") <= numeric_priority <= Decimal("1.0"):
+                                        invalid_priorities.append(value[:80])
+                                except (InvalidOperation, ValueError):
+                                    invalid_priorities.append(value[:80])
+                            if not priority_values:
+                                priority_outcome = "not_assessed"
+                                priority_evidence = "No priority elements were present; this optional hint's absence is not an error."
+                            elif invalid_priorities:
+                                priority_outcome = "warning"
+                                priority_evidence = (
+                                    f"{len(invalid_priorities)} of {len(priority_values)} priority value(s) were not valid finite "
+                                    f"numbers between 0.0 and 1.0; examples: {invalid_priorities[:3]!r}. "
+                                    "Priority is a sitemap hint and does not guarantee ranking or crawl priority."
+                                )
+                            else:
+                                priority_outcome = "pass"
+                                priority_evidence = (
+                                    f"All {len(priority_values)} priority value(s) were finite numbers from 0.0 to 1.0. "
+                                    "This does not establish ranking benefit or crawler use."
+                                )
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.priority_format",
+                                category=category, page_url=final_url,
+                                outcome=priority_outcome,
+                                observed_at_utc=observed_at_utc,
+                                method="bounded XML extraction and numeric range validation of sitemap priority values",
+                                evidence=priority_evidence,
+                                evidence_ref=final_url,
+                            ))
+                        except (ET.ParseError, ValueError):
+                            for check_id, evidence in (
+                                ("discovery.sitemap_xml.changefreq_format", "Sitemap XML could not be parsed for changefreq values; no format conclusion is inferred."),
+                                ("discovery.sitemap_xml.priority_format", "Sitemap XML could not be parsed for priority values; no format conclusion is inferred."),
+                            ):
+                                check_outcomes.append(CheckOutcome(
+                                    check_id=check_id, category=category, page_url=final_url,
+                                    outcome="not_assessed", observed_at_utc=observed_at_utc,
+                                    method="bounded XML extraction and basic sitemap field validation",
+                                    evidence=evidence, evidence_ref=final_url,
+                                ))
                     elif category == "llms_txt":
                         text_lines = [line.strip() for line in body.splitlines() if line.strip()]
                         looks_like_markdown = bool(text_lines) and any(line.startswith("#") for line in text_lines)
