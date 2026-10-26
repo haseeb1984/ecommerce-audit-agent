@@ -924,12 +924,27 @@ def record_homepage_outcomes(
             if not variants:
                 missing_variant_list += 1
                 continue
-            if any(
-                not isinstance(variant, dict)
-                and not (isinstance(variant, str) and variant.strip())
-                for variant in variants
-            ):
-                malformed_variant_list += 1
+            def variant_reference_is_usable(variant: Any) -> bool:
+                if isinstance(variant, str):
+                    # A non-empty IRI reference can identify an external entity;
+                    # its target is not fetched or verified by this source check.
+                    return bool(variant.strip())
+                if not isinstance(variant, dict) or not variant:
+                    return False
+                variant_type = variant.get("@type", [])
+                variant_types = variant_type if isinstance(variant_type, list) else [variant_type]
+                is_product = any(
+                    isinstance(item, str)
+                    and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "product"
+                    for item in variant_types
+                )
+                has_reference = isinstance(variant.get("@id"), str) and bool(variant["@id"].strip())
+                return is_product or has_reference
+
+            malformed_entries = sum(
+                1 for variant in variants if not variant_reference_is_usable(variant)
+            )
+            malformed_variant_list += malformed_entries
             variant_count += len(variants)
         variant_outcome = (
             "issue" if malformed_variant_list
@@ -938,7 +953,7 @@ def record_homepage_outcomes(
         )
         record(
             "structured_data.product_group_variants", "structured_data", variant_outcome,
-            f"ProductGroup entities: {len(product_groups)}; entities without hasVariant entries: {missing_variant_list}; entries inspected: {variant_count}; malformed primitive entries: {malformed_variant_list}. "
+            f"ProductGroup entities: {len(product_groups)}; entities without hasVariant entries: {missing_variant_list}; entries inspected: {variant_count}; entries without a Product type or usable @id reference: {malformed_variant_list}. "
             "This checks only source shape; it does not verify variant URLs, SKU/GTIN consistency, selectable UI behavior, or price/availability synchronization.",
         )
 
