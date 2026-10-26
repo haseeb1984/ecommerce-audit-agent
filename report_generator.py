@@ -1842,6 +1842,44 @@ def render_audit_pdf(
         ))
 
     story.append(Paragraph("Coverage and limitations", section_style))
+    explicit_outcomes = list(getattr(result, "check_outcomes", []) or [])
+    outcome_states = ("pass", "issue", "warning", "not_assessed", "error")
+    outcome_counts = {
+        state: sum(1 for outcome in explicit_outcomes if getattr(outcome, "outcome", None) == state)
+        for state in outcome_states
+    }
+    outcome_denominator = len(explicit_outcomes)
+    story.append(Paragraph("Explicit recorded check outcomes", base["Heading2"]))
+    if outcome_denominator:
+        outcome_rows = [[_p("Outcome", small_style), _p("Count", small_style), _p("Share of recorded outcomes", small_style)]]
+        for state in outcome_states:
+            count = outcome_counts[state]
+            percentage = count / outcome_denominator * 100
+            outcome_rows.append([
+                _p(state.replace("_", " ").title(), body_style),
+                _p(str(count), body_style),
+                _p(f"{percentage:.1f}%", body_style),
+            ])
+        outcome_table = Table(outcome_rows, colWidths=[58 * mm, 28 * mm, 60 * mm], repeatRows=1, hAlign="LEFT")
+        outcome_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.extend([outcome_table, Spacer(1, 2 * mm)])
+        story.append(_p(
+            f"Denominator: {outcome_denominator} explicit saved outcome records. These counts describe recorded outcomes only, not every required control or every page. Missing outcomes are not passes.",
+            small_style,
+        ))
+    else:
+        story.append(_p(
+            "Outcome distribution unavailable: this run contains no explicit check outcome records. No pass rate is inferred.",
+            body_style,
+        ))
     if coverage_manifest:
         coverage_pct = coverage_manifest.get("category_signal_coverage_pct")
         execution_pct = coverage_manifest.get("category_execution_coverage_pct")
