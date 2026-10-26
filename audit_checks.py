@@ -706,6 +706,154 @@ def record_homepage_outcomes(
             "No application/ld+json script block was found in the returned HTML; JSON-LD syntax could not be evaluated. "
             "Other structured-data formats and page-specific requirements were not assessed by this check.",
         )
+    # Product/Offer outcomes are independent source checks. A missing Product
+    # entity is not a failure of a product-specific property check: that check is
+    # marked not_assessed because this page may not represent a product.
+    product_entities: list[dict[str, Any]] = []
+
+    def collect_product_entities(value: Any) -> None:
+        if isinstance(value, list):
+            for child in value:
+                collect_product_entities(child)
+        elif isinstance(value, dict):
+            raw_type = value.get("@type", [])
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            if any(isinstance(item, str) and item.lower() == "product" for item in types):
+                product_entities.append(value)
+            if "@graph" in value:
+                collect_product_entities(value["@graph"])
+
+    malformed_product_jsonld = 0
+    for script in parser.jsonld_scripts:
+        try:
+            collect_product_entities(json.loads(script))
+        except (json.JSONDecodeError, TypeError):
+            malformed_product_jsonld += 1
+
+    if not product_entities:
+        product_not_assessed = (
+            "No parseable Product entity was found in returned HTML JSON-LD. "
+            "This may be a non-product page or product markup may be absent, malformed, rendered later, or represented in another format; no positive product-data conclusion is inferred."
+        )
+        for check_id, description in (
+            ("structured_data.product_name", "Product name property"),
+            ("structured_data.product_description", "Product description property"),
+            ("structured_data.product_image", "Product image property"),
+            ("structured_data.product_offers", "Product offer information"),
+            ("structured_data.offer_price", "Offer price"),
+            ("structured_data.offer_currency", "Offer currency"),
+            ("structured_data.offer_availability", "Offer availability"),
+        ):
+            record(check_id, "structured_data", "not_assessed", f"{description} not assessed. {product_not_assessed}")
+    else:
+        def product_property_missing(product: dict[str, Any], key: str) -> bool:
+            value = product.get(key)
+            if key == "image":
+                values = value if isinstance(value, list) else [value]
+                return not any(
+                    (isinstance(item, str) and item.strip())
+                    or (isinstance(item, dict) and any(
+                        isinstance(item.get(field), str) and item[field].strip()
+                        for field in ("url", "contentUrl")
+                    ))
+                    for item in values
+                )
+            return not (isinstance(value, str) and value.strip()) if key in {"name", "description"} else False
+
+        for property_name, check_id in (
+            ("name", "structured_data.product_name"),
+            ("description", "structured_data.product_description"),
+            ("image", "structured_data.product_image"),
+        ):
+            missing_count = sum(product_property_missing(product, property_name) for product in product_entities)
+            record(
+                check_id, "structured_data", "issue" if missing_count else "pass",
+                f"Parseable Product entities: {len(product_entities)}; entities missing a usable {property_name} property: {missing_count}. "
+                "This checks source presence/shape only; it does not verify visible-content consistency, image reachability, or rich-result eligibility.",
+            )
+
+        offer_objects: list[dict[str, Any]] = []
+        products_without_offers = 0
+        for product in product_entities:
+            raw_offers = product.get("offers")
+            offers = raw_offers if isinstance(raw_offers, list) else [raw_offers]
+            product_offers = [offer for offer in offers if isinstance(offer, dict) and offer]
+            if product_offers:
+                offer_objects.extend(product_offers)
+            else:
+                products_without_offers += 1
+        record(
+            "structured_data.product_offers", "structured_data",
+            "warning" if products_without_offers else "pass",
+            f"Parseable Product entities: {len(product_entities)}; entities without a non-empty Offer/AggregateOffer object: {products_without_offers}; offer objects inspected: {len(offer_objects)}. "
+            "Some Product markup is used outside merchant listings, so absent offers are not universally invalid.",
+        )
+
+        def parse_source_price(value: Any) -> Decimal | None:
+            if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                return None
+            try:
+                parsed = Decimal(str(value).strip())
+            except (InvalidOperation, ValueError):
+                return None
+            return parsed if parsed.is_finite() and parsed >= 0 else None
+
+        missing_price = 0
+        missing_currency = 0
+        missing_or_invalid_availability = 0
+        recognized_availability = {
+            "backorder", "discontinued", "instoreonly", "limitedavailability",
+            "madetoorder", "onlineonly", "outofstock", "presale", "preorder",
+            "instock", "soldout",
+        }
+        for offer in offer_objects:
+            offer_types = offer.get("@type", [])
+            offer_types = offer_types if isinstance(offer_types, list) else [offer_types]
+            aggregate = any(isinstance(t, str) and t.lower() == "aggregateoffer" for t in offer_types)
+            if aggregate:
+                if parse_source_price(offer.get("lowPrice")) is None and parse_source_price(offer.get("highPrice")) is None:
+                    missing_price += 1
+            elif parse_source_price(offer.get("price")) is None:
+                missing_price += 1
+            currency = offer.get("priceCurrency")
+            if not (isinstance(currency, str) and re.fullmatch(r"[A-Za-z]{3}", currency.strip())):
+                missing_currency += 1
+            availability = offer.get("availability")
+            if isinstance(availability, str) and availability.strip():
+                token = re.sub(r"[^A-Za-z-]", "", availability.strip().rstrip("/").rsplit("/", 1)[-1]).lower()
+                if token not in recognized_availability:
+                    missing_or_invalid_availability += 1
+            else:
+                missing_or_invalid_availability += 1
+
+        if not offer_objects:
+            for check_id, description in (
+                ("structured_data.offer_price", "Offer price"),
+                ("structured_data.offer_currency", "Offer currency"),
+                ("structured_data.offer_availability", "Offer availability"),
+            ):
+                record(check_id, "structured_data", "not_assessed",
+                       f"{description} not assessed because no non-empty Offer/AggregateOffer object was found. Product entities: {len(product_entities)}; missing offer entities: {products_without_offers}.")
+        else:
+            record(
+                "structured_data.offer_price", "structured_data",
+                "issue" if missing_price else "pass",
+                f"Offer objects inspected: {len(offer_objects)}; objects missing a usable non-negative finite price (or both aggregate range bounds): {missing_price}. "
+                "Visible-price consistency and variant selection are not assessed.",
+            )
+            record(
+                "structured_data.offer_currency", "structured_data",
+                "issue" if missing_currency else "pass",
+                f"Offer objects inspected: {len(offer_objects)}; objects missing a three-letter priceCurrency code: {missing_currency}. "
+                "The code is not verified against the actual storefront currency.",
+            )
+            record(
+                "structured_data.offer_availability", "structured_data",
+                "issue" if missing_or_invalid_availability else "pass",
+                f"Offer objects inspected: {len(offer_objects)}; objects missing or using an unrecognized availability token: {missing_or_invalid_availability}. "
+                "This is a markup-shape check only; real-time inventory, fulfillment, and visible stock consistency are not verified.",
+            )
+
     return outcomes
 
 
