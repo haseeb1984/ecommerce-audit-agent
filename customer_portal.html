@@ -172,7 +172,12 @@
         const outcomeLine = document.createElement("small");
         const states = ["pass", "issue", "warning", "not_assessed", "error"];
         outcomeLine.textContent = "Recorded checks (" + outcomeSummary.denominator + "): " +
-          states.map(state => state.replace("_", " ") + " " + (Number(outcomeSummary.counts[state]) || 0)).join(" · ");
+          states.map(state => {
+            const count = Number(outcomeSummary.counts[state]) || 0;
+            const percentage = outcomeSummary.percentages && Number.isFinite(Number(outcomeSummary.percentages[state]))
+              ? " (" + Number(outcomeSummary.percentages[state]).toFixed(1) + "%)" : "";
+            return state.replace("_", " ") + " " + count + percentage;
+          }).join(" · ");
         outcomeLine.title = outcomeSummary.scope_note || "Only saved explicit outcomes are counted; missing outcomes are not passes.";
         outcomeLine.className = "muted";
         meta.append(outcomeLine);
