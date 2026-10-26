@@ -134,12 +134,12 @@ def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFind
     findings: list[AuditFinding] = []
     lower = html.lower()
     tracking_patterns = {
-        "Google Tag Manager": re.compile(r"(?:googletagmanager\\.com/gtm\\.js|gtm-[a-z0-9]{4,})", re.I),
-        "Google Analytics / gtag": re.compile(r"(?:googletagmanager\\.com/gtag/js|google-analytics\\.com/analytics\\.js|\\bgtag\\s*\\()", re.I),
-        "Meta Pixel": re.compile(r"(?:connect\\.facebook\\.net/.*/fbevents\\.js|\\bfbq\\s*\\()", re.I),
-        "TikTok Pixel": re.compile(r"(?:analytics\\.tiktok\\.com|\\bttq\\.load\\s*\\()", re.I),
-        "Microsoft Clarity": re.compile(r"(?:clarity\\.ms/tag|\\bclarity\\s*\\(\\s*['\"]set['\"])", re.I),
-        "Pinterest Tag": re.compile(r"(?:s\\.pinimg\\.com/ct/core\\.js|\\bpinterest\\.tag\\s*\\()", re.I),
+        "Google Tag Manager": re.compile(r"(?:googletagmanager\.com/gtm\.js|gtm-[a-z0-9]{4,})", re.I),
+        "Google Analytics / gtag": re.compile(r"(?:googletagmanager\.com/gtag/js|google-analytics\.com/analytics\.js|\bgtag\s*\()", re.I),
+        "Meta Pixel": re.compile(r"(?:connect\.facebook\.net/.*/fbevents\.js|\bfbq\s*\()", re.I),
+        "TikTok Pixel": re.compile(r"(?:analytics\.tiktok\.com|\bttq\.load\s*\()", re.I),
+        "Microsoft Clarity": re.compile(r"(?:clarity\.ms/tag|\bclarity\s*\(\s*['\"]set['\"])", re.I),
+        "Pinterest Tag": re.compile(r"(?:s\.pinimg\.com/ct/core\.js|\bpinterest\.tag\s*\()", re.I),
     }
     detected = [name for name, pattern in tracking_patterns.items() if pattern.search(html)]
     if detected:
