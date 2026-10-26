@@ -1590,6 +1590,22 @@ async def crawl_same_origin_pages(
                 client, page_url, allowed_origin=origin
             )
             if not _same_origin(final_url, origin):
+                if outcome_records is not None:
+                    from datetime import datetime, timezone
+                    outcome_records.append(CheckOutcome(
+                        check_id="crawl.discovered_url_redirect_scope",
+                        category="crawlability",
+                        page_url=page_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded redirect destination origin comparison",
+                        evidence=(
+                            "A discovered same-origin URL redirected outside the audited origin; "
+                            "the destination was excluded from page analysis under the same-origin crawl policy. "
+                            "No destination-page outcome is inferred."
+                        ),
+                        evidence_ref=page_url,
+                    ))
                 limitations.append("A same-origin link redirected to another origin and was excluded from page analysis.")
                 continue
             if final_url in checked or final_url == homepage_url:
