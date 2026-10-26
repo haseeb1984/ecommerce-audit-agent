@@ -1910,7 +1910,18 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                                 evidence=parse_finding.evidence,
                                 evidence_ref=final_url,
                             ))
-                        elif structure is not None:
+                        else:
+                            # Reaching the structure finding means XML parsing completed;
+                            # keep parseability separate from semantic sitemap quality.
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.parseability",
+                                category=category, page_url=final_url, outcome="pass",
+                                observed_at_utc=observed_at_utc,
+                                method="Python XML parser on bounded fetched sitemap response",
+                                evidence="The response parsed as well-formed XML. Sitemap semantics and search-engine acceptance are assessed separately.",
+                                evidence_ref=final_url,
+                            ))
+                        if structure is not None:
                             structure_outcome = "pass" if structure.status == "verified" else "warning"
                             check_outcomes.append(CheckOutcome(
                                 check_id="discovery.sitemap_xml.structure",
@@ -1927,6 +1938,15 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                                 observed_at_utc=observed_at_utc,
                                 method="exact-string duplicate detection over non-empty sitemap loc entries",
                                 evidence=duplicate.evidence,
+                                evidence_ref=final_url,
+                            ))
+                        elif structure is not None:
+                            check_outcomes.append(CheckOutcome(
+                                check_id="discovery.sitemap_xml.duplicate_urls",
+                                category=category, page_url=final_url, outcome="pass",
+                                observed_at_utc=observed_at_utc,
+                                method="exact-string duplicate detection over non-empty sitemap loc entries",
+                                evidence="No exact-string duplicate non-empty loc entries were detected. This does not establish URL canonicality or indexability.",
                                 evidence_ref=final_url,
                             ))
                     elif category == "llms_txt":
