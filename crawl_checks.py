@@ -166,6 +166,16 @@ def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFind
         r"reject all cookies", r"manage preferences", r"cookie settings",
     )
     consent_detected = any(re.search(pattern, lower, re.I) for pattern in consent_patterns)
+    if not detected and not consent_detected:
+        findings.append(_finding(
+            "pixel_analytics", "No supported tracking or consent signatures detected in initial HTML",
+            "manual_review_required", "info",
+            f"No supported client-side tracking signatures or recognizable consent/banner source signals were found in the returned HTML for {page_url}.",
+            "This does not prove that analytics or consent controls are absent. Tags may be injected after JavaScript execution, loaded through a tag manager, blocked by the response variant, or implemented server-side.",
+            "Review the rendered page and authorized browser network traffic before concluding that tracking is absent. If analytics are expected, verify event delivery with safe test events and without real customer data.",
+            ["Inspect the rendered DOM and network requests after the page settles.", "Review the tag manager and analytics configuration where authorized.", "Use a consent-aware test session to verify optional tracking behavior."],
+            page_url,
+        ))
     if detected or consent_detected:
         consent_evidence = (
             f"Consent/banner-related source signals were detected on {page_url}."
