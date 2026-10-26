@@ -724,6 +724,37 @@ async def get_account_usage(
     }
 
 
+def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
+    """Summarize only persisted explicit outcomes; never infer missing checks as passes."""
+    states = ("pass", "issue", "warning", "not_assessed", "error")
+    counts = {state: 0 for state in states}
+    try:
+        payload = json.loads(coverage_json or "{}")
+        outcomes = payload.get("check_outcomes", [])
+        if not isinstance(outcomes, list):
+            outcomes = []
+        for item in outcomes:
+            if not isinstance(item, dict):
+                continue
+            state = item.get("outcome")
+            if state in counts:
+                counts[state] += 1
+    except (TypeError, ValueError):
+        outcomes = []
+    denominator = sum(counts.values())
+    return {
+        "counts": counts,
+        "denominator": denominator,
+        "percentages": {
+            state: round(count / denominator * 100, 1) if denominator else None
+            for state, count in counts.items()
+        },
+        "scope_note": (
+            "Counts include only saved explicit outcomes; missing outcomes are not passes."
+        ),
+    }
+
+
 @app.get("/api/v1/reports")
 async def list_audit_reports(
     response: Response,
@@ -754,6 +785,7 @@ async def list_audit_reports(
                 "domain": row.domain,
                 "finding_count": row.finding_count,
                 "created_at": row.created_at.isoformat(),
+                "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
                 "download_url": f"/api/v1/reports/{row.id}/pdf",
                 "coverage_url": f"/api/v1/reports/{row.id}/coverage",
             }
