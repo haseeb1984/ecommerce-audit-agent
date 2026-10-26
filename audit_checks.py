@@ -2012,6 +2012,36 @@ async def crawl_same_origin_pages(
                     evidence=f"Sitemap-listed URL {page_url} returned HTTP {status}; content type: {content_type or 'not declared'}. A successful response does not prove canonicality or indexability.",
                     evidence_ref=final_url,
                 ))
+            if outcome_records is not None and _parent == "sitemap":
+                from datetime import datetime, timezone
+                x_robots = " ".join(
+                    str(value) for key, value in headers.items()
+                    if key.lower() == "x-robots-tag"
+                )
+                meta_robots = " ".join(
+                    match.group(1)
+                    for match in re.finditer(
+                        r"<meta[^>]+name\\s*=\\s*['\"](?:robots|googlebot|googlebot-news)['\"][^>]+content\\s*=\\s*['\"]([^'\"]*)['\"][^>]*>",
+                        body, re.I
+                    )
+                )
+                noindex_signal = bool(re.search(r"(?:^|[,\\s])noindex(?:$|[,\\s])", x_robots + " " + meta_robots, re.I))
+                outcome_records.append(CheckOutcome(
+                    check_id="discovery.sitemap_xml.obvious_non_indexable",
+                    category="sitemap_xml", page_url=final_url,
+                    outcome="issue" if noindex_signal else "pass" if is_html else "not_assessed",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded inspection of X-Robots-Tag and robots meta directives on sitemap-listed URLs",
+                    evidence=(
+                        f"Explicit noindex token detected. X-Robots-Tag: {x_robots[:200]!r}; meta robots: {meta_robots[:200]!r}. "
+                        "This public-source signal does not establish actual search-engine index status."
+                        if noindex_signal else
+                        "No explicit noindex token was detected in the inspected directives; this does not prove indexability or search-engine acceptance."
+                        if is_html else
+                        f"Non-HTML content type ({content_type or 'not declared'}); HTML meta directives were not inspected."
+                    ),
+                    evidence_ref=final_url,
+                ))
             if not is_html:
                 if outcome_records is not None:
                     from datetime import datetime, timezone
