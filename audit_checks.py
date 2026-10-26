@@ -2291,6 +2291,42 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                             evidence=sitemap_reference_evidence,
                             evidence_ref=final_url,
                         ))
+                        malformed_directive_lines = []
+                        empty_user_agent_lines = []
+                        for line_number, raw_line in enumerate(body.splitlines(), start=1):
+                            directive_line = raw_line.split("#", 1)[0].strip()
+                            if not directive_line:
+                                continue
+                            if ":" not in directive_line:
+                                malformed_directive_lines.append(line_number)
+                                continue
+                            directive_name, directive_value = directive_line.split(":", 1)
+                            if directive_name.strip().lower() == "user-agent" and not directive_value.strip():
+                                empty_user_agent_lines.append(line_number)
+                        malformed_count = len(malformed_directive_lines) + len(empty_user_agent_lines)
+                        if malformed_count:
+                            directive_format_outcome = "warning"
+                            directive_format_evidence = (
+                                f"Potentially malformed non-comment lines: {len(malformed_directive_lines)}; "
+                                f"empty User-agent values: {len(empty_user_agent_lines)}; "
+                                f"sample line numbers: {(malformed_directive_lines + empty_user_agent_lines)[:10]}. "
+                                "This is a conservative line-level heuristic, not a complete robots protocol parser."
+                            )
+                        else:
+                            directive_format_outcome = "pass"
+                            directive_format_evidence = (
+                                "No non-comment lines without a colon and no empty User-agent values were detected. "
+                                "This basic syntax signal does not validate crawler-specific semantics or rule precedence."
+                            )
+                        check_outcomes.append(CheckOutcome(
+                            check_id="discovery.robots_txt.directive_format",
+                            category=category, page_url=final_url,
+                            outcome=directive_format_outcome,
+                            observed_at_utc=observed_at_utc,
+                            method="bounded line-level syntax heuristic for colon-delimited directives and non-empty User-agent values",
+                            evidence=directive_format_evidence,
+                            evidence_ref=final_url,
+                        ))
                     elif category == "sitemap_xml":
                         parse_finding = next((item for item in content_findings if item.title == "Sitemap XML parsing"), None)
                         structure = next((item for item in content_findings if item.title == "Sitemap XML structure"), None)
