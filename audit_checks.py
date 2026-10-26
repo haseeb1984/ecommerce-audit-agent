@@ -644,11 +644,31 @@ def record_homepage_outcomes(
             language for language, _ in parser.hreflang_entries
             if not re.fullmatch(r"(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|x-default)", language)
         ]
-        invalid_href_count = sum(1 for _, href in parser.hreflang_entries if not href)
-        hreflang_outcome = "issue" if invalid_href_count else "warning" if invalid_hreflang else "pass"
+        normalized_languages = [language.strip().lower() for language, _ in parser.hreflang_entries]
+        duplicate_language_count = len(normalized_languages) - len(set(normalized_languages))
+        invalid_href_count = 0
+        for _, href in parser.hreflang_entries:
+            try:
+                href_parts = urlsplit(href)
+                href_valid = (
+                    href_parts.scheme.lower() in {"http", "https"}
+                    and bool(href_parts.hostname)
+                    and href_parts.username is None
+                    and href_parts.password is None
+                )
+                _ = href_parts.port
+            except (ValueError, UnicodeError):
+                href_valid = False
+            if not href_valid:
+                invalid_href_count += 1
+        hreflang_outcome = (
+            "issue" if invalid_href_count
+            else "warning" if invalid_hreflang or duplicate_language_count
+            else "pass"
+        )
         record(
             "international_seo.hreflang_links", "international_seo", hreflang_outcome,
-            f"HTML hreflang declarations: {len(parser.hreflang_entries)}; missing href: {invalid_href_count}; values outside conservative language-tag syntax: {len(invalid_hreflang)}. This source check does not validate reciprocal links, target status, locale correctness, or Google selection.",
+            f"HTML hreflang declarations: {len(parser.hreflang_entries)}; missing or non-absolute/invalid HTTP(S) href: {invalid_href_count}; values outside conservative language-tag syntax: {len(invalid_hreflang)}; duplicate language labels: {duplicate_language_count}. This source check does not validate reciprocal links, target status, locale correctness, or Google selection.",
         )
     robots_header = headers.get("x-robots-tag", "")
     robots_signal = f"{parser.meta_robots}, {robots_header}"
