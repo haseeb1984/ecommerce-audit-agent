@@ -140,6 +140,12 @@ def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFind
         "TikTok Pixel": re.compile(r"(?:analytics\.tiktok\.com|\bttq\.load\s*\()", re.I),
         "Microsoft Clarity": re.compile(r"(?:clarity\.ms/tag|\bclarity\s*\(\s*['\"]set['\"])", re.I),
         "Pinterest Tag": re.compile(r"(?:s\.pinimg\.com/ct/core\.js|\bpinterest\.tag\s*\()", re.I),
+        "LinkedIn Insight Tag": re.compile(r"(?:snap\.licdn\.com/li\.lms-analytics/insight\.min\.js|_linkedin_partner_id)", re.I),
+        "Snapchat Pixel": re.compile(r"(?:sc-static\.net/scevent\.min\.js|snaptr\s*\()", re.I),
+        "Hotjar": re.compile(r"(?:static\.hotjar\.com/c/hotjar-|hj\s*\(\s*['\"]event['\"])", re.I),
+        "Matomo": re.compile(r"(?:matomo\.js|piwik\.js|_paq\s*\.push)", re.I),
+        "Adobe Analytics": re.compile(r"(?:assets\.adobedtm\.com|omtrdc\.net|s\.t\s*\()", re.I),
+        "Segment": re.compile(r"(?:cdn\.segment\.com/analytics\.js|analytics\.load\s*\()", re.I),
     }
     detected = [name for name, pattern in tracking_patterns.items() if pattern.search(html)]
     if detected:
