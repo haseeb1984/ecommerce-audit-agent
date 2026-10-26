@@ -654,6 +654,14 @@ def record_homepage_outcomes(
             f"JSON-LD script blocks: {len(parser.jsonld_scripts)}; blocks that failed JSON parsing: {malformed_jsonld}. "
             "Valid JSON syntax does not establish Schema.org validity or rich-result eligibility.",
         )
+    else:
+        # No JSON-LD means parseability itself was not testable. Do not treat the
+        # absence of structured data as a parseability pass or silently omit it.
+        record(
+            "structured_data.jsonld_parseability", "structured_data", "not_assessed",
+            "No application/ld+json script block was found in the returned HTML; JSON-LD syntax could not be evaluated. "
+            "Other structured-data formats and page-specific requirements were not assessed by this check.",
+        )
     return outcomes
 
 
