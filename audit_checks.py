@@ -1566,7 +1566,22 @@ async def crawl_same_origin_pages(
     parser = _PageParser()
     try:
         parser.feed(homepage_html)
-    except Exception:
+    except Exception as exc:
+        if outcome_records is not None:
+            from datetime import datetime, timezone
+            outcome_records.append(CheckOutcome(
+                check_id="crawl.homepage_link_discovery",
+                category="crawlability",
+                page_url=homepage_url,
+                outcome="error",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="bounded static HTML link parsing",
+                evidence=(
+                    f"Homepage link parsing failed with {type(exc).__name__}; "
+                    "internal-link discovery and dependent page checks were not completed."
+                ),
+                evidence_ref="crawl.homepage_link_discovery",
+            ))
         return checked, findings, ["Same-origin crawling was skipped because homepage links could not be parsed safely."]
     # Sitemap URLs are lower-priority seeds; the same origin, URL, and page
     # budgets apply to them as to ordinary homepage links.
