@@ -16,6 +16,9 @@ class _ResourceParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.images = 0
         self.images_without_dimensions = 0
+        self.images_with_lazy_loading = 0
+        self.first_image_loading = ""
+        self.first_image_fetchpriority = ""
         self.external_scripts = 0
         self.stylesheets = 0
         self.inline_script_bytes = 0
@@ -28,6 +31,11 @@ class _ResourceParser(HTMLParser):
         tag = tag.lower()
         if tag == "img":
             self.images += 1
+            if self.images == 1:
+                self.first_image_loading = values.get("loading", "").strip().lower()
+                self.first_image_fetchpriority = values.get("fetchpriority", "").strip().lower()
+            if values.get("loading", "").strip().lower() == "lazy":
+                self.images_with_lazy_loading += 1
             if not values.get("width") or not values.get("height"):
                 self.images_without_dimensions += 1
         elif tag == "script":
@@ -88,6 +96,33 @@ def inspect_static_performance_signals(html: str, page_url: str) -> list[AuditFi
             verification_steps=[
                 "Inspect the image element and its computed layout in browser developer tools.",
                 "Retest layout shifts with Lighthouse or PageSpeed Insights after changes.",
+            ],
+            source_url=page_url,
+        ))
+
+    if parser.first_image_loading == "lazy":
+        findings.append(AuditFinding(
+            category="performance",
+            title="First source-order image is lazy-loaded",
+            status="manual_review_required",
+            severity="low",
+            evidence=(
+                f"The first img element in returned HTML for {page_url} has loading=lazy. "
+                f"Inspected img elements with lazy loading: {parser.images_with_lazy_loading}."
+            ),
+            explanation=(
+                "The first image may be the hero or Largest Contentful Paint (LCP) candidate, but source order "
+                "does not identify the actual LCP element. Lazy-loading a genuinely above-the-fold LCP image "
+                "can delay its discovery; this static signal is not a measured performance defect."
+            ),
+            recommendation=(
+                "Check the actual LCP element in PageSpeed Insights or a browser performance trace. "
+                "If this image is the above-the-fold LCP candidate, consider eager loading and appropriate "
+                "fetch priority; retain lazy loading for below-the-fold images."
+            ),
+            verification_steps=[
+                "Identify the LCP element in a representative mobile and desktop lab run.",
+                "Compare LCP and image request start time before and after any loading-priority change.",
             ],
             source_url=page_url,
         ))
