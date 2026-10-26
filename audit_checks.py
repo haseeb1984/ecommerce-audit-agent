@@ -2018,13 +2018,17 @@ async def crawl_same_origin_pages(
                     str(value) for key, value in headers.items()
                     if key.lower() == "x-robots-tag"
                 )
-                meta_robots = " ".join(
-                    match.group(1)
-                    for match in re.finditer(
-                        r"<meta[^>]+name\s*=\s*['\"](?:robots|googlebot|googlebot-news)['\"][^>]+content\s*=\s*['\"]([^'\"]*)['\"][^>]*>",
-                        body, re.I
-                    )
-                )
+                meta_robots_values = []
+                for meta_tag_match in re.finditer(r"<meta\b[^>]*>", body, re.I):
+                    meta_tag = meta_tag_match.group(0)
+                    name_match = re.search(r"""\bname\s*=\s*(['"])(.*?)\1""", meta_tag, re.I)
+                    content_match = re.search(r"""\bcontent\s*=\s*(['"])(.*?)\1""", meta_tag, re.I)
+                    if (
+                        name_match and content_match
+                        and name_match.group(2).strip().lower() in {"robots", "googlebot", "googlebot-news"}
+                    ):
+                        meta_robots_values.append(content_match.group(2))
+                meta_robots = " ".join(meta_robots_values)
                 noindex_signal = bool(re.search(r"(?:^|[,\s])noindex(?:$|[,\s])", x_robots + " " + meta_robots, re.I))
                 outcome_records.append(CheckOutcome(
                     check_id="discovery.sitemap_xml.obvious_non_indexable",
