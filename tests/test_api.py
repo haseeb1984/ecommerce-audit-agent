@@ -1988,3 +1988,58 @@ async def test_admin_overview_filters_clients_by_status_and_package(client, monk
     inactive_page = await client.get("/api/v1/admin/overview?client_status=inactive", headers=headers)
     assert inactive_page.status_code == 200, inactive_page.text
     assert {row["client_name"] for row in inactive_page.json()["clients"]} == {"Filter Inactive"}
+
+
+@pytest.mark.asyncio
+async def test_customer_audit_activity_is_paginated_scoped_and_minimizes_sensitive_fields(client):
+    owner_id = await create_license(key="activity-owner")
+    other_id = await create_license(key="activity-other")
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            AuditLead(license_id=owner_id, domain="first.example", mobile_score=80, speed_index_sec=2.2,
+                      contact_email="private@example.com", revenue_leak_hypothesis="private pitch", email_body="secret body",
+                      source_channel="customer_portal", created_at=now - timedelta(minutes=1)),
+            AuditLead(license_id=owner_id, domain="second.example", mobile_score=60, speed_index_sec=4.5,
+                      contact_email="other-private@example.com", revenue_leak_hypothesis="other pitch",
+                      source_channel="api", created_at=now),
+            AuditLead(license_id=other_id, domain="must-not-leak.example", mobile_score=99, speed_index_sec=1.0,
+                      created_at=now),
+        ])
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/account/activity?limit=1&offset=0",
+        headers={"X-License-Key": "activity-owner"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["page"] == {"limit": 1, "offset": 0, "total": 2, "has_more": True}
+    assert len(data["items"]) == 1
+    assert data["items"][0]["domain"] == "second.example"
+    assert "contact_email" not in data["items"][0]
+    assert "revenue_leak_hypothesis" not in data["items"][0]
+    assert "email_body" not in data["items"][0]
+    assert "must-not-leak.example" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
+
+    second_page = await client.get(
+        "/api/v1/account/activity?limit=1&offset=1",
+        headers={"X-License-Key": "activity-owner"},
+    )
+    assert second_page.status_code == 200
+    assert second_page.json()["items"][0]["domain"] == "first.example"
+    assert second_page.json()["page"]["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_customer_audit_activity_requires_auth_and_bounds_pagination(client):
+    unauthenticated = await client.get("/api/v1/account/activity")
+    assert unauthenticated.status_code == 401
+    license_id = await create_license(key="activity-bounds")
+    del license_id
+    headers = {"X-License-Key": "activity-bounds"}
+    invalid_limit = await client.get("/api/v1/account/activity?limit=101", headers=headers)
+    invalid_offset = await client.get("/api/v1/account/activity?offset=-1", headers=headers)
+    assert invalid_limit.status_code == 422
+    assert invalid_offset.status_code == 422
