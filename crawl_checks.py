@@ -319,7 +319,67 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             found_product = True
             break
 
-    if found_product or malformed:
+    if found_product:
+        # Audit core commerce fields conservatively. This is a source-level completeness
+        # signal only: it does not compare the JSON-LD against the visible/selected variant.
+        product_nodes: list[dict] = []
+
+        def collect_product_nodes(value):
+            if isinstance(value, list):
+                for item in value:
+                    collect_product_nodes(item)
+                return
+            if not isinstance(value, dict):
+                return
+            raw_type = value.get("@type", [])
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            normalized_types = {
+                item.rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].casefold()
+                for item in types if isinstance(item, str)
+            }
+            if normalized_types.intersection({"product", "productgroup"}):
+                product_nodes.append(value)
+            for key, child in value.items():
+                if key in {"@graph", "mainEntity", "itemListElement", "hasVariant"}:
+                    collect_product_nodes(child)
+
+        for script in parser.jsonld_scripts:
+            try:
+                collect_product_nodes(json.loads(script))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        gaps: set[str] = set()
+        for node in product_nodes:
+            if not node.get("name"):
+                gaps.add("name")
+            if not node.get("image"):
+                gaps.add("image")
+            offers = node.get("offers")
+            offer_items = offers if isinstance(offers, list) else [offers]
+            valid_offers = [offer for offer in offer_items if isinstance(offer, dict)]
+            if not valid_offers:
+                gaps.add("offers")
+            else:
+                if not any(offer.get("price") or offer.get("lowPrice") for offer in valid_offers):
+                    gaps.add("offer price")
+                if not any(offer.get("priceCurrency") for offer in valid_offers):
+                    gaps.add("offer currency")
+                if not any(offer.get("availability") for offer in valid_offers):
+                    gaps.add("offer availability")
+
+        if gaps:
+            return [_finding(
+                "structured_data", "Product structured data has core commerce fields to review",
+                "manual_review_required", "medium" if {"offers", "offer price", "offer currency", "offer availability"} & gaps else "low",
+                f"Core field(s) not detected in the inspected Product/ProductGroup JSON-LD on {page_url}: {', '.join(sorted(gaps))}. Raw structured-data values are not copied into the report.",
+                "Product markup can be syntactically present while omitting information important to product understanding and eligible search experiences. Some fields may be intentionally supplied elsewhere or through variant-specific markup; this source-only check does not validate rich-result eligibility or compare data with the visible selected variant.",
+                "Review the rendered product and selected variant. Where applicable, provide accurate product name, image, offer price, ISO currency, and availability that match what customers can actually select and buy. Do not invent prices or stock states.",
+                ["Inspect the rendered page and all Product/Offer entities.", "Compare the selected variant's visible price, currency, image, and stock state with its structured data.", "Validate the final markup using an authoritative structured-data validator."],
+                page_url,
+            )]
+        return []
+    if malformed:
         return []
     return [_finding(
         "structured_data", "Product structured data not detected",
