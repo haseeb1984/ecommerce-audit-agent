@@ -123,9 +123,45 @@ def read_root():
 
 @app.get("/health-check")
 async def health_check(db: AsyncSession = Depends(get_async_db)):
+    """Report database connectivity separately from required application-schema readiness."""
+    required_tables = {
+        "software_licenses",
+        "api_keys",
+        "audit_leads",
+        "audit_quota_reservations",
+        "audit_reports",
+        "saas_plan_packages",
+        "saas_admin_action_logs",
+        "saas_operation_events",
+        "payment_webhook_events",
+    }
     try:
         result = await db.execute(text("SELECT 1"))
-        return {"status": "success", "db_connected": True, "result": result.scalar()}
+        table_result = await db.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema()"
+        ))
+        existing_tables = set(table_result.scalars().all())
+        missing_tables = sorted(required_tables - existing_tables)
+        if missing_tables:
+            logger.error("Database schema readiness failed (missing_table_count=%s)", len(missing_tables))
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "not_ready",
+                    "db_connected": True,
+                    "schema_ready": False,
+                    "missing_tables": missing_tables,
+                },
+            )
+        return {
+            "status": "success",
+            "db_connected": True,
+            "schema_ready": True,
+            "result": result.scalar(),
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("Health check failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Database connection error")
