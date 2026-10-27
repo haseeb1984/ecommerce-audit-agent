@@ -426,3 +426,5 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Extended /health-check beyond a SELECT 1 connectivity probe: it now checks the current schema for the nine application tables used by licensing, API keys, audit lifecycle, plans, operations, and payment events.
 - A connected database with missing required tables returns HTTP 503 with schema_ready: false and a bounded list of missing table names; database connectivity failures remain HTTP 500 and do not expose connection details.
 - Updated the existing health endpoint regression assertion for the successful readiness response. This does not prove that every migration has been applied or that columns/indexes match the latest migration files; those checks remain open. The tests have not been executed in this session.
+
+- Added a direct endpoint regression test with a deliberately incomplete schema response to assert HTTP 503, explicit not-ready status, and missing-table reporting. The test is committed but remains unexecuted pending CI evidence.
