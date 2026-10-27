@@ -1332,6 +1332,7 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
             elif robots_status >= 500:
+                robots_rules = [("disallow", "/")]
                 limitations.append(f"robots.txt could not be inspected because the server returned HTTP {robots_status}.")
                 if outcome_records is not None:
                     outcome_records.append(CheckOutcome(
@@ -1345,6 +1346,7 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
             elif 200 <= robots_status < 300:
+                robots_rules = [("disallow", "/")]
                 limitations.append("robots.txt inspection was skipped because the response redirected outside the audited origin.")
                 if outcome_records is not None:
                     outcome_records.append(CheckOutcome(
@@ -1371,7 +1373,8 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
         except Exception as exc:
-            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}).")
+            robots_rules = [("disallow", "/")]
+            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}); additional page crawling was conservatively stopped.")
             if outcome_records is not None:
                 outcome_records.append(CheckOutcome(
                     check_id="robots_txt.discovery_rules",
