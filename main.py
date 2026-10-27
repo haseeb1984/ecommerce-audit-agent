@@ -2390,7 +2390,9 @@ def _require_admin_key(request: Request) -> None:
     supplied = request.headers.get("x-admin-key", "")
     if not expected:
         raise HTTPException(status_code=503, detail="Admin access is not configured.")
-    if not supplied or not hmac.compare_digest(expected, supplied):
+    if not supplied:
+        raise HTTPException(status_code=401, detail="Admin authentication required.")
+    if not hmac.compare_digest(expected, supplied):
         raise HTTPException(status_code=403, detail="Admin authentication failed.")
 
 
