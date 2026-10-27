@@ -317,7 +317,14 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
                 continue
             if action_parts.scheme.lower() == "http" and action_parts.netloc:
                 # Keep the report evidence free of query strings, which may contain tokens.
-                safe_destination = f"http://{action_parts.netloc}{action_parts.path or '/'}"
+                action_host = (action_parts.hostname or "").lower()
+                if not action_host or action_parts.username is not None or action_parts.password is not None:
+                    # Do not echo URL userinfo into audit evidence.
+                    continue
+                display_host = f"[{action_host}]" if ":" in action_host else action_host
+                if action_parts.port and action_parts.port != 80:
+                    display_host = f"{display_host}:{action_parts.port}"
+                safe_destination = f"http://{display_host}{action_parts.path or '/'}"
                 if safe_destination not in insecure_form_actions:
                     insecure_form_actions.append(safe_destination)
 
