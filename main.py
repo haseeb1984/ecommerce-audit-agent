@@ -479,6 +479,21 @@ async def comprehensive_audit_pdf(
             outcome_ref = f"finding.{finding.finding_id}"
             if outcome_ref in existing_finding_outcome_refs:
                 continue
+            # The PageSpeed summary already has a checker-authored outcome above.
+            # Do not add a second inferred outcome for the same summary finding,
+            # which would otherwise count one measured score twice in coverage.
+            if (
+                finding.title in {
+                    "Google PageSpeed mobile performance snapshot",
+                    "Google PageSpeed performance score unavailable",
+                }
+                and any(
+                    outcome.check_id == "performance.pagespeed_api"
+                    and outcome.page_url == (finding.source_url or target_url)
+                    for outcome in result.check_outcomes
+                )
+            ):
+                continue
             finding_status = str(finding.status or "").casefold()
             finding_severity = str(finding.severity or "").casefold()
             if finding_status in {"not_tested", "not tested", "insufficient_data"}:
