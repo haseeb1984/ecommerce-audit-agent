@@ -60,10 +60,17 @@ async def verify_license_or_api_key(
             detail="Invalid or revoked license key / API key."
         )
 
-    if license_obj.expires_at and license_obj.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="License expired. Renewal required."
-        )
+    expires_at = license_obj.expires_at
+    if expires_at:
+        # SQLite and older schemas may return a naive datetime even though the
+        # production column is timezone-aware. Treat legacy naive values as UTC
+        # so authentication does not crash with a naive/aware comparison error.
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="License expired. Renewal required."
+            )
 
     return license_obj
