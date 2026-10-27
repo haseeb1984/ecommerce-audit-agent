@@ -1207,6 +1207,14 @@ async def run_bounded_site_crawl(
                 robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
                 findings.extend(robots_findings)
                 limitations.extend(robots_limitations)
+                _record_static_check_outcome(
+                    outcome_records,
+                    check_id="robots_txt.discovery_rules",
+                    category="indexing",
+                    page_url=robots_final_url,
+                    findings=robots_findings,
+                    method="same-origin robots.txt response and bounded directive parsing",
+                )
                 # Sitemap directives may point to a nonstandard path. Accept only
                 # bounded, credential-free HTTP(S) URLs on the audited origin; the
                 # same-origin requirement keeps this discovery step from becoming
@@ -1239,10 +1247,69 @@ async def run_bounded_site_crawl(
                         break
             elif robots_status in {401, 403}:
                 limitations.append("robots.txt could not be inspected because the server returned an access-denied response.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="robots_txt.discovery_rules",
+                        category="indexing",
+                        page_url=robots_final_url or robots_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin robots.txt response and bounded directive parsing",
+                        evidence=f"Inspection skipped because robots.txt returned HTTP {robots_status}.",
+                        evidence_ref="robots_txt.discovery_rules",
+                    ))
             elif robots_status >= 500:
                 limitations.append(f"robots.txt could not be inspected because the server returned HTTP {robots_status}.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="robots_txt.discovery_rules",
+                        category="indexing",
+                        page_url=robots_final_url or robots_url,
+                        outcome="error",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin robots.txt response and bounded directive parsing",
+                        evidence=f"Inspection unavailable because robots.txt returned HTTP {robots_status}.",
+                        evidence_ref="robots_txt.discovery_rules",
+                    ))
+            elif 200 <= robots_status < 300:
+                limitations.append("robots.txt inspection was skipped because the response redirected outside the audited origin.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="robots_txt.discovery_rules",
+                        category="indexing",
+                        page_url=robots_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin robots.txt response and bounded directive parsing",
+                        evidence="Inspection skipped because the response redirected outside the audited origin.",
+                        evidence_ref="robots_txt.discovery_rules",
+                    ))
+            else:
+                limitations.append(f"robots.txt returned HTTP {robots_status}; directive inspection was not performed.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="robots_txt.discovery_rules",
+                        category="indexing",
+                        page_url=robots_final_url or robots_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin robots.txt response and bounded directive parsing",
+                        evidence=f"Directive inspection was not performed for HTTP {robots_status}.",
+                        evidence_ref="robots_txt.discovery_rules",
+                    ))
         except Exception as exc:
             limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}).")
+            if outcome_records is not None:
+                outcome_records.append(CheckOutcome(
+                    check_id="robots_txt.discovery_rules",
+                    category="indexing",
+                    page_url=robots_url,
+                    outcome="error",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="same-origin robots.txt response and bounded directive parsing",
+                    evidence=f"Inspection failed with {type(exc).__name__}; response contents were not included.",
+                    evidence_ref="robots_txt.discovery_rules",
+                ))
 
         link_parser = _LinkParser()
         link_parser.feed(homepage)
