@@ -2195,6 +2195,139 @@ class AdminClientUpdate(BaseModel):
     expires_at: datetime | None = None
 
 
+class AdminAPIKeyCreate(BaseModel):
+    client_id: int = Field(..., ge=1)
+    label: str = Field(default="Admin-created key", min_length=1, max_length=100)
+
+
+class AdminAPIKeyRevoke(BaseModel):
+    reason: str = Field(default="operator revocation", min_length=1, max_length=200)
+
+
+@app.get("/api/v1/admin/clients/{license_id}/api-keys")
+async def admin_list_client_api_keys(
+    license_id: int,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return key metadata for a selected client without exposing key secrets."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    rows = (await db.execute(
+        select(APIKey).where(APIKey.license_id == license_id)
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc()).limit(100)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "client_id": license_id,
+        "items": [
+            {
+                "id": item.id,
+                "key_prefix": item.key_prefix,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in rows
+        ],
+        "limit": 100,
+    }
+
+
+@app.post("/api/v1/admin/clients/{license_id}/api-keys", status_code=201)
+async def admin_create_client_api_key(
+    license_id: int,
+    payload: AdminAPIKeyCreate,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a customer integration key as an explicitly authorized admin action."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func
+
+    if payload.client_id != license_id:
+        raise HTTPException(status_code=422, detail="Client ID in the path and body must match.")
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    current_count = int((await db.execute(
+        select(sql_func.count(APIKey.id)).where(APIKey.license_id == license_id)
+    )).scalar_one() or 0)
+    if current_count >= 10:
+        raise HTTPException(status_code=409, detail="This account already has 10 API keys.")
+    raw_key = "eaa_" + secrets.token_urlsafe(32)
+    item = APIKey(
+        license_id=license_id,
+        api_key_hash=APIKey.hash_key(raw_key),
+        key_prefix=raw_key[:10],
+    )
+    db.add(item)
+    try:
+        await db.flush()
+        await _write_admin_log(db, "client.api_key_created", "client", license_id, {
+            "api_key_id": item.id, "key_prefix": item.key_prefix, "label": payload.label,
+        })
+        await db.commit()
+        await db.refresh(item)
+    except Exception:
+        await db.rollback()
+        logger.error("Admin API key creation failed (client_id=%s)", license_id)
+        raise HTTPException(status_code=503, detail="API key could not be created. Please retry.") from None
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": item.id,
+        "client_id": license_id,
+        "key": raw_key,
+        "key_prefix": item.key_prefix,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "warning": "Copy this key now. It cannot be retrieved again.",
+    }
+
+
+@app.delete("/api/v1/admin/clients/{license_id}/api-keys/{key_id}")
+async def admin_revoke_client_api_key(
+    license_id: int,
+    key_id: int,
+    payload: AdminAPIKeyRevoke,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke one client API key with an auditable, account-scoped admin action."""
+    _require_admin_key(request)
+    from sqlalchemy import delete, select
+
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    item = (await db.execute(
+        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id)
+    )).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="API key not found for this client.")
+    prefix = item.key_prefix
+    await db.execute(delete(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id))
+    await _write_admin_log(db, "client.api_key_revoked", "client", license_id, {
+        "api_key_id": key_id, "key_prefix": prefix, "reason": payload.reason.strip(),
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "client_id": license_id, "key_id": key_id}
+
+
 @app.patch("/api/v1/admin/clients/{license_id}")
 async def admin_update_client(license_id: int, payload: AdminClientUpdate, request: Request,
                               db: AsyncSession = Depends(get_async_db)):
