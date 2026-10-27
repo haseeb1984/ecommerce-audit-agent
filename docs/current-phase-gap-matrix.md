@@ -405,3 +405,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Successful same-origin responses are classified using the existing static outcome recorder. Access-denied responses and non-success responses are explicitly marked `not_assessed`; server errors and fetch exceptions are marked `error`; successful HTTP responses redirected off-origin are not assessed.
 - Added parametrized regression coverage for HTTP 200, 403, 404, and 500. Tests are committed but **not yet executed**.
 - This is source-level directive analysis only; it does not prove search-engine behavior or live indexing status. No deployment or database migration was performed.
+
+## Sitemap-listed page HTTP status evidence — implementation batch
+
+- The bounded crawl now retains sitemap provenance for URLs that make it into the capped page sample and emits `sitemap.discovered_url_status` outcomes for those URLs.
+- Sampled sitemap URLs returning 4xx are recorded as issues, 5xx/fetch failures as errors, successful same-origin responses as passes, and off-origin redirects as not assessed. The outcome explicitly distinguishes HTTP reachability from search-engine indexing.
+- Added a regression test for a sitemap-listed URL returning HTTP 404, checking both the finding and check-level outcome. Test is committed but has not been run.
+- Scope remains bounded by the existing page cap; URLs beyond the sampled crawl budget are not individually tested. No deployment or database migration was performed.
