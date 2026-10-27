@@ -104,3 +104,46 @@ def test_completed_checker_group_without_findings_is_not_marked_unproven_or_as_a
     assert manifest["categories_checked"] == 3
     assert manifest["categories_checked_without_findings"] == 2
     assert manifest["category_execution_coverage_pct"] > manifest["category_signal_coverage_pct"]
+
+
+
+def test_coverage_manifest_includes_bounded_reproducibility_context():
+    finding = SimpleNamespace(
+        category="technical_seo",
+        title="Title check",
+        status="verified",
+        severity="low",
+        source_url="https://shop.example/?private=token",
+    )
+    outcome = SimpleNamespace(
+        check_id="seo.title",
+        outcome="pass",
+        page_url="https://shop.example/",
+    )
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/?secret=removed",
+        pages_checked=["https://shop.example/", "https://shop.example/?session=private"],
+        findings=[finding],
+        limitations=["Rendered browser was not available."],
+        check_outcomes=[outcome],
+        run_context={
+            "started_at_utc": "2026-10-27T10:00:00+00:00",
+            "completed_at_utc": "2026-10-27T10:01:00+00:00",
+            "target_scope": "Public unauthenticated audit.",
+            "user_agent": "EcommerceAuditBot/1.0",
+            "limits": {"max_crawl_pages": 12, "max_response_bytes": 1000000, "unsafe": "ignore"},
+            "measurement_context": {"performance": "lab only", "private_token": {"should": "not leak"}},
+        },
+    )
+
+    context = manifest["audit_run_context"]
+    assert manifest["schema_version"] == 4
+    assert context["started_at_utc"] == "2026-10-27T10:00:00+00:00"
+    assert context["completed_at_utc"] == "2026-10-27T10:01:00+00:00"
+    assert context["limits"] == {"max_crawl_pages": 12, "max_response_bytes": 1000000}
+    assert context["check_ids_recorded"] == ["seo.title"]
+    assert context["check_outcome_state_counts"] == {"pass": 1}
+    assert context["limitations_count"] == 1
+    assert "private_token" not in context["measurement_context"]
+    assert manifest["target_url"] == "https://shop.example/"
+    assert manifest["pages_checked_count"] == 1
