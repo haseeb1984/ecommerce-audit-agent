@@ -405,11 +405,18 @@ async def comprehensive_audit_pdf(
                 )
                 + "Lab measurements are not field measurements; unavailable field metrics must not be inferred."
             )
+            score_is_valid = isinstance(getattr(metrics, "mobile_score", None), (int, float)) and not isinstance(getattr(metrics, "mobile_score", None), bool)
             result.findings.insert(0, AuditFinding(
                 category="performance",
-                title="Google PageSpeed mobile performance snapshot",
-                status="verified",
-                severity="medium" if metrics.mobile_score < 50 else "low" if metrics.mobile_score < 90 else "info",
+                title=(
+                    "Google PageSpeed mobile performance snapshot"
+                    if score_is_valid else
+                    "Google PageSpeed performance score unavailable"
+                ),
+                status="verified" if score_is_valid else "not_tested",
+                severity=(
+                    "medium" if metrics.mobile_score < 50 else "low" if metrics.mobile_score < 90 else "info"
+                ) if score_is_valid else "info",
                 evidence=performance_evidence,
                 explanation=(
                     "The performance score summarizes a Lighthouse lab run and is not a direct "
