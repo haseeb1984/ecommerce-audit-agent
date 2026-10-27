@@ -166,6 +166,17 @@ def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFind
         r"reject all cookies", r"manage preferences", r"cookie settings",
     )
     consent_detected = any(re.search(pattern, lower, re.I) for pattern in consent_patterns)
+    # Record distinct choice-label signals independently. A label in source is not
+    # proof the control is visible, accessible, clickable, or respected by tracking.
+    consent_choice_patterns = {
+        "accept": re.compile(r"(?:accept all|allow all|agree to all|accept cookies)", re.I),
+        "reject": re.compile(r"(?:reject all|decline all|deny all|reject cookies)", re.I),
+        "preferences": re.compile(r"(?:manage preferences|customi[sz]e|cookie settings|privacy settings)", re.I),
+    }
+    consent_choices = [
+        name for name, pattern in consent_choice_patterns.items()
+        if pattern.search(html[:500_000])
+    ]
     if not detected and not consent_detected:
         findings.append(_finding(
             "pixel_analytics", "No supported tracking or consent signatures detected in initial HTML",
@@ -177,10 +188,14 @@ def inspect_privacy_tracking_signals(html: str, page_url: str) -> list[AuditFind
             page_url,
         ))
     if detected or consent_detected:
+        choice_summary = (
+            ", ".join(consent_choices) if consent_choices else
+            "no distinct accept/reject/preferences labels detected in initial HTML"
+        )
         consent_evidence = (
-            f"Consent/banner-related source signals were detected on {page_url}."
+            f"Consent/banner-related source signals were detected on {page_url}; source-level choice-label signals: {choice_summary}."
             if consent_detected else
-            f"Tracking references were detected on {page_url}, but no recognizable consent/banner signal was found in the returned HTML."
+            f"Tracking references were detected on {page_url}, but no recognizable consent/banner signal was found in the returned HTML; source-level choice-label signals: {choice_summary}."
         )
         findings.append(_finding(
             "pixel_analytics", "Review consent controls and tracking behavior",
