@@ -2262,3 +2262,20 @@ async def test_sitemap_discovered_url_status_records_fetch_exception_as_error(mo
     outcome = next(item for item in outcomes if item.check_id == "sitemap.discovered_url_status")
     assert outcome.outcome == "error"
     assert "TimeoutError" in outcome.evidence
+
+@pytest.mark.parametrize(
+    ("robots", "url", "expected"),
+    [
+        ("User-agent: *\\nDisallow: /private", "https://shop.example/private", False),
+        ("User-agent: *\\nDisallow: /private", "https://shop.example/products/1", True),
+        ("User-agent: *\\nDisallow: /products\\nAllow: /products/public", "https://shop.example/products/public/1", True),
+        ("User-agent: *\\nDisallow: /products\\nAllow: /products/public", "https://shop.example/products/secret", False),
+        ("User-agent: *\\nDisallow: /*?preview=*", "https://shop.example/item?preview=yes", False),
+        ("User-agent: OtherBot\\nDisallow: /\\nUser-agent: *\\nDisallow: /private", "https://shop.example/products/1", True),
+        ("User-agent: EcommerceAuditBot\\nDisallow: /special", "https://shop.example/special", False),
+    ],
+)
+def test_robots_rules_are_respected_with_longest_match_and_agent_groups(robots, url, expected):
+    rules = crawl_checks._parse_robots_rules(robots, crawl_checks.USER_AGENT)
+    assert crawl_checks._robots_path_allowed(url, rules) is expected
+
