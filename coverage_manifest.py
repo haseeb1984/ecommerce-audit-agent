@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import hashlib
+import re
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
