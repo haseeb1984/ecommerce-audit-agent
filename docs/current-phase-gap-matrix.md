@@ -247,3 +247,11 @@
 - Extended the sampled HTML document checker to detect missing/empty meta descriptions and multiple non-empty description elements.
 - Findings are labeled as low-priority manual review, with explicit caveats that search engines may generate alternate snippets and absence alone does not prove a ranking penalty.
 - Added regression cases for absent, single valid, and duplicate meta descriptions. Tests are committed but not run, consistent with the implementation-first sequence. No migration or deployment performed.
+
+
+## On-page metadata follow-through and next bounded SEO batch — 2026-10-27
+
+- Added an advisory source-level finding for meta descriptions longer than 320 characters. The check intentionally uses a conservative threshold for clearly excessive content, labels it informational/manual review, avoids echoing the description into evidence, and explicitly states that length alone does not prove a ranking impact.
+- Corrected the existing valid-metadata test fixture to include a description now that absence is checked; added coverage for the long-description advisory and its non-ranking claim.
+- The on-page metadata implementation batch now covers missing/empty descriptions, duplicate declarations, and unusually long descriptions. Test cases are committed but not executed; this phase is source-implemented, not runtime-verified. No deployment or migration performed.
+- Next phase focus: close remaining core SaaS workflow gaps outside PDF/report styling, then perform integrated tests and fixes after implementation coverage is complete.
