@@ -440,3 +440,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 Scope: operator overview, client search/pagination, license and API-key management, package entitlements, payment-event reconciliation, retryable email delivery, action logs and non-secret diagnostics. Validate authorization and bounded inputs for every admin route.
 
 Acceptance: route-level authorization tests, audit trail tests, pagination/search edge cases, and UI success/error/loading states. Status: branch created from shared base; feature implementation not yet completed or verified.
+
+### Admin branch — bounded payment event queue
+
+- Added a protected `/api/v1/admin/payment-events` endpoint with bounded limit/offset pagination and exact status filtering. Response fields are allowlisted to event/lifecycle identifiers and timestamps; customer email and license secrets are not returned.
+- Added an operator-console queue with status filtering, paging, reconciliation and pending license-email retry actions.
+- Added API regression coverage for pagination, filtering, validation and response minimization. Tests have not been run.
