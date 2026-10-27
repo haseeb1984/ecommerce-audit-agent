@@ -67,3 +67,18 @@ def test_document_basics_flags_duplicate_meta_descriptions_and_accepts_one():
     assert "Multiple non-empty meta descriptions detected" in {
         finding.title for finding in duplicate
     }
+
+
+def test_document_basics_advises_on_extremely_long_meta_description_without_ranking_claims():
+    description = "A" * 321
+    findings = inspect_document_basics(
+        '<html lang="en"><head><meta charset="utf-8"><title>Shop</title>'
+        f'<meta name="description" content="{description}"></head>'
+        '<body><main>Products</main></body></html>',
+        "https://shop.example/products/",
+    )
+    finding = next(item for item in findings if item.title == "Meta description is unusually long")
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "info"
+    assert "does not establish a defect or ranking impact" in finding.impact
+    assert description not in finding.evidence
