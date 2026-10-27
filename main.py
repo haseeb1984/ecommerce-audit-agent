@@ -1110,7 +1110,24 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     signature = request.headers.get("paddle-signature", "")
     if not secret or not signature:
         raise HTTPException(status_code=503 if not secret else 400, detail="Paddle webhook is not configured or signature is missing.")
-    raw_body = await request.body()
+    # Webhook payloads are small JSON documents. Bound streamed input before
+    # buffering it so an oversized request cannot consume unbounded function memory.
+    max_webhook_body_bytes = 1024 * 1024
+    content_length = request.headers.get("content-length", "").strip()
+    if content_length:
+        try:
+            if int(content_length) > max_webhook_body_bytes:
+                raise HTTPException(status_code=413, detail="Paddle webhook payload is too large.")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Paddle webhook content length.")
+    body_chunks = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > max_webhook_body_bytes:
+            raise HTTPException(status_code=413, detail="Paddle webhook payload is too large.")
+        body_chunks.append(chunk)
+    raw_body = b"".join(body_chunks)
     try:
         parts = {}
         for item in signature.split(";"):
