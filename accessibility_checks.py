@@ -167,8 +167,35 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
     parser = _AccessibilityParser()
     try:
         parser.feed(html)
-    except Exception:
-        return []
+        parser.close()
+    except Exception as exc:
+        # A parser failure is an unavailable assessment, not evidence that the
+        # page passed accessibility checks. Preserve the failure in the audit.
+        return [AuditFinding(
+            category="accessibility",
+            title="Accessibility source checks could not be completed",
+            status="not_tested",
+            severity="info",
+            evidence=(
+                f"The returned HTML could not be parsed for static accessibility signals "
+                f"({type(exc).__name__}) at {page_url}. No accessibility pass or defect is inferred."
+            ),
+            explanation=(
+                "The static accessibility checker could not reliably inspect this response. "
+                "This does not establish WCAG conformance or prove that an accessibility defect exists."
+            ),
+            recommendation=(
+                "Retry the audit and inspect the returned HTML for malformed or truncated markup. "
+                "Use a browser-based accessibility tree and keyboard review for rendered behavior."
+            ),
+            verification_steps=[
+                "Retry the audit and confirm the page response is complete.",
+                "Inspect the rendered accessibility tree and keyboard behavior in a browser.",
+            ],
+            source_url=page_url,
+            test_method="static HTML accessibility source inspection",
+            evidence_confidence="limited",
+        )]
 
     findings: list[AuditFinding] = []
     unresolved_refs = sorted({(attribute, identifier) for attribute, identifier, _tag in parser.aria_references if identifier not in parser.ids})
