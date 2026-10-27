@@ -183,3 +183,12 @@
 - Centralized defensive parsing of persisted report coverage JSON. Customer coverage, customer evidence pagination, admin evidence previews, and report-card outcome summaries now treat malformed JSON or a non-object JSON payload as unavailable saved metadata rather than raising a server error.
 - Added an API regression test covering malformed saved coverage across the customer coverage endpoint, customer paginated evidence endpoint, and admin evidence endpoint. The test is committed but **not run** per the implementation-first instruction.
 - This is resilience for legacy/corrupted report metadata; it does not fabricate evidence or pass outcomes. No schema migration, deployment, or test run was performed.
+
+
+## Saved-report lifecycle phase — bounded evidence and private delivery
+
+- Completed the saved-evidence response boundary for customer and administrator APIs: only approved evidence fields are serialized, strings are bounded and passed through the existing credential/query-string redactor, affected URL arrays are capped, and arbitrary nested metadata is not returned to either portal.
+- Malformed non-object entries are excluded from outcome totals and the returned evidence collection so the denominator represents actual saved object records. Explicit recorded outcomes retain their pass/issue/warning/not_assessed/error states; no outcome is inferred from absence.
+- The customer report-email endpoint now also sets private no-store response headers. The existing report ownership check, recipient confirmation, email validation, and attachment-size cap remain in place.
+- Added API regression coverage for allowlisting, credential/query redaction, malformed outcome entries, customer outcome denominator, and private report-email responses. These tests are committed but **not run** under the current implementation-first instruction. No migrations or deployment performed.
+- Phase boundary: this completes the source implementation batch for saved-report evidence access/delivery, not overall SaaS completion. End-to-end acceptance still depends on the later planned verification phase.
