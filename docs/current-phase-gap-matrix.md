@@ -355,3 +355,30 @@
 - Homepage source inspection now retains a bounded set of up to 500 anchor attributes and reports links using `target="_blank"` without an explicit `rel="noopener"` or `rel="noreferrer"` token.
 - The result is intentionally low-severity manual review: modern browsers commonly imply noopener behavior, so this is not treated as proof of an exploitable vulnerability. Destinations are not included in the evidence.
 - Added parameterized regression coverage for missing rel, unrelated rel, noopener, noreferrer, and combined rel tokens. Tests are committed but have not been run; deployment and database migration remain untouched.
+
+
+## 100% completion acceptance gate — 2026-10-27
+
+A 100% completion claim is withheld until every applicable requirement below has implementation evidence and the release gates are satisfied. A source-code commit or the existence of a test is not a passing test result.
+
+| Gate | Required evidence | Current status |
+|---|---|---|
+| Requirement traceability | Every requirement in `comprehensive-audit-requirements.md` mapped to implementation, test, limitation, or an explicitly approved out-of-scope decision | Open; existing matrix is partial and not a line-by-line acceptance trace |
+| Backend and database | API contract tests, persistence/ownership isolation, quota reserve/release, migration compatibility and rollback plan | Code exists; full integrated acceptance and production migration confirmation pending |
+| Billing lifecycle | Sandbox webhook signature/idempotency, cancellation/renewal ordering, payment failure/recovery, portal and customer entitlement tests | Source and selected regression tests exist; complete sandbox event-path reconciliation pending |
+| Customer/admin UX | Login/account access, audit submission, usage, report history, evidence coverage, PDF download/email, admin search/pagination and authorization | Features exist; complete cross-role end-to-end acceptance pending |
+| Audit engine | Each module's check IDs, evidence provenance, unavailable/error classification, crawl caps, redirect/DNS safeguards and module-isolation tests | Partial; full module-by-module acceptance pending |
+| Report/PDF | Evidence fidelity, category/check coverage, limitations, reproducible metadata, rendering and download ownership | PDF code/tests exist; final real-result report QA intentionally deferred until the end |
+| Automated verification | Intended commit's Python suite and relevant static/build checks pass with recorded output | **Not established**; recent changes have committed tests but no fresh test run is evidenced |
+| Deployment readiness | Required environment/configuration, production migration confirmation, webhook response reconciliation, monitored release and explicit user approval | Blocked/pending; no deployment performed |
+
+### Immediate next sequence
+
+1. Establish an executable test environment against the latest `main` revision without deploying production or running migrations.
+2. Run the full test suite and relevant static/build checks; fix failures before adding unrelated features.
+3. Turn every requirement into a traceable pass/partial/not-tested acceptance row, including limitations that cannot safely be automated.
+4. Close backend, billing, database, customer and admin workflow gaps in coherent implementation batches, with regression tests for each batch.
+5. Complete audit-module acceptance and only then do the final PDF/report review.
+6. Claim 100% implementation only when all in-scope requirement rows pass code/test acceptance. Keep production rollout readiness as a separate gate requiring approved environment/migration and live-workflow evidence.
+
+No deployment, database migration, payment, or production-site audit was run as part of this checklist update.
