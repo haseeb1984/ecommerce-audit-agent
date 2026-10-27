@@ -1479,7 +1479,13 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         subscription_id = str(transaction.get("id") or "")[:100]
         if not subscription_id:
             raise HTTPException(status_code=400, detail="Paddle cancellation event has no subscription ID.")
-        from sqlalchemy import select
+        from sqlalchemy import select, update
+        # Serialize lifecycle transitions for this subscription. The advisory lock
+        # is transaction-scoped and avoids a late renewal racing a cancellation.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
+            {"subscription_id": subscription_id},
+        )
         linked_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.subscription_id == subscription_id)
@@ -1496,6 +1502,11 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=503, detail="Subscription cancellation is awaiting license reconciliation.")
         changed = bool(license_obj.is_active)
         license_obj.is_active = False
+        # Persist a sticky lifecycle marker on the latest subscription event.
+        # A delayed transaction.completed webhook must not reactivate access after
+        # a cancellation has already been applied.
+        linked_event.status = "subscription_canceled"
+        linked_event.updated_at = datetime.now(timezone.utc)
         await db.commit()
         if changed:
             await _record_operation_event(db, "subscription_canceled", license_obj.id, None, None)
@@ -1524,12 +1535,23 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     transaction_id = str(transaction.get("id") or "")[:100] or None
     subscription_id = str(transaction.get("subscription_id") or "")[:100] or None
     if subscription_id:
+        # Use the same subscription-scoped lock as cancellation so lifecycle state
+        # transitions are serialized in PostgreSQL.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
+            {"subscription_id": subscription_id},
+        )
         linked_subscription_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.subscription_id == subscription_id)
             .order_by(PaymentWebhookEvent.updated_at.desc())
             .limit(1)
         )).scalar_one_or_none()
+        if linked_subscription_event is not None and linked_subscription_event.status == "subscription_canceled":
+            # A late/replayed payment event is not proof that a canceled subscription
+            # has been reinstated. Require a separately verified lifecycle/reconcile
+            # action instead of silently restoring account access.
+            return {"status": "subscription_canceled", "event_id": event_id}
         if linked_subscription_event is not None and linked_subscription_event.license_id is not None:
             linked_license = (await db.execute(
                 select(SoftwareLicense).where(SoftwareLicense.id == linked_subscription_event.license_id)
