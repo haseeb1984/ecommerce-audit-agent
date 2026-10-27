@@ -1662,6 +1662,38 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             [f"Inspect the response headers with browser DevTools or a reputable header scanner.", "Review configuration and test critical site flows."],
             final_url,
         ))
+    # Inspect link destinations as source evidence without fetching arbitrary
+    # external destinations. This preserves the same-origin crawl boundary.
+    unsafe_link_count = 0
+    credentialed_link_count = 0
+    malformed_link_count = 0
+    for raw_href in parser.link_hrefs[:500]:
+        href = (raw_href or "").strip()
+        if not href:
+            continue
+        try:
+            resolved = urljoin(final_url, href)
+            link_parts = urlsplit(resolved)
+            _ = link_parts.port
+            scheme = link_parts.scheme.lower()
+            if scheme in {"javascript", "data", "vbscript", "file"}:
+                unsafe_link_count += 1
+            elif scheme in {"http", "https"} and (link_parts.username is not None or link_parts.password is not None):
+                credentialed_link_count += 1
+            elif scheme not in {"http", "https", "mailto", "tel"}:
+                malformed_link_count += 1
+        except (ValueError, UnicodeError):
+            malformed_link_count += 1
+    if unsafe_link_count or credentialed_link_count or malformed_link_count:
+        findings.append(_finding(
+            "technical_seo", "Link destinations need source-level review",
+            "manual_review_required", "low",
+            f"Among the first {min(len(parser.link_hrefs), 500)} anchor href value(s), found {unsafe_link_count} script/data/file scheme target(s), {credentialed_link_count} HTTP(S) target(s) containing URL credentials, and {malformed_link_count} malformed or unsupported target(s). Raw destinations are intentionally omitted.",
+            "This bounded source check identifies suspicious or malformed anchor destinations only. It does not fetch external links, establish whether destinations return errors, or determine whether a JavaScript-driven control is intentionally implemented.",
+            "Review the affected anchor elements in context. Use ordinary HTTP(S) links for navigation, avoid credential-bearing URLs, and verify any script-driven controls with an authorized browser test.",
+            ["Inspect anchor href attributes in the source or browser DevTools.", "Confirm intended links use safe, supported destinations.", "Test external destination status separately with an approved bounded link checker."],
+            final_url,
+        ))
     return findings
 
 
