@@ -175,3 +175,35 @@ async def test_pagespeed_rejects_non_finite_remote_metrics(monkeypatch):
 
     with pytest.raises(RuntimeError, match="out-of-range"):
         await agent.run_audit("shop.example")
+
+
+
+@pytest.mark.asyncio
+async def test_pagespeed_field_urls_drop_query_secrets_and_categories_are_allowlisted(monkeypatch):
+    agent = make_agent(
+        monkeypatch,
+        FakeResponse(
+            payload={
+                "loadingExperience": {
+                    "id": "https://shop.example/product?token=field-secret#section",
+                    "overall_category": "UNRECOGNIZED",
+                    "metrics": {
+                        "INTERACTION_TO_NEXT_PAINT": {"percentile": 180, "category": "UNTRUSTED CATEGORY"},
+                    },
+                },
+                "lighthouseResult": {
+                    "categories": {"performance": {"score": 0.8}},
+                    "audits": {"speed-index": {"numericValue": 1000}},
+                    "finalDisplayedUrl": "https://shop.example/product?session=final-secret#top",
+                },
+            }
+        ),
+    )
+
+    result = await agent.run_audit("shop.example")
+    assert result.field_data_context["url_data_id"] == "https://shop.example/product"
+    assert "url_overall_category" not in result.field_data_context
+    assert result.field_metrics["url:INTERACTION_TO_NEXT_PAINT"]["category"] is None
+    assert result.final_url == "https://shop.example/product"
+    assert "field-secret" not in str(result.model_dump())
+    assert "final-secret" not in str(result.model_dump())
