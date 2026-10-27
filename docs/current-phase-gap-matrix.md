@@ -318,3 +318,11 @@
 - The legacy `/api/v1/audit-lead` endpoint now applies the same bounded public-target normalization used by the comprehensive audit before reserving quota or calling external providers. Invalid targets return HTTP 422 without creating an audit lead or quota reservation.
 - Added API-level regression coverage for local/private addresses, URL userinfo, query strings, and custom ports, including assertions that rejected requests do not reserve quota or persist leads.
 - This closes a gap at the older API boundary; it does not replace the DNS-pinned resolver and redirect checks used by the bounded crawler. Tests have not been run in this batch; no production data or deployment was changed.
+
+
+## Paddle recurring-payment account continuity batch — 2026-10-27
+
+- Completed subscription-linked recurring transaction handling in the webhook: when a verified completed transaction belongs to an already provisioned subscription, the existing license is reused and its active status and plan allowance are refreshed from the server-managed price catalogue.
+- Recurring renewals are recorded as delivered billing events without sending the original license secret again. This prevents a new license and duplicate credential email for each new recurring transaction ID.
+- Added a regression journey covering initial purchase, a separate renewal transaction, duplicate webhook delivery, account count, event history and no repeat credential email.
+- Tests are committed but have not been executed. Paddle sandbox renewal payloads and production event ordering still require verification before release; no deployment, environment change or migration was performed.
