@@ -993,6 +993,15 @@ async def revoke_account_api_key(
     return {"status": "revoked", "key_id": key_id}
 
 
+def _load_saved_report_coverage(coverage_json: str | None) -> dict:
+    """Load persisted coverage defensively; a damaged legacy row must not break report history."""
+    try:
+        payload = json.loads(coverage_json or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
     """Summarize only persisted explicit outcomes; never infer missing checks as passes."""
     states = ("pass", "issue", "warning", "not_assessed", "error")
@@ -1107,7 +1116,7 @@ async def get_audit_report_coverage(
         raise HTTPException(status_code=404, detail="Audit report not found")
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    payload = json.loads(row.coverage_json)
+    payload = _load_saved_report_coverage(row.coverage_json)
     # Keep the common coverage request small. Detailed evidence is separately paginated
     # so large crawls do not flood the customer dashboard or serverless response body.
     findings = payload.pop("findings", [])
@@ -1136,7 +1145,7 @@ async def get_audit_report_evidence(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    metadata = json.loads(row.coverage_json)
+    metadata = _load_saved_report_coverage(row.coverage_json)
     collection = metadata.get("findings" if kind == "findings" else "check_outcomes", [])
     if not isinstance(collection, list):
         collection = []
@@ -2319,10 +2328,7 @@ async def admin_report_evidence(
     )).scalar_one_or_none()
     if report is None:
         raise HTTPException(status_code=404, detail="Audit report not found.")
-    try:
-        metadata = json.loads(report.coverage_json or "{}")
-    except (TypeError, json.JSONDecodeError):
-        metadata = {}
+    metadata = _load_saved_report_coverage(report.coverage_json)
     key = "findings" if kind == "findings" else "check_outcomes"
     records = metadata.get(key, [])
     if not isinstance(records, list):
