@@ -293,16 +293,19 @@
         try { const r = await api(item.coverage_url); const data = await r.json(); setStatus("auditStatus", JSON.stringify(data, null, 2)); }
         catch (e) { setStatus("auditStatus", e.message, "error"); }
       });
-      const evidence = document.createElement("button"); evidence.type = "button"; evidence.className = "secondary"; evidence.textContent = "View saved findings";
-      evidence.addEventListener("click", async () => {
+      const openEvidence = async (kind) => {
         activeEvidenceReportId = item.id;
-        evidenceKind = "findings";
+        evidenceKind = kind;
         evidenceOffset = 0;
         $("savedEvidence").hidden = false;
-        $("savedEvidenceTitle").textContent = "Saved evidence · report #" + item.id;
+        $("savedEvidenceTitle").textContent = (kind === "check_outcomes" ? "Check outcomes" : "Saved findings") + " · report #" + item.id;
         await loadEvidencePage();
         $("savedEvidence").scrollIntoView({behavior:"smooth", block:"nearest"});
-      });
+      };
+      const evidence = document.createElement("button"); evidence.type = "button"; evidence.className = "secondary"; evidence.textContent = "View saved findings";
+      evidence.addEventListener("click", () => openEvidence("findings"));
+      const outcomes = document.createElement("button"); outcomes.type = "button"; outcomes.className = "secondary"; outcomes.textContent = "View check outcomes";
+      outcomes.addEventListener("click", () => openEvidence("check_outcomes"));
       const emailbox = document.createElement("div"); emailbox.className = "emailbox";
       const recipient = document.createElement("input"); recipient.type = "email"; recipient.required = true; recipient.maxLength = 254; recipient.placeholder = "Recipient email"; recipient.setAttribute("aria-label", "Report recipient email");
       const consentLabel = document.createElement("label");
@@ -319,7 +322,7 @@
         finally { send.disabled = false; }
       });
       emailbox.append(recipient, consentLabel, send);
-      actions.append(download, coverage, evidence, emailbox); card.append(meta, actions); container.append(card);
+      actions.append(download, coverage, evidence, outcomes, emailbox); card.append(meta, actions); container.append(card);
     }
   }
   async function loadEvidencePage() {
