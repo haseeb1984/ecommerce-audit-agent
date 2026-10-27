@@ -1764,6 +1764,8 @@ def test_product_schema_presence_accepts_absolute_schema_org_type_iri():
         '</script>',
         "https://shop.example/products/blue-shirt",
     )
+    # A Product entity with only a name is still detected; completeness review is
+    # intentionally handled by the dedicated structured-data audit module.
     assert findings == []
 
 
