@@ -277,3 +277,9 @@
 - The operator console now provides server-side search (press Enter), result counts, and previous/next pagination. This replaces the previous behavior that loaded every license into the browser and searched only the currently loaded in-memory collection.
 - Added API regression cases for page bounds, literal client-ID search, global summary preservation, and invalid pagination parameters. Tests are committed but not run; no deployment or migration was performed.
 - Remaining acceptance: run targeted API tests and browser QA later as part of the full integration verification phase. This is a core SaaS/admin workflow change, not PDF/report presentation work.
+## Customer account session cleanup batch — 2026-10-27
+
+- Added an explicit customer-portal disconnect action so shared-browser users can clear account-specific report, quota, billing and API-key data without switching identities first.
+- After successful connection, the credential input is cleared from the visible form while the in-memory credential remains available for authenticated requests. On failed connection, the credential is cleared from both the form and in-memory state to avoid a stale failed identity.
+- Account-only controls are disabled while disconnected; disconnect also clears the target URL and returns the audit UI to its disconnected state.
+- Added a portal regression test for disconnect affordance and credential cleanup behavior. Tests have not been run and no deployment was performed.
