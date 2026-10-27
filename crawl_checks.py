@@ -395,7 +395,15 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             )]
         return []
     if malformed:
-        return []
+        return [_finding(
+            "structured_data", "Product structured data could not be parsed",
+            "manual_review_required", "low",
+            f"At least one application/ld+json block on the likely product URL could not be parsed as JSON: {page_url}. Raw script contents are intentionally omitted from the report.",
+            "Malformed JSON-LD may prevent consumers from reading that block, but this source-only check cannot determine whether the malformed block is intended for Product data or whether equivalent valid structured data exists elsewhere in the rendered page.",
+            "Inspect each JSON-LD script in the rendered page, correct syntax errors in the intended structured-data block, and confirm the final product properties match the visible product and selected variant. Do not copy private data into structured markup.",
+            ["Open the page in an authorized browser and inspect each JSON-LD script for syntax errors.", "Validate the corrected markup with an authoritative structured-data validator.", "Compare product, offer, and selected-variant values with what customers see."],
+            page_url,
+        )]
     return [_finding(
         "structured_data", "Product structured data not detected",
         "manual_review_required", "low",
