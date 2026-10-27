@@ -255,3 +255,10 @@
 - Corrected the existing valid-metadata test fixture to include a description now that absence is checked; added coverage for the long-description advisory and its non-ranking claim.
 - The on-page metadata implementation batch now covers missing/empty descriptions, duplicate declarations, and unusually long descriptions. Test cases are committed but not executed; this phase is source-implemented, not runtime-verified. No deployment or migration performed.
 - Next phase focus: close remaining core SaaS workflow gaps outside PDF/report styling, then perform integrated tests and fixes after implementation coverage is complete.
+
+
+## Canonical URL consistency review batch — 2026-10-27
+
+- Added a source-level review finding when a page's valid same-origin canonical points to a different path or query than the inspected URL.
+- The finding is low severity and manual-review-only: parameterized and duplicate URLs can legitimately canonicalize to a preferred URL. The checker does not fetch the canonical target or claim that a non-self canonical is automatically wrong.
+- Added regression cases for a non-self same-origin canonical and a self-canonical. Tests are committed but not run. No deployment, migration, or production audit performed.
