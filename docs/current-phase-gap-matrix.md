@@ -333,3 +333,10 @@
 - Applying a verified cancellation records a sticky `subscription_canceled` state on the linked subscription event and deactivates the linked license. A delayed or replayed `transaction.completed` event for that subscription is acknowledged without reactivating the license or issuing another license.
 - Added regression coverage for the ordering case: purchase → cancellation → late renewal; the test asserts the license remains inactive and no renewal event is recorded.
 - This is source-level implementation only. The new regression test has not been run, Paddle sandbox event ordering has not been exercised, and the advisory-lock behavior assumes the production PostgreSQL database. A legitimate subscription resumption must be handled through a separately verified lifecycle/reconciliation flow; payment completion alone is not treated as proof of resumption. No deployment, migration, or infrastructure change was performed.
+
+## Paddle cancellation history integrity — implementation batch
+
+- Cancellation webhooks now create their own idempotent billing-event row instead of overwriting the original purchase/renewal event status. Customer billing history can distinguish a successfully delivered payment event from the later subscription cancellation.
+- Repeated delivery of the same cancellation event ID returns the existing canceled state without creating a duplicate record. Cancellation remains the latest subscription lifecycle event, so a late `transaction.completed` event cannot reactivate access.
+- Regression coverage now asserts that a purchase remains `delivered`, cancellation is separately recorded as `subscription_canceled`, and a late renewal leaves the license inactive.
+- Source-level implementation and tests are committed; tests have not been executed. Sandbox payload/order verification, production migration checks, full customer workflow acceptance, and deployment remain pending. No database migration or deployment was performed.
