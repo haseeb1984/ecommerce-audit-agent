@@ -30,6 +30,14 @@
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
 </section>
+<section class="panel" aria-labelledby="apiKeysHeading">
+<h2 id="apiKeysHeading">API key management</h2>
+<p class="muted">Create API keys for integrations, review their prefixes, and revoke keys you no longer use. A new key's full secret is shown once only; copy it immediately and store it securely.</p>
+<div class="report-actions"><button id="createApiKey" type="button">Create API key</button><button id="refreshApiKeys" class="secondary" type="button">Refresh key list</button></div>
+<div id="newApiKeyPanel" class="status" hidden aria-live="polite"><strong>Copy your new API key now</strong><p id="newApiKeyValue" style="overflow-wrap:anywhere"></p><button id="copyApiKey" class="secondary" type="button">Copy API key</button><button id="hideApiKey" class="secondary" type="button">Hide secret</button></div>
+<div id="apiKeys" class="reports" aria-live="polite"><p class="muted">Connect your account to manage API keys.</p></div>
+<div id="apiKeyStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel">
 <h2>2. Run a website audit</h2>
 <form id="auditForm"><label for="target">Public website URL</label><input id="target" type="url" required maxlength="2048" placeholder="https://example.com"><p class="muted">Only public HTTP/HTTPS websites are accepted. This performs an audit only; it does not change the target website. A run consumes your license quota.</p><button id="runAudit" type="submit">Run audit and generate PDF</button></form><div id="auditStatus" class="status" role="status" aria-live="polite">Connect your credential first.</div>
@@ -59,7 +67,7 @@
   let evidenceOffset = 0;
   let evidenceTotal = 0;
   const evidencePageSize = 20;
-  let evidenceLoading = false;
+  let evidenceLoading = false;\n  let apiKeyRows = [];\n  let newlyCreatedApiKey = "";
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -109,6 +117,56 @@
         card.append(meta, link); container.append(card);
       }
     } catch (e) { container.textContent = e.message; }
+  }
+  async function loadApiKeys() {
+    const response = await api("/api/v1/account/api-keys");
+    const data = await response.json();
+    apiKeyRows = Array.isArray(data.items) ? data.items : [];
+    renderApiKeys();
+  }
+  function renderApiKeys() {
+    const container = $("apiKeys"); container.replaceChildren();
+    if (!apiKeyRows.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No API keys have been created for this account.";
+      container.append(empty); return;
+    }
+    for (const item of apiKeyRows) {
+      const card = document.createElement("article"); card.className = "report";
+      const meta = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = "API key · " + String(item.key_prefix || "prefix unavailable");
+      const detail = document.createElement("small");
+      const created = item.created_at ? new Date(item.created_at) : null;
+      detail.textContent = "Key ID " + item.id + " · Created " + (created && !Number.isNaN(created.getTime()) ? created.toLocaleString() : "date unavailable");
+      meta.append(title, detail);
+      const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "secondary"; revoke.textContent = "Revoke";
+      revoke.addEventListener("click", async () => {
+        if (!window.confirm("Revoke API key " + item.key_prefix + "? Any integration using it will stop authenticating.")) return;
+        revoke.disabled = true;
+        try {
+          await api("/api/v1/account/api-keys/" + encodeURIComponent(item.id), {method:"DELETE"});
+          await loadApiKeys();
+          setStatus("apiKeyStatus", "API key revoked.", "success");
+        } catch (error) { setStatus("apiKeyStatus", error.message, "error"); revoke.disabled = false; }
+      });
+      const actions = document.createElement("div"); actions.className = "report-actions"; actions.append(revoke);
+      card.append(meta, actions); container.append(card);
+    }
+  }
+  async function createApiKey() {
+    if (!credential) { setStatus("apiKeyStatus", "Connect your account first.", "error"); return; }
+    const button = $("createApiKey"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/api-keys", {method:"POST"});
+      const data = await response.json();
+      newlyCreatedApiKey = String(data.key || "");
+      if (!newlyCreatedApiKey) throw new Error("The server did not return the new key. Refresh the key list and retry if needed.");
+      $("newApiKeyValue").textContent = newlyCreatedApiKey;
+      $("newApiKeyPanel").hidden = false;
+      await loadApiKeys();
+      setStatus("apiKeyStatus", "API key created. Copy the secret now; it will not be shown again.", "success");
+    } catch (error) { setStatus("apiKeyStatus", error.message, "error"); }
+    finally { button.disabled = false; }
   }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
@@ -340,7 +398,7 @@
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
-    $("usageReset").textContent = "Period reset: —";
+    $("usageReset").textContent = "Period reset: —";\n    apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
@@ -351,9 +409,28 @@
     if (nextCredential !== credential || nextHeaderName !== headerName) clearAccountView();
     credential = nextCredential; headerName = nextHeaderName;
     $("connect").disabled = true;
-    try { await loadReports(); await loadUsage(); setStatus("connectStatus", "Connected. Your license-scoped report history and quota are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
+    try { await loadReports(); await loadUsage(); await loadApiKeys(); setStatus("connectStatus", "Connected. Your license-scoped report history, quota, and API keys are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
     catch (e) { clearAccountView(); setStatus("connectStatus", e.message, "error"); }
     finally { $("connect").disabled = false; }
+  });
+  $("createApiKey").addEventListener("click", createApiKey);
+  $("refreshApiKeys").addEventListener("click", async () => {
+    try { await loadApiKeys(); setStatus("apiKeyStatus", "API key list refreshed.", "success"); }
+    catch (error) { setStatus("apiKeyStatus", error.message, "error"); }
+  });
+  $("copyApiKey").addEventListener("click", async () => {
+    if (!newlyCreatedApiKey) return;
+    try {
+      await navigator.clipboard.writeText(newlyCreatedApiKey);
+      setStatus("apiKeyStatus", "API key copied to clipboard. Store it securely.", "success");
+    } catch {
+      setStatus("apiKeyStatus", "Clipboard access was blocked. Select and copy the key shown above manually.", "error");
+    }
+  });
+  $("hideApiKey").addEventListener("click", () => {
+    newlyCreatedApiKey = "";
+    $("newApiKeyValue").textContent = "";
+    $("newApiKeyPanel").hidden = true;
   });
   $("auditForm").addEventListener("submit", async event => {
     event.preventDefault();
