@@ -32,7 +32,7 @@ for _logger in [logging.getLogger(), *[
 from fastapi import FastAPI, Depends, HTTPException, Query, Response, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
