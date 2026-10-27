@@ -435,3 +435,8 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
 
+## Parallel implementation lane — database readiness
+
+Scope: schema/table/column compatibility, migration inventory and safe startup/readiness diagnostics, persistence/ownership consistency, quota reservation integrity and production-migration documentation. Do not execute production migrations or destructive database actions.
+
+Acceptance: schema compatibility tests against model metadata, migration-to-model gap review, test database persistence and rollback/cleanup coverage. Status: branch created from shared base; the main branch's current readiness change is not yet ported to this branch, and the lane is not verified.
