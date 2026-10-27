@@ -269,3 +269,11 @@
 - The bounded crawl now explicitly counts discovered sitemap URLs that were not fetched within the shared page budget and records a limitation stating that sitemap inclusion alone does not establish HTTP status, canonical consistency, or indexability.
 - Added a bounded integration regression case with more sitemap URLs than the crawler can inspect. The test and implementation are committed but not run. No production site was crawled and no deployment or migration was performed.
 - This improves coverage transparency; it does not yet implement exhaustive sitemap URL status validation. Remaining URLs stay explicitly unassessed rather than being presented as checked.
+
+## Core SaaS operator client-management scalability batch — 2026-10-27
+
+- Admin overview now accepts validated `limit` (1–200), `offset`, and bounded `search` parameters. Search covers client display name, tier and numeric license ID; SQL wildcard characters in user input are removed so the search remains literal.
+- Client rows are fetched in a bounded database page while platform-wide client totals and active/inactive counts remain global and are not incorrectly reduced to the visible page.
+- The operator console now provides server-side search (press Enter), result counts, and previous/next pagination. This replaces the previous behavior that loaded every license into the browser and searched only the currently loaded in-memory collection.
+- Added API regression cases for page bounds, literal client-ID search, global summary preservation, and invalid pagination parameters. Tests are committed but not run; no deployment or migration was performed.
+- Remaining acceptance: run targeted API tests and browser QA later as part of the full integration verification phase. This is a core SaaS/admin workflow change, not PDF/report presentation work.
