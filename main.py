@@ -935,6 +935,43 @@ async def get_account_usage(
     }
 
 
+@app.get("/api/v1/account/activity")
+async def account_audit_activity(
+    response: Response,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10000000),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return bounded audit activity for the authenticated customer without lead-contact data."""
+    from sqlalchemy import select, func as sql_func
+
+    base = select(AuditLead).where(AuditLead.license_id == license_obj.id)
+    total = int((await db.execute(
+        select(sql_func.count(AuditLead.id)).where(AuditLead.license_id == license_obj.id)
+    )).scalar_one() or 0)
+    rows = (await db.execute(
+        base.order_by(AuditLead.created_at.desc(), AuditLead.id.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "items": [{
+            "id": row.id,
+            "domain": row.domain,
+            "mobile_score": row.mobile_score,
+            "speed_index_sec": row.speed_index_sec,
+            "source": row.source_channel,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        } for row in rows],
+        "page": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": offset + len(rows) < total,
+        },
+    }
+
+
 @app.get("/api/v1/account/billing-history")
 async def account_billing_history(
     response: Response,
