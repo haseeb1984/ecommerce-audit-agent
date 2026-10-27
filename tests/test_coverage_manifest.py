@@ -147,3 +147,26 @@ def test_coverage_manifest_includes_bounded_reproducibility_context():
     assert "private_token" not in context["measurement_context"]
     assert manifest["target_url"] == "https://shop.example/"
     assert manifest["pages_checked_count"] == 1
+
+
+
+def test_coverage_manifest_preserves_only_known_module_lifecycle_states():
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/",
+        pages_checked=[],
+        findings=[],
+        limitations=[],
+        run_context={
+            "module_statuses": {
+                "pagespeed": "unavailable",
+                "bounded_crawl": "error",
+                "unsafe_state": "pretend_success",
+                "nested": {"state": "completed"},
+            },
+        },
+    )
+
+    assert manifest["audit_run_context"]["module_statuses"] == {
+        "pagespeed": "unavailable",
+        "bounded_crawl": "error",
+    }
