@@ -2667,9 +2667,11 @@ async def admin_overview(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10000000),
     search: str = Query(default="", max_length=100),
+    client_status: str = Query(default="all", pattern="^(all|active|inactive|expired)$"),
+    tier_filter: str = Query(default="", max_length=50),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return global platform metrics plus a bounded, searchable client page."""
+    """Return global platform metrics plus a bounded, searchable and filterable client page."""
     _require_admin_key(request)
     from sqlalchemy import select, func as sql_func, or_, cast, String
     now = datetime.now(timezone.utc)
@@ -2687,9 +2689,26 @@ async def admin_overview(
         )
     count_query = select(sql_func.count(SoftwareLicense.id))
     filtered_query = select(SoftwareLicense)
+    filters = []
     if client_filter is not None:
-        count_query = count_query.where(client_filter)
-        filtered_query = filtered_query.where(client_filter)
+        filters.append(client_filter)
+    normalized_tier = tier_filter.strip().lower()
+    if normalized_tier:
+        filters.append(SoftwareLicense.tier.ilike(normalized_tier))
+    # Expiry takes precedence over the active flag: an expired but still-enabled
+    # record must not be shown as active in the operator's recovery workflow.
+    if client_status == "active":
+        filters.append(SoftwareLicense.is_active.is_(True))
+        filters.append((SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now))
+    elif client_status == "inactive":
+        filters.append(SoftwareLicense.is_active.is_(False))
+        filters.append((SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now))
+    elif client_status == "expired":
+        filters.append(SoftwareLicense.expires_at.is_not(None))
+        filters.append(SoftwareLicense.expires_at < now)
+    if filters:
+        count_query = count_query.where(*filters)
+        filtered_query = filtered_query.where(*filters)
     filtered_total = int((await db.execute(count_query)).scalar_one() or 0)
     licenses = (await db.execute(
         filtered_query.order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
@@ -2768,7 +2787,7 @@ async def admin_overview(
             "payment_webhook_events": int(total_webhooks or 0),
         },
         "clients": client_rows,
-        "client_page": {"limit": limit, "offset": offset, "total": filtered_total, "search": normalized_search, "has_more": offset + len(client_rows) < filtered_total},
+        "client_page": {"limit": limit, "offset": offset, "total": filtered_total, "search": normalized_search, "status": client_status, "tier": normalized_tier, "has_more": offset + len(client_rows) < filtered_total},
     }
 
 
