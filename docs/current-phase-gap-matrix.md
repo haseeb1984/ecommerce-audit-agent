@@ -221,3 +221,7 @@
 
 - Extended the coverage-manifest text boundary to redact bearer credentials, common token/key/password assignments, and query/fragment data embedded in URLs in evidence, explanation, recommendation and related finding text fields.
 - Added regression coverage for representative bearer, API-key, URL-query and secret assignment patterns. This is defense-in-depth, not a guarantee against every possible secret format; tests remain unexecuted and deployment is unchanged.
+
+
+
+- PageSpeed field-data identifiers and final displayed URLs now pass through a public-URL allowlist that removes query strings/fragments and rejects URL credentials/non-HTTP(S) values. Provider field-data categories are allowlisted before being surfaced. Regression cases added; tests have not been run, and no deployment occurred.
