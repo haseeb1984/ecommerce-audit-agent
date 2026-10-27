@@ -447,5 +447,5 @@ Acceptance: module-to-requirement mapping; tests for normal, error, timeout, off
 - Both sitemap/homepage-discovered candidate pages and subsequently discovered internal links are filtered against applicable robots rules.
 - If robots.txt returns a server error, redirects off-origin, or cannot be fetched, additional page crawling is conservatively stopped rather than assuming permission.
 - Added focused unit cases for blocked/allowed paths, more-specific Allow rules, wildcard query patterns, and crawler-specific groups.
-- Regression tests have not been executed. The homepage is still fetched as the explicitly requested audit target; robots policy controls additional page crawling. Safe exposure probes and full RFC edge-case conformance remain separate review items.
+- Regression tests have not been executed. The homepage is still fetched as the explicitly requested audit target; robots policy controls additional page crawling. Passive exposure probes now use the same robots path filter, with a focused test that disallowed probes are skipped. Full RFC edge-case conformance remains a review item.
 
