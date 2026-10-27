@@ -62,7 +62,7 @@
 <section class="panel">
 <h2>3. Saved reports</h2>
 <div class="row" aria-label="Report summary"><div class="status"><strong id="reportCount">0 / 0</strong><br><span class="muted">Reports loaded / total</span></div><div class="status"><strong id="findingCount">0</strong><br><span class="muted">Findings across loaded reports</span></div></div>
-<label for="reportFilter">Filter reports by website</label><input id="reportFilter" type="text" maxlength="253" placeholder="Search a domain, e.g. example.com" autocomplete="off" aria-describedby="reportFilterHelp"><p id="reportFilterHelp" class="muted">Filtering happens in this page; it does not send your search text to the server.</p>
+<label for="reportFilter">Filter reports by website</label><div class="row"><input id="reportFilter" type="text" maxlength="253" placeholder="Search a domain, e.g. example.com" autocomplete="off" aria-describedby="reportFilterHelp"><button id="applyReportFilter" class="secondary" type="button">Apply filter</button></div><p id="reportFilterHelp" class="muted">Search is applied on the server and remains scoped to this account.</p>
 <div id="reports" class="reports" aria-live="polite"><p class="muted">Connect to load reports for your license.</p></div>
 <p id="reportPaginationStatus" class="muted" aria-live="polite"></p>
 <button id="loadMoreReports" class="secondary" type="button" hidden>Load more reports</button>
@@ -318,14 +318,16 @@
     moreButton.disabled = true;
     try {
       const offset = reset ? 0 : loadedReports.length;
-      const response = await api("/api/v1/reports?limit=" + reportPageSize + "&offset=" + offset);
+      const domain = $("reportFilter").value.trim();
+      const params = new URLSearchParams({limit: String(reportPageSize), offset: String(offset), domain});
+      const response = await api("/api/v1/reports?" + params.toString());
       const data = await response.json();
       const page = Array.isArray(data.reports) ? data.reports : [];
       loadedReports = reset ? page : [...loadedReports, ...page];
       reportsTotal = Math.max(0, Number(data.total) || 0);
       $("reportCount").textContent = String(loadedReports.length) + " / " + String(reportsTotal);
       $("findingCount").textContent = String(loadedReports.reduce((sum, item) => sum + Math.max(0, Number(item.finding_count) || 0), 0));
-      $("reportPaginationStatus").textContent = "Loaded " + loadedReports.length + " of " + reportsTotal + " saved reports.";
+      $("reportPaginationStatus").textContent = "Loaded " + loadedReports.length + " of " + reportsTotal + " matching saved reports.";
       moreButton.hidden = loadedReports.length >= reportsTotal;
       renderReports();
     } finally {
@@ -335,8 +337,7 @@
   }
   function renderReports() {
     const container = $("reports"); container.replaceChildren();
-    const filter = $("reportFilter").value.trim().toLowerCase();
-    const visibleReports = loadedReports.filter(item => String(item.domain || "").toLowerCase().includes(filter));
+    const visibleReports = loadedReports;
     if (!visibleReports.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = loadedReports.length ? "No saved reports match this website filter." : "No saved reports yet.";
@@ -501,7 +502,10 @@
     activeEvidenceReportId = null;
     $("savedEvidenceItems").replaceChildren();
   });
-  $("reportFilter").addEventListener("input", renderReports);
+  $("applyReportFilter").addEventListener("click", () => loadReports().catch(e => setStatus("connectStatus", e.message, "error")));
+  $("reportFilter").addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); loadReports().catch(e => setStatus("connectStatus", e.message, "error")); }
+  });
   $("applyActivityFilter").addEventListener("click", async () => {
     try { await loadActivity(); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
