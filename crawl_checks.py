@@ -1000,6 +1000,47 @@ def inspect_llms_txt(body: str, status: int, source_url: str, content_type: str 
     )]
 
 
+def _record_static_check_outcome(
+    outcome_records: list[CheckOutcome] | None,
+    *,
+    check_id: str,
+    category: str,
+    page_url: str,
+    findings: list[AuditFinding],
+    method: str,
+) -> None:
+    """Record a check's actual evaluation, including a pass when it found no signal."""
+    if outcome_records is None:
+        return
+    statuses = {str(item.status or "").casefold() for item in findings}
+    if any(status in {"not_tested", "not tested", "insufficient_data"} for status in statuses):
+        outcome = "not_assessed"
+    elif any(status == "verified" for status in statuses):
+        outcome = "issue"
+    elif findings:
+        outcome = "warning"
+    else:
+        outcome = "pass"
+    evidence = (
+        "; ".join(
+            f"{item.title}: {str(item.evidence or '').strip()[:350]}"
+            for item in findings[:3]
+        )
+        if findings else
+        "The static checker completed successfully and emitted no issue or review signal for this page."
+    )
+    outcome_records.append(CheckOutcome(
+        check_id=check_id,
+        category=category,
+        page_url=page_url,
+        outcome=outcome,
+        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+        method=method,
+        evidence=evidence[:1800],
+        evidence_ref=check_id,
+    ))
+
+
 async def run_bounded_site_crawl(
     target: str,
     outcome_records: list[CheckOutcome] | None = None,
@@ -1591,19 +1632,55 @@ async def run_bounded_site_crawl(
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
-            findings.extend(inspect_security_header_quality(page_headers, final_url))
-            findings.extend(inspect_standard_security_headers(page_headers, final_url))
+            header_quality_findings = inspect_security_header_quality(page_headers, final_url)
+            findings.extend(header_quality_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="security_headers.header_quality",
+                category="security_headers", page_url=final_url,
+                findings=header_quality_findings, method="static HTTP response-header review",
+            )
+            standard_header_findings = inspect_standard_security_headers(page_headers, final_url)
+            findings.extend(standard_header_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="security_headers.standard_headers",
+                category="security_headers", page_url=final_url,
+                findings=standard_header_findings, method="static HTTP response-header review",
+            )
 
             findings.extend(inspect_hreflang(body, final_url))
             findings.extend(inspect_meta_refresh(body, final_url))
-            findings.extend(inspect_mobile_viewport(body, final_url))
+            viewport_findings = inspect_mobile_viewport(body, final_url)
+            findings.extend(viewport_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="mobile_ux.viewport_declaration",
+                category="mobile_ux", page_url=final_url,
+                findings=viewport_findings, method="static HTML viewport declaration inspection",
+            )
 
             # Static resource patterns are review signals, not measured Core Web Vitals.
-            findings.extend(inspect_static_performance_signals(body, final_url))
+            performance_findings = inspect_static_performance_signals(body, final_url)
+            findings.extend(performance_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="performance.static_resource_signals",
+                category="performance", page_url=final_url,
+                findings=performance_findings, method="static HTML resource-pattern inspection",
+            )
             # Source-level accessibility signals are review prompts, not a WCAG verdict.
-            findings.extend(inspect_static_accessibility_signals(body, final_url))
+            accessibility_findings = inspect_static_accessibility_signals(body, final_url)
+            findings.extend(accessibility_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="accessibility.static_html_signals",
+                category="accessibility", page_url=final_url,
+                findings=accessibility_findings, method="static HTML accessibility signal inspection",
+            )
             # Trust inventory is source-level only and explicitly avoids authenticity claims.
-            findings.extend(inspect_trust_signals(body, final_url))
+            trust_findings = inspect_trust_signals(body, final_url)
+            findings.extend(trust_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="trust.visible_signal_inventory",
+                category="trust", page_url=final_url,
+                findings=trust_findings, method="static visible trust-signal inventory",
+            )
             # Detect source-visible tags and consent signals; never infer event success or legal compliance.
             findings.extend(inspect_privacy_tracking_signals(body, final_url))
 
