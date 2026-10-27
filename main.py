@@ -2167,14 +2167,18 @@ async def _record_operation_event(db: AsyncSession, event_type: str, license_id:
                                 domain: str | None, error_type: str | None) -> None:
     """Best-effort diagnostic write with only a hostname and exception class; never store traceback/secrets."""
     try:
-        await db.execute(text("""
+        dialect_name = db.get_bind().dialect.name
+        timestamp_type = "TIMESTAMPTZ" if dialect_name == "postgresql" else "DATETIME"
+        timestamp_default = "NOW()" if dialect_name == "postgresql" else "CURRENT_TIMESTAMP"
+        id_type = "BIGSERIAL PRIMARY KEY" if dialect_name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        await db.execute(text(f"""
             CREATE TABLE IF NOT EXISTS saas_operation_events (
-                id BIGSERIAL PRIMARY KEY,
+                id {id_type},
                 event_type VARCHAR(80) NOT NULL,
                 license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
                 domain VARCHAR(255),
                 error_type VARCHAR(120),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
             )
         """))
         await db.execute(text("""
