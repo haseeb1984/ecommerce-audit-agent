@@ -208,13 +208,22 @@ async def comprehensive_audit_pdf(
     license_id = license_obj.id
     reservation_id = None
     try:
+        audit_started_at_utc = datetime.now(timezone.utc).isoformat()
+        module_statuses = {
+            "core_homepage_discovery": "running",
+            "pagespeed": "not_started",
+            "bounded_crawl": "not_started",
+            "conversion_paid_traffic": "not_started",
+        }
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
         # Run audit families independently. A failure in the phase-one checker must not
         # discard findings from the bounded crawl, conversion checks, or PageSpeed.
         try:
             result = await run_phase_one_checks(target_url)
+            module_statuses["core_homepage_discovery"] = "completed"
         except Exception as phase_one_exc:
+            module_statuses["core_homepage_discovery"] = "error"
             result = AuditCheckResult(
                 target_url=target_url,
                 checked_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -247,9 +256,12 @@ async def comprehensive_audit_pdf(
                 source_url=target_url,
             ))
         metrics = None
+        module_statuses["pagespeed"] = "running"
         try:
             metrics = await agent.run_audit(target_url)
+            module_statuses["pagespeed"] = "completed" if metrics is not None else "unavailable"
         except Exception as pagespeed_exc:
+            module_statuses["pagespeed"] = "error"
             result.limitations.append(
                 f"Google PageSpeed metrics were unavailable for this run ({type(pagespeed_exc).__name__}); "
                 "performance measurements are not inferred and other audit modules continue."
@@ -259,6 +271,7 @@ async def comprehensive_audit_pdf(
         # valid results already collected by the core page/discovery checks.
         crawl_completed = False
         conversion_completed = False
+        module_statuses["bounded_crawl"] = "running"
         try:
             crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(
                 target_url, outcome_records=result.check_outcomes
@@ -266,10 +279,12 @@ async def comprehensive_audit_pdf(
             # A normal return can still mean the homepage was non-HTML/unavailable;
             # count the bounded crawl as completed only when it recorded a page.
             crawl_completed = bool(crawl_pages)
+            module_statuses["bounded_crawl"] = "completed" if crawl_completed else "unavailable"
             result.findings.extend(crawl_findings)
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *crawl_pages]))
             result.limitations.extend(crawl_limitations)
         except Exception as crawl_exc:
+            module_statuses["bounded_crawl"] = "error"
             result.check_outcomes.append(CheckOutcome(
                 check_id="crawl.bounded_crawl",
                 category="crawlability",
@@ -295,13 +310,16 @@ async def comprehensive_audit_pdf(
                 f"Bounded same-origin crawl results are unavailable for this run ({type(crawl_exc).__name__}); other completed checks are retained."
             )
 
+        module_statuses["conversion_paid_traffic"] = "running"
         try:
             conversion_findings, conversion_pages, conversion_limitations = await run_conversion_paid_traffic_checks(target_url)
             conversion_completed = True
+            module_statuses["conversion_paid_traffic"] = "completed"
             result.findings.extend(conversion_findings)
             result.pages_checked = list(dict.fromkeys([*result.pages_checked, *conversion_pages]))
             result.limitations.extend(conversion_limitations)
         except Exception as conversion_exc:
+            module_statuses["conversion_paid_traffic"] = "error"
             result.check_outcomes.append(CheckOutcome(
                 check_id="conversion_paid_traffic.checker",
                 category="conversion_paid_traffic",
@@ -553,10 +571,11 @@ async def comprehensive_audit_pdf(
             executed_categories=sorted(executed_categories),
             check_outcomes=result.check_outcomes,
             run_context={
-                "started_at_utc": result.checked_at_utc,
+                "started_at_utc": audit_started_at_utc,
                 "completed_at_utc": datetime.now(timezone.utc).isoformat(),
                 "target_scope": "Public unauthenticated HTTP(S) audit; bounded same-origin crawl; no active penetration testing or authenticated checkout actions.",
                 "user_agent": USER_AGENT,
+                "module_statuses": module_statuses,
                 "limits": {
                     "max_crawl_pages": 12,
                     "max_links_from_homepage": 100,
