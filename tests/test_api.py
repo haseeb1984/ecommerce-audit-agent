@@ -752,7 +752,9 @@ async def test_report_history_supports_stable_offset_pagination(client):
     headers = {"X-License-Key": "report-pagination-owner"}
     first = await client.get("/api/v1/reports?limit=2&offset=0", headers=headers)
     second = await client.get("/api/v1/reports?limit=2&offset=2", headers=headers)
-    assert first.status_code == second.status_code == 200
+    filtered = await client.get("/api/v1/reports?limit=10&offset=0&domain=SHOP-1.EXAMPLE", headers=headers)
+    wildcard = await client.get("/api/v1/reports?domain=%25", headers=headers)
+    assert first.status_code == second.status_code == filtered.status_code == wildcard.status_code == 200
     first_data, second_data = first.json(), second.json()
     assert first_data["total"] == second_data["total"] == 3
     assert len(first_data["reports"]) == 2
@@ -760,6 +762,11 @@ async def test_report_history_supports_stable_offset_pagination(client):
     first_ids = {row["id"] for row in first_data["reports"]}
     second_ids = {row["id"] for row in second_data["reports"]}
     assert first_ids.isdisjoint(second_ids)
+    assert filtered.json()["total"] == 1
+    assert filtered.json()["domain"] == "shop-1.example"
+    assert filtered.json()["reports"][0]["domain"] == "shop-1.example"
+    assert wildcard.json()["total"] == 3
+    assert wildcard.json()["domain"] == ""
 
 
 @pytest.mark.asyncio
