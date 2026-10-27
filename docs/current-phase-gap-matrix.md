@@ -87,6 +87,13 @@
 - Admin console GET requests now explicitly use browser `cache: "no-store"` for JSON API reads and PDF downloads. After connection succeeds or fails, the password input is cleared; the active key remains only in the page's in-memory variable for the connected session. This is source-level hardening and has not been browser-tested.
 - Production readiness remains unproven until targeted tests, CI, migrations, and end-to-end ownership/security acceptance are verified.
 
+## Customer API key lifecycle — source-level implementation
+
+- Added license-scoped customer endpoints to list API key metadata, create an API key with a one-time secret response, and revoke a key only when it belongs to the authenticated license.
+- The customer portal now exposes key creation, refresh, one-time copy/hide controls, and confirmed revocation. Full secrets are not persisted in browser storage or returned by the list endpoint; key metadata is cleared when the customer switches credentials or a reconnect fails.
+- A per-account limit of 10 API keys is enforced at creation time. API key management is available to an authenticated license key or API key, so account owners can bootstrap integrations from the license credential.
+- Source-level implementation only: no tests or browser verification have been run. Concurrent creation at the key limit, cross-account revocation, and compatibility with the deployed schema still require the planned verification phase.
+
 ## Non-negotiable reporting rules
 
 - Audit/finding only: do not implement fixes on customer websites in this phase.
