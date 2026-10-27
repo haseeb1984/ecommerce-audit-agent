@@ -2294,46 +2294,12 @@ def test_product_group_without_inline_variants_is_not_misreported_as_missing_off
     ) == []
 
 
-def test_product_schema_accepts_zero_price_and_absolute_availability_iri():
+def test_product_schema_presence_does_not_duplicate_commerce_completeness_findings():
     html = '''
     <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"https://schema.org/Product",
-     "name":"Free sample","image":[{"url":"https://shop.example/sample.jpg"}],
-     "offers":{"@type":"https://schema.org/Offer","price":0,"priceCurrency":"USD",
-     "availability":"https://schema.org/InStock"}}
+    {"@context":"https://schema.org","@type":"https://schema.org/Product","name":"Blue shirt"}
     </script>
     '''
     assert crawl_checks.inspect_product_page_schema_presence(
-        html, "https://shop.example/products/free-sample"
-    ) == []
-
-
-def test_product_schema_treats_blank_name_and_invalid_currency_as_missing_fields():
-    html = '''
-    <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"Product","name":"   ",
-     "image":"https://shop.example/item.jpg",
-     "offers":{"@type":"Offer","price":"12.00","priceCurrency":"US dollars",
-     "availability":"https://schema.org/InStock"}}
-    </script>
-    '''
-    findings = crawl_checks.inspect_product_page_schema_presence(
-        html, "https://shop.example/products/item"
-    )
-    assert len(findings) == 1
-    assert "name" in findings[0].evidence
-    assert "offer currency" in findings[0].evidence
-
-
-def test_product_schema_accepts_image_object_content_url():
-    html = '''
-    <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"Product","name":"Object image",
-     "image":{"contentUrl":"https://shop.example/item.jpg"},
-     "offers":{"@type":"Offer","price":"10.00","priceCurrency":"USD",
-     "availability":"https://schema.org/InStock"}}
-    </script>
-    '''
-    assert crawl_checks.inspect_product_page_schema_presence(
-        html, "https://shop.example/products/object-image"
+        html, "https://shop.example/products/blue-shirt"
     ) == []
