@@ -2274,16 +2274,46 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
 
 
 @app.get("/api/v1/admin/overview")
-async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_db)):
-    """Aggregated platform metrics and per-client quota/usage data for authorized operators."""
+async def admin_overview(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10000000),
+    search: str = Query(default="", max_length=100),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return global platform metrics plus a bounded, searchable client page."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func
+    from sqlalchemy import select, func as sql_func, or_, cast, String
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+    normalized_search = search.strip()
+    client_filter = None
+    if normalized_search:
+        literal_search = normalized_search.replace("%", "").replace("_", "")
+        pattern = f"%{literal_search}%"
+        client_filter = or_(
+            SoftwareLicense.client_name.ilike(pattern),
+            SoftwareLicense.tier.ilike(pattern),
+            cast(SoftwareLicense.id, String).ilike(pattern),
+        )
+    count_query = select(sql_func.count(SoftwareLicense.id))
+    filtered_query = select(SoftwareLicense)
+    if client_filter is not None:
+        count_query = count_query.where(client_filter)
+        filtered_query = filtered_query.where(client_filter)
+    filtered_total = int((await db.execute(count_query)).scalar_one() or 0)
     licenses = (await db.execute(
-        select(SoftwareLicense).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
+        filtered_query.order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
+        .offset(offset).limit(limit)
     )).scalars().all()
+    total_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)))).scalar_one() or 0)
+    active_clients = int((await db.execute(
+        select(sql_func.count(SoftwareLicense.id)).where(
+            SoftwareLicense.is_active.is_(True),
+            (SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now),
+        )
+    )).scalar_one() or 0)
     total_leads = (await db.execute(select(sql_func.count(AuditLead.id)))).scalar_one()
     total_reports = (await db.execute(select(sql_func.count(AuditReport.id)))).scalar_one()
     total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
@@ -2293,7 +2323,6 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
     monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
         AuditLead.created_at >= month_start
     ))).scalar_one()
-    active_clients = sum(1 for item in licenses if item.is_active and not (item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now))
     # Aggregate per-license metrics in bounded queries instead of issuing several
     # round trips for every client. This keeps the operator overview responsive as
     # the SaaS customer count grows and avoids an N+1 query pattern.
@@ -2344,13 +2373,14 @@ async def admin_overview(request: Request, db: AsyncSession = Depends(get_async_
     return {
         "generated_at": now.isoformat(), "month_start": month_start.isoformat(),
         "summary": {
-            "clients_total": len(licenses), "clients_active": active_clients,
-            "clients_inactive_or_expired": len(licenses) - active_clients,
+            "clients_total": total_clients, "clients_active": active_clients,
+            "clients_inactive_or_expired": total_clients - active_clients,
             "audits_this_month": int(monthly_leads or 0), "audits_all_time": int(total_leads or 0),
             "reports_saved": int(total_reports or 0), "active_audit_reservations": int(total_reservations or 0),
             "payment_webhook_events": int(total_webhooks or 0),
         },
         "clients": client_rows,
+        "client_page": {"limit": limit, "offset": offset, "total": filtered_total, "search": normalized_search, "has_more": offset + len(client_rows) < filtered_total},
     }
 
 
