@@ -199,3 +199,11 @@
 - Coverage manifests now carry an audit_run_context object with start/completion timestamps, the public unauthenticated audit scope, the declared user agent, bounded crawl/response/evidence limits, measurement-mode notes, recorded check IDs, explicit outcome-state totals, and the limitation count.
 - The metadata is bounded and type-checked before persistence; target/page URLs continue to be normalized without query strings or fragments. This gives saved reports and downstream report rendering a repeatable description of what the run did and did not attempt.
 - The context is descriptive, not a claim that every listed limit was reached or that browser/manual/authorized checks ran. Check outcomes remain the source of execution evidence. Regression coverage was added but not run; no deployment or migration was performed.
+
+
+
+## Audit module lifecycle and run timestamps — source implementation batch
+
+- The comprehensive-audit orchestration now records a start timestamp before checker execution and records a bounded lifecycle state for core homepage/discovery checks, PageSpeed, bounded crawl, and conversion/paid-traffic checks.
+- Each module state is restricted to not_started, running, completed, unavailable, or error. The saved coverage context preserves these statuses separately from findings and check outcomes, so a module-level failure cannot be mistaken for a clean result.
+- A regression test covers the module-state allowlist. Tests remain unrun, and no deployment or migration was performed.
