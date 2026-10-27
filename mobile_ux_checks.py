@@ -33,8 +33,31 @@ def inspect_mobile_viewport(html: str, page_url: str) -> list[AuditFinding]:
     parser = _ViewportParser()
     try:
         parser.feed(html)
-    except Exception:
-        return []
+        parser.close()
+    except Exception as exc:
+        return [AuditFinding(
+            category="mobile_ux",
+            title="Mobile viewport source could not be assessed",
+            status="not_tested",
+            severity="info",
+            evidence=(
+                f"The returned HTML could not be fully parsed for viewport declarations on {page_url}; "
+                f"parser error type: {type(exc).__name__}."
+            ),
+            explanation=(
+                "A parser failure is not evidence that the page has a mobile layout defect. "
+                "The viewport check is inconclusive because the returned HTML could not be reliably inspected."
+            ),
+            recommendation=(
+                "Inspect the rendered page and its viewport declaration in a browser; do not infer mobile compatibility "
+                "from this inconclusive source check."
+            ),
+            verification_steps=[
+                "Inspect the final rendered DOM for meta name=viewport.",
+                "Test reflow at 320 CSS px and common mobile widths, including zoom and text enlargement.",
+            ],
+            source_url=page_url,
+        )]
 
     findings: list[AuditFinding] = []
     if not parser.declarations:
