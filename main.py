@@ -2212,12 +2212,24 @@ async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[
         query += " WHERE is_active = TRUE"
     query += " ORDER BY monthly_audit_allowance ASC, tier ASC"
     rows = (await db.execute(text(query))).mappings().all()
-    return [{
-        "tier": row["tier"], "label": row["label"],
-        "monthly_audit_allowance": int(row["monthly_audit_allowance"]),
-        "max_concurrent_audits": int(row["max_concurrent_audits"]),
-        "price_id": row["paddle_price_id"], "is_active": bool(row["is_active"])
-    } for row in rows]
+    plans = []
+    for row in rows:
+        tier = str(row["tier"] or "").strip().lower()
+        # Database package settings are authoritative when they contain a price ID.
+        # For existing installations whose package row has no price yet, retain the
+        # documented environment-based configuration path used by deployment setups.
+        price_id = str(row["paddle_price_id"] or "").strip()
+        if not price_id and tier:
+            candidate = os.getenv(f"PADDLE_PRICE_ID_{tier.upper()}", "").strip()
+            if re.fullmatch(r"pri_[A-Za-z0-9]+", candidate):
+                price_id = candidate
+        plans.append({
+            "tier": tier, "label": row["label"],
+            "monthly_audit_allowance": int(row["monthly_audit_allowance"]),
+            "max_concurrent_audits": int(row["max_concurrent_audits"]),
+            "price_id": price_id or None, "is_active": bool(row["is_active"])
+        })
+    return plans
 
 
 class AdminPackageInput(BaseModel):
