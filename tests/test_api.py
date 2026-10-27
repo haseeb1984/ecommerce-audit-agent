@@ -2031,6 +2031,15 @@ async def test_customer_audit_activity_is_paginated_scoped_and_minimizes_sensiti
     assert second_page.json()["items"][0]["domain"] == "first.example"
     assert second_page.json()["page"]["has_more"] is False
 
+    filtered = await client.get(
+        "/api/v1/account/activity?domain=SECOND&limit=20&offset=0",
+        headers={"X-License-Key": "activity-owner"},
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["page"]["total"] == 1
+    assert filtered.json()["page"]["domain"] == "second"
+    assert [item["domain"] for item in filtered.json()["items"]] == ["second.example"]
+
 
 @pytest.mark.asyncio
 async def test_customer_audit_activity_requires_auth_and_bounds_pagination(client):
