@@ -435,3 +435,8 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
 
+## Parallel implementation lane — audit engine acceptance
+
+Scope: review audit modules and crawl checks against the requirement matrix; close meaningful evidence/coverage gaps with focused regression tests. Preserve safe URL fetching, crawl caps, and conservative pass/issue/error/not_assessed outcomes. Exclude PDF layout and final audit-result refinement until all SaaS features are complete.
+
+Acceptance: module-to-requirement mapping; tests for normal, error, timeout, off-origin and bounded cases; no unsupported claims about indexing, WCAG conformance, security or field performance. Status: branch created from shared base; feature implementation not yet completed or verified.
