@@ -1000,7 +1000,7 @@ async def create_account_billing_portal(
 @app.get("/api/v1/account/api-keys")
 async def list_account_api_keys(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List metadata for this account's API keys; never return stored key material."""
