@@ -273,6 +273,40 @@ async def test_missing_authentication_returns_401(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("domain", [
+    "http://127.0.0.1",
+    "http://[::1]/admin",
+    "http://localhost",
+    "https://user:password@shop.example",
+    "https://shop.example/?token=secret",
+    "https://shop.example:8443",
+])
+async def test_audit_lead_rejects_unsafe_target_before_reserving_quota(client, domain):
+    license_key = "invalid-target-license"
+    await create_license(key=license_key, quota=2)
+    response = await client.post(
+        "/api/v1/audit-lead",
+        params={"domain": domain},
+        headers={"X-License-Key": license_key},
+    )
+    assert response.status_code == 422
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
+        )).scalar_one()
+        reservations = (await db.execute(
+            select(func.count(AuditQuotaReservation.id)).where(
+                AuditQuotaReservation.license_id == license_obj.id
+            )
+        )).scalar_one()
+        leads = (await db.execute(
+            select(func.count(AuditLead.id)).where(AuditLead.license_id == license_obj.id)
+        )).scalar_one()
+    assert reservations == 0
+    assert leads == 0
+
+
+@pytest.mark.asyncio
 async def test_invalid_license_returns_403(client):
     response = await client.post(
         "/api/v1/audit-lead",
