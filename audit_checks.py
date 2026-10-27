@@ -429,7 +429,11 @@ class _PageParser(HTMLParser):
                 self.images_empty_alt += 1
         elif tag == "a" and values.get("href"):
             self.links += 1
-            self.link_hrefs.append(values.get("href", "").strip())
+            # Keep parser memory bounded even when a page contains a huge number
+            # of anchors. Downstream source checks and crawl discovery are capped
+            # at 500 links, so retaining additional hrefs cannot improve coverage.
+            if len(self.link_hrefs) < 500:
+                self.link_hrefs.append(values.get("href", "").strip())
             if len(self.link_attributes) < 500:
                 self.link_attributes.append({
                     "href": values.get("href", "").strip(),
