@@ -99,30 +99,41 @@ def build_coverage_manifest(
             outcomes_by_check[check_id].append(outcome)
     check_outcome_summaries = []
     for check_id, records in sorted(outcomes_by_check.items()):
-        counts = Counter(str(getattr(record, "outcome", "unknown")).lower() for record in records)
-        page_urls = {
-            safe_url
-            for record in records
-            if (safe_url := _safe_evidence_url(getattr(record, "page_url", None))) is not None
-        }
-        denominator = len(page_urls)
+        # One page must contribute at most once to a check's denominator. If duplicate
+        # records disagree, use the most conservative state for that page.
+        severity_order = {"error": 5, "not_assessed": 4, "issue": 3, "warning": 2, "pass": 1}
+        page_outcomes: dict[str, str] = {}
+        unscoped_counts = Counter()
+        for record in records:
+            value = str(getattr(record, "outcome", "unknown")).lower()
+            safe_url = _safe_evidence_url(getattr(record, "page_url", None))
+            if safe_url is None:
+                unscoped_counts[value] += 1
+                continue
+            previous = page_outcomes.get(safe_url)
+            if previous is None or severity_order.get(value, 0) > severity_order.get(previous, 0):
+                page_outcomes[safe_url] = value
+        counts = Counter(page_outcomes.values())
+        # Records without a safe, attributable URL remain visible as unscoped outcomes,
+        # but are excluded from the tested-page denominator.
         assessed = counts.get("pass", 0) + counts.get("issue", 0) + counts.get("warning", 0)
         check_outcome_summaries.append({
             "check_id": check_id,
             "outcome_counts": {
-                "pass": counts.get("pass", 0),
-                "issue": counts.get("issue", 0),
-                "warning": counts.get("warning", 0),
-                "not_assessed": counts.get("not_assessed", 0),
-                "error": counts.get("error", 0),
+                "pass": counts.get("pass", 0) + unscoped_counts.get("pass", 0),
+                "issue": counts.get("issue", 0) + unscoped_counts.get("issue", 0),
+                "warning": counts.get("warning", 0) + unscoped_counts.get("warning", 0),
+                "not_assessed": counts.get("not_assessed", 0) + unscoped_counts.get("not_assessed", 0),
+                "error": counts.get("error", 0) + unscoped_counts.get("error", 0),
             },
             "outcome_records": len(records),
-            "tested_page_denominator": denominator,
+            "tested_page_denominator": len(page_outcomes),
             "assessed_page_count": assessed,
-            "not_assessed_record_count": counts.get("not_assessed", 0),
-            "error_record_count": counts.get("error", 0),
+            "not_assessed_record_count": counts.get("not_assessed", 0) + unscoped_counts.get("not_assessed", 0),
+            "error_record_count": counts.get("error", 0) + unscoped_counts.get("error", 0),
             "pass_pct_of_assessed_records": round(100 * counts.get("pass", 0) / assessed, 1) if assessed else None,
-            "note": "Counts describe recorded outcome records, not full-site coverage; repeated records for the same page can exist if a checker emits duplicates.",
+            "unscoped_outcome_records": sum(unscoped_counts.values()),
+            "note": "Per-page counts deduplicate repeated records by sanitized URL and use the most conservative outcome when duplicate states conflict; unscoped records are shown separately.",
         })
     executed = set(executed_categories)
     observed: list[dict[str, Any]] = []
