@@ -189,6 +189,35 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
                     "schema_ready": False,
                     "missing_tables": [],
                     "missing_columns": missing_columns,
+                    "missing_indexes": [],
+                },
+            )
+
+        index_result = await db.execute(text(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+        ))
+        existing_indexes = set(index_result.scalars().all())
+        required_indexes = {
+            index.name
+            for table_name in required_tables
+            for index in Base.metadata.tables[table_name].indexes
+            if index.name
+        }
+        missing_indexes = sorted(required_indexes - existing_indexes)
+        if missing_indexes:
+            logger.error(
+                "Database schema readiness failed (missing_index_count=%s)",
+                len(missing_indexes),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "not_ready",
+                    "db_connected": True,
+                    "schema_ready": False,
+                    "missing_tables": [],
+                    "missing_columns": {},
+                    "missing_indexes": missing_indexes,
                 },
             )
         return {
@@ -1000,7 +1029,7 @@ async def create_account_billing_portal(
 @app.get("/api/v1/account/api-keys")
 async def list_account_api_keys(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List metadata for this account's API keys; never return stored key material."""
@@ -1545,6 +1574,56 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     event_type = str(event.get("event_type") or event.get("type") or "")
     if not event_id: raise HTTPException(status_code=400, detail="Paddle event ID is missing.")
     transaction = event.get("data") or {}
+
+# Persist payment-failure lifecycle events for customer-visible billing history.
+    # Paddle's retry/dunning policy remains authoritative: a single failed transaction
+    # does not by itself revoke access, but the event must not disappear silently.
+    if event_type in {"transaction.payment_failed", "subscription.past_due"}:
+        subscription_id = str(
+            transaction.get("subscription_id") or
+            (transaction.get("id") if event_type == "subscription.past_due" else "") or ""
+        )[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle payment-failure event has no subscription ID.")
+        from sqlalchemy import select
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
+            {"subscription_id": subscription_id},
+        )
+        duplicate = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            return {"status": "already_processed", "event_id": event_id}
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            )
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None:
+            # Do not acknowledge an unlinked event permanently; Paddle may retry after
+            # the original purchase event is reconciled and the subscription is linked.
+            raise HTTPException(status_code=503, detail="Payment-failure event is awaiting subscription reconciliation.")
+        customer = transaction.get("customer") or {}
+        customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
+        status = "payment_failed" if event_type == "transaction.payment_failed" else "subscription_past_due"
+        db.add(PaymentWebhookEvent(
+            event_id=event_id,
+            status=status,
+            license_id=linked_event.license_id,
+            recipient_email=linked_event.recipient_email,
+            transaction_id=(str(transaction.get("id") or "")[:100] or None)
+                if event_type == "transaction.payment_failed" else None,
+            subscription_id=subscription_id,
+            paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
+        ))
+        await db.commit()
+        await _record_operation_event(db, status, linked_event.license_id, None, None)
+        return {"status": status, "event_id": event_id, "license_id": linked_event.license_id}
 
     # Subscription lifecycle events must not be silently discarded: a confirmed
     # cancellation revokes future access for the license provisioned by its purchase.
@@ -2263,6 +2342,54 @@ async def admin_dashboard_page():
     """Serve the operator-only dashboard shell; every data endpoint independently authenticates."""
     return FileResponse(Path(__file__).resolve().parent / "admin_portal.html")
 
+
+
+@app.get("/api/v1/admin/payment-events")
+async def admin_payment_events(
+    request: Request,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=100000),
+    status: str | None = Query(None, min_length=1, max_length=40),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded, filterable payment-event queue for operator triage."""
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    from sqlalchemy import select, func as sql_func
+
+    statement = select(PaymentWebhookEvent)
+    count_statement = select(sql_func.count(PaymentWebhookEvent.event_id))
+    if status:
+        statement = statement.where(PaymentWebhookEvent.status == status)
+        count_statement = count_statement.where(PaymentWebhookEvent.status == status)
+    total = int((await db.execute(count_statement)).scalar_one() or 0)
+    events = (await db.execute(
+        statement
+        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "items": [
+            {
+                "event_id": event.event_id,
+                "status": event.status,
+                "license_id": event.license_id,
+                "transaction_id": event.transaction_id,
+                "subscription_id": event.subscription_id,
+                "paddle_customer_id": event.paddle_customer_id,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+                "updated_at": event.updated_at.isoformat() if event.updated_at else None,
+            }
+            for event in events
+        ],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(events) < total,
+        },
+    }
 
 
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
