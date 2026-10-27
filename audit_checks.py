@@ -2623,28 +2623,41 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                                 ))
                     elif category == "llms_txt":
                         text_lines = [line.strip() for line in body.splitlines() if line.strip()]
-                        looks_like_markdown = bool(text_lines) and any(line.startswith("#") for line in text_lines)
+                        has_heading = any(line.startswith("# ") and line[2:].strip() for line in text_lines)
+                        has_markdown_links = "](" in body
+                        byte_length = len(body.encode("utf-8", errors="replace"))
+                        review_signals = []
+                        if not text_lines:
+                            review_signals.append("empty or whitespace-only content")
+                        if not has_heading:
+                            review_signals.append("no top-level Markdown heading detected")
+                        if byte_length > 100000:
+                            review_signals.append("content exceeds 100 KB editorial review threshold")
+                        if not has_markdown_links:
+                            review_signals.append("no Markdown link syntax detected")
                         format_evidence = (
-                            f"Non-empty lines: {len(text_lines)}; Markdown heading present: {looks_like_markdown}. "
-                            "This is only a lightweight format signal for a proposed convention, not a ranking or discovery assessment."
+                            f"Non-empty lines: {len(text_lines)}; top-level heading: {has_heading}; "
+                            f"Markdown link syntax: {has_markdown_links}; UTF-8 bytes: {byte_length}; "
+                            f"editorial review signals: {', '.join(review_signals) if review_signals else 'none detected'}. "
+                            "These are lightweight editorial heuristics for an optional proposed convention, not a ranking, indexing, or AI-citation assessment."
                         )
                         check_outcomes.append(CheckOutcome(
-                            check_id="discovery.llms_txt.basic_format",
+                            check_id="discovery.llms_txt.content_review",
                             category=category, page_url=final_url,
-                            outcome="pass" if looks_like_markdown else "warning",
+                            outcome="warning" if review_signals else "pass",
                             observed_at_utc=observed_at_utc,
-                            method="basic non-empty text and Markdown heading signal inspection",
+                            method="bounded llms.txt content inspection for emptiness, heading, Markdown links, and size",
                             evidence=format_evidence,
                             evidence_ref=final_url,
                         ))
-                        if not looks_like_markdown:
+                        if review_signals:
                             findings.append(_finding(
-                                category, "llms.txt basic format needs review",
+                                category, "llms.txt content may need editorial review",
                                 "manual_review_required", "low",
                                 format_evidence + f" Source: {final_url}",
-                                "llms.txt is a proposed convention rather than a guaranteed indexing, ranking, or AI-citation control. This simple check only looks for a non-empty response with a Markdown heading.",
-                                "If you choose to publish llms.txt, review its content for accuracy and consider using a concise Markdown structure with a heading and relevant public resources. Do not publish confidential or access-restricted URLs.",
-                                ["Review the public file content.", "Confirm all listed resources are accurate, intended to be public, and current."],
+                                "These are lightweight editorial heuristics, not a formal standard validator. llms.txt is an optional proposed convention; these signals do not establish technical failure or search/AI visibility.",
+                                "If published, keep the file concise, use a clear heading, and link only to relevant, maintained public resources. Never include secrets or private URLs.",
+                                ["Review the published text manually.", "Check that each linked destination is intended to be public and contains no sensitive information."],
                                 final_url,
                             ))
                 else:
