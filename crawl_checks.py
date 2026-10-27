@@ -63,6 +63,9 @@ def _parse_robots_rules(body: str, user_agent: str) -> list[tuple[str, str]]:
         agents, rules, saw_rule = [], [], False
 
     product_token = (user_agent.split("/", 1)[0].split(" ", 1)[0] or "").lower()
+    # Accept escaped line separators from plain-text transports/test fixtures as well
+    # as the real CRLF/LF format used by robots.txt.
+    body = body.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
     for raw_line in body.splitlines()[:5000]:
         line = raw_line.split("#", 1)[0].strip()
         if not line or ":" not in line:
@@ -1318,6 +1321,21 @@ async def run_bounded_site_crawl(
                     # reporting instead of silently discarding them.
                     if len(robots_declared_sitemap_urls) >= MAX_CHILD_SITEMAPS:
                         break
+            elif robots_status == 404:
+                # A missing robots.txt is an unavailable file, not a server failure.
+                # With no published rules, bounded same-origin discovery can proceed.
+                robots_rules = []
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="robots_txt.discovery_rules",
+                        category="indexing",
+                        page_url=robots_final_url or robots_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin robots.txt response and bounded directive parsing",
+                        evidence="No robots.txt file was published (HTTP 404); no crawl directives were available to inspect.",
+                        evidence_ref="robots_txt.discovery_rules",
+                    ))
             elif robots_status in {401, 403}:
                 limitations.append("robots.txt could not be inspected because the server returned an access-denied response.")
                 if outcome_records is not None:
