@@ -80,5 +80,5 @@ def test_document_basics_advises_on_extremely_long_meta_description_without_rank
     finding = next(item for item in findings if item.title == "Meta description is unusually long")
     assert finding.status == "manual_review_required"
     assert finding.severity == "info"
-    assert "does not establish a defect or ranking impact" in finding.impact
+    assert "does not establish a defect or ranking impact" in finding.explanation
     assert description not in finding.evidence
