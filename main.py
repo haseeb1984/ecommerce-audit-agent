@@ -1978,7 +1978,7 @@ async def admin_dashboard_page():
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
 async def admin_reconcile_payment(event_id: str, request: Request,
                                   db: AsyncSession = Depends(get_async_db)):
-    """Read-only Paddle reconciliation for a previously verified transaction."""
+    """Reconcile a recorded payment and safely backfill missing provider identifiers."""
     _require_admin_key(request)
     await _ensure_admin_tables(db)
     from sqlalchemy import select
@@ -1994,21 +1994,38 @@ async def admin_reconcile_payment(event_id: str, request: Request,
     try:
         response = await asyncio.to_thread(_paddle_api_request, f"/transactions/{event.transaction_id}")
         data = response.get("data") or {}
+        provider_transaction_id = str(data.get("id") or "").strip()
+        if not provider_transaction_id or not hmac.compare_digest(provider_transaction_id, event.transaction_id):
+            raise HTTPException(status_code=502, detail="Paddle returned a transaction that does not match the recorded payment.")
         details = data.get("details") or {}
         totals = details.get("totals") or {}
+        subscription_id = str(data.get("subscription_id") or "").strip()
+        customer_id = str(data.get("customer_id") or "").strip()
+        # Backfill only missing IDs from the authenticated Paddle API response.
+        # Never overwrite an existing link or change license/payment entitlement here.
+        backfilled = []
+        if not event.subscription_id and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id):
+            event.subscription_id = subscription_id[:100]
+            backfilled.append("subscription_id")
+        if not event.paddle_customer_id and re.fullmatch(r"ctm_[A-Za-z0-9]+", customer_id):
+            event.paddle_customer_id = customer_id[:100]
+            backfilled.append("paddle_customer_id")
         result = {
             "event_id": event.event_id,
             "recorded_email_status": event.status,
             "recorded_transaction_id": event.transaction_id,
-            "paddle_transaction_id": data.get("id"),
+            "paddle_transaction_id": provider_transaction_id,
             "paddle_status": data.get("status"),
-            "subscription_id": data.get("subscription_id"),
+            "subscription_id": subscription_id or event.subscription_id,
             "currency_code": data.get("currency_code"),
             "total_minor_units": totals.get("total"),
-            "customer_id": data.get("customer_id"),
+            "customer_id": customer_id or event.paddle_customer_id,
+            "backfilled_identifiers": backfilled,
+            "entitlement_changed": False,
         }
         await _write_admin_log(db, "payment.reconciled", "payment_event", event.event_id, {
-            "transaction_id": event.transaction_id, "paddle_status": str(data.get("status") or "")[:40]})
+            "transaction_id": event.transaction_id, "paddle_status": str(data.get("status") or "")[:40],
+            "backfilled_identifiers": backfilled})
         await db.commit()
         return result
     except HTTPException:
