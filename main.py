@@ -2265,6 +2265,54 @@ async def admin_dashboard_page():
 
 
 
+@app.get("/api/v1/admin/payment-events")
+async def admin_payment_events(
+    request: Request,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=100000),
+    status: str | None = Query(None, min_length=1, max_length=40),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded, filterable payment-event queue for operator triage."""
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    from sqlalchemy import select, func as sql_func
+
+    statement = select(PaymentWebhookEvent)
+    count_statement = select(sql_func.count(PaymentWebhookEvent.event_id))
+    if status:
+        statement = statement.where(PaymentWebhookEvent.status == status)
+        count_statement = count_statement.where(PaymentWebhookEvent.status == status)
+    total = int((await db.execute(count_statement)).scalar_one() or 0)
+    events = (await db.execute(
+        statement
+        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "items": [
+            {
+                "event_id": event.event_id,
+                "status": event.status,
+                "license_id": event.license_id,
+                "transaction_id": event.transaction_id,
+                "subscription_id": event.subscription_id,
+                "paddle_customer_id": event.paddle_customer_id,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+                "updated_at": event.updated_at.isoformat() if event.updated_at else None,
+            }
+            for event in events
+        ],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(events) < total,
+        },
+    }
+
+
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
 async def admin_reconcile_payment(event_id: str, request: Request,
                                   db: AsyncSession = Depends(get_async_db)):
