@@ -140,3 +140,9 @@
 - The most recent successful GitHub Actions run observed before this entry was for commit `e10138735a91335514e915e2a64ef722dad8c3d4`, not the current `main` commit. The current source therefore still requires a fresh full workflow run before it can be considered verified.
 - URL evidence privacy regression coverage is present in `tests/test_api.py`; it must be confirmed by the full test suite rather than treated as passed based on source inspection.
 - Release acceptance remains incomplete until the latest-commit workflow result and live customer audit/PDF/history/ownership/email-consent journey are reviewed. A `READY` deployment alone does not prove feature correctness.
+
+## Explicitly unassessed verification methods — source-level implementation
+
+- Added `unavailable_checks.py` and wired it into the comprehensive audit pipeline. Each audit now records individual `not_assessed` outcomes for rendered JavaScript DOM comparison, real-browser viewport matrix, browser console/network diagnostics, manual WCAG review, owner-authorized Google Search Console status, backlink/competitor datasets, authorized checkout testing, consent-dependent analytics event verification, active security testing, and trust-mark authenticity review.
+- The outcome records carry the exact reason the check was not performed and appear in the same persisted check-outcome/coverage data as other checks. One bounded limitation summary is also added; no missing capability is represented as a pass or as a verified issue.
+- This makes the current capability boundary explicit but does not implement a browser runner, connect owner accounts, acquire external SEO datasets, or perform manual/active testing. Those remain separate implementation/authorization gaps. Source changes only; tests, deployment, and migrations have not been run/applied.
