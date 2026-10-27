@@ -247,7 +247,7 @@ def build_coverage_manifest(
     module_statuses = {
         str(key)[:80]: value
         for key, value in raw_module_statuses.items()
-        if isinstance(key, str) and value in allowed_module_states
+        if isinstance(key, str) and isinstance(value, str) and value in allowed_module_states
     }
     safe_run_context = {
         "started_at_utc": str(context.get("started_at_utc") or "")[:40] or None,
