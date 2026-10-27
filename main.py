@@ -1490,7 +1490,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
         if duplicate_cancellation is not None:
-            return {"status": "already_processed", "event_id": event_id}
+            return {"status": "already_canceled", "event_id": event_id}
         linked_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(
