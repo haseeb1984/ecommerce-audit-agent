@@ -428,3 +428,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Updated the existing health endpoint regression assertion for the successful readiness response. This does not prove that every migration has been applied or that columns/indexes match the latest migration files; those checks remain open. The tests have not been executed in this session.
 
 - Added a direct endpoint regression test with a deliberately incomplete schema response to assert HTTP 503, explicit not-ready status, and missing-table reporting. The test is committed but remains unexecuted pending CI evidence.
+
+## Database schema readiness — column compatibility extension
+
+- The health-check endpoint now compares every mapped column required by the nine application tables against information_schema.columns, after checking connectivity and table presence. A connected database with missing mapped columns returns HTTP 503 and names missing table/column metadata without returning connection strings or raw database errors.
+- Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
+- This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
+
