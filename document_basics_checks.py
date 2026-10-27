@@ -31,7 +31,7 @@ class _DocumentBasicsParser(HTMLParser):
             elif values.get("http-equiv", "").lower() == "content-type":
                 content = values.get("content", "")
                 import re
-                match = re.search(r"charset\\s*=\\s*['\"]?([a-zA-Z0-9._-]+)", content, re.I)
+                match = re.search(r"charset\s*=\s*([a-zA-Z0-9._-]+)", content, re.I)
                 if match:
                     self.charsets.append(match.group(1))
         if tag == "title":
