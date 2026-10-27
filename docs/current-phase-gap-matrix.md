@@ -290,3 +290,8 @@
 - The dashboard reports which account features are unavailable and disables audit/API-key actions unless report history and usage access both load; billing controls remain available after billing authentication succeeds. Credentials are cleared from the visible input after the attempt, and failed overall authentication clears in-memory credentials.
 - Added a portal regression assertion for partial-access handling. Tests have not been run and no deployment or migration was performed.
 - Remaining release work is still substantial: run the complete test suite, browser acceptance, validate subscription/webhook lifecycle against the existing Sandbox records, confirm production schema migration state, and execute the licensed audit → saved report → ownership isolation → consented email journey before any release approval.
+
+## Subscription cancellation lifecycle regression coverage — 2026-10-27
+
+- Added an integration regression test that provisions a test license from a signed Paddle transaction, applies a signed `subscription.canceled` event to the linked subscription, and verifies repeat delivery remains idempotent.
+- Test added; not run in this batch. This is coverage, not confirmation of live Paddle configuration or production readiness. Remaining release gate: execute full CI/test suite, verify migration/schema state and sandbox event mappings, then perform browser-based customer/admin acceptance before deployment.
