@@ -1374,3 +1374,41 @@ async def test_saved_report_evidence_is_allowlisted_redacted_and_email_is_privat
     )
     assert emailed.status_code == 200, emailed.text
     assert emailed.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.asyncio
+async def test_admin_overview_search_and_pagination_are_bounded_and_keep_global_summary(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-overview-page-key")
+    first_id = await create_license(key="admin-page-alpha", quota=5)
+    await create_license(key="admin-page-beta", quota=5)
+    await create_license(key="admin-page-gamma", quota=5)
+    headers = {"X-Admin-Key": "test-admin-overview-page-key"}
+
+    page = await client.get("/api/v1/admin/overview?limit=1&offset=0", headers=headers)
+    assert page.status_code == 200, page.text
+    payload = page.json()
+    assert len(payload["clients"]) == 1
+    assert payload["client_page"]["limit"] == 1
+    assert payload["client_page"]["offset"] == 0
+    assert payload["client_page"]["total"] >= 3
+    assert payload["summary"]["clients_total"] >= 3
+
+    searched = await client.get(
+        f"/api/v1/admin/overview?limit=10&offset=0&search={first_id}",
+        headers=headers,
+    )
+    assert searched.status_code == 200, searched.text
+    search_payload = searched.json()
+    assert [row["id"] for row in search_payload["clients"]] == [first_id]
+    assert search_payload["client_page"]["total"] == 1
+    assert search_payload["summary"]["clients_total"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_admin_overview_rejects_out_of_range_page_parameters(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-overview-validation-key")
+    headers = {"X-Admin-Key": "test-admin-overview-validation-key"}
+    too_large = await client.get("/api/v1/admin/overview?limit=201", headers=headers)
+    negative_offset = await client.get("/api/v1/admin/overview?offset=-1", headers=headers)
+    assert too_large.status_code == 422
+    assert negative_offset.status_code == 422
