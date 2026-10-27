@@ -2222,6 +2222,13 @@ async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[
         # For existing installations whose package row has no price yet, retain the
         # documented environment-based configuration path used by deployment setups.
         price_id = str(row["paddle_price_id"] or "").strip()
+        # Never pass malformed persisted operator data through to Paddle. Treat
+        # invalid legacy values as unconfigured so checkout fails closed; a valid
+        # environment fallback remains available only when the DB value is absent
+        # or malformed, and never changes the stored package record.
+        if price_id and not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id):
+            logger.warning("Ignoring malformed Paddle price ID for package tier=%s", tier)
+            price_id = ""
         if not price_id and tier:
             candidate = os.getenv(f"PADDLE_PRICE_ID_{tier.upper()}", "").strip()
             if re.fullmatch(r"pri_[A-Za-z0-9]+", candidate):
