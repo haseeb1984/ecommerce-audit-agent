@@ -34,6 +34,7 @@
 <h2 id="billingHistoryHeading">Billing history</h2>
 <p class="muted">View recent payment provisioning events associated with your connected account. This history does not expose payment details or allow refunds.</p>
 <div id="billingAccount" class="muted">Connect your account to load billing status.</div>
+<div class="report-actions" style="margin:12px 0"><button id="openBillingPortal" type="button">Manage subscription & billing</button><button id="refreshBillingHistory" class="secondary" type="button">Refresh billing history</button></div>
 <div id="billingEvents" class="reports"><p class="muted">No billing history loaded.</p></div>
 <div id="billingStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
@@ -451,6 +452,21 @@
     try { await loadReports(); await loadUsage(); await loadApiKeys(); await loadBillingHistory(); setStatus("connectStatus", "Connected. Your report history, quota, API keys, and billing history are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
     catch (e) { clearAccountView(); setStatus("connectStatus", e.message, "error"); }
     finally { $("connect").disabled = false; }
+  });
+  $("openBillingPortal").addEventListener("click", async () => {
+    if (!credential) { setStatus("billingStatus", "Connect your account first.", "error"); return; }
+    const button = $("openBillingPortal"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/billing-portal", {method:"POST"});
+      const data = await response.json();
+      if (!data.portal_url) throw new Error("Billing portal URL was not returned.");
+      window.location.assign(data.portal_url);
+    } catch (error) { setStatus("billingStatus", error.message, "error"); }
+    finally { button.disabled = false; }
+  });
+  $("refreshBillingHistory").addEventListener("click", async () => {
+    try { await loadBillingHistory(); }
+    catch (error) { setStatus("billingStatus", error.message, "error"); }
   });
   $("createApiKey").addEventListener("click", createApiKey);
   $("refreshApiKeys").addEventListener("click", async () => {
