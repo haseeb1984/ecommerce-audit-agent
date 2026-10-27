@@ -176,6 +176,21 @@ def build_coverage_manifest(
             if not isinstance(value, str):
                 return None
             cleaned = " ".join(value.split())
+            cleaned = re.sub(
+                r"(?i)\\b(authorization\\s*:\\s*bearer|bearer)\\s+[A-Za-z0-9._~+/=-]+",
+                r"\\1 [REDACTED]",
+                cleaned,
+            )
+            cleaned = re.sub(
+                r"""(?i)\\b(api[_-]?key|access[_-]?token|refresh[_-]?token|session(?:id)?|password|secret)\\s*[:=]\\s*["']?[^&\\s,"']+""",
+                r"\\1=[REDACTED]",
+                cleaned,
+            )
+            cleaned = re.sub(
+                r"https?://[^\\s<>\\"']+",
+                lambda match: _safe_evidence_url(match.group(0).rstrip(".,);]")) or "[URL REDACTED]",
+                cleaned,
+            )
             return cleaned[:limit] or None
         raw_steps = getattr(finding, "verification_steps", [])
         verification_steps = [
