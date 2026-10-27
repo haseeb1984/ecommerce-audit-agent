@@ -234,3 +234,9 @@
 
 - Static accessibility inspection now emits a clearly labeled manual-review checklist covering keyboard/focus behavior, contrast, reflow/zoom, contextual image alternatives, dynamic UI and assistive-technology behavior, media alternatives, and representative keyboard/screen-reader shopping journeys.
 - The checklist is explicitly marked manual_review_required and states that static source checks do not establish WCAG conformance. It is linked to the W3C WCAG 2.2 reference. Regression coverage was added; tests remain unexecuted and deployment unchanged.
+
+
+## Conversion form-action evidence redaction — source implementation batch
+
+- Corrected the HTTP form-downgrade finding to rebuild evidence destinations from validated hostname and non-default port instead of echoing the raw URL authority. This prevents embedded username/password userinfo from entering the report and continues to omit query strings.
+- Added regression coverage for an HTTP form action containing synthetic userinfo, query token and a non-default port. Tests remain unexecuted; no deployment or migration performed.
