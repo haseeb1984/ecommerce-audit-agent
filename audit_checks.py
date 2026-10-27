@@ -1742,6 +1742,37 @@ def inspect_discovery_contents(category: str, body: str, source_url: str) -> lis
             ))
         return findings
 
+    if category == "llms_txt":
+        # llms.txt is optional and proposed; these are editorial signals, not a
+        # ranking/indexing validator or a promise of AI crawler behavior.
+        text = (body or "").lstrip("\\ufeff").strip()
+        if not text:
+            return [_finding(
+                category, "llms.txt is empty", "manual_review_required", "low",
+                f"The public response at {source_url} contains no non-whitespace content.",
+                "An empty llms.txt file provides no site context to consumers that choose to read this optional convention. Its presence or content does not guarantee crawling, ranking, or AI citations.",
+                "If the site intends to maintain llms.txt, add concise and accurate context with links to relevant public resources. It is also acceptable not to use this optional convention.",
+                ["Review whether the site intends to publish llms.txt.", "Ensure any listed URLs are public and do not expose private content."],
+                source_url,
+            )]
+        signals = []
+        if not any(line.startswith("# ") and line[2:].strip() for line in text.splitlines()):
+            signals.append("no top-level Markdown heading detected")
+        if len(text.encode("utf-8", errors="replace")) > 100000:
+            signals.append("content exceeds the lightweight 100 KB review threshold")
+        if "](" not in text:
+            signals.append("no Markdown link syntax detected")
+        if signals:
+            return [_finding(
+                category, "llms.txt content may need editorial review", "manual_review_required", "low",
+                f"Content review signals for {source_url}: " + "; ".join(signals) + ".",
+                "These are lightweight editorial heuristics, not a formal standard validator. llms.txt is an optional proposed convention; these signals do not establish technical failure or search/AI visibility.",
+                "If published, keep the file concise, use a clear heading, and link only to relevant, maintained public resources. Never include secrets or private URLs.",
+                ["Review the published text manually.", "Check that each linked destination is intended to be public and contains no sensitive information."],
+                source_url,
+            )]
+        return []
+
     if category == "sitemap_xml":
         try:
             root = ET.fromstring(body)
