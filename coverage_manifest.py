@@ -66,7 +66,7 @@ CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     "crawlability": ("crawl",),
     "indexing": ("indexing",),
     "trust": ("trust_inspector",),
-    "ecommerce": ("ecommerce_category",),
+    "ecommerce": ("ecommerce_category", "ecommerce_catalog"),
     "security_baseline": ("security",),
     "dependency_advisory": ("security_dependency",),
     "content_quality": ("duplicate_content",),
