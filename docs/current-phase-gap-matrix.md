@@ -21,6 +21,9 @@
 
 ## Repository-only work completed without deployments/workflow minutes
 
+- Customer API-key creation now takes a per-license row lock before counting existing keys, preventing concurrent create requests from bypassing the 10-key cap on databases that support row-level locking. This is source-only; concurrency behavior has not been tested, and SQLite does not enforce `FOR UPDATE` semantics.
+
+
 - Corrected an audit-coverage false-positive: general accessibility findings no longer automatically mark the separate ARIA and image-alt categories as observed. Added a regression test requiring those categories to remain `not_proven` unless their own signals/check execution support them. Test is committed but **not executed**.
 - Coverage manifests now sanitize the target URL, sampled page URLs, and finding evidence URLs through one helper: query strings/fragments are stripped, credential-bearing URLs and non-HTTP(S) values are excluded, and the page count reflects only retained unique safe URLs. A regression test covers token-like query values, fragments, URL userinfo, and a `javascript:` URL. The test is committed but **not executed**.
 
