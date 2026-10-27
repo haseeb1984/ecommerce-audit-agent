@@ -106,7 +106,7 @@ def _robots_path_allowed(url: str, rules: list[tuple[str, str]]) -> bool:
             continue
         anchored = pattern.endswith("$")
         pattern_body = pattern[:-1] if anchored else pattern
-        expression = re.escape(pattern_body).replace(r"\\*", ".*")
+        expression = re.escape(pattern_body).replace(r"\*", ".*")
         expression = "^" + expression + ("$" if anchored else "")
         try:
             if re.search(expression, path):
