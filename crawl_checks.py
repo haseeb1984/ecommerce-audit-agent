@@ -455,22 +455,72 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             return []
 
         gaps: set[str] = set()
+
+        def has_text(value: object) -> bool:
+            return isinstance(value, str) and bool(value.strip())
+
+        def has_usable_image(value: object) -> bool:
+            values = value if isinstance(value, list) else [value]
+            return any(
+                has_text(item)
+                or (
+                    isinstance(item, dict)
+                    and any(has_text(item.get(field)) for field in ("url", "contentUrl"))
+                )
+                for item in values
+            )
+
+        def has_valid_price(value: object) -> bool:
+            # Zero is a valid numeric value and must not be treated as missing.
+            if isinstance(value, bool) or value is None:
+                return False
+            if isinstance(value, (int, float)):
+                return value >= 0
+            if isinstance(value, str):
+                try:
+                    from decimal import Decimal, InvalidOperation
+                    parsed = Decimal(value.strip())
+                    return parsed.is_finite() and parsed >= 0
+                except (InvalidOperation, ValueError):
+                    return False
+            return False
+
+        def has_valid_availability(value: object) -> bool:
+            if not has_text(value):
+                return False
+            normalized = value.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].casefold()
+            return normalized in {
+                "backorder", "discontinued", "instoreonly", "limitedavailability",
+                "madetoorder", "onlineonly", "outofstock", "presale", "preorder",
+                "instock", "soldout",
+            }
+
         for node in product_nodes:
-            if not node.get("name"):
+            if not has_text(node.get("name")):
                 gaps.add("name")
-            if not node.get("image"):
+            if not has_usable_image(node.get("image")):
                 gaps.add("image")
             offers = node.get("offers")
             offer_items = offers if isinstance(offers, list) else [offers]
-            valid_offers = [offer for offer in offer_items if isinstance(offer, dict)]
+            valid_offers = [
+                offer for offer in offer_items
+                if isinstance(offer, dict) and offer
+            ]
             if not valid_offers:
                 gaps.add("offers")
             else:
-                if not any(offer.get("price") or offer.get("lowPrice") for offer in valid_offers):
+                if not any(
+                    has_valid_price(offer.get("price")) or has_valid_price(offer.get("lowPrice"))
+                    for offer in valid_offers
+                ):
                     gaps.add("offer price")
-                if not any(offer.get("priceCurrency") for offer in valid_offers):
+                if not any(
+                    isinstance(offer.get("priceCurrency"), str)
+                    and re.fullmatch(r"[A-Za-z]{3}", offer["priceCurrency"].strip())
+                    for offer in valid_offers
+                ):
                     gaps.add("offer currency")
-                if not any(offer.get("availability") for offer in valid_offers):
+                if not any(has_valid_availability(offer.get("availability")) for offer in valid_offers):
                     gaps.add("offer availability")
 
         if gaps:
@@ -1303,7 +1353,15 @@ async def run_bounded_site_crawl(
                 # bounded, credential-free HTTP(S) URLs on the audited origin; the
                 # same-origin requirement keeps this discovery step from becoming
                 # an arbitrary URL fetch mechanism.
-                for raw_line in robots_body.splitlines()[:5000]:
+                # Some proxy/test transports preserve escaped line separators in
+                # text bodies. Normalize them here too so Sitemap directives are
+                # discovered consistently with the robots rule parser.
+                normalized_robots_body = (
+                    robots_body.replace("\\r\\n", "\n")
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\n")
+                )
+                for raw_line in normalized_robots_body.splitlines()[:5000]:
                     line = raw_line.split("#", 1)[0].strip()
                     if ":" not in line:
                         continue
