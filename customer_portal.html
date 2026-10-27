@@ -77,6 +77,7 @@
   const evidencePageSize = 20;
   let evidenceLoading = false;
   let apiKeyRows = [];
+  let apiKeyLimit = 10;
   let newlyCreatedApiKey = "";
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
@@ -181,10 +182,18 @@
     const response = await api("/api/v1/account/api-keys");
     const data = await response.json();
     apiKeyRows = Array.isArray(data.items) ? data.items : [];
+    apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
     renderApiKeys();
   }
   function renderApiKeys() {
     const container = $("apiKeys"); container.replaceChildren();
+    const atLimit = apiKeyRows.length >= apiKeyLimit;
+    $("createApiKey").disabled = !credential || atLimit;
+    $("createApiKey").title = atLimit ? "Revoke an existing key before creating another." : "";
+    const count = document.createElement("p"); count.className = "muted";
+    count.textContent = apiKeyRows.length + " of " + apiKeyLimit + " API keys used" +
+      (atLimit ? " · Limit reached; revoke a key to create another." : " · " + (apiKeyLimit - apiKeyRows.length) + " slot(s) available.");
+    container.append(count);
     if (!apiKeyRows.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No API keys have been created for this account.";
