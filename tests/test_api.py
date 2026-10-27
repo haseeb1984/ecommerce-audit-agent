@@ -1261,3 +1261,45 @@ async def test_admin_report_evidence_is_authenticated_bounded_and_reads_saved_ou
         headers={"X-Admin-Key": "test-admin-evidence-key"},
     )
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_malformed_saved_coverage_does_not_break_customer_or_admin_evidence(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-malformed-coverage")
+    license_key = "malformed-saved-coverage-license"
+    license_id = await create_license(key=license_key)
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="broken-coverage.example",
+            pdf_bytes=b"%PDF-test",
+            coverage_json="{malformed-json",
+            finding_count=0,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    headers = {"X-License-Key": license_key}
+    coverage = await client.get(f"/api/v1/reports/{report_id}/coverage", headers=headers)
+    assert coverage.status_code == 200
+    assert coverage.json()["stored_findings_count"] == 0
+    assert coverage.json()["stored_check_outcomes_count"] == 0
+
+    evidence = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?kind=check_outcomes",
+        headers=headers,
+    )
+    assert evidence.status_code == 200
+    assert evidence.json()["total"] == 0
+    assert evidence.json()["items"] == []
+    assert evidence.json()["outcome_summary"]["denominator"] == 0
+
+    admin = await client.get(
+        f"/api/v1/admin/reports/{report_id}/evidence",
+        headers={"X-Admin-Key": "test-admin-malformed-coverage"},
+    )
+    assert admin.status_code == 200
+    assert admin.json()["total"] == 0
+    assert admin.json()["items"] == []
