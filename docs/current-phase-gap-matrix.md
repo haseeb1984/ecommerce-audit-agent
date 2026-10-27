@@ -262,3 +262,10 @@
 - Added a source-level review finding when a page's valid same-origin canonical points to a different path or query than the inspected URL.
 - The finding is low severity and manual-review-only: parameterized and duplicate URLs can legitimately canonicalize to a preferred URL. The checker does not fetch the canonical target or claim that a non-self canonical is automatically wrong.
 - Added regression cases for a non-self same-origin canonical and a self-canonical. Tests are committed but not run. No deployment, migration, or production audit performed.
+
+
+## Sitemap coverage transparency batch — 2026-10-27
+
+- The bounded crawl now explicitly counts discovered sitemap URLs that were not fetched within the shared page budget and records a limitation stating that sitemap inclusion alone does not establish HTTP status, canonical consistency, or indexability.
+- Added a bounded integration regression case with more sitemap URLs than the crawler can inspect. The test and implementation are committed but not run. No production site was crawled and no deployment or migration was performed.
+- This improves coverage transparency; it does not yet implement exhaustive sitemap URL status validation. Remaining URLs stay explicitly unassessed rather than being presented as checked.
