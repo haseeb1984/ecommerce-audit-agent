@@ -1156,14 +1156,45 @@ async def run_bounded_site_crawl(
         try:
             llms_status, llms_body, llms_headers, llms_final_url = await _safe_get(client, llms_url)
             if _same_origin(llms_final_url, final_home):
-                findings.extend(inspect_llms_txt(
+                llms_findings = inspect_llms_txt(
                     llms_body, llms_status, llms_final_url,
                     llms_headers.get("content-type", ""),
-                ))
+                )
+                findings.extend(llms_findings)
+                _record_static_check_outcome(
+                    outcome_records,
+                    check_id="llms_txt.basic_format",
+                    category="llms_txt",
+                    page_url=llms_final_url,
+                    findings=llms_findings,
+                    method="same-origin llms.txt HTTP response and bounded Markdown format heuristics",
+                )
             else:
                 limitations.append("llms.txt inspection was skipped because its redirect left the audited origin.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="llms_txt.basic_format",
+                        category="llms_txt",
+                        page_url=llms_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin llms.txt HTTP response and bounded Markdown format heuristics",
+                        evidence="Inspection skipped because the response redirected outside the audited origin.",
+                        evidence_ref="llms_txt.basic_format",
+                    ))
         except Exception as exc:
             limitations.append(f"llms.txt inspection was inconclusive ({type(exc).__name__}).")
+            if outcome_records is not None:
+                outcome_records.append(CheckOutcome(
+                    check_id="llms_txt.basic_format",
+                    category="llms_txt",
+                    page_url=llms_url,
+                    outcome="error",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="same-origin llms.txt HTTP response and bounded Markdown format heuristics",
+                    evidence=f"Inspection failed with {type(exc).__name__}; no file content was included.",
+                    evidence_ref="llms_txt.basic_format",
+                ))
 
         # Inspect robots.txt as a discovery/indexing signal. It is fetched through
         # the same public-only resolver and redirect/response-size safeguards.
