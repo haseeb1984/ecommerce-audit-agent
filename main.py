@@ -1043,6 +1043,10 @@ async def list_account_api_keys(
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
+    now = datetime.now(timezone.utc)
+    can_create = bool(license_obj.is_active) and not (
+        license_obj.expires_at is not None and license_obj.expires_at <= now
+    )
     return {
         "items": [
             {
@@ -1056,6 +1060,7 @@ async def list_account_api_keys(
         "max_keys": 10,
         "key_count": len(rows),
         "keys_remaining": max(0, 10 - len(rows)),
+        "can_create": can_create,
         "note": "Full API keys are shown only once when created.",
     }
 
