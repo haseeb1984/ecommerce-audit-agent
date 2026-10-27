@@ -22,6 +22,7 @@
 ## Repository-only work completed without deployments/workflow minutes
 
 - Customer API-key creation now takes a per-license row lock before counting existing keys, preventing concurrent create requests from bypassing the 10-key cap on databases that support row-level locking. This is source-only; concurrency behavior has not been tested, and SQLite does not enforce `FOR UPDATE` semantics.
+- Customer API-key revocation now uses a narrowly scoped account-ownership dependency that still authenticates an existing license/API key after license expiry or deactivation. It is used only by `DELETE /api/v1/account/api-keys/{key_id}`; audit/report endpoints retain the normal active-and-unexpired entitlement checks. This closes the account-recovery gap for invalidating a compromised key after expiry. Source-only; authorization regression coverage and runtime behavior remain unverified.
 
 
 - Corrected an audit-coverage false-positive: general accessibility findings no longer automatically mark the separate ARIA and image-alt categories as observed. Added a regression test requiring those categories to remain `not_proven` unless their own signals/check execution support them. Test is committed but **not executed**.
