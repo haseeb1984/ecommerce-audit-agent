@@ -348,3 +348,10 @@
 - The homepage HTML checker now reviews a bounded sample of up to 500 anchor destinations without fetching external URLs. It reports counts for script/data/file schemes, HTTP(S) URLs containing embedded credentials, and malformed/unsupported schemes.
 - Raw destination strings are intentionally excluded from evidence so credentials and query tokens are not copied into findings. Ordinary external-link availability/status is still not checked, and browser-driven navigation behavior remains outside this source-only check.
 - Added a regression test for a JavaScript URL and a credential/query-bearing external URL. Test is committed but has not been run; no deployment or migration was performed.
+
+
+## New-tab link opener isolation — 2026-10-27
+
+- Homepage source inspection now retains a bounded set of up to 500 anchor attributes and reports links using `target="_blank"` without an explicit `rel="noopener"` or `rel="noreferrer"` token.
+- The result is intentionally low-severity manual review: modern browsers commonly imply noopener behavior, so this is not treated as proof of an exploitable vulnerability. Destinations are not included in the evidence.
+- Added parameterized regression coverage for missing rel, unrelated rel, noopener, noreferrer, and combined rel tokens. Tests are committed but have not been run; deployment and database migration remain untouched.
