@@ -225,3 +225,5 @@
 
 
 - PageSpeed field-data identifiers and final displayed URLs now pass through a public-URL allowlist that removes query strings/fragments and rejects URL credentials/non-HTTP(S) values. Provider field-data categories are allowlisted before being surfaced. Regression cases added; tests have not been run, and no deployment occurred.
+
+- Follow-up compatibility correction: allow documented PageSpeed overall categories (FAST/AVERAGE/SLOW) separately from field-metric categories (GOOD/NEEDS_IMPROVEMENT/POOR), with regression coverage for both formats.
