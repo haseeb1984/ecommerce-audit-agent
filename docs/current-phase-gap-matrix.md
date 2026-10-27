@@ -207,3 +207,10 @@
 - The comprehensive-audit orchestration now records a start timestamp before checker execution and records a bounded lifecycle state for core homepage/discovery checks, PageSpeed, bounded crawl, and conversion/paid-traffic checks.
 - Each module state is restricted to not_started, running, completed, unavailable, or error. The saved coverage context preserves these statuses separately from findings and check outcomes, so a module-level failure cannot be mistaken for a clean result.
 - A regression test covers the module-state allowlist. Tests remain unrun, and no deployment or migration was performed.
+
+
+## Finding contract traceability — source implementation batch
+
+- Coverage manifests now preserve a bounded, allowlisted finding contract: stable finding/check ID, category, status/severity, source URL with query/fragment removed, evidence and explanation, recommendation, verification steps, standards references, qualitative benefit/risk, effort, and dependencies.
+- IDs are deterministic for the same category/title/sanitized source URL. This is source-level traceability, not proof that each field is populated by every checker.
+- A focused regression test covers the key contract fields and URL query-secret removal. Tests remain unexecuted; runtime/production acceptance is still pending.
