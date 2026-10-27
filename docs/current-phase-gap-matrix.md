@@ -440,3 +440,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 Scope: customer authentication/account access, API-key lifecycle, quota/usage, audit submission, saved report history, report evidence/coverage, explicit-consent email and clear recovery states. Check license ownership isolation across every customer report endpoint and UI state. Exclude PDF layout polish until final phase.
 
 Acceptance: backend API and browser journey tests; wrong-license access denied; failed audit/quota release and retry behavior verified; no secret leakage. Status: branch created from shared base; feature implementation not yet completed or verified.
+
+### Customer branch — expired-account API key recovery
+
+- The API-key list endpoint now uses the narrowly scoped account-ownership dependency already used for revocation. It allows an expired/inactive account to view key metadata and revoke compromised keys without granting audit/report access or returning stored key secrets.
+- The customer portal keeps key-list refresh available when audit usage/report access is expired, while key creation remains disabled unless normal audit access is available.
+- Added an API regression test covering list → revoke → empty list for an expired, inactive license. Tests have not been run.
