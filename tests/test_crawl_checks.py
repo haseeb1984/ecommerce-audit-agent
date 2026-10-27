@@ -2017,3 +2017,28 @@ async def test_bounded_crawl_reports_non_html_homepage_without_page_findings(mon
     assert "application/json" in finding.evidence
     assert not checked
     assert any("not text/html" in item for item in limitations)
+
+
+def test_canonical_inspector_flags_same_origin_non_self_target_as_review_only():
+    findings = crawl_checks.inspect_canonical_declaration(
+        '<html><head><link rel="canonical" href="/products/primary"></head><body></body></html>',
+        "https://shop.example/products/variant",
+    )
+    finding = next(
+        item for item in findings
+        if item.title == "Canonical target differs from the inspected page URL"
+    )
+    assert finding.status == "manual_review_required"
+    assert finding.severity == "low"
+    assert "can be intentional" in finding.explanation
+
+
+def test_canonical_inspector_does_not_flag_self_canonical():
+    findings = crawl_checks.inspect_canonical_declaration(
+        '<html><head><link rel="canonical" href="https://shop.example/products/primary"></head><body></body></html>',
+        "https://shop.example/products/primary",
+    )
+    assert not any(
+        item.title == "Canonical target differs from the inspected page URL"
+        for item in findings
+    )
