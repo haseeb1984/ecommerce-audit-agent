@@ -40,16 +40,16 @@ async def verify_license_or_api_key(
 
     if api_key:
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        # Resolve the account first, including expired/inactive accounts, so
+        # entitlement state can return the correct renewal response instead of
+        # misclassifying a known expired customer as invalid credentials.
         stmt = (
             select(SoftwareLicense)
             .join(APIKey)
-            .where(APIKey.api_key_hash == key_hash, SoftwareLicense.is_active.is_(True))
+            .where(APIKey.api_key_hash == key_hash)
         )
     else:
-        stmt = select(SoftwareLicense).where(
-            SoftwareLicense.license_key == license_key,
-            SoftwareLicense.is_active.is_(True)
-        )
+        stmt = select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
 
     result = await db.execute(stmt)
     license_obj = result.scalar_one_or_none()
@@ -72,6 +72,12 @@ async def verify_license_or_api_key(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="License expired. Renewal required."
             )
+
+    if not license_obj.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="License is inactive. Contact the account owner or renew service."
+        )
 
     return license_obj
 
