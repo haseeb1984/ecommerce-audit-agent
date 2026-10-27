@@ -1304,9 +1304,21 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
         response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
         url = response.get("data", {}).get("checkout", {}).get("url")
         parsed = urlsplit(url or "")
-        if parsed.scheme != "https" or not parsed.hostname:
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or not (
+                parsed.hostname.lower() == "paddle.com"
+                or parsed.hostname.lower().endswith(".paddle.com")
+            )
+        ):
             raise RuntimeError("Paddle did not return a valid checkout URL")
-        return {"checkout_url": url, "transaction_id": response.get("data", {}).get("id")}
+        transaction_id = response.get("data", {}).get("id")
+        if not isinstance(transaction_id, str) or not re.fullmatch(r"txn_[A-Za-z0-9]+", transaction_id):
+            raise RuntimeError("Paddle did not return a valid transaction ID")
+        return {"checkout_url": url, "transaction_id": transaction_id}
     except Exception as exc:
         logger.error("Paddle checkout creation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Unable to start Paddle checkout; verify billing configuration.") from exc
