@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_async_db
+from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
@@ -152,6 +152,43 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
                     "db_connected": True,
                     "schema_ready": False,
                     "missing_tables": missing_tables,
+                    "missing_columns": {},
+                },
+            )
+
+        column_result = await db.execute(text(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema()"
+        ))
+        existing_columns = {
+            (row[0], row[1]) for row in column_result.all()
+        }
+        missing_columns = {
+            table_name: sorted(
+                column.name for column in Base.metadata.tables[table_name].columns
+                if (table_name, column.name) not in existing_columns
+            )
+            for table_name in sorted(required_tables)
+        }
+        missing_columns = {
+            table_name: columns
+            for table_name, columns in missing_columns.items()
+            if columns
+        }
+        if missing_columns:
+            missing_column_count = sum(len(columns) for columns in missing_columns.values())
+            logger.error(
+                "Database schema readiness failed (missing_column_count=%s)",
+                missing_column_count,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "not_ready",
+                    "db_connected": True,
+                    "schema_ready": False,
+                    "missing_tables": [],
+                    "missing_columns": missing_columns,
                 },
             )
         return {
