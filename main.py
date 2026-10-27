@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
-from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation
+from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
@@ -792,7 +792,7 @@ async def get_account_usage(
 @app.get("/api/v1/account/billing-history")
 async def account_billing_history(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return a bounded billing-event history scoped to the authenticated license."""
@@ -831,7 +831,7 @@ async def account_billing_history(
 @app.post("/api/v1/account/billing-portal")
 async def create_account_billing_portal(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a short-lived Paddle customer portal session for the authenticated license."""
