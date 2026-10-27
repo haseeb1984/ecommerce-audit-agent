@@ -1053,6 +1053,9 @@ async def list_account_api_keys(
             for item in rows
         ],
         "limit": 100,
+        "max_keys": 10,
+        "key_count": len(rows),
+        "keys_remaining": max(0, 10 - len(rows)),
         "note": "Full API keys are shown only once when created.",
     }
 
