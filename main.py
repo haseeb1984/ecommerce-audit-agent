@@ -46,6 +46,7 @@ from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
+from unavailable_checks import append_unavailable_check_outcomes
 
 logger = logging.getLogger("audit_service")
 
@@ -468,6 +469,10 @@ async def comprehensive_audit_pdf(
                 evidence_confidence="limited",
                 standard_references=["https://web.dev/articles/vitals", "https://pagespeed.web.dev/"],
             ))
+        # Explicitly disclose verification modes unavailable in this deployment; absence of
+        # browser/authorized/external data must never read as a pass.
+        append_unavailable_check_outcomes(result)
+
         # Convert each emitted finding into a durable explicit outcome record. This
         # records observed issues/review-needed/not-assessed states only; absence of a
         # finding is never converted into a pass. Checker-specific positive outcomes
