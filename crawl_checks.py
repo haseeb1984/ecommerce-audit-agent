@@ -1530,6 +1530,9 @@ async def run_bounded_site_crawl(
             # Failure here only means sitemap-based URL discovery is unavailable.
             pass
 
+        # Preserve sitemap provenance for URLs that enter the bounded page sample.
+        sitemap_discovered_urls: set[str] = set()
+
         # Inspect additional same-origin Sitemap directives rather than silently
         # ignoring every directive after the first. Keep the total number of
         # sitemap documents small and the URL discovery budget bounded.
@@ -1629,6 +1632,8 @@ async def run_bounded_site_crawl(
                 continue
             seen.add(candidate)
             candidates.append(candidate)
+            if any(candidate == _canonical_page_url(item) for item in sitemap_urls):
+                sitemap_discovered_urls.add(candidate)
             if len(candidates) >= MAX_CRAWL_PAGES - 1:
                 break
 
@@ -1669,10 +1674,47 @@ async def run_bounded_site_crawl(
                     "Open the URL in a browser and check server, DNS, TLS, and access restrictions.",
                     ["Retry the URL with a browser and an HTTP status checker."], url,
                 ))
+                if url in sitemap_discovered_urls and outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="sitemap.discovered_url_status",
+                        category="indexing",
+                        page_url=url,
+                        outcome="error",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded GET of a sampled same-origin sitemap URL",
+                        evidence=f"The sitemap-listed URL could not be fetched ({type(exc).__name__}); no HTTP status or indexability conclusion is inferred.",
+                        evidence_ref="sitemap.discovered_url_status",
+                    ))
                 continue
 
             if url not in pages_checked:
                 pages_checked.append(url)
+            if url in sitemap_discovered_urls and outcome_records is not None:
+                if not _same_origin(final_url, final_home):
+                    sitemap_outcome = "not_assessed"
+                    sitemap_evidence = "The sitemap-listed URL redirected outside the audited origin; its destination was not treated as an in-scope page."
+                elif 200 <= page_status < 300:
+                    sitemap_outcome = "pass"
+                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status} on the audited origin. This does not establish search-engine indexing."
+                elif page_status >= 500:
+                    sitemap_outcome = "error"
+                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status}; availability is inconclusive."
+                elif page_status >= 400:
+                    sitemap_outcome = "issue"
+                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status}."
+                else:
+                    sitemap_outcome = "not_assessed"
+                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status}; no pass/fail conclusion is assigned."
+                outcome_records.append(CheckOutcome(
+                    check_id="sitemap.discovered_url_status",
+                    category="indexing",
+                    page_url=url,
+                    outcome=sitemap_outcome,
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded GET of a sampled same-origin sitemap URL",
+                    evidence=sitemap_evidence,
+                    evidence_ref="sitemap.discovered_url_status",
+                ))
             if page_headers.get("x-audit-decoding-fallback") == "unsupported-or-invalid-charset":
                 findings.append(_finding(
                     "crawl", "Page text was decoded with a fallback charset",
