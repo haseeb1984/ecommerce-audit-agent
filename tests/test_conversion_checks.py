@@ -387,16 +387,15 @@ def test_form_action_origin_normalizes_default_ports_and_host_case():
     assert not any(f.title == "Form submission may downgrade to unencrypted HTTP" for f in findings)
 
 
-def test_protocol_relative_http_form_action_is_flagged_without_query_evidence():
+def test_protocol_relative_form_action_inherits_https_without_query_evidence():
     findings = inspect_conversion_html(
         '<form action="//forms.vendor.example/submit?token=private"><input name="email" type="email"><button>Send</button></form>',
         "https://shop.example/",
     )
-    insecure = next(f for f in findings if f.title == "Form submission may downgrade to unencrypted HTTP")
     external = next(f for f in findings if f.title == "External form destination needs trust review")
-    assert "http://" not in insecure.evidence
-    assert "forms.vendor.example/submit" in external.evidence
+    assert "https://forms.vendor.example/submit" in external.evidence
     assert "token=private" not in external.evidence
+    assert not any(f.title == "Form submission may downgrade to unencrypted HTTP" for f in findings)
 
 
 def test_external_form_actions_deduplicate_query_variants():
