@@ -1130,8 +1130,39 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     event_id = str(event.get("event_id") or event.get("id") or "")
     event_type = str(event.get("event_type") or event.get("type") or "")
     if not event_id: raise HTTPException(status_code=400, detail="Paddle event ID is missing.")
-    if event_type != "transaction.completed": return {"status": "ignored", "event_id": event_id}
     transaction = event.get("data") or {}
+
+    # Subscription lifecycle events must not be silently discarded: a confirmed
+    # cancellation revokes future access for the license provisioned by its purchase.
+    if event_type == "subscription.canceled":
+        subscription_id = str(transaction.get("id") or "")[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle cancellation event has no subscription ID.")
+        from sqlalchemy import select
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(PaymentWebhookEvent.subscription_id == subscription_id)
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None or linked_event.license_id is None:
+            logger.warning("Paddle cancellation cannot yet be linked (event_id=%s)", event_id[:80])
+            raise HTTPException(status_code=503, detail="Subscription cancellation is awaiting license reconciliation.")
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == linked_event.license_id)
+        )).scalar_one_or_none()
+        if license_obj is None:
+            raise HTTPException(status_code=503, detail="Subscription cancellation is awaiting license reconciliation.")
+        changed = bool(license_obj.is_active)
+        license_obj.is_active = False
+        await db.commit()
+        if changed:
+            await _record_operation_event(db, "subscription_canceled", license_obj.id, None, None)
+            logger.info("Paddle subscription cancellation applied (license_id=%s)", license_obj.id)
+        return {"status": "cancellation_applied" if changed else "already_canceled", "event_id": event_id}
+
+    if event_type != "transaction.completed":
+        return {"status": "ignored", "event_id": event_id}
     if transaction.get("status") != "completed": return {"status": "payment_not_complete", "event_id": event_id}
     custom_data = transaction.get("custom_data") or {}
     tier = str(custom_data.get("license_tier", "")).strip().lower()
