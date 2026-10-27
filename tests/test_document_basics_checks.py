@@ -38,3 +38,32 @@ def test_document_basics_flags_duplicate_titles_but_does_not_infer_encoding_fail
     assert "Character encoding declaration not detected" in titles
     assert "Document language is not declared in the HTML element" not in titles
     assert "No common semantic landmark elements detected" not in titles
+
+
+def test_document_basics_flags_missing_meta_description():
+    findings = inspect_document_basics(
+        '<html lang="en"><head><meta charset="utf-8"><title>Shop</title></head>'
+        '<body><main>Products</main></body></html>',
+        "https://shop.example/products/",
+    )
+    assert "Non-empty meta description not detected" in {finding.title for finding in findings}
+
+
+def test_document_basics_flags_duplicate_meta_descriptions_and_accepts_one():
+    one = inspect_document_basics(
+        '<html lang="en"><head><meta charset="utf-8"><title>Shop</title>'
+        '<meta name="description" content="A useful store description."></head>'
+        '<body><main>Products</main></body></html>',
+        "https://shop.example/",
+    )
+    assert not any("meta description" in finding.title.lower() for finding in one)
+
+    duplicate = inspect_document_basics(
+        '<html lang="en"><head><title>Shop</title>'
+        '<meta name="description" content="First">'
+        '<meta name="description" content="Second"></head><body><main>Products</main></body></html>',
+        "https://shop.example/",
+    )
+    assert "Multiple non-empty meta descriptions detected" in {
+        finding.title for finding in duplicate
+    }
