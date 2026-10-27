@@ -169,3 +169,10 @@
 - Added a bounded parser for sampled HTML pages that records review findings for missing document language, missing explicit character-encoding metadata, missing/duplicate non-empty page titles, and absence of common semantic landmark elements.
 - Integrated these findings into the existing same-origin crawl and per-check outcome recording. This improves baseline technical SEO/accessibility signals without claiming rendered behavior or WCAG conformance; HTTP charset headers and runtime DOM changes still need contextual review.
 - Added focused regression cases for missing metadata, valid metadata/landmarks, and duplicate titles. Tests are committed but **not run** under the current implementation-first instruction. No deployment or database migration was performed.
+
+
+## Report evidence workflow — backend, persistence and portals implementation batch
+
+- Added an authenticated administrator endpoint at `/api/v1/admin/reports/{report_id}/evidence` that reads the report's persisted `coverage_json`, validates report existence, restricts evidence kind and pagination, returns explicit recorded outcome counts, sets private no-store headers, and allowlists response fields rather than returning arbitrary stored metadata. No schema change is required because report evidence is already persisted with each `AuditReport`.
+- Extended the admin client-history report cards with a bounded outcome preview, explicit state counts, page URL, and evidence excerpt alongside PDF download. The customer report cards now provide a direct `View check outcomes` action as well as findings, using the existing license-scoped paginated evidence endpoint.
+- Added API regression coverage for admin authentication, bounded pagination, outcome counts, sensitive-field exclusion, cache headers and missing-report behavior. Tests have **not been run** under the current implementation-first instruction; behavior remains unverified until the planned test phase. No migrations or deployment performed.
