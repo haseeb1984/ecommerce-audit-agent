@@ -327,6 +327,33 @@ async def comprehensive_audit_pdf(
             )
         performance_completed = metrics is not None
         if metrics is not None:
+            # PageSpeed successfully returned a lab result. Record an explicit
+            # outcome instead of relying on the presence of a summary finding.
+            # These thresholds describe the measured Lighthouse score only; they
+            # do not establish field Core Web Vitals or business outcomes.
+            score = getattr(metrics, "mobile_score", None)
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                performance_outcome = "issue" if score < 50 else "warning" if score < 90 else "pass"
+                performance_evidence = (
+                    f"Google PageSpeed Insights returned a mobile Lighthouse score of {score}/100. "
+                    "This is a lab measurement, not a field Core Web Vitals result or a business-impact measurement."
+                )
+            else:
+                performance_outcome = "not_assessed"
+                performance_evidence = (
+                    "PageSpeed returned a response, but its mobile Lighthouse score was missing or invalid; "
+                    "no pass or issue is inferred."
+                )
+            result.check_outcomes.append(CheckOutcome(
+                check_id="performance.pagespeed_api",
+                category="performance",
+                page_url=target_url,
+                outcome=performance_outcome,
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="Google PageSpeed Insights API mobile Lighthouse lab run",
+                evidence=performance_evidence,
+                evidence_ref="performance.pagespeed_api",
+            ))
             lab_metric_parts = [
                 f"Mobile Lighthouse performance score: {metrics.mobile_score}/100",
                 f"Speed Index: {metrics.speed_index_sec} seconds",
