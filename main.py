@@ -2298,7 +2298,7 @@ async def admin_update_package(tier: str, payload: AdminPackageInput, request: R
         UPDATE saas_plan_packages SET label=:label,
           monthly_audit_allowance=:monthly_audit_allowance,
           max_concurrent_audits=:max_concurrent_audits,
-          paddle_price_id=:paddle_price_id, is_active=:is_active, updated_at=NOW()
+          paddle_price_id=:paddle_price_id, is_active=:is_active, updated_at=CURRENT_TIMESTAMP
         WHERE tier=:tier
     """), values)
     if result.rowcount == 0:
@@ -2329,7 +2329,7 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
     tier = tier.strip().lower()
     await _ensure_admin_tables(db)
     result = await db.execute(text("""
-        UPDATE saas_plan_packages SET is_active=FALSE, updated_at=NOW() WHERE tier=:tier
+        UPDATE saas_plan_packages SET is_active=FALSE, updated_at=CURRENT_TIMESTAMP WHERE tier=:tier
     """), {"tier": tier})
     if result.rowcount == 0:
         await db.rollback()
