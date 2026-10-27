@@ -177,17 +177,17 @@ def build_coverage_manifest(
                 return None
             cleaned = " ".join(value.split())
             cleaned = re.sub(
-                r"(?i)\\b(authorization\\s*:\\s*bearer|bearer)\\s+[A-Za-z0-9._~+/=-]+",
-                r"\\1 [REDACTED]",
+                r"(?i)\b(authorization\s*:\s*bearer|bearer)\s+[A-Za-z0-9._~+/=-]+",
+                r"\1 [REDACTED]",
                 cleaned,
             )
             cleaned = re.sub(
-                r"""(?i)\\b(api[_-]?key|access[_-]?token|refresh[_-]?token|session(?:id)?|password|secret)\\s*[:=]\\s*["']?[^&\\s,"']+""",
-                r"\\1=[REDACTED]",
+                r"""(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|session(?:id)?|password|secret)\s*[:=]\s*["']?[^&\s,"']+""",
+                r"\1=[REDACTED]",
                 cleaned,
             )
             cleaned = re.sub(
-                r"https?://[^\\s<>\\"']+",
+                r"""https?://[^\s<>"']+""",
                 lambda match: _safe_evidence_url(match.group(0).rstrip(".,);]")) or "[URL REDACTED]",
                 cleaned,
             )
