@@ -69,6 +69,33 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_legacy_malformed_paddle_price_id_fails_closed_and_uses_valid_env_fallback(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from main import _db_payment_plans
+    from sqlalchemy import text
+
+    monkeypatch.setenv("PADDLE_PRICE_ID_LEGACY_BAD", "not-a-price-id")
+    monkeypatch.setenv("PADDLE_PRICE_ID_LEGACY_GOOD", "pri_ValidFallback123")
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES
+                ('legacy_bad', 'Legacy Bad', 10, 1, 'not-a-price-id', TRUE),
+                ('legacy_good', 'Legacy Good', 20, 1, NULL, TRUE)
+            ON CONFLICT (tier) DO UPDATE SET
+                paddle_price_id=excluded.paddle_price_id,
+                is_active=excluded.is_active
+        """))
+        await db.commit()
+        plans = await _db_payment_plans(db, active_only=True)
+
+    by_tier = {plan["tier"]: plan for plan in plans}
+    assert by_tier["legacy_bad"]["price_id"] is None
+    assert by_tier["legacy_good"]["price_id"] == "pri_ValidFallback123"
+
+
+@pytest.mark.asyncio
 async def test_admin_package_validation_rejects_invalid_limits(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
     response = await client.post(
