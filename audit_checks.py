@@ -308,7 +308,17 @@ async def _safe_get(
                 if size > MAX_RESPONSE_BYTES:
                     raise ValueError("Response exceeded the audit's 1 MB size limit.")
                 chunks.append(chunk)
-            body = b"".join(chunks).decode(response.charset or "utf-8", errors="replace")
+            raw_body = b"".join(chunks)
+            try:
+                charset = response.charset or "utf-8"
+                body = raw_body.decode(charset, errors="replace")
+            except (LookupError, ValueError):
+                # A server-controlled or malformed charset label must not abort
+                # the entire audit after the response was safely fetched.
+                # UTF-8 replacement decoding preserves inspectable text while
+                # avoiding a false claim that the original encoding was valid.
+                body = raw_body.decode("utf-8", errors="replace")
+                headers["x-audit-decoding-fallback"] = "unsupported-or-invalid-charset"
             return response.status, body, headers, current
     raise ValueError("The website exceeded the redirect limit.")
 
