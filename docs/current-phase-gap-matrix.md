@@ -412,3 +412,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Sampled sitemap URLs returning 4xx are recorded as issues, 5xx/fetch failures as errors, successful same-origin responses as passes, and off-origin redirects as not assessed. The outcome explicitly distinguishes HTTP reachability from search-engine indexing.
 - Added a regression test for a sitemap-listed URL returning HTTP 404, checking both the finding and check-level outcome. Test is committed but has not been run.
 - Scope remains bounded by the existing page cap; URLs beyond the sampled crawl budget are not individually tested. No deployment or database migration was performed.
+
+
+## Sitemap URL reachability outcome regression coverage — extension batch
+
+- Extended the sitemap-listed URL lifecycle tests to cover successful same-origin responses, HTTP 503 server failures, off-origin redirects, and fetch timeouts in addition to the existing HTTP 404 case.
+- Expected outcomes remain conservative: 2xx same-origin is a reachability pass only (not proof of indexing), 5xx/fetch exceptions are errors, and off-origin redirects are not assessed.
+- Regression tests have been committed but have **not been executed** in this session. No production crawl, migration, deployment, or PDF/report-layout work was performed.
