@@ -784,6 +784,45 @@ async def get_account_usage(
     }
 
 
+@app.get("/api/v1/account/billing-history")
+async def account_billing_history(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded billing-event history scoped to the authenticated license."""
+    from sqlalchemy import select
+
+    events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.license_id == license_obj.id)
+        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(50)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "account": {
+            "client_name": license_obj.client_name,
+            "tier": license_obj.tier,
+            "is_active": bool(license_obj.is_active),
+            "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
+        },
+        "items": [
+            {
+                "event_id": item.event_id,
+                "status": item.status,
+                "transaction_id": item.transaction_id,
+                "subscription_id": item.subscription_id,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            }
+            for item in events
+        ],
+        "limit": 50,
+    }
+
+
 @app.get("/api/v1/account/api-keys")
 async def list_account_api_keys(
     response: Response,
