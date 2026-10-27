@@ -1546,6 +1546,56 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if not event_id: raise HTTPException(status_code=400, detail="Paddle event ID is missing.")
     transaction = event.get("data") or {}
 
+    # Persist payment-failure lifecycle events for customer-visible billing history.
+    # Paddle's retry/dunning policy remains authoritative: a single failed transaction
+    # does not by itself revoke access, but the event must not disappear silently.
+    if event_type in {"transaction.payment_failed", "subscription.past_due"}:
+        subscription_id = str(
+            transaction.get("subscription_id") or
+            (transaction.get("id") if event_type == "subscription.past_due" else "") or ""
+        )[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle payment-failure event has no subscription ID.")
+        from sqlalchemy import select
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
+            {"subscription_id": subscription_id},
+        )
+        duplicate = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            return {"status": "already_processed", "event_id": event_id}
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            )
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None:
+            # Do not acknowledge an unlinked event permanently; Paddle may retry after
+            # the original purchase event is reconciled and the subscription is linked.
+            raise HTTPException(status_code=503, detail="Payment-failure event is awaiting subscription reconciliation.")
+        customer = transaction.get("customer") or {}
+        customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
+        status = "payment_failed" if event_type == "transaction.payment_failed" else "subscription_past_due"
+        db.add(PaymentWebhookEvent(
+            event_id=event_id,
+            status=status,
+            license_id=linked_event.license_id,
+            recipient_email=linked_event.recipient_email,
+            transaction_id=(str(transaction.get("id") or "")[:100] or None)
+                if event_type == "transaction.payment_failed" else None,
+            subscription_id=subscription_id,
+            paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
+        ))
+        await db.commit()
+        await _record_operation_event(db, status, linked_event.license_id, None, None)
+        return {"status": status, "event_id": event_id, "license_id": linked_event.license_id}
+
     # Subscription lifecycle events must not be silently discarded: a confirmed
     # cancellation revokes future access for the license provisioned by its purchase.
     if event_type == "subscription.canceled":
