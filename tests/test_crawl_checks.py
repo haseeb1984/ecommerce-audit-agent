@@ -51,6 +51,62 @@ async def test_sitemap_discovered_url_status_is_recorded_without_claiming_indexi
     assert "https://shop.example/products/missing" in checked
 
 @pytest.mark.asyncio
+async def test_crawl_resolves_relative_links_using_same_origin_base_href(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    pages = {
+        "https://shop.example/": (
+            200,
+            '<html><head><base href="/store/"><title>Store</title></head>'
+            '<body><a href="products/one">Product</a></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/",
+        ),
+        "https://shop.example/store/products/one": (
+            200,
+            '<html><head><title>Product</title></head><body><h1>One</h1></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/store/products/one",
+        ),
+    }
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        return pages.get(url, (404, "", {"content-type": "text/plain"}, url))
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert "https://shop.example/store/products/one" in requested
+    assert "https://shop.example/store/products/one" in checked
+
+
+@pytest.mark.asyncio
+async def test_off_origin_base_href_cannot_expand_crawl_scope(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><base href="https://other.example/"></head>'
+                '<body><a href="products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert checked == ["https://shop.example/"]
+
+
+@pytest.mark.asyncio
 async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
     pages = {
