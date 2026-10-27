@@ -30,6 +30,13 @@
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
 </section>
+<section class="panel" aria-labelledby="billingHistoryHeading">
+<h2 id="billingHistoryHeading">Billing history</h2>
+<p class="muted">View recent payment provisioning events associated with your connected account. This history does not expose payment details or allow refunds.</p>
+<div id="billingAccount" class="muted">Connect your account to load billing status.</div>
+<div id="billingEvents" class="reports"><p class="muted">No billing history loaded.</p></div>
+<div id="billingStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel" aria-labelledby="apiKeysHeading">
 <h2 id="apiKeysHeading">API key management</h2>
 <p class="muted">Create API keys for integrations, review their prefixes, and revoke keys you no longer use. A new key's full secret is shown once only; copy it immediately and store it securely.</p>
@@ -118,6 +125,33 @@
         card.append(meta, link); container.append(card);
       }
     } catch (e) { container.textContent = e.message; }
+  }
+  async function loadBillingHistory() {
+    const response = await api("/api/v1/account/billing-history");
+    const data = await response.json();
+    const account = data.account || {};
+    $("billingAccount").textContent = (account.client_name || "Account") + " · Plan " + (account.tier || "unassigned") +
+      " · " + (account.is_active ? "Active" : "Inactive") +
+      " · Expires " + (account.expires_at ? new Date(account.expires_at).toLocaleDateString() : "no expiry recorded");
+    const container = $("billingEvents"); container.replaceChildren();
+    const events = Array.isArray(data.items) ? data.items : [];
+    if (!events.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No payment provisioning events are associated with this account yet.";
+      container.append(empty);
+    }
+    for (const item of events) {
+      const card = document.createElement("article"); card.className = "report";
+      const meta = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = "Payment event · " + String(item.status || "unknown").replaceAll("_", " ");
+      const detail = document.createElement("small");
+      detail.textContent = "Event " + item.event_id + " · Transaction " + (item.transaction_id || "not recorded") +
+        " · Subscription " + (item.subscription_id || "not recorded") +
+        " · Created " + (item.created_at ? new Date(item.created_at).toLocaleString() : "date unavailable") +
+        " · Updated " + (item.updated_at ? new Date(item.updated_at).toLocaleString() : "date unavailable");
+      meta.append(title, detail); card.append(meta); container.append(card);
+    }
+    setStatus("billingStatus", "Loaded " + events.length + " recent billing event(s).", "success");
   }
   async function loadApiKeys() {
     const response = await api("/api/v1/account/api-keys");
@@ -399,7 +433,10 @@
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
-    $("usageReset").textContent = "Period reset: —";\n    apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
+    $("usageReset").textContent = "Period reset: —";
+    $("billingAccount").textContent = "Connect your account to load billing status.";
+    $("billingEvents").replaceChildren(); setStatus("billingStatus", "Account connection required.");
+    apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
@@ -410,7 +447,7 @@
     if (nextCredential !== credential || nextHeaderName !== headerName) clearAccountView();
     credential = nextCredential; headerName = nextHeaderName;
     $("connect").disabled = true;
-    try { await loadReports(); await loadUsage(); await loadApiKeys(); setStatus("connectStatus", "Connected. Your license-scoped report history, quota, and API keys are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
+    try { await loadReports(); await loadUsage(); await loadApiKeys(); await loadBillingHistory(); setStatus("connectStatus", "Connected. Your report history, quota, API keys, and billing history are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
     catch (e) { clearAccountView(); setStatus("connectStatus", e.message, "error"); }
     finally { $("connect").disabled = false; }
   });
