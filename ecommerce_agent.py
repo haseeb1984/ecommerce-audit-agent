@@ -31,8 +31,9 @@ def _normalize_audit_target(value: object) -> str:
         raise ValueError("Enter a valid public website URL or domain.") from exc
     if scheme not in {"http", "https"} or not host or parts.username is not None or parts.password is not None:
         raise ValueError("Only public HTTP(S) website URLs without embedded credentials are supported.")
-    if parts.query or parts.fragment:
-        raise ValueError("Remove query parameters and fragments; audit a public page URL.")
+    # Audit providers receive a canonical public page URL, never a query string
+    # or fragment that could contain session tokens, search terms, or other user data.
+    # Dropping these components is safer than logging or forwarding them to providers.
     if port is not None and port not in {80, 443}:
         raise ValueError("Custom ports are not supported for public website audits.")
     host = host.rstrip(".").lower()
