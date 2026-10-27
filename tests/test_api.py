@@ -1756,3 +1756,183 @@ async def test_health_check_returns_not_ready_when_required_schema_columns_are_m
     assert raised.value.detail["missing_tables"] == []
     assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
 
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_database_indexes_are_missing():
+    required_tables = set(main.Base.metadata.tables)
+    existing_columns = [
+        (table_name, column.name)
+        for table_name, table in main.Base.metadata.tables.items()
+        for column in table.columns
+    ]
+    required_indexes = sorted({
+        index.name
+        for table_name in required_tables
+        for index in main.Base.metadata.tables[table_name].indexes
+        if index.name
+    })
+    assert required_indexes, "test fixture requires at least one mapped index"
+    existing_indexes = [name for name in required_indexes if name != required_indexes[0]]
+
+    class IncompleteIndexSchemaSession:
+        async def execute(self, statement):
+            sql = str(statement)
+            if "SELECT 1" in sql:
+                return SimpleNamespace(scalar=lambda: 1)
+            if "information_schema.tables" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
+            if "information_schema.columns" in sql:
+                return SimpleNamespace(all=lambda: existing_columns)
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: existing_indexes))
+
+    with pytest.raises(HTTPException) as raised:
+        await main.health_check(IncompleteIndexSchemaSession())
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail["status"] == "not_ready"
+    assert raised.value.detail["schema_ready"] is False
+    assert raised.value.detail["missing_indexes"] == [required_indexes[0]]
+
+
+@pytest.mark.asyncio
+async def test_paddle_payment_failure_is_recorded_without_immediately_deactivating_license(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_payment_failure123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_payment_failure_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_payment_failure_purchase",
+            "subscription_id": "sub_payment_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_payment_failure123",
+            "customer": {"email": "payment-failure@example.com", "name": "Payment Failure"},
+            "items": [{"price": {"id": "pri_payment_failure123"}, "quantity": 1}],
+        },
+    }
+    provision = await send(purchase)
+    assert provision.status_code == 200
+
+    failed_payment = {
+        "event_id": "evt_payment_failure_attempt",
+        "event_type": "transaction.payment_failed",
+        "data": {
+            "id": "txn_payment_failure_attempt",
+            "subscription_id": "sub_payment_failure123",
+            "customer_id": "ctm_payment_failure123",
+            "customer": {"email": "payment-failure@example.com"},
+        },
+    }
+    first = await send(failed_payment)
+    assert first.status_code == 200
+    assert first.json()["status"] == "payment_failed"
+    duplicate = await send(failed_payment)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Payment Failure")
+        )).scalar_one()
+        assert license_obj.is_active is True
+        failure_event = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_payment_failure_attempt")
+        )).scalar_one()
+        assert failure_event.status == "payment_failed"
+        assert failure_event.license_id == license_obj.id
+
+
+@pytest.mark.asyncio
+async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access(client):
+    raw_key = "expired-account-key-secret"
+    license_id = await create_license(
+        key="expired-key-owner",
+        quota=5,
+        active=False,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(APIKey(
+            license_id=license_id,
+            api_key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix=raw_key[:10],
+        ))
+        await db.commit()
+
+    headers = {"X-License-Key": "expired-key-owner"}
+    listing = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing.status_code == 200
+    assert len(listing.json()["items"]) == 1
+    key_id = listing.json()["items"][0]["id"]
+    assert "key" not in listing.json()["items"][0]
+
+    revoke = await client.delete(f"/api/v1/account/api-keys/{key_id}", headers=headers)
+    assert revoke.status_code == 200
+    assert revoke.json()["status"] == "revoked"
+
+    listing_after_revoke = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing_after_revoke.status_code == 200
+    assert listing_after_revoke.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimized(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-payment-event-queue-key")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_pending",
+                status="email_pending",
+                recipient_email="pending@example.com",
+                transaction_id="txn_admin_queue_pending",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_failed",
+                status="payment_failed",
+                recipient_email="failed@example.com",
+                transaction_id="txn_admin_queue_failed",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_delivered",
+                status="delivered",
+                recipient_email="delivered@example.com",
+                transaction_id="txn_admin_queue_delivered",
+            ),
+        ])
+        await db.commit()
+
+    headers = {"X-Admin-Key": "test-payment-event-queue-key"}
+    page = await client.get("/api/v1/admin/payment-events?limit=1&offset=0", headers=headers)
+    assert page.status_code == 200
+    assert page.json()["page"]["limit"] == 1
+    assert page.json()["page"]["total"] >= 3
+    assert len(page.json()["items"]) == 1
+    assert page.json()["page"]["has_more"] is True
+    assert "recipient_email" not in page.json()["items"][0]
+    assert "license_key" not in page.json()["items"][0]
+
+    failed = await client.get(
+        "/api/v1/admin/payment-events?status=payment_failed",
+        headers=headers,
+    )
+    assert failed.status_code == 200
+    assert all(item["status"] == "payment_failed" for item in failed.json()["items"])
+    assert any(item["event_id"] == "evt_admin_queue_failed" for item in failed.json()["items"])
+
+    invalid_limit = await client.get("/api/v1/admin/payment-events?limit=101", headers=headers)
+    assert invalid_limit.status_code == 422
