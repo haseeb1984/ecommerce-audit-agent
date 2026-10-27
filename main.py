@@ -1870,10 +1870,10 @@ async def admin_create_package(payload: AdminPackageInput, request: Request,
                 (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
             VALUES (:tier, :label, :monthly_audit_allowance, :max_concurrent_audits, :paddle_price_id, :is_active)
         """), values)
-        await db.execute(text("""
-            UPDATE software_licenses SET max_monthly_audits=:allowance
-            WHERE LOWER(tier)=:tier
-        """), {"allowance": values["monthly_audit_allowance"], "tier": values["tier"]})
+        # Creating a package must not silently mutate pre-existing license
+        # entitlements that happen to use the same tier identifier (for example,
+        # legacy/manual licenses). New defaults apply to future assignments;
+        # existing entitlements are changed explicitly through client management.
         await _write_admin_log(db, "package.created", "package", values["tier"], {
             "monthly_audit_allowance": values["monthly_audit_allowance"],
             "max_concurrent_audits": values["max_concurrent_audits"], "is_active": values["is_active"]})
