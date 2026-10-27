@@ -1120,8 +1120,10 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
                 PaymentWebhookEvent.subscription_id == "sub_late_renewal123"
             )
         )).scalars().all()
-    assert len(events) == 1
-    assert events[0].status == "subscription_canceled"
+    assert len(events) == 2
+    statuses = {item.event_id: item.status for item in events}
+    assert statuses["evt_late_renewal_purchase"] == "delivered"
+    assert statuses["evt_late_renewal_cancel"] == "subscription_canceled"
 
 
 @pytest.mark.asyncio
