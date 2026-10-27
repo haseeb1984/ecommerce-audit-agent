@@ -2014,7 +2014,7 @@ async def test_customer_audit_activity_is_paginated_scoped_and_minimizes_sensiti
     )
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["page"] == {"limit": 1, "offset": 0, "total": 2, "has_more": True}
+    assert data["page"] == {"limit": 1, "offset": 0, "total": 2, "has_more": True, "domain": ""}
     assert len(data["items"]) == 1
     assert data["items"][0]["domain"] == "second.example"
     assert "contact_email" not in data["items"][0]
