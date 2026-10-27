@@ -189,6 +189,35 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
                     "schema_ready": False,
                     "missing_tables": [],
                     "missing_columns": missing_columns,
+                    "missing_indexes": [],
+                },
+            )
+
+        index_result = await db.execute(text(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+        ))
+        existing_indexes = set(index_result.scalars().all())
+        required_indexes = {
+            index.name
+            for table_name in required_tables
+            for index in Base.metadata.tables[table_name].indexes
+            if index.name
+        }
+        missing_indexes = sorted(required_indexes - existing_indexes)
+        if missing_indexes:
+            logger.error(
+                "Database schema readiness failed (missing_index_count=%s)",
+                len(missing_indexes),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "not_ready",
+                    "db_connected": True,
+                    "schema_ready": False,
+                    "missing_tables": [],
+                    "missing_columns": {},
+                    "missing_indexes": missing_indexes,
                 },
             )
         return {
