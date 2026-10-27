@@ -176,3 +176,10 @@
 - Added an authenticated administrator endpoint at `/api/v1/admin/reports/{report_id}/evidence` that reads the report's persisted `coverage_json`, validates report existence, restricts evidence kind and pagination, returns explicit recorded outcome counts, sets private no-store headers, and allowlists response fields rather than returning arbitrary stored metadata. No schema change is required because report evidence is already persisted with each `AuditReport`.
 - Extended the admin client-history report cards with a bounded outcome preview, explicit state counts, page URL, and evidence excerpt alongside PDF download. The customer report cards now provide a direct `View check outcomes` action as well as findings, using the existing license-scoped paginated evidence endpoint.
 - Added API regression coverage for admin authentication, bounded pagination, outcome counts, sensitive-field exclusion, cache headers and missing-report behavior. Tests have **not been run** under the current implementation-first instruction; behavior remains unverified until the planned test phase. No migrations or deployment performed.
+
+
+## Saved-report evidence resilience — backend and regression coverage
+
+- Centralized defensive parsing of persisted report coverage JSON. Customer coverage, customer evidence pagination, admin evidence previews, and report-card outcome summaries now treat malformed JSON or a non-object JSON payload as unavailable saved metadata rather than raising a server error.
+- Added an API regression test covering malformed saved coverage across the customer coverage endpoint, customer paginated evidence endpoint, and admin evidence endpoint. The test is committed but **not run** per the implementation-first instruction.
+- This is resilience for legacy/corrupted report metadata; it does not fabricate evidence or pass outcomes. No schema migration, deployment, or test run was performed.
