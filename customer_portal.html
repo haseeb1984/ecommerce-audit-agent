@@ -457,7 +457,7 @@
     credential = nextCredential; headerName = nextHeaderName;
     $("connect").disabled = true;
     try {
-      await loadReports(); await loadUsage(); await loadApiKeys(); await loadBillingHistory();
+      await loadBillingHistory(); const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()]); if (results.some(result => result.status === "rejected")) { setStatus("connectStatus", "Billing is available, but some account features are restricted or unavailable.", "error"); }
       $("credential").value = "";
       setAccountControls(true);
       setStatus("connectStatus", "Connected. Your report history, quota, API keys, and billing history are loaded. Credential input cleared.", "success");
