@@ -1199,3 +1199,65 @@ def test_persisted_audit_evidence_redacts_query_parameters_and_credentials():
     assert "access_token=private" not in safe
     assert "synthetic-secret" not in safe
     assert "https://shop.example/products/item" in safe
+
+
+
+@pytest.mark.asyncio
+async def test_admin_report_evidence_is_authenticated_bounded_and_reads_saved_outcomes(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-evidence-key")
+    license_id = await create_license(key="admin-evidence-license")
+    coverage = {
+        "check_outcomes": [
+            {
+                "check_id": "seo.title",
+                "category": "technical_seo",
+                "page_url": "https://shop.example/",
+                "outcome": "pass",
+                "evidence": "A non-empty title was present.",
+                "internal_secret": "must-not-be-returned",
+            },
+            {
+                "check_id": "mobile.viewport",
+                "category": "mobile_ux",
+                "page_url": "https://shop.example/product",
+                "outcome": "warning",
+                "evidence": "Viewport declaration needs review.",
+            },
+        ],
+        "findings": [],
+    }
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="shop.example",
+            pdf_bytes=b"%PDF-test",
+            coverage_json=json.dumps(coverage),
+            finding_count=0,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    denied = await client.get(f"/api/v1/admin/reports/{report_id}/evidence")
+    assert denied.status_code == 401
+
+    response = await client.get(
+        f"/api/v1/admin/reports/{report_id}/evidence?kind=check_outcomes&limit=1&offset=0",
+        headers={"X-Admin-Key": "test-admin-evidence-key"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["counts"]["pass"] == 1
+    assert payload["counts"]["warning"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["check_id"] == "seo.title"
+    assert "internal_secret" not in json.dumps(payload)
+    assert response.headers["cache-control"] == "no-store, private"
+
+    missing = await client.get(
+        "/api/v1/admin/reports/999999/evidence",
+        headers={"X-Admin-Key": "test-admin-evidence-key"},
+    )
+    assert missing.status_code == 404
