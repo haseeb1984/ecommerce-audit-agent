@@ -295,3 +295,10 @@
 
 - Added an integration regression test that provisions a test license from a signed Paddle transaction, applies a signed `subscription.canceled` event to the linked subscription, and verifies repeat delivery remains idempotent.
 - Test added; not run in this batch. This is coverage, not confirmation of live Paddle configuration or production readiness. Remaining release gate: execute full CI/test suite, verify migration/schema state and sandbox event mappings, then perform browser-based customer/admin acceptance before deployment.
+
+
+## Production operations diagnostics — 2026-10-27
+
+- Admin operations diagnostics now validate SMTP configuration completeness rather than checking only host and sender. They flag invalid ports, unsupported TLS modes, and incomplete username/password pairs without returning secret values.
+- Added focused regression tests for missing configuration, invalid settings, and a valid STARTTLS setup. Tests have not been executed in this batch; live SMTP delivery and provider connectivity remain unverified.
+- No production environment variables, database migrations, or deployment settings were changed.
