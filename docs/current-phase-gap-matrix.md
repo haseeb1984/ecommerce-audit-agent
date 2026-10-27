@@ -435,3 +435,8 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
 
+## Parallel implementation lane — customer account workflows
+
+Scope: customer authentication/account access, API-key lifecycle, quota/usage, audit submission, saved report history, report evidence/coverage, explicit-consent email and clear recovery states. Check license ownership isolation across every customer report endpoint and UI state. Exclude PDF layout polish until final phase.
+
+Acceptance: backend API and browser journey tests; wrong-license access denied; failed audit/quota release and retry behavior verified; no secret leakage. Status: branch created from shared base; feature implementation not yet completed or verified.
