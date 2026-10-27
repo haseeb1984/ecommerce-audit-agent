@@ -797,14 +797,23 @@ class _AnchorNameParser(HTMLParser):
 
 
 class _LinkParser(HTMLParser):
+    """Collect anchor hrefs and the first HTML base URL from source markup."""
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.links: list[str] = []
+        self.base_href: str | None = None
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() != "a":
-            return
+        tag = tag.lower()
         values = {key.lower(): value or "" for key, value in attrs}
+        if tag == "base" and self.base_href is None:
+            href = values.get("href", "").strip()
+            if href:
+                self.base_href = href
+            return
+        if tag != "a":
+            return
         href = values.get("href", "").strip()
         if href:
             self.links.append(href)
@@ -1644,6 +1653,26 @@ async def run_bounded_site_crawl(
                     extra_sitemap_url,
                 ))
 
+        # HTML's first <base href> changes how relative anchor links resolve.
+        # Treat it as untrusted input: all resolved candidates still pass the
+        # existing HTTP(S), credential, same-origin, robots and file-type gates.
+        try:
+            link_resolution_base = (
+                urljoin(final_home, link_parser.base_href)
+                if link_parser.base_href else final_home
+            )
+            base_parts = urlsplit(link_resolution_base)
+            _ = base_parts.port
+            if (
+                base_parts.scheme.lower() not in {"http", "https"}
+                or not base_parts.hostname
+                or base_parts.username is not None
+                or base_parts.password is not None
+            ):
+                link_resolution_base = final_home
+        except (ValueError, UnicodeError):
+            link_resolution_base = final_home
+
         discovery_hrefs = [
             *link_parser.links[:MAX_LINKS_FROM_HOME],
             *sitemap_urls,
@@ -1657,7 +1686,7 @@ async def run_bounded_site_crawl(
             # authority (for example, an unmatched IPv6 bracket) must not abort
             # discovery for the remaining valid URLs.
             try:
-                absolute = urljoin(final_home, href)
+                absolute = urljoin(link_resolution_base if href in link_parser.links else final_home, href)
                 parts = urlsplit(absolute)
                 if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
                     continue
