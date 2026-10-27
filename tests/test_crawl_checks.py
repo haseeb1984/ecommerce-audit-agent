@@ -2042,3 +2042,30 @@ def test_canonical_inspector_does_not_flag_self_canonical():
         item.title == "Canonical target differs from the inspected page URL"
         for item in findings
     )
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_discloses_sitemap_urls_not_fetched_due_to_page_budget(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+    urls = [f"https://shop.example/products/item-{i}" for i in range(20)]
+
+    async def fake_safe_get(client, url):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, "User-agent: *\\nSitemap: https://shop.example/sitemap.xml\\n", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            locations = "".join(f"<url><loc>{item}</loc></url>" for item in urls)
+            return 200, f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{locations}</urlset>', {"content-type": "application/xml"}, url
+        if url in urls:
+            return 200, '<html><head><title>Product</title></head><body></body></html>', {"content-type": "text/html"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
+    assert any("discovered sitemap URL(s) were not fetched" in item for item in limitations)
