@@ -2051,12 +2051,24 @@ async def run_bounded_site_crawl(
                 matching = [item for item in page_findings if item.category == category]
                 if any(getattr(item, "status", "") == "not_tested" for item in matching):
                     outcome = "not_assessed"
-                elif any(getattr(item, "status", "") == "verified" for item in matching):
-                    outcome = "issue"
-                elif matching:
-                    outcome = "warning"
                 else:
-                    outcome = "pass"
+                    # A few checks emit a positive "detected" observation as a
+                    # verified finding. Do not invert that evidence into a failure.
+                    actionable_verified = [
+                        item for item in matching
+                        if getattr(item, "status", "") == "verified"
+                        and not (
+                            check_id == "structured_data.product"
+                            and "structured data detected" in str(getattr(item, "title", "")).lower()
+                            and "not detected" not in str(getattr(item, "title", "")).lower()
+                        )
+                    ]
+                    if actionable_verified:
+                        outcome = "issue"
+                    elif matching:
+                        outcome = "warning"
+                    else:
+                        outcome = "pass"
                 outcome_records.append(CheckOutcome(
                     check_id=check_id,
                     category=category,
