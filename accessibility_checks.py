@@ -7,6 +7,19 @@ import re
 from audit_checks import AuditFinding
 
 
+
+# These checks require rendered/browser or human context and are never inferred from static HTML.
+MANUAL_WCAG_REVIEW_CHECKLIST = (
+    "Keyboard-only navigation: logical focus order, visible focus, and no keyboard traps.",
+    "Rendered contrast and non-text contrast, including states and overlays.",
+    "Zoom/reflow and responsive layouts at narrow viewport widths.",
+    "Meaningful image alternatives and decorative-image handling in page context.",
+    "Dynamic updates, validation errors, dialogs, menus, and focus management with assistive technology.",
+    "Captions/transcripts for relevant media and accessible names/instructions for interactive controls.",
+    "Task completion using a screen reader and keyboard for representative shopping journeys; do not submit real orders.",
+)
+
+
 class _AccessibilityParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -401,4 +414,28 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             source_url=page_url,
         ))
 
+    findings.append(AuditFinding(
+        category="accessibility",
+        title="Manual WCAG 2.2 A/AA review checklist remains required",
+        status="manual_review_required",
+        severity="info",
+        evidence=(
+            "Static returned-HTML checks cannot establish WCAG conformance. The following browser/manual "
+            f"checks remain unverified for this page ({page_url}): "
+            + " | ".join(MANUAL_WCAG_REVIEW_CHECKLIST)
+        ),
+        explanation=(
+            "Automated source inspection detects only a subset of accessibility barriers. Keyboard behavior, "
+            "rendered contrast, responsive reflow, assistive-technology behavior, media alternatives and task "
+            "completion require browser or human review. This record is a checklist, not a claim that these "
+            "criteria failed or passed."
+        ),
+        recommendation=(
+            "Complete and record each checklist item in an authorized test environment. Pair automated scans "
+            "with keyboard-only and screen-reader review; do not claim full WCAG conformance from this audit alone."
+        ),
+        verification_steps=list(MANUAL_WCAG_REVIEW_CHECKLIST),
+        standard_references=["https://www.w3.org/TR/WCAG22/"],
+        source_url=page_url,
+    ))
     return findings
