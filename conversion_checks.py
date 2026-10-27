@@ -318,9 +318,10 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             if action_parts.scheme.lower() == "http" and action_parts.netloc:
                 # Keep the report evidence free of query strings, which may contain tokens.
                 action_host = (action_parts.hostname or "").lower()
-                if not action_host or action_parts.username is not None or action_parts.password is not None:
-                    # Do not echo URL userinfo into audit evidence.
+                if not action_host:
                     continue
+                # URL userinfo must never appear in evidence, but its presence must
+                # not suppress the transport-security finding itself.
                 display_host = f"[{action_host}]" if ":" in action_host else action_host
                 if action_parts.port and action_parts.port != 80:
                     display_host = f"{display_host}:{action_parts.port}"
