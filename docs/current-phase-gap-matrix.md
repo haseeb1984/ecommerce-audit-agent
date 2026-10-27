@@ -214,3 +214,10 @@
 - Coverage manifests now preserve a bounded, allowlisted finding contract: stable finding/check ID, category, status/severity, source URL with query/fragment removed, evidence and explanation, recommendation, verification steps, standards references, qualitative benefit/risk, effort, and dependencies.
 - IDs are deterministic for the same category/title/sanitized source URL. This is source-level traceability, not proof that each field is populated by every checker.
 - A focused regression test covers the key contract fields and URL query-secret removal. Tests remain unexecuted; runtime/production acceptance is still pending.
+
+
+
+## Finding text redaction — source implementation batch
+
+- Extended the coverage-manifest text boundary to redact bearer credentials, common token/key/password assignments, and query/fragment data embedded in URLs in evidence, explanation, recommendation and related finding text fields.
+- Added regression coverage for representative bearer, API-key, URL-query and secret assignment patterns. This is defense-in-depth, not a guarantee against every possible secret format; tests remain unexecuted and deployment is unchanged.
