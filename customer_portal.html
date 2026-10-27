@@ -22,7 +22,7 @@
 <h2>1. Connect your license</h2>
 <p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
 <div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
-<button id="connect" type="button">Load report history</button><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
+<div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
 </section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
@@ -82,6 +82,10 @@
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
   const authHeaders = () => ({[headerName]: credential});
+  function setAccountControls(connected) {
+    for (const id of ["disconnectAccount", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+  }
+  setAccountControls(false);
   loadPlans();
   // A cancelled Paddle checkout can restore this page from the browser back-forward cache.
   // Re-enable checkout buttons whenever the customer returns to the portal.
@@ -452,9 +456,30 @@
     if (nextCredential !== credential || nextHeaderName !== headerName) clearAccountView();
     credential = nextCredential; headerName = nextHeaderName;
     $("connect").disabled = true;
-    try { await loadReports(); await loadUsage(); await loadApiKeys(); await loadBillingHistory(); setStatus("connectStatus", "Connected. Your report history, quota, API keys, and billing history are loaded.", "success"); setStatus("auditStatus", "Ready. Enter a public URL to start an audit."); }
-    catch (e) { clearAccountView(); setStatus("connectStatus", e.message, "error"); }
-    finally { $("connect").disabled = false; }
+    try {
+      await loadReports(); await loadUsage(); await loadApiKeys(); await loadBillingHistory();
+      $("credential").value = "";
+      setAccountControls(true);
+      setStatus("connectStatus", "Connected. Your report history, quota, API keys, and billing history are loaded. Credential input cleared.", "success");
+      setStatus("auditStatus", "Ready. Enter a public URL to start an audit.");
+    } catch (e) {
+      clearAccountView();
+      credential = "";
+      $("credential").value = "";
+      setAccountControls(false);
+      setStatus("connectStatus", e.message + " Credentials were cleared; reconnect to continue.", "error");
+    } finally { $("connect").disabled = false; }
+  });
+  $("disconnectAccount").addEventListener("click", () => {
+    credential = "";
+    headerName = "X-License-Key";
+    $("credential").value = "";
+    $("authType").value = "X-License-Key";
+    clearAccountView();
+    setAccountControls(false);
+    $("target").value = "";
+    setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
+    setStatus("auditStatus", "Connect your credential first.");
   });
   $("openBillingPortal").addEventListener("click", async () => {
     if (!credential) { setStatus("billingStatus", "Connect your account first.", "error"); return; }
