@@ -1303,3 +1303,74 @@ async def test_malformed_saved_coverage_does_not_break_customer_or_admin_evidenc
     assert admin.status_code == 200
     assert admin.json()["total"] == 0
     assert admin.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_saved_report_evidence_is_allowlisted_redacted_and_email_is_private(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-safe-evidence")
+    license_key = "safe-evidence-license"
+    license_id = await create_license(key=license_key)
+    coverage = {
+        "findings": [{
+            "finding_id": "seo.meta.description",
+            "category": "technical_seo",
+            "title": "Meta description review",
+            "page_url": "https://shop.example/products/one?access_token=private#details",
+            "evidence": "Observed api_key=synthetic-secret in diagnostic output.",
+            "recommendation": "Review the page metadata.",
+            "internal_secret": "must-not-leak",
+            "nested_internal": {"token": "must-not-leak"},
+        }],
+        "check_outcomes": [
+            {"check_id": "seo.title", "outcome": "pass"},
+            None,
+            "malformed-record",
+        ],
+    }
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="shop.example",
+            pdf_bytes=b"%PDF-test",
+            coverage_json=json.dumps(coverage),
+            finding_count=1,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    headers = {"X-License-Key": license_key}
+    evidence = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?kind=findings",
+        headers=headers,
+    )
+    assert evidence.status_code == 200, evidence.text
+    payload = evidence.json()
+    serialized = json.dumps(payload)
+    assert "internal_secret" not in serialized
+    assert "nested_internal" not in serialized
+    assert "synthetic-secret" not in serialized
+    assert "access_token=private" not in serialized
+    assert payload["items"][0]["finding_id"] == "seo.meta.description"
+    assert payload["items"][0]["page_url"] == "https://shop.example/products/one"
+
+    outcomes = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?kind=check_outcomes",
+        headers=headers,
+    )
+    assert outcomes.status_code == 200
+    assert outcomes.json()["total"] == 1
+    assert outcomes.json()["outcome_summary"]["denominator"] == 1
+
+    async def fake_send(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "_send_pdf_email", fake_send)
+    emailed = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers=headers,
+        json={"recipient_email": "owner@example.com", "recipient_confirmed": True},
+    )
+    assert emailed.status_code == 200, emailed.text
+    assert emailed.headers["cache-control"] == "no-store, private"
