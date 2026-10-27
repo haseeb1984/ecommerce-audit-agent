@@ -41,7 +41,7 @@ from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
 from quota import reserve_audit_slot, release_audit_reservation
-from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
+from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -552,6 +552,24 @@ async def comprehensive_audit_pdf(
             limitations=result.limitations,
             executed_categories=sorted(executed_categories),
             check_outcomes=result.check_outcomes,
+            run_context={
+                "started_at_utc": result.checked_at_utc,
+                "completed_at_utc": datetime.now(timezone.utc).isoformat(),
+                "target_scope": "Public unauthenticated HTTP(S) audit; bounded same-origin crawl; no active penetration testing or authenticated checkout actions.",
+                "user_agent": USER_AGENT,
+                "limits": {
+                    "max_crawl_pages": 12,
+                    "max_links_from_homepage": 100,
+                    "max_response_bytes": MAX_RESPONSE_BYTES,
+                    "max_saved_check_outcomes": 500,
+                    "max_saved_findings": 150,
+                },
+                "measurement_context": {
+                    "performance": "PageSpeed Insights lab metrics and any provider-returned field data are reported separately; absent field data is not inferred.",
+                    "rendered_browser": "Not available in this server-side audit path unless explicitly recorded by a checker outcome.",
+                    "authorization": "Only unauthenticated public checks are attempted by default.",
+                },
+            },
         )
         pdf_bytes = render_audit_pdf(
             result,
