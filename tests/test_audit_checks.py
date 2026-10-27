@@ -1321,3 +1321,19 @@ def test_homepage_reviews_target_blank_opener_isolation(rel, should_flag):
         assert matches[0].status == "manual_review_required"
         assert "1 anchor link(s)" in matches[0].evidence
         assert "partner.example" not in matches[0].evidence
+
+
+def test_page_parser_bounds_retained_anchor_details_but_counts_all_links():
+    html = (
+        '<html lang="en"><head><title>Shop</title></head><body>'
+        + ''.join(f'<a href="/product/{index}">Product</a>' for index in range(750))
+        + '</body></html>'
+    )
+    parser = audit_checks._PageParser()
+    parser.feed(html)
+
+    assert parser.links == 750
+    assert len(parser.link_hrefs) == 500
+    assert len(parser.link_attributes) == 500
+    assert parser.link_hrefs[0] == '/product/0'
+    assert parser.link_hrefs[-1] == '/product/499'
