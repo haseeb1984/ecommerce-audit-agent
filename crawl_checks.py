@@ -49,6 +49,77 @@ MAX_CHILD_SITEMAPS = 3
 
 PRODUCT_DETAIL_PATH = re.compile(r"(?:^|/)(?:products?|items?)(?:/|$)", re.I)
 
+def _parse_robots_rules(body: str, user_agent: str) -> list[tuple[str, str]]:
+    """Return the applicable Allow/Disallow rules for this crawler's product token."""
+    groups: list[tuple[list[str], list[tuple[str, str]]]] = []
+    agents: list[str] = []
+    rules: list[tuple[str, str]] = []
+    saw_rule = False
+
+    def finish_group() -> None:
+        nonlocal agents, rules, saw_rule
+        if agents:
+            groups.append((agents, rules))
+        agents, rules, saw_rule = [], [], False
+
+    product_token = (user_agent.split("/", 1)[0].split(" ", 1)[0] or "").lower()
+    for raw_line in body.splitlines()[:5000]:
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        key = key.lower()
+        if key == "user-agent":
+            if saw_rule:
+                finish_group()
+            agents.append(value.lower())
+        elif key in {"allow", "disallow"} and agents:
+            saw_rule = True
+            # Empty Disallow means no restriction; empty Allow is ignored.
+            if value or key == "disallow":
+                rules.append((key, value))
+
+    finish_group()
+    exact_groups = [
+        group_rules for group_agents, group_rules in groups
+        if any(agent != "*" and agent and agent in product_token for agent in group_agents)
+    ]
+    wildcard_groups = [
+        group_rules for group_agents, group_rules in groups
+        if "*" in group_agents
+    ]
+    selected = exact_groups if exact_groups else wildcard_groups
+    return [rule for group_rules in selected for rule in group_rules]
+
+
+def _robots_path_allowed(url: str, rules: list[tuple[str, str]]) -> bool:
+    """Apply the longest-match robots rule; Allow wins equal-length ties."""
+    if not rules:
+        return True
+    parts = urlsplit(url)
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+    matched: list[tuple[int, bool]] = []
+    for directive, pattern in rules:
+        if not pattern:
+            continue
+        anchored = pattern.endswith("$")
+        pattern_body = pattern[:-1] if anchored else pattern
+        expression = re.escape(pattern_body).replace(r"\\*", ".*")
+        expression = "^" + expression + ("$" if anchored else "")
+        try:
+            if re.search(expression, path):
+                specificity = len(pattern_body.replace("*", ""))
+                matched.append((specificity, directive == "allow"))
+        except re.error:
+            continue
+    if not matched:
+        return True
+    longest = max(length for length, _allowed in matched)
+    return any(allowed for length, allowed in matched if length == longest)
+
+
 
 class _SensitiveGetFormParser(HTMLParser):
     """Find GET forms that appear to submit credentials or payment-related fields."""
@@ -1200,11 +1271,13 @@ async def run_bounded_site_crawl(
         # the same public-only resolver and redirect/response-size safeguards.
         robots_sitemap_urls: list[str] = []
         robots_declared_sitemap_urls: list[str] = []
+        robots_rules: list[tuple[str, str]] = []
         robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
         try:
             robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
             if 200 <= robots_status < 300 and _same_origin(robots_final_url, final_home):
                 robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
+                robots_rules = _parse_robots_rules(robots_body, USER_AGENT)
                 findings.extend(robots_findings)
                 limitations.extend(robots_limitations)
                 _record_static_check_outcome(
@@ -1624,6 +1697,8 @@ async def run_bounded_site_crawl(
                 candidate = _canonical_page_url(absolute)
                 if candidate in seen or candidate == _canonical_page_url(final_home):
                     continue
+                if not _robots_path_allowed(candidate, robots_rules):
+                    continue
                 suffix = urlsplit(candidate).path.lower()
             except (ValueError, UnicodeError):
                 continue
@@ -1766,6 +1841,8 @@ async def run_bounded_site_crawl(
                             continue
                         candidate_url = _canonical_page_url(absolute)
                         if candidate_url in queued_urls:
+                            continue
+                        if not _robots_path_allowed(candidate_url, robots_rules):
                             continue
                         path = urlsplit(candidate_url).path.lower()
                         if path.endswith((
