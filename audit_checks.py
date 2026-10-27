@@ -349,6 +349,7 @@ class _PageParser(HTMLParser):
         self.images_empty_alt = 0
         self.links = 0
         self.link_hrefs: list[str] = []
+        self.link_attributes: list[dict[str, str]] = []
         self._title_parts: list[str] = []
         self._h1_parts: list[str] = []
         self.jsonld_scripts: list[str] = []
@@ -429,6 +430,12 @@ class _PageParser(HTMLParser):
         elif tag == "a" and values.get("href"):
             self.links += 1
             self.link_hrefs.append(values.get("href", "").strip())
+            if len(self.link_attributes) < 500:
+                self.link_attributes.append({
+                    "href": values.get("href", "").strip(),
+                    "target": values.get("target", "").strip().lower(),
+                    "rel": values.get("rel", "").strip().lower(),
+                })
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
@@ -1662,6 +1669,26 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
             [f"Inspect the response headers with browser DevTools or a reputable header scanner.", "Review configuration and test critical site flows."],
             final_url,
         ))
+    # Source-level opener isolation review. Browsers generally apply implicit
+    # noopener behavior to target=_blank in modern versions, but explicit rel
+    # tokens improve compatibility and make the intended policy auditable.
+    blank_target_without_isolation = 0
+    for link in parser.link_attributes:
+        if link.get("target") == "_blank":
+            rel_tokens = set(link.get("rel", "").split())
+            if not ({"noopener", "noreferrer"} & rel_tokens):
+                blank_target_without_isolation += 1
+    if blank_target_without_isolation:
+        findings.append(_finding(
+            "security_links", "New-tab links lack explicit opener isolation",
+            "manual_review_required", "low",
+            f"Found {blank_target_without_isolation} anchor link(s) with target=\"_blank\" and no explicit rel=noopener or rel=noreferrer among the first {len(parser.link_attributes)} links inspected. Destinations are omitted.",
+            "Modern browsers generally imply noopener for target=_blank, so this source signal alone does not prove an exploitable reverse-tabnabbing issue. Explicit opener isolation remains a useful compatibility and defense-in-depth practice.",
+            "Add rel=\"noopener\" to links that open a new tab, or rel=\"noreferrer\" where suppressing the Referer header is also intended. Confirm any opener-dependent workflow before changing behavior.",
+            ["Inspect the affected anchor elements in source or browser DevTools.", "Add an appropriate rel token and retest new-tab behavior in supported browsers."],
+            final_url,
+        ))
+
     # Inspect link destinations as source evidence without fetching arbitrary
     # external destinations. This preserves the same-origin crawl boundary.
     unsafe_link_count = 0
