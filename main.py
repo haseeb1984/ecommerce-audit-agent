@@ -2384,8 +2384,10 @@ async def admin_create_client_api_key(
 
     if payload.client_id != license_id:
         raise HTTPException(status_code=422, detail="Client ID in the path and body must match.")
+    # Serialize admin-issued key creation on the owning license row as well;
+    # otherwise parallel operator requests could bypass the account's 10-key cap.
     client = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id).with_for_update()
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
@@ -2393,6 +2395,7 @@ async def admin_create_client_api_key(
         select(sql_func.count(APIKey.id)).where(APIKey.license_id == license_id)
     )).scalar_one() or 0)
     if current_count >= 10:
+        await db.rollback()
         raise HTTPException(status_code=409, detail="This account already has 10 API keys.")
     raw_key = "eaa_" + secrets.token_urlsafe(32)
     item = APIKey(
