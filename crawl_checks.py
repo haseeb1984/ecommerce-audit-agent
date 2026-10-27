@@ -1790,10 +1790,10 @@ async def run_bounded_site_crawl(
             if url in sitemap_discovered_urls and outcome_records is not None:
                 if not _same_origin(final_url, final_home):
                     sitemap_outcome = "not_assessed"
-                    sitemap_evidence = "The sitemap-listed URL redirected outside the audited origin; its destination was not treated as an in-scope page."
+                    sitemap_evidence = "The sitemap-listed URL redirected off-origin; its destination was not treated as an in-scope page."
                 elif 200 <= page_status < 300:
                     sitemap_outcome = "pass"
-                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status} on the audited origin. This does not establish search-engine indexing."
+                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status} on the audited origin. This does not establish indexing by search engines."
                 elif page_status >= 500:
                     sitemap_outcome = "error"
                     sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status}; availability is inconclusive."
