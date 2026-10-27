@@ -126,6 +126,11 @@ class LeadDossier(BaseModel):
 
 
 class UniversalEcommerceAgent:
+    @staticmethod
+    def _normalize_audit_target(value: object) -> str:
+        """Expose the shared public-target validator for callers and regression tests."""
+        return _normalize_audit_target(value)
+
     def __init__(self):
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
@@ -367,6 +372,7 @@ class UniversalEcommerceAgent:
             except (ValueError, TypeError, AttributeError):
                 logger.info("PageSpeed screenshot was absent or invalid")
 
+            clean_domain = urlsplit(target_url).hostname or target_url
             return StoreAuditMetrics(
                 domain=clean_domain,
                 mobile_score=score,
