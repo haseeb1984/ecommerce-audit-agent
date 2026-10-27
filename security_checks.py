@@ -6,6 +6,8 @@ for every path). These low-impact GET checks do not exploit or modify the target
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import asyncio
 import datetime as dt
 import ipaddress
@@ -156,18 +158,27 @@ def inspect_exposure_response(path: str, status: int, body: str,
     )]
 
 
-async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[AuditFinding], list[str]]:
-    """Probe a tiny fixed list of common exposure paths using the safe public fetcher."""
+async def probe_common_exposure_paths(
+    client,
+    base_url: str,
+    *,
+    allowed_url: Callable[[str], bool] | None = None,
+) -> tuple[list[AuditFinding], list[str]]:
+    """Probe common exposure paths, optionally respecting the caller's crawl policy."""
     findings: list[AuditFinding] = []
     unverified_probes = 0
     inconclusive_success_probes = 0
     server_error_probes = 0
+    skipped_by_policy = 0
     limitations: list[str] = [
         f"Passive exposure probes checked only {len(EXPOSURE_PATHS)} common paths; this is not a penetration test or proof that other files are safe."
     ]
     origin = f"{urlsplit(base_url).scheme}://{urlsplit(base_url).netloc}"
     for path in EXPOSURE_PATHS:
         url = urljoin(origin + "/", path.lstrip("/"))
+        if allowed_url is not None and not allowed_url(url):
+            skipped_by_policy += 1
+            continue
         try:
             status, body, headers, final_url = await _safe_get(client, url)
         except Exception:
@@ -205,6 +216,10 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
     if server_error_probes:
         limitations.append(
             f"{server_error_probes} of {len(EXPOSURE_PATHS)} exposure probes returned HTTP 5xx server errors; treated as unverified, not safe."
+        )
+    if skipped_by_policy:
+        limitations.append(
+            f"{skipped_by_policy} of {len(EXPOSURE_PATHS)} exposure probes were skipped because the active crawl policy disallowed those paths."
         )
     return findings, limitations
 
