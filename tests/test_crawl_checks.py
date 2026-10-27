@@ -96,9 +96,9 @@ async def test_off_origin_base_href_cannot_expand_crawl_scope(monkeypatch):
             )
         if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
             return 404, "", {"content-type": "text/plain"}, url
-        if url == "https://shop.example/sitemap.xml":
+        if url.startswith("https://shop.example/"):
             return 404, "", {"content-type": "text/plain"}, url
-        raise AssertionError(f"Unexpected URL requested: {url}")
+        raise AssertionError(f"Unexpected off-origin URL requested: {url}")
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
     _, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
