@@ -162,3 +162,10 @@
 - Added `unavailable_checks.py` and wired it into the comprehensive audit pipeline. Each audit now records individual `not_assessed` outcomes for rendered JavaScript DOM comparison, real-browser viewport matrix, browser console/network diagnostics, manual WCAG review, owner-authorized Google Search Console status, backlink/competitor datasets, authorized checkout testing, consent-dependent analytics event verification, active security testing, and trust-mark authenticity review.
 - The outcome records carry the exact reason the check was not performed and appear in the same persisted check-outcome/coverage data as other checks. One bounded limitation summary is also added; no missing capability is represented as a pass or as a verified issue.
 - This makes the current capability boundary explicit but does not implement a browser runner, connect owner accounts, acquire external SEO datasets, or perform manual/active testing. Those remain separate implementation/authorization gaps. Source changes only; tests, deployment, and migrations have not been run/applied.
+
+
+## Core HTML document checks — source-level implementation
+
+- Added a bounded parser for sampled HTML pages that records review findings for missing document language, missing explicit character-encoding metadata, missing/duplicate non-empty page titles, and absence of common semantic landmark elements.
+- Integrated these findings into the existing same-origin crawl and per-check outcome recording. This improves baseline technical SEO/accessibility signals without claiming rendered behavior or WCAG conformance; HTTP charset headers and runtime DOM changes still need contextual review.
+- Added focused regression cases for missing metadata, valid metadata/landmarks, and duplicate titles. Tests are committed but **not run** under the current implementation-first instruction. No deployment or database migration was performed.
