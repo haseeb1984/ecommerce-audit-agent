@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import math
+import re
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -9,6 +11,27 @@ from groq import AsyncGroq
 
 
 logger = logging.getLogger(__name__)
+
+FIELD_DATA_CATEGORIES = {"GOOD", "AVERAGE", "NEEDS IMPROVEMENT", "POOR"}
+
+def _safe_pagespeed_url(value: object) -> str | None:
+    """Retain only public HTTP(S) URL identity, omitting userinfo, query and fragment."""
+    try:
+        parts = urlsplit(str(value or "").strip())
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        port = parts.port
+        if scheme not in {"http", "https"} or not host or parts.username is not None or parts.password is not None:
+            return None
+        host = host.lower()
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        default_port = 443 if scheme == "https" else 80
+        netloc = f"{host}:{port}" if port and port != default_port else host
+        return urlunsplit((scheme, netloc, parts.path or "/", "", ""))
+    except (TypeError, ValueError, UnicodeError):
+        return None
+
 
 # HTTPX logs full request URLs at INFO; PageSpeed puts its API key in the query string.
 # Keep HTTP request logs at WARNING+ so credentials cannot be emitted by request logging.
@@ -225,12 +248,12 @@ class UniversalEcommerceAgent:
                 if not isinstance(experience, dict):
                     continue
                 overall_category = experience.get("overall_category")
-                if isinstance(overall_category, str):
-                    field_data_context[f"{scope_label}_overall_category"] = overall_category
+                if isinstance(overall_category, str) and overall_category.strip().upper() in FIELD_DATA_CATEGORIES:
+                    field_data_context[f"{scope_label}_overall_category"] = overall_category.strip().upper()
                 experience_id = experience.get("id")
-                if isinstance(experience_id, str):
-                    # Store only the provider's public URL/origin identity, never request credentials.
-                    field_data_context[f"{scope_label}_data_id"] = experience_id[:300]
+                safe_experience_id = _safe_pagespeed_url(experience_id)
+                if safe_experience_id:
+                    field_data_context[f"{scope_label}_data_id"] = safe_experience_id[:300]
                 metrics = experience.get("metrics", {})
                 if not isinstance(metrics, dict):
                     continue
@@ -258,7 +281,7 @@ class UniversalEcommerceAgent:
                             "percentile": percentile,
                             "normalized_value": normalized_value,
                             "unit": unit,
-                            "category": category if isinstance(category, str) else None,
+                            "category": category.strip().upper() if isinstance(category, str) and category.strip().upper() in FIELD_DATA_CATEGORIES else None,
                             "source": f"PageSpeed {scope_key} field data",
                         }
             lighthouse_version = lighthouse.get("lighthouseVersion")
@@ -308,7 +331,7 @@ class UniversalEcommerceAgent:
                 field_data_context=field_data_context,
                 lighthouse_version=lighthouse_version if isinstance(lighthouse_version, str) else None,
                 page_fetch_time=page_fetch_time if isinstance(page_fetch_time, str) else None,
-                final_url=final_url if isinstance(final_url, str) else None,
+                final_url=_safe_pagespeed_url(final_url),
                 form_factor=form_factor if isinstance(form_factor, str) else None,
             )
         except RuntimeError:
