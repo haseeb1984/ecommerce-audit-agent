@@ -466,7 +466,7 @@
       setAccountControls(true);
       $("runAudit").disabled = !auditAccess;
       $("createApiKey").disabled = !auditAccess;
-      $("refreshApiKeys").disabled = !auditAccess;
+      $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
       setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
       setStatus("connectStatus", unavailable.length ? "Connected for billing. Unavailable features: " + unavailable.join(", ") + ". Credential input cleared." : "Connected. Report history, quota, API keys, and billing history are loaded. Credential input cleared.", unavailable.length ? "error" : "success");
     } catch (e) {
