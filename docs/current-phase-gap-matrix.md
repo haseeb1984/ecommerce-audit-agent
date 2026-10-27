@@ -419,3 +419,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Extended the sitemap-listed URL lifecycle tests to cover successful same-origin responses, HTTP 503 server failures, off-origin redirects, and fetch timeouts in addition to the existing HTTP 404 case.
 - Expected outcomes remain conservative: 2xx same-origin is a reachability pass only (not proof of indexing), 5xx/fetch exceptions are errors, and off-origin redirects are not assessed.
 - Regression tests have been committed but have **not been executed** in this session. No production crawl, migration, deployment, or PDF/report-layout work was performed.
+
+
+## Database schema readiness endpoint — implementation batch
+
+- Extended /health-check beyond a SELECT 1 connectivity probe: it now checks the current schema for the nine application tables used by licensing, API keys, audit lifecycle, plans, operations, and payment events.
+- A connected database with missing required tables returns HTTP 503 with schema_ready: false and a bounded list of missing table names; database connectivity failures remain HTTP 500 and do not expose connection details.
+- Updated the existing health endpoint regression assertion for the successful readiness response. This does not prove that every migration has been applied or that columns/indexes match the latest migration files; those checks remain open. The tests have not been executed in this session.
