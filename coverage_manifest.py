@@ -1,7 +1,7 @@
 """Transparent audit coverage summaries; never treat absent findings as successful checks."""
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 import hashlib
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -80,6 +80,7 @@ def build_coverage_manifest(
     findings: list[Any],
     limitations: list[str],
     executed_categories: list[str] | tuple[str, ...] = (),
+    check_outcomes: list[Any] | tuple[Any, ...] = (),
 ) -> dict[str, Any]:
     """Build coverage from findings plus explicit records of successfully run check groups.
 
@@ -88,6 +89,41 @@ def build_coverage_manifest(
     otherwise it remains not_proven. This is category-level, not individual-check coverage.
     """
     raw_counts = Counter(str(getattr(item, "category", "unknown")) for item in findings)
+    # Individual-check summaries use recorded outcomes only. They never infer passes
+    # from absent findings and expose the observed-page denominator for each check.
+    outcomes_by_check: dict[str, list[Any]] = defaultdict(list)
+    for outcome in check_outcomes:
+        check_id = str(getattr(outcome, "check_id", "") or "").strip()
+        outcome_value = str(getattr(outcome, "outcome", "") or "").strip().lower()
+        if check_id and outcome_value in {"pass", "issue", "warning", "not_assessed", "error"}:
+            outcomes_by_check[check_id].append(outcome)
+    check_outcome_summaries = []
+    for check_id, records in sorted(outcomes_by_check.items()):
+        counts = Counter(str(getattr(record, "outcome", "unknown")).lower() for record in records)
+        page_urls = {
+            safe_url
+            for record in records
+            if (safe_url := _safe_evidence_url(getattr(record, "page_url", None))) is not None
+        }
+        denominator = len(page_urls)
+        assessed = counts.get("pass", 0) + counts.get("issue", 0) + counts.get("warning", 0)
+        check_outcome_summaries.append({
+            "check_id": check_id,
+            "outcome_counts": {
+                "pass": counts.get("pass", 0),
+                "issue": counts.get("issue", 0),
+                "warning": counts.get("warning", 0),
+                "not_assessed": counts.get("not_assessed", 0),
+                "error": counts.get("error", 0),
+            },
+            "outcome_records": len(records),
+            "tested_page_denominator": denominator,
+            "assessed_page_count": assessed,
+            "not_assessed_record_count": counts.get("not_assessed", 0),
+            "error_record_count": counts.get("error", 0),
+            "pass_pct_of_assessed_records": round(100 * counts.get("pass", 0) / assessed, 1) if assessed else None,
+            "note": "Counts describe recorded outcome records, not full-site coverage; repeated records for the same page can exist if a checker emits duplicates.",
+        })
     executed = set(executed_categories)
     observed: list[dict[str, Any]] = []
     checked_without_findings: list[dict[str, Any]] = []
@@ -134,7 +170,7 @@ def build_coverage_manifest(
         if (safe_url := _safe_evidence_url(page_url)) is not None
     ))
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "coverage_level": "category_signal_coverage_not_individual_check_coverage",
         "target_url": safe_target_url,
         "pages_checked": safe_pages_checked,
@@ -144,6 +180,8 @@ def build_coverage_manifest(
         "finding_category_counts": dict(raw_counts),
         "recorded_observations": recorded_observations,
         "recorded_observations_count": len(recorded_observations),
+        "individual_check_outcomes": check_outcome_summaries,
+        "individual_check_outcomes_count": len(check_outcome_summaries),
         "required_categories": total,
         "categories_with_recorded_findings": len(observed),
         "categories_checked_without_findings": len(checked_without_findings),
