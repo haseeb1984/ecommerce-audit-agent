@@ -78,6 +78,7 @@
   let evidenceLoading = false;
   let apiKeyRows = [];
   let apiKeyLimit = 10;
+  let apiKeyCreationAllowed = false;
   let newlyCreatedApiKey = "";
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
@@ -183,13 +184,16 @@
     const data = await response.json();
     apiKeyRows = Array.isArray(data.items) ? data.items : [];
     apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
+    apiKeyCreationAllowed = data.can_create === true;
     renderApiKeys();
   }
   function renderApiKeys() {
     const container = $("apiKeys"); container.replaceChildren();
     const atLimit = apiKeyRows.length >= apiKeyLimit;
-    $("createApiKey").disabled = !credential || atLimit;
-    $("createApiKey").title = atLimit ? "Revoke an existing key before creating another." : "";
+    $("createApiKey").disabled = !credential || !apiKeyCreationAllowed || atLimit;
+    $("createApiKey").title = atLimit
+      ? "Revoke an existing key before creating another."
+      : (!apiKeyCreationAllowed ? "API key creation requires an active, unexpired account." : "");
     const count = document.createElement("p"); count.className = "muted";
     count.textContent = apiKeyRows.length + " of " + apiKeyLimit + " API keys used" +
       (atLimit ? " · Limit reached; revoke a key to create another." : " · " + (apiKeyLimit - apiKeyRows.length) + " slot(s) available.");
@@ -471,6 +475,7 @@
     $("usageRemaining").textContent = "Remaining: —";
     $("usageReset").textContent = "Period reset: —";
     $("billingAccount").textContent = "Connect your account to load billing status.";
+    apiKeyCreationAllowed = false;
     $("billingEvents").replaceChildren(); setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
