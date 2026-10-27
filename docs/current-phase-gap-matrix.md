@@ -397,3 +397,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The bounded crawl now records an individual `llms_txt.basic_format` check outcome alongside findings. A same-origin HTTP response is classified through the existing conservative outcome recorder; an off-origin redirect is recorded as `not_assessed`, and fetch exceptions are recorded as `error`.
 - Added a crawl regression test for the optional file being absent (HTTP 404), asserting that the check outcome and finding are both present. The test is committed but has **not been executed**.
 - This is a proposed convention/basic-format check only. It does not imply ranking value, indexing control, or AI crawler usage. No deployment, migration, or workflow run was performed.
+
+
+## Robots.txt discovery outcome lifecycle — feature batch
+
+- The bounded crawl now records the `robots_txt.discovery_rules` check outcome alongside existing robots findings and sitemap discovery.
+- Successful same-origin responses are classified using the existing static outcome recorder. Access-denied responses and non-success responses are explicitly marked `not_assessed`; server errors and fetch exceptions are marked `error`; successful HTTP responses redirected off-origin are not assessed.
+- Added parametrized regression coverage for HTTP 200, 403, 404, and 500. Tests are committed but **not yet executed**.
+- This is source-level directive analysis only; it does not prove search-engine behavior or live indexing status. No deployment or database migration was performed.
