@@ -18,7 +18,7 @@ def test_document_basics_detects_missing_language_charset_title_and_landmarks():
 def test_document_basics_accepts_declared_metadata_and_semantic_landmarks():
     findings = inspect_document_basics(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        "<title>Shop home</title></head><body><header>Header</header>"
+        "<title>Shop home</title><meta name=\"description\" content=\"A useful shop description.\"></head><body><header>Header</header>"
         "<nav>Menu</nav><main>Products</main><footer>Footer</footer></body></html>",
         "https://shop.example/",
     )
