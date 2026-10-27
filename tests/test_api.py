@@ -1881,6 +1881,7 @@ async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access
     assert listing.json()["max_keys"] == 10
     assert listing.json()["key_count"] == 1
     assert listing.json()["keys_remaining"] == 9
+    assert listing.json()["can_create"] is False
     key_id = listing.json()["items"][0]["id"]
     assert "key" not in listing.json()["items"][0]
 
