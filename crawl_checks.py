@@ -1717,7 +1717,9 @@ async def run_bounded_site_crawl(
 
         # A small fixed set of safe GET probes looks for recognizable exposed artifacts.
         # The public-only resolver, redirect validation, timeout and response cap still apply.
-        exposure_findings, exposure_limitations = await probe_common_exposure_paths(client, final_home)
+        exposure_findings, exposure_limitations = await probe_common_exposure_paths(
+            client, final_home, allowed_url=lambda candidate_url: _robots_path_allowed(candidate_url, robots_rules)
+        )
         findings.extend(exposure_findings)
         limitations.extend(exposure_limitations)
 
