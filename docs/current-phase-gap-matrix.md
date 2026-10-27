@@ -227,3 +227,10 @@
 - PageSpeed field-data identifiers and final displayed URLs now pass through a public-URL allowlist that removes query strings/fragments and rejects URL credentials/non-HTTP(S) values. Provider field-data categories are allowlisted before being surfaced. Regression cases added; tests have not been run, and no deployment occurred.
 
 - Follow-up compatibility correction: allow documented PageSpeed overall categories (FAST/AVERAGE/SLOW) separately from field-metric categories (GOOD/NEEDS_IMPROVEMENT/POOR), with regression coverage for both formats.
+
+
+
+## Accessibility manual-review checklist — source implementation batch
+
+- Static accessibility inspection now emits a clearly labeled manual-review checklist covering keyboard/focus behavior, contrast, reflow/zoom, contextual image alternatives, dynamic UI and assistive-technology behavior, media alternatives, and representative keyboard/screen-reader shopping journeys.
+- The checklist is explicitly marked manual_review_required and states that static source checks do not establish WCAG conformance. It is linked to the W3C WCAG 2.2 reference. Regression coverage was added; tests remain unexecuted and deployment unchanged.
