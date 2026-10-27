@@ -457,11 +457,18 @@
     credential = nextCredential; headerName = nextHeaderName;
     $("connect").disabled = true;
     try {
-      await loadBillingHistory(); const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()]); if (results.some(result => result.status === "rejected")) { setStatus("connectStatus", "Billing is available, but some account features are restricted or unavailable.", "error"); }
+      await loadBillingHistory();
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()]);
+      const names = ["saved reports", "usage and audit access", "API keys"];
+      const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
+      const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
       setAccountControls(true);
-      setStatus("connectStatus", "Connected. Your report history, quota, API keys, and billing history are loaded. Credential input cleared.", "success");
-      setStatus("auditStatus", "Ready. Enter a public URL to start an audit.");
+      $("runAudit").disabled = !auditAccess;
+      $("createApiKey").disabled = !auditAccess;
+      $("refreshApiKeys").disabled = !auditAccess;
+      setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
+      setStatus("connectStatus", unavailable.length ? "Connected for billing. Unavailable features: " + unavailable.join(", ") + ". Credential input cleared." : "Connected. Report history, quota, API keys, and billing history are loaded. Credential input cleared.", unavailable.length ? "error" : "success");
     } catch (e) {
       clearAccountView();
       credential = "";
