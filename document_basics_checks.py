@@ -16,6 +16,7 @@ class _DocumentBasicsParser(HTMLParser):
         self.html_lang: str = ""
         self.charsets: list[str] = []
         self.titles: list[str] = []
+        self.meta_descriptions: list[str] = []
         self.landmarks: set[str] = set()
         self._in_title = False
         self._title_parts: list[str] = []
@@ -26,6 +27,8 @@ class _DocumentBasicsParser(HTMLParser):
         if tag == "html" and not self.html_lang:
             self.html_lang = values.get("lang", "")
         if tag == "meta":
+            if values.get("name", "").lower() == "description":
+                self.meta_descriptions.append(values.get("content", ""))
             if values.get("charset"):
                 self.charsets.append(values["charset"])
             elif values.get("http-equiv", "").lower() == "content-type":
@@ -123,6 +126,31 @@ def inspect_document_basics(html: str, page_url: str) -> list[AuditFinding]:
             "Keep one intentional title element and verify the final rendered document title.",
             ["Inspect title elements in source and rendered DOM.",
              "Check whether a template or client-side script injects duplicate title elements."],
+            page_url,
+        ))
+    descriptions = [value.strip() for value in parser.meta_descriptions if value.strip()]
+    if not descriptions:
+        findings.append(_finding(
+            "on_page_seo",
+            "Non-empty meta description not detected",
+            "manual_review_required",
+            "low",
+            f"No non-empty meta name=description content was detected in the returned HTML for {page_url}.",
+            "A useful meta description can help search engines and people understand a page in search results, but search engines may generate a different snippet. Its absence does not establish a ranking penalty.",
+            "Add a concise, accurate description specific to the page where it is useful, then verify the rendered head and avoid repeating boilerplate across unrelated pages.",
+            ["Inspect the page source and rendered head for meta name=description.", "Compare descriptions across representative product, category, and home pages."],
+            page_url,
+        ))
+    elif len(descriptions) > 1:
+        findings.append(_finding(
+            "on_page_seo",
+            "Multiple non-empty meta descriptions detected",
+            "manual_review_required",
+            "low",
+            f"Found {len(descriptions)} non-empty meta description elements in returned HTML for {page_url}.",
+            "Multiple descriptions make the intended snippet metadata ambiguous; scripts may also alter metadata after the initial response.",
+            "Keep one intentional, accurate meta description where appropriate and verify the final rendered head.",
+            ["Inspect source and rendered head for duplicate description elements.", "Check whether templates or client-side scripts inject metadata."],
             page_url,
         ))
     if not parser.landmarks:
