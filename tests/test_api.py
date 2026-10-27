@@ -1052,6 +1052,71 @@ async def test_paddle_subscription_cancellation_deactivates_linked_license_idemp
         assert license_obj.is_active is False
 
 
+
+@pytest.mark.asyncio
+async def test_paddle_payment_failure_is_recorded_without_immediately_deactivating_license(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_payment_failure123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_payment_failure_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_payment_failure_purchase",
+            "subscription_id": "sub_payment_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_payment_failure123",
+            "customer": {"email": "payment-failure@example.com", "name": "Payment Failure"},
+            "items": [{"price": {"id": "pri_payment_failure123"}, "quantity": 1}],
+        },
+    }
+    provision = await send(purchase)
+    assert provision.status_code == 200
+
+    failed_payment = {
+        "event_id": "evt_payment_failure_attempt",
+        "event_type": "transaction.payment_failed",
+        "data": {
+            "id": "txn_payment_failure_attempt",
+            "subscription_id": "sub_payment_failure123",
+            "customer_id": "ctm_payment_failure123",
+            "customer": {"email": "payment-failure@example.com"},
+        },
+    }
+    first = await send(failed_payment)
+    assert first.status_code == 200
+    assert first.json()["status"] == "payment_failed"
+    duplicate = await send(failed_payment)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Payment Failure")
+        )).scalar_one()
+        assert license_obj.is_active is True
+        failure_event = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_payment_failure_attempt")
+        )).scalar_one()
+        assert failure_event.status == "payment_failed"
+        assert failure_event.license_id == license_obj.id
+
+
 @pytest.mark.asyncio
 async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
