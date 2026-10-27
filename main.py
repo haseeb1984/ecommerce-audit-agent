@@ -920,6 +920,14 @@ async def create_account_api_key(
     """Create a customer-owned API key and reveal its secret exactly once."""
     from sqlalchemy import select, func as sql_func
 
+    # Serialize key creation per license on databases that support row locks. Without
+    # this lock, simultaneous requests can both observe nine keys and create an
+    # eleventh key despite the per-account cap.
+    await db.execute(
+        select(SoftwareLicense.id)
+        .where(SoftwareLicense.id == license_obj.id)
+        .with_for_update()
+    )
     current_count = int((await db.execute(
         select(sql_func.count(APIKey.id)).where(APIKey.license_id == license_obj.id)
     )).scalar_one() or 0)
