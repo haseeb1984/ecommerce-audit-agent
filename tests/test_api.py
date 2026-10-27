@@ -263,7 +263,12 @@ async def test_root_and_database_health(client):
 
     health = await client.get("/health-check")
     assert health.status_code == 200
-    assert health.json() == {"status": "success", "db_connected": True, "result": 1}
+    assert health.json() == {
+        "status": "success",
+        "db_connected": True,
+        "schema_ready": True,
+        "result": 1,
+    }
 
 
 @pytest.mark.asyncio
