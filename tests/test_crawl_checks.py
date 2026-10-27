@@ -2069,3 +2069,45 @@ async def test_bounded_crawl_discloses_sitemap_urls_not_fetched_due_to_page_budg
 
     assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
     assert any("discovered sitemap URL(s) were not fetched" in item for item in limitations)
+
+
+@pytest.mark.asyncio
+async def test_llms_txt_check_records_outcome_when_optional_file_is_missing(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url == "https://shop.example/products/one":
+            return (
+                200,
+                '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url == "https://shop.example/llms.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/robots.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    llms_outcome = next(
+        item for item in outcomes if item.check_id == "llms_txt.basic_format"
+    )
+    assert llms_outcome.outcome in {"issue", "warning", "pass"}
+    assert llms_outcome.page_url == "https://shop.example/llms.txt"
+    assert any("llms.txt" in item.title.lower() for item in findings)
