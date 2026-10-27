@@ -85,9 +85,18 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
             )
         """))
         package_result = await db.execute(text("""
-            SELECT max_concurrent_audits FROM saas_plan_packages WHERE tier=:tier
+            SELECT monthly_audit_allowance, max_concurrent_audits
+            FROM saas_plan_packages WHERE tier=:tier
         """), {"tier": tier_key})
-        package_limit = package_result.scalar_one_or_none()
+        package_row = package_result.mappings().first()
+        # The live plan catalogue is the billing source of truth. The legacy
+        # license field remains a fallback for tiers not yet migrated to plans.
+        monthly_allowance = (
+            int(package_row["monthly_audit_allowance"])
+            if package_row is not None
+            else int(license_obj.max_monthly_audits)
+        )
+        package_limit = package_row["max_concurrent_audits"] if package_row is not None else None
         concurrency_limit = int(package_limit) if package_limit is not None else None
         if concurrency_limit is None:
             tier_env = tier_key.upper()
@@ -110,11 +119,11 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
                 raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail=f"Concurrent audit limit of {concurrency_limit} reached for tier '{license_obj.tier}'.")
 
-        if successful_count + pending_count >= license_obj.max_monthly_audits:
+        if successful_count + pending_count >= monthly_allowance:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=(
-                    f"Monthly audit quota of {license_obj.max_monthly_audits} "
+                    f"Monthly audit quota of {monthly_allowance} "
                     f"exceeded for tier '{license_obj.tier}'."
                 ),
             )
