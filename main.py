@@ -1518,10 +1518,60 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         raise HTTPException(status_code=400, detail="Completed Paddle transaction does not match a configured price.")
 
     from sqlalchemy import select
+    # Resolve subscription renewals to the original account before provisioning.
+    # Recurring transactions have new transaction IDs; treating each as a new purchase
+    # would otherwise mint a fresh license and send duplicate credentials every month.
+    transaction_id = str(transaction.get("id") or "")[:100] or None
+    subscription_id = str(transaction.get("subscription_id") or "")[:100] or None
+    if subscription_id:
+        linked_subscription_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(PaymentWebhookEvent.subscription_id == subscription_id)
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_subscription_event is not None and linked_subscription_event.license_id is not None:
+            linked_license = (await db.execute(
+                select(SoftwareLicense).where(SoftwareLicense.id == linked_subscription_event.license_id)
+            )).scalar_one_or_none()
+            if linked_license is not None:
+                existing_event = (await db.execute(
+                    select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+                )).scalar_one_or_none()
+                if existing_event is not None:
+                    if existing_event.status == "delivered":
+                        return {"status": "already_processed", "event_id": event_id}
+                    return {"status": "delivery_in_progress", "event_id": event_id}
+                if transaction_id:
+                    prior_renewal = (await db.execute(
+                        select(PaymentWebhookEvent).where(PaymentWebhookEvent.transaction_id == transaction_id)
+                    )).scalar_one_or_none()
+                    if prior_renewal is not None:
+                        return {"status": "already_processed", "event_id": prior_renewal.event_id}
+                linked_license.tier = plan["tier"]
+                linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
+                linked_license.is_active = True
+                renewal_customer = transaction.get("customer") or {}
+                renewal_customer_id = str(
+                    transaction.get("customer_id") or renewal_customer.get("id") or ""
+                ).strip()
+                renewal_event = PaymentWebhookEvent(
+                    event_id=event_id,
+                    status="delivered",
+                    license_id=linked_license.id,
+                    recipient_email=linked_subscription_event.recipient_email,
+                    transaction_id=transaction_id,
+                    subscription_id=subscription_id,
+                    paddle_customer_id=(renewal_customer_id[:100] or linked_subscription_event.paddle_customer_id),
+                )
+                db.add(renewal_event)
+                await db.commit()
+                await _record_operation_event(db, "subscription_renewed", linked_license.id, None, None)
+                return {"status": "subscription_renewed", "event_id": event_id, "license_id": linked_license.id}
+
     # Paddle retries normally reuse event_id, but a transaction can also be
     # delivered under a distinct event ID. Reuse the original provisioning record
     # by transaction ID so a second notification cannot mint another license.
-    transaction_id = str(transaction.get("id") or "")[:100] or None
     if transaction_id:
         # Serialize provisioning for this purchase before looking up its event.
         # This closes the race where distinct event IDs arrive simultaneously
