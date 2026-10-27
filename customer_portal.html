@@ -75,7 +75,8 @@
   let evidenceTotal = 0;
   const evidencePageSize = 20;
   let evidenceLoading = false;
-  let apiKeyRows = [];\n  let newlyCreatedApiKey = "";
+  let apiKeyRows = [];
+  let newlyCreatedApiKey = "";
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
