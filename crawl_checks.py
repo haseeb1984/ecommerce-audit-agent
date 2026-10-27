@@ -322,7 +322,12 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
 
         if any(is_product_type(item) for item in types):
             return True
-        return contains_product(value.get("@graph", []))
+        # Product entities can be nested in common JSON-LD containers rather than
+        # appearing only at the document root or inside @graph.
+        return any(
+            contains_product(value.get(key, []))
+            for key in ("@graph", "mainEntity", "itemListElement", "hasVariant")
+        )
 
     for script in parser.jsonld_scripts:
         try:
