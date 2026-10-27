@@ -240,3 +240,10 @@
 
 - Corrected the HTTP form-downgrade finding to rebuild evidence destinations from validated hostname and non-default port instead of echoing the raw URL authority. This prevents embedded username/password userinfo from entering the report and continues to omit query strings.
 - Added regression coverage for an HTTP form action containing synthetic userinfo, query token and a non-default port. Tests remain unexecuted; no deployment or migration performed.
+
+
+## On-page SEO metadata implementation batch — 2026-10-27
+
+- Extended the sampled HTML document checker to detect missing/empty meta descriptions and multiple non-empty description elements.
+- Findings are labeled as low-priority manual review, with explicit caveats that search engines may generate alternate snippets and absence alone does not prove a ranking penalty.
+- Added regression cases for absent, single valid, and duplicate meta descriptions. Tests are committed but not run, consistent with the implementation-first sequence. No migration or deployment performed.
