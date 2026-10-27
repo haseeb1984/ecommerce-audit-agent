@@ -224,6 +224,8 @@ async def test_portal_pages_send_browser_security_headers_and_disable_caching(cl
         assert response.headers["x-frame-options"] == "DENY"
         assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
         assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+        if path == "/admin":
+            assert "smtp_configuration_issues" in response.text
 
 
 @pytest.mark.asyncio
