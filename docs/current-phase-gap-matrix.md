@@ -435,3 +435,29 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
 
+### Audit-engine branch — robots.txt crawl-policy enforcement
+
+- Added a bounded robots.txt rule parser for the crawler's own product token and wildcard group, including Allow/Disallow precedence by longest matching path, wildcard patterns, query matching, and end-of-pattern anchors.
+- Both sitemap/homepage-discovered candidate pages and subsequently discovered internal links are filtered against applicable robots rules.
+- If robots.txt returns a server error, redirects off-origin, or cannot be fetched, additional page crawling is conservatively stopped rather than assuming permission.
+- Added focused unit cases for blocked/allowed paths, more-specific Allow rules, wildcard query patterns, and crawler-specific groups.
+- Regression tests have not been executed. The homepage is still fetched as the explicitly requested audit target; robots policy controls additional page crawling. Passive exposure probes now use the same robots path filter, with a focused test that disallowed probes are skipped. Full RFC edge-case conformance remains a review item.
+
+### Billing branch — payment-failure lifecycle visibility
+
+- The verified Paddle webhook now persists `transaction.payment_failed` and `subscription.past_due` events against the linked license, so customer billing history and operator event history can show failures instead of silently ignoring them.
+- Duplicate event IDs are idempotent. A failure event that cannot yet be linked to a provisioned subscription returns retryable HTTP 503 rather than acknowledging and losing the event.
+- A single failed transaction is recorded but does not automatically deactivate the license; Paddle's retry/dunning policy remains authoritative.
+- Added a regression test for payment-failure persistence, duplicate delivery and license access continuity. Tests have not been run.
+
+### Customer branch — expired-account API key recovery
+
+- The API-key list endpoint now uses the narrowly scoped account-ownership dependency already used for revocation. It allows an expired/inactive account to view key metadata and revoke compromised keys without granting audit/report access or returning stored key secrets.
+- The customer portal keeps key-list refresh available when audit usage/report access is expired, while key creation remains disabled unless normal audit access is available.
+- Added an API regression test covering list → revoke → empty list for an expired, inactive license. Tests have not been run.
+
+### Admin branch — bounded payment event queue
+
+- Added a protected `/api/v1/admin/payment-events` endpoint with bounded limit/offset pagination and exact status filtering. Response fields are allowlisted to event/lifecycle identifiers and timestamps; customer email and license secrets are not returned.
+- Added an operator-console queue with status filtering, paging, reconciliation and pending license-email retry actions.
+- Added API regression coverage for pagination, filtering, validation and response minimization. Tests have not been run.
