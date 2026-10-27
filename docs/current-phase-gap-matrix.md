@@ -141,6 +141,12 @@
 - URL evidence privacy regression coverage is present in `tests/test_api.py`; it must be confirmed by the full test suite rather than treated as passed based on source inspection.
 - Release acceptance remains incomplete until the latest-commit workflow result and live customer audit/PDF/history/ownership/email-consent journey are reviewed. A `READY` deployment alone does not prove feature correctness.
 
+## Static checker outcome recording — source-level implementation
+
+- The bounded crawler now emits explicit per-page outcome records for standard security headers, header quality, viewport declarations, static performance resource signals, static accessibility signals, and visible trust-signal inventory.
+- A successfully executed checker with no findings records `pass`; emitted verified findings record `issue`; review prompts record `warning`; and unavailable checker results remain `not_assessed`. These records use the actual sampled page URL and method description.
+- This improves the denominator and check-level coverage evidence without treating the absence of a finding as a pass. It does not replace rendered-browser, manual, authenticated, or external-dataset verification. Source-level change only; no tests have been run.
+
 ## Explicitly unassessed verification methods — source-level implementation
 
 - Added `unavailable_checks.py` and wired it into the comprehensive audit pipeline. Each audit now records individual `not_assessed` outcomes for rendered JavaScript DOM comparison, real-browser viewport matrix, browser console/network diagnostics, manual WCAG review, owner-authorized Google Search Console status, backlink/competitor datasets, authorized checkout testing, consent-dependent analytics event verification, active security testing, and trust-mark authenticity review.
