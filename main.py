@@ -1002,6 +1002,34 @@ def _load_saved_report_coverage(coverage_json: str | None) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _sanitize_saved_evidence_records(records: list, offset: int, limit: int) -> list[dict]:
+    """Return a bounded, allowlisted, redacted slice of persisted report evidence."""
+    allowed = {
+        "check_id", "check_name", "category", "page_url", "source_url", "outcome",
+        "observed_at_utc", "method", "test_method", "evidence", "evidence_ref",
+        "title", "status", "severity", "finding_id", "description", "recommendation",
+        "message", "detail", "notes", "evidence_confidence", "standard_reference",
+        "affected_urls", "observed_value", "limitation", "reason", "tool_version",
+    }
+    result = []
+    for record in records[offset:offset + limit]:
+        if not isinstance(record, dict):
+            continue
+        safe = {}
+        for field in allowed:
+            if field not in record:
+                continue
+            value = record[field]
+            if isinstance(value, str):
+                safe[field] = _redact_audit_metadata_text(value, limit=2000)
+            elif isinstance(value, (int, float, bool)) or value is None:
+                safe[field] = value
+            elif field == "affected_urls" and isinstance(value, list):
+                safe[field] = [_redact_audit_metadata_text(item, limit=1000) for item in value[:50] if isinstance(item, str)]
+        result.append(safe)
+    return result
+
+
 def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
     """Summarize only persisted explicit outcomes; never infer missing checks as passes."""
     states = ("pass", "issue", "warning", "not_assessed", "error")
@@ -1146,6 +1174,8 @@ async def get_audit_report_evidence(
     collection = metadata.get("findings" if kind == "findings" else "check_outcomes", [])
     if not isinstance(collection, list):
         collection = []
+    # Only object records are meaningful outcomes; malformed entries are not checks.
+    collection = [item for item in collection if isinstance(item, dict)]
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     outcome_summary = None
@@ -1177,7 +1207,7 @@ async def get_audit_report_evidence(
         "total": len(collection),
         "limit": limit,
         "offset": offset,
-        "items": collection[offset:offset + limit],
+        "items": _sanitize_saved_evidence_records(collection, offset, limit),
     }
 
 
@@ -1579,6 +1609,7 @@ def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: byte
 async def email_audit_report(
     report_id: int,
     payload: ReportEmailRequest,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -1609,6 +1640,8 @@ async def email_audit_report(
     except Exception as exc:
         logger.error("Report email delivery failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Email delivery failed; verify SMTP configuration and retry.") from exc
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {"status": "sent", "report_id": row.id}
 
 
@@ -2330,6 +2363,7 @@ async def admin_report_evidence(
     records = metadata.get(key, [])
     if not isinstance(records, list):
         records = []
+    records = [item for item in records if isinstance(item, dict)]
     states = ("pass", "issue", "warning", "not_assessed", "error")
     counts = {
         state: sum(
@@ -2339,17 +2373,7 @@ async def admin_report_evidence(
         for state in states
     }
     denominator = len(records)
-    items = []
-    for item in records[offset:offset + limit]:
-        if not isinstance(item, dict):
-            continue
-        # Only return the fields needed for audit review; never return arbitrary metadata.
-        allowed = (
-            "check_id", "category", "page_url", "outcome", "observed_at_utc",
-            "method", "evidence", "evidence_ref", "title", "status", "severity",
-            "finding_id", "description", "recommendation",
-        )
-        items.append({field: item[field] for field in allowed if field in item})
+    items = _sanitize_saved_evidence_records(records, offset, limit)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
