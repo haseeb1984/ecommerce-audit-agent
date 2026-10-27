@@ -1250,6 +1250,29 @@ async def get_audit_report_evidence(
 
 
 
+def _smtp_configuration_status() -> dict:
+    """Describe SMTP readiness without returning configured values or secrets."""
+    issues = []
+    if not os.getenv("SMTP_HOST", "").strip():
+        issues.append("SMTP_HOST missing")
+    if not os.getenv("SMTP_FROM", "").strip():
+        issues.append("SMTP_FROM missing")
+    try:
+        port = int(os.getenv("SMTP_PORT", "587").strip())
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except (TypeError, ValueError):
+        issues.append("SMTP_PORT must be an integer from 1 to 65535")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        issues.append("SMTP_TLS_MODE must be starttls or ssl")
+    username = os.getenv("SMTP_USERNAME", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "")
+    if bool(username) != bool(password):
+        issues.append("SMTP_USERNAME and SMTP_PASSWORD must both be set or both be empty")
+    return {"configured": not issues, "issues": issues}
+
+
 def _configured_smtp_port() -> int:
     """Validate SMTP port configuration before opening a network connection."""
     raw_port = os.getenv("SMTP_PORT", "587").strip()
@@ -2234,13 +2257,15 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         SELECT COUNT(*) FROM saas_operation_events
         WHERE created_at >= NOW() - INTERVAL '24 hours'
     """))).scalar_one()
+    smtp_status = _smtp_configuration_status()
     return {
         "generated_at": now.isoformat(),
         "health": {
             "database": database_status,
             "paddle_api_key_configured": bool(os.getenv("PADDLE_API_KEY", "").strip()),
             "paddle_webhook_secret_configured": bool(os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()),
-            "smtp_configured": bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip()),
+            "smtp_configured": smtp_status["configured"],
+            "smtp_configuration_issues": smtp_status["issues"],
             "admin_key_configured": bool(os.getenv("ADMIN_API_KEY", "").strip()),
         },
         "counts": {
