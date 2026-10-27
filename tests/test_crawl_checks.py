@@ -17,6 +17,40 @@ class FakeClientSession:
 
 
 @pytest.mark.asyncio
+async def test_sitemap_discovered_url_status_is_recorded_without_claiming_indexing(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    sitemap = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://shop.example/products/missing</loc></url>'
+        '</urlset>'
+    )
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 200, sitemap, {"content-type": "application/xml"}, url
+        if url == "https://shop.example/products/missing":
+            return 404, "", {"content-type": "text/html"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    outcome = next(item for item in outcomes if item.check_id == "sitemap.discovered_url_status")
+    assert outcome.outcome == "issue"
+    assert outcome.page_url == "https://shop.example/products/missing"
+    assert "HTTP 404" in outcome.evidence
+    assert any(item.title == "Internal URL returned an error" for item in findings)
+    assert "https://shop.example/products/missing" in checked
+
+@pytest.mark.asyncio
 async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
     pages = {
