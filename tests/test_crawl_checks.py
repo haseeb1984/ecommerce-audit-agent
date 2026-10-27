@@ -75,7 +75,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
 
     async def fake_safe_get(client, url):
         requested.append(url)
-        return pages[url]
+        return pages.get(url, (404, "", {"content-type": "text/plain"}, url))
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
     findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(
