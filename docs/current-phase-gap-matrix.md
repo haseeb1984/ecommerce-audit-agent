@@ -304,3 +304,10 @@
 - No production environment variables, database migrations, or deployment settings were changed.
 
 - Operator console now displays the specific non-secret SMTP configuration issues returned by the diagnostics endpoint, rather than showing only a generic missing/configured state.
+
+
+## Audit target validation phase — 2026-10-27
+
+- Added a shared target-normalization gate before calling PageSpeed: only HTTP(S) URL input is accepted, embedded credentials/query/fragment/custom ports are rejected, local/private IP literals and common local hostnames are blocked, and internationalized hostnames are canonicalized.
+- Audit requests now pass the normalized URL to PageSpeed instead of naïvely concatenating arbitrary input into a URL. This is a defense-in-depth input gate, not a claim of complete DNS-rebinding/SSRF protection for a future direct crawler; DNS resolution and redirect-safe fetching remain required before implementing direct crawling.
+- Added parameterized positive and negative regression coverage. Tests are not run in this implementation batch; do not treat this as release verified.
