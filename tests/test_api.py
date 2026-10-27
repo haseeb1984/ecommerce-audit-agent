@@ -109,6 +109,33 @@ def test_smtp_configuration_status_accepts_valid_unauthenticated_starttls(monkey
 
     assert main._smtp_configuration_status() == {"configured": True, "issues": []}
 
+@pytest.mark.parametrize("target", [
+    "http://127.0.0.1",
+    "https://10.0.0.1",
+    "http://[::1]/admin",
+    "localhost",
+    "service.internal",
+    "https://user:password@shop.example",
+    "https://shop.example:8443",
+    "https://shop.example/?token=secret",
+    "javascript:alert(1)",
+    "not a valid hostname",
+])
+def test_audit_target_normalization_rejects_unsafe_or_ambiguous_targets(target):
+    with pytest.raises(ValueError):
+        main.agent._normalize_audit_target(target)
+
+
+@pytest.mark.parametrize("target,expected", [
+    ("shop.example", "https://shop.example/"),
+    ("https://Shop.Example/products", "https://shop.example/products"),
+    ("http://shop.example/", "https://shop.example/"),
+    ("https://bücher.example/catalog", "https://xn--bcher-kva.example/catalog"),
+])
+def test_audit_target_normalization_canonicalizes_public_targets(target, expected):
+    assert main.agent._normalize_audit_target(target) == expected
+
+
 def test_coverage_manifest_does_not_infer_aria_or_alt_text_from_general_accessibility():
     finding = SimpleNamespace(
         category="accessibility",
