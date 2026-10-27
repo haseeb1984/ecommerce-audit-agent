@@ -1486,9 +1486,17 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
             {"subscription_id": subscription_id},
         )
+        duplicate_cancellation = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate_cancellation is not None:
+            return {"status": "already_processed", "event_id": event_id}
         linked_event = (await db.execute(
             select(PaymentWebhookEvent)
-            .where(PaymentWebhookEvent.subscription_id == subscription_id)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            )
             .order_by(PaymentWebhookEvent.updated_at.desc())
             .limit(1)
         )).scalar_one_or_none()
@@ -1502,11 +1510,21 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=503, detail="Subscription cancellation is awaiting license reconciliation.")
         changed = bool(license_obj.is_active)
         license_obj.is_active = False
-        # Persist a sticky lifecycle marker on the latest subscription event.
-        # A delayed transaction.completed webhook must not reactivate access after
-        # a cancellation has already been applied.
-        linked_event.status = "subscription_canceled"
-        linked_event.updated_at = datetime.now(timezone.utc)
+        # Keep the original purchase/renewal event intact for billing history and
+        # store cancellation as its own idempotent lifecycle event. The new event
+        # is the latest subscription record, so late payment events see the sticky
+        # canceled state without erasing the original payment's delivery status.
+        now = datetime.now(timezone.utc)
+        db.add(PaymentWebhookEvent(
+            event_id=event_id,
+            status="subscription_canceled",
+            license_id=license_obj.id,
+            recipient_email=linked_event.recipient_email,
+            subscription_id=subscription_id,
+            paddle_customer_id=linked_event.paddle_customer_id,
+            created_at=now,
+            updated_at=now,
+        ))
         await db.commit()
         if changed:
             await _record_operation_event(db, "subscription_canceled", license_obj.id, None, None)
