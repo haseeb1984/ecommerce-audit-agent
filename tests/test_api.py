@@ -1885,6 +1885,15 @@ async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access
     key_id = listing.json()["items"][0]["id"]
     assert "key" not in listing.json()["items"][0]
 
+    # The UI is not the security boundary: direct API requests must also be denied.
+    creation = await client.post("/api/v1/account/api-keys", headers=headers)
+    assert creation.status_code == 402
+    async with AsyncSessionLocal() as db:
+        remaining_keys = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert len(remaining_keys) == 1
+
     revoke = await client.delete(f"/api/v1/account/api-keys/{key_id}", headers=headers)
     assert revoke.status_code == 200
     assert revoke.json()["status"] == "revoked"
