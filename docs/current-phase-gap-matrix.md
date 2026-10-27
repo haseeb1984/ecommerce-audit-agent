@@ -390,3 +390,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The cap matches existing homepage source-review and crawl-discovery limits; anchors beyond the retained window do not affect these bounded checks.
 - Added a regression test with 750 links to assert total counting and bounded retained state.
 - Verification status: source/test committed only; this new test and the full suite have not yet been executed in a clean environment.
+
+
+## llms.txt check-level coverage — implementation batch
+
+- The bounded crawl now records an individual `llms_txt.basic_format` check outcome alongside findings. A same-origin HTTP response is classified through the existing conservative outcome recorder; an off-origin redirect is recorded as `not_assessed`, and fetch exceptions are recorded as `error`.
+- Added a crawl regression test for the optional file being absent (HTTP 404), asserting that the check outcome and finding are both present. The test is committed but has **not been executed**.
+- This is a proposed convention/basic-format check only. It does not imply ranking value, indexing control, or AI crawler usage. No deployment, migration, or workflow run was performed.
