@@ -1962,22 +1962,20 @@ async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimi
 async def test_admin_overview_filters_clients_by_status_and_package(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-filter-key")
     headers = {"X-Admin-Key": "test-admin-filter-key"}
-    await create_license(key="filter-active", client_name="Filter Active", tier="starter", quota=5)
+    await create_license(key="filter-active", quota=5)
+    await create_license(key="filter-expired", quota=5, expires_at=datetime.now(timezone.utc) - timedelta(days=1))
+    await create_license(key="filter-inactive", quota=20, active=False)
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
-        active = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.client_name == "Filter Active"))).scalar_one()
-        active.is_active = True
-        active.expires_at = None
-        expired = SoftwareLicense(
-            client_name="Filter Expired", license_key="filter-expired",
-            tier="starter", max_monthly_audits=5, is_active=True,
-            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
-        )
-        inactive = SoftwareLicense(
-            client_name="Filter Inactive", license_key="filter-inactive",
-            tier="growth", max_monthly_audits=20, is_active=False,
-        )
-        db.add_all([expired, inactive])
+        active = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.license_key == "filter-active"))).scalar_one()
+        active.client_name = "Filter Active"
+        active.tier = "starter"
+        expired = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.license_key == "filter-expired"))).scalar_one()
+        expired.client_name = "Filter Expired"
+        expired.tier = "starter"
+        inactive = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.license_key == "filter-inactive"))).scalar_one()
+        inactive.client_name = "Filter Inactive"
+        inactive.tier = "growth"
         await db.commit()
 
     active_page = await client.get("/api/v1/admin/overview?client_status=active&tier_filter=starter", headers=headers)
