@@ -163,17 +163,56 @@ def build_coverage_manifest(
     categories_checked = len(observed) + len(checked_without_findings)
     recorded_observations = []
     for finding in findings:
-        category = str(getattr(finding, "category", "unknown"))
-        title = str(getattr(finding, "title", "Untitled check"))
+        category = str(getattr(finding, "category", "unknown"))[:100]
+        title = str(getattr(finding, "title", "Untitled check"))[:300]
         safe_source_url = _safe_evidence_url(getattr(finding, "source_url", None))
         identity = "|".join((category, title, safe_source_url or ""))
+        generated_id = "F-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12].upper()
+        finding_id = str(getattr(finding, "finding_id", "") or "").strip()
+        if not re.fullmatch(r"F-[A-F0-9]{12}", finding_id):
+            finding_id = generated_id
+        def safe_text(value: object, limit: int = 1200) -> str | None:
+            if not isinstance(value, str):
+                return None
+            cleaned = " ".join(value.split())
+            return cleaned[:limit] or None
+        raw_steps = getattr(finding, "verification_steps", [])
+        verification_steps = [
+            safe_text(step, 500) for step in raw_steps[:12]
+            if isinstance(step, str) and safe_text(step, 500)
+        ] if isinstance(raw_steps, list) else []
+        raw_references = getattr(finding, "standard_references", [])
+        standard_references = [
+            safe_text(reference, 500) for reference in raw_references[:10]
+            if isinstance(reference, str) and safe_text(reference, 500)
+        ] if isinstance(raw_references, list) else []
+        raw_dependencies = getattr(finding, "dependencies", [])
+        dependencies = [
+            safe_text(item, 300) for item in raw_dependencies[:10]
+            if isinstance(item, str) and safe_text(item, 300)
+        ] if isinstance(raw_dependencies, list) else []
         recorded_observations.append({
-            "check_id": hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16],
+            "finding_id": finding_id,
+            "check_id": finding_id,
             "category": category,
             "title": title,
-            "status": str(getattr(finding, "status", "unknown")),
-            "severity": str(getattr(finding, "severity", "info")),
+            "status": str(getattr(finding, "status", "unknown"))[:80],
+            "severity": str(getattr(finding, "severity", "info"))[:40],
+            "severity_rationale": safe_text(getattr(finding, "severity_rationale", None), 800),
             "source_url": safe_source_url,
+            "observed_at_utc": safe_text(getattr(finding, "observed_at_utc", None), 40),
+            "test_method": safe_text(getattr(finding, "test_method", None), 300),
+            "evidence_confidence": safe_text(getattr(finding, "evidence_confidence", None), 80),
+            "evidence": safe_text(getattr(finding, "evidence", None), 1200),
+            "explanation": safe_text(getattr(finding, "explanation", None), 1200),
+            "recommendation": safe_text(getattr(finding, "recommendation", None), 1200),
+            "verification_steps": verification_steps,
+            "standard_references": standard_references,
+            "potential_benefit": safe_text(getattr(finding, "potential_benefit", None), 500),
+            "risk_if_unresolved": safe_text(getattr(finding, "risk_if_unresolved", None), 500),
+            "estimated_effort": safe_text(getattr(finding, "estimated_effort", None), 120),
+            "effort_basis": safe_text(getattr(finding, "effort_basis", None), 500),
+            "dependencies": dependencies,
         })
 
     safe_target_url = _safe_evidence_url(target_url)
