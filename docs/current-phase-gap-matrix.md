@@ -87,6 +87,12 @@
 - Admin console GET requests now explicitly use browser `cache: "no-store"` for JSON API reads and PDF downloads. After connection succeeds or fails, the password input is cleared; the active key remains only in the page's in-memory variable for the connected session. This is source-level hardening and has not been browser-tested.
 - Production readiness remains unproven until targeted tests, CI, migrations, and end-to-end ownership/security acceptance are verified.
 
+## Customer billing history — source-level implementation
+
+- Added an authenticated `/api/v1/account/billing-history` endpoint scoped to the verified license, returning at most 50 recent payment provisioning events and account tier/status/expiry metadata. It does not return recipient email or payment instrument details and sends private no-store headers.
+- Added the billing history section to the customer portal, showing event status, transaction/subscription identifiers, and created/updated timestamps. Billing data is cleared when account data is reset or credentials change.
+- A source inspection also found and corrected literal escaped-newline sequences in the customer portal script introduced during earlier API-key UI edits. No browser or automated tests have been run; syntax and runtime behavior still need the deferred verification phase.
+
 ## Operator API key lifecycle — source-level implementation
 
 - Added admin-authenticated endpoints to list a client's API-key metadata, create a key with a one-time secret response, and revoke only a key belonging to the client in the URL. Create/revoke actions write sanitized admin audit records and never persist the raw key.
