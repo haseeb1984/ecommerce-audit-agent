@@ -1267,3 +1267,25 @@ def test_indexing_signal_outcome_includes_meta_and_response_header(markup, heade
     outcome = next(item for item in outcomes if item.check_id == "html.meta_robots_noindex")
     assert outcome.outcome == expected
     assert "not proof of actual search-engine index status" in outcome.evidence
+
+
+
+def test_homepage_flags_unsafe_link_schemes_without_echoing_destinations():
+    html = """
+    <html><head><title>Shop</title></head><body>
+      <a href="javascript:runSomething()">Action</a>
+      <a href="https://user:secret@example.com/path?token=private">External</a>
+      <a href="https://shop.example/products/1">Product</a>
+    </body></html>
+    """
+    findings = audit_checks.inspect_homepage(
+        html,
+        "https://shop.example/",
+        {"content-type": "text/html; charset=utf-8"},
+    )
+    finding = next(item for item in findings if item.title == "Link destinations need source-level review")
+    assert finding.status == "manual_review_required"
+    assert "1 script/data/file scheme target(s)" in finding.evidence
+    assert "1 HTTP(S) target(s) containing URL credentials" in finding.evidence
+    assert "secret" not in finding.evidence
+    assert "token=private" not in finding.evidence
