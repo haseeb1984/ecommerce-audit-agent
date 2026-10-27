@@ -1044,8 +1044,11 @@ async def list_account_api_keys(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     now = datetime.now(timezone.utc)
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     can_create = bool(license_obj.is_active) and not (
-        license_obj.expires_at is not None and license_obj.expires_at <= now
+        expires_at is not None and expires_at <= now
     )
     return {
         "items": [
