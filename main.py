@@ -1006,19 +1006,16 @@ def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
     """Summarize only persisted explicit outcomes; never infer missing checks as passes."""
     states = ("pass", "issue", "warning", "not_assessed", "error")
     counts = {state: 0 for state in states}
-    try:
-        payload = json.loads(coverage_json or "{}")
-        outcomes = payload.get("check_outcomes", [])
-        if not isinstance(outcomes, list):
-            outcomes = []
-        for item in outcomes:
-            if not isinstance(item, dict):
-                continue
-            state = item.get("outcome")
-            if state in counts:
-                counts[state] += 1
-    except (TypeError, ValueError):
+    payload = _load_saved_report_coverage(coverage_json)
+    outcomes = payload.get("check_outcomes", [])
+    if not isinstance(outcomes, list):
         outcomes = []
+    for item in outcomes:
+        if not isinstance(item, dict):
+            continue
+        state = item.get("outcome")
+        if state in counts:
+            counts[state] += 1
     denominator = sum(counts.values())
     return {
         "counts": counts,
