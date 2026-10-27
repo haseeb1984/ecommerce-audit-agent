@@ -207,3 +207,26 @@ async def test_pagespeed_field_urls_drop_query_secrets_and_categories_are_allowl
     assert result.final_url == "https://shop.example/product"
     assert "field-secret" not in str(result.model_dump())
     assert "final-secret" not in str(result.model_dump())
+
+
+@pytest.mark.asyncio
+async def test_pagespeed_accepts_documented_field_data_categories(monkeypatch):
+    agent = make_agent(
+        monkeypatch,
+        FakeResponse(payload={
+            "loadingExperience": {
+                "id": "https://shop.example/",
+                "overall_category": "FAST",
+                "metrics": {
+                    "INTERACTION_TO_NEXT_PAINT": {"percentile": 180, "category": "NEEDS_IMPROVEMENT"},
+                },
+            },
+            "lighthouseResult": {
+                "categories": {"performance": {"score": 0.8}},
+                "audits": {"speed-index": {"numericValue": 1000}},
+            },
+        }),
+    )
+    result = await agent.run_audit("shop.example")
+    assert result.field_data_context["url_overall_category"] == "FAST"
+    assert result.field_metrics["url:INTERACTION_TO_NEXT_PAINT"]["category"] == "NEEDS_IMPROVEMENT"
