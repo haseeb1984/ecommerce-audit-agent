@@ -1956,3 +1956,37 @@ async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimi
 
     invalid_limit = await client.get("/api/v1/admin/payment-events?limit=101", headers=headers)
     assert invalid_limit.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_overview_filters_clients_by_status_and_package(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-filter-key")
+    headers = {"X-Admin-Key": "test-admin-filter-key"}
+    await create_license(key="filter-active", client_name="Filter Active", tier="starter", quota=5)
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        active = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.client_name == "Filter Active"))).scalar_one()
+        active.is_active = True
+        active.expires_at = None
+        expired = SoftwareLicense(
+            client_name="Filter Expired", license_key="filter-expired",
+            tier="starter", max_monthly_audits=5, is_active=True,
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+        inactive = SoftwareLicense(
+            client_name="Filter Inactive", license_key="filter-inactive",
+            tier="growth", max_monthly_audits=20, is_active=False,
+        )
+        db.add_all([expired, inactive])
+        await db.commit()
+
+    active_page = await client.get("/api/v1/admin/overview?client_status=active&tier_filter=starter", headers=headers)
+    assert active_page.status_code == 200, active_page.text
+    assert {row["client_name"] for row in active_page.json()["clients"]} == {"Filter Active"}
+    assert active_page.json()["client_page"]["status"] == "active"
+    expired_page = await client.get("/api/v1/admin/overview?client_status=expired", headers=headers)
+    assert expired_page.status_code == 200, expired_page.text
+    assert {row["client_name"] for row in expired_page.json()["clients"]} == {"Filter Expired"}
+    inactive_page = await client.get("/api/v1/admin/overview?client_status=inactive", headers=headers)
+    assert inactive_page.status_code == 200, inactive_page.text
+    assert {row["client_name"] for row in inactive_page.json()["clients"]} == {"Filter Inactive"}
