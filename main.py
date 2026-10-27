@@ -1071,11 +1071,24 @@ async def list_account_api_keys(
 @app.post("/api/v1/account/api-keys", status_code=201)
 async def create_account_api_key(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Create a customer-owned API key and reveal its secret exactly once."""
+    """Create a customer-owned API key and reveal its secret exactly once.
+
+    Account ownership is resolved even after expiry so the API can return a clear
+    payment-required response for expired subscriptions, while revoked accounts
+    remain forbidden. This dependency does not grant audit or report access.
+    """
     from sqlalchemy import select, func as sql_func
+
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=402, detail="License expired. Renewal required.")
+    if not license_obj.is_active:
+        raise HTTPException(status_code=403, detail="License is inactive or revoked.")
 
     # Serialize key creation per license on databases that support row locks. Without
     # this lock, simultaneous requests can both observe nine keys and create an
