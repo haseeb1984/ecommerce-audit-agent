@@ -1756,3 +1756,39 @@ async def test_health_check_returns_not_ready_when_required_schema_columns_are_m
     assert raised.value.detail["missing_tables"] == []
     assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
 
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_database_indexes_are_missing():
+    required_tables = set(main.Base.metadata.tables)
+    existing_columns = [
+        (table_name, column.name)
+        for table_name, table in main.Base.metadata.tables.items()
+        for column in table.columns
+    ]
+    required_indexes = sorted({
+        index.name
+        for table_name in required_tables
+        for index in main.Base.metadata.tables[table_name].indexes
+        if index.name
+    })
+    assert required_indexes, "test fixture requires at least one mapped index"
+    existing_indexes = [name for name in required_indexes if name != required_indexes[0]]
+
+    class IncompleteIndexSchemaSession:
+        async def execute(self, statement):
+            sql = str(statement)
+            if "SELECT 1" in sql:
+                return SimpleNamespace(scalar=lambda: 1)
+            if "information_schema.tables" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
+            if "information_schema.columns" in sql:
+                return SimpleNamespace(all=lambda: existing_columns)
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: existing_indexes))
+
+    with pytest.raises(HTTPException) as raised:
+        await main.health_check(IncompleteIndexSchemaSession())
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail["status"] == "not_ready"
+    assert raised.value.detail["schema_ready"] is False
+    assert raised.value.detail["missing_indexes"] == [required_indexes[0]]
+
