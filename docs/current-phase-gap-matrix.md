@@ -302,3 +302,5 @@
 - Admin operations diagnostics now validate SMTP configuration completeness rather than checking only host and sender. They flag invalid ports, unsupported TLS modes, and incomplete username/password pairs without returning secret values.
 - Added focused regression tests for missing configuration, invalid settings, and a valid STARTTLS setup. Tests have not been executed in this batch; live SMTP delivery and provider connectivity remain unverified.
 - No production environment variables, database migrations, or deployment settings were changed.
+
+- Operator console now displays the specific non-secret SMTP configuration issues returned by the diagnostics endpoint, rather than showing only a generic missing/configured state.
