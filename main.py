@@ -1972,10 +1972,15 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
     # Multiple cold-start requests can enter this lazy initializer simultaneously.
     # Serialize DDL + plan seeding within PostgreSQL; the transaction lock is released
     # by the caller's commit/rollback, preventing CREATE INDEX / INSERT deadlocks.
-    await db.execute(text(
-        "SELECT pg_advisory_xact_lock(hashtext('ecommerce_audit_admin_schema_v1'))"
-    ))
-    await db.execute(text("""
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        await db.execute(text(
+            "SELECT pg_advisory_xact_lock(hashtext('ecommerce_audit_admin_schema_v1'))"
+        ))
+    timestamp_type = "TIMESTAMPTZ" if dialect_name == "postgresql" else "DATETIME"
+    timestamp_default = "NOW()" if dialect_name == "postgresql" else "CURRENT_TIMESTAMP"
+    id_type = "BIGSERIAL PRIMARY KEY" if dialect_name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    await db.execute(text(f"""
         CREATE TABLE IF NOT EXISTS saas_plan_packages (
             tier VARCHAR(50) PRIMARY KEY,
             label VARCHAR(100) NOT NULL,
@@ -1983,22 +1988,22 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
             max_concurrent_audits INTEGER NOT NULL CHECK (max_concurrent_audits BETWEEN 1 AND 10000),
             paddle_price_id VARCHAR(100),
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default},
+            updated_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
         )
     """))
     await db.execute(text("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_plan_packages_paddle_price_id
         ON saas_plan_packages (paddle_price_id) WHERE paddle_price_id IS NOT NULL
     """))
-    await db.execute(text("""
+    await db.execute(text(f"""
         CREATE TABLE IF NOT EXISTS saas_operation_events (
-            id BIGSERIAL PRIMARY KEY,
+            id {id_type},
             event_type VARCHAR(80) NOT NULL,
             license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
             domain VARCHAR(255),
             error_type VARCHAR(120),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
         )
     """))
     await db.execute(text("""
@@ -2009,14 +2014,14 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         CREATE INDEX IF NOT EXISTS ix_saas_operation_events_type_created
         ON saas_operation_events (event_type, created_at DESC)
     """))
-    await db.execute(text("""
+    await db.execute(text(f"""
         CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
-            id BIGSERIAL PRIMARY KEY,
+            id {id_type},
             action VARCHAR(80) NOT NULL,
             entity_type VARCHAR(50) NOT NULL,
             entity_id VARCHAR(255),
-            details_json TEXT NOT NULL DEFAULT '{}',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            details_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
         )
     """))
     await db.execute(text("""
@@ -2024,8 +2029,16 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         ON saas_admin_action_logs (created_at DESC, id DESC)
     """))
     # Keep billing references available when this code is upgraded against an existing database.
-    await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100)"))
-    await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"))
+    if dialect_name == "postgresql":
+        await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100)"))
+        await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"))
+    elif dialect_name == "sqlite":
+        columns = (await db.execute(text("PRAGMA table_info(payment_webhook_events)"))).all()
+        column_names = {row[1] for row in columns}
+        if "transaction_id" not in column_names:
+            await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN transaction_id VARCHAR(100)"))
+        if "subscription_id" not in column_names:
+            await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN subscription_id VARCHAR(100)"))
     await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id ON payment_webhook_events (transaction_id)"))
     await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id ON payment_webhook_events (subscription_id)"))
     # Migrate configured legacy plans without overwriting operator-managed values.
@@ -2055,9 +2068,9 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         if concurrency > 1:
             await db.execute(text("""
                 UPDATE saas_plan_packages
-                SET max_concurrent_audits=:concurrency, updated_at=NOW()
+                SET max_concurrent_audits=:concurrency, updated_at=:updated_at
                 WHERE tier=:tier AND max_concurrent_audits=1
-            """), {"tier": tier, "concurrency": concurrency})
+            """), {"tier": tier, "concurrency": concurrency, "updated_at": datetime.now(timezone.utc)})
     await db.commit()
 
 
