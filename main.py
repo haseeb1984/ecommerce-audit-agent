@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
@@ -782,6 +782,107 @@ async def get_account_usage(
         "is_active": bool(license_obj.is_active),
         "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
     }
+
+
+@app.get("/api/v1/account/api-keys")
+async def list_account_api_keys(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List metadata for this account's API keys; never return stored key material."""
+    from sqlalchemy import select
+
+    rows = (await db.execute(
+        select(APIKey)
+        .where(APIKey.license_id == license_obj.id)
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
+        .limit(100)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "key_prefix": item.key_prefix,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            for item in rows
+        ],
+        "limit": 100,
+        "note": "Full API keys are shown only once when created.",
+    }
+
+
+@app.post("/api/v1/account/api-keys", status_code=201)
+async def create_account_api_key(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a customer-owned API key and reveal its secret exactly once."""
+    from sqlalchemy import select, func as sql_func
+
+    current_count = int((await db.execute(
+        select(sql_func.count(APIKey.id)).where(APIKey.license_id == license_obj.id)
+    )).scalar_one() or 0)
+    if current_count >= 10:
+        raise HTTPException(
+            status_code=409,
+            detail="This account already has 10 API keys. Revoke an unused key before creating another.",
+        )
+
+    raw_key = "eaa_" + secrets.token_urlsafe(32)
+    key_hash = APIKey.hash_key(raw_key)
+    item = APIKey(
+        license_id=license_obj.id,
+        api_key_hash=key_hash,
+        key_prefix=raw_key[:10],
+    )
+    db.add(item)
+    try:
+        await db.commit()
+        await db.refresh(item)
+    except Exception:
+        await db.rollback()
+        logger.error("Customer API key creation failed (license_id=%s)", license_obj.id)
+        raise HTTPException(status_code=503, detail="API key could not be created. Please retry.") from None
+
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": item.id,
+        "key": raw_key,
+        "key_prefix": item.key_prefix,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "warning": "Copy this key now. It cannot be retrieved again.",
+    }
+
+
+@app.delete("/api/v1/account/api-keys/{key_id}")
+async def revoke_account_api_key(
+    key_id: int,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke one API key only when it belongs to the authenticated account."""
+    from sqlalchemy import delete
+
+    result = await db.execute(
+        delete(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.license_id == license_obj.id,
+        )
+    )
+    if not result.rowcount:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="API key not found for this account.")
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "key_id": key_id}
 
 
 def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
