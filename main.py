@@ -759,7 +759,15 @@ async def get_account_usage(
             AuditQuotaReservation.expires_at > now,
         )
     )).scalar_one() or 0)
-    limit = max(0, int(license_obj.max_monthly_audits or 0))
+    # Show the same operator-managed allowance that quota enforcement uses.
+    # Retain the license column as a migration fallback for older/unlisted tiers.
+    package_result = await db.execute(text("""
+        SELECT monthly_audit_allowance FROM saas_plan_packages WHERE tier=:tier
+    """), {"tier": str(license_obj.tier or "starter").strip().lower()})
+    package_limit = package_result.scalar_one_or_none()
+    limit = max(0, int(
+        package_limit if package_limit is not None else (license_obj.max_monthly_audits or 0)
+    ))
     consumed = used + pending
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
