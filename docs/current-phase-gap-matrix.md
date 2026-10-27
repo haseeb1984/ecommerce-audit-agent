@@ -326,3 +326,10 @@
 - Recurring renewals are recorded as delivered billing events without sending the original license secret again. This prevents a new license and duplicate credential email for each new recurring transaction ID.
 - Added a regression journey covering initial purchase, a separate renewal transaction, duplicate webhook delivery, account count, event history and no repeat credential email.
 - Tests are committed but have not been executed. Paddle sandbox renewal payloads and production event ordering still require verification before release; no deployment, environment change or migration was performed.
+
+## Paddle subscription lifecycle consistency — implementation batch
+
+- Renewal and cancellation handlers now take the same PostgreSQL transaction-scoped advisory lock keyed by subscription ID, serializing these two lifecycle transitions.
+- Applying a verified cancellation records a sticky `subscription_canceled` state on the linked subscription event and deactivates the linked license. A delayed or replayed `transaction.completed` event for that subscription is acknowledged without reactivating the license or issuing another license.
+- Added regression coverage for the ordering case: purchase → cancellation → late renewal; the test asserts the license remains inactive and no renewal event is recorded.
+- This is source-level implementation only. The new regression test has not been run, Paddle sandbox event ordering has not been exercised, and the advisory-lock behavior assumes the production PostgreSQL database. A legitimate subscription resumption must be handled through a separately verified lifecycle/reconciliation flow; payment completion alone is not treated as proof of resumption. No deployment, migration, or infrastructure change was performed.
