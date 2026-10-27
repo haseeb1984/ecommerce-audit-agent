@@ -340,3 +340,11 @@
 - Repeated delivery of the same cancellation event ID returns the existing canceled state without creating a duplicate record. Cancellation remains the latest subscription lifecycle event, so a late `transaction.completed` event cannot reactivate access.
 - Regression coverage now asserts that a purchase remains `delivered`, cancellation is separately recorded as `subscription_canceled`, and a late renewal leaves the license inactive.
 - Source-level implementation and tests are committed; tests have not been executed. Sandbox payload/order verification, production migration checks, full customer workflow acceptance, and deployment remain pending. No database migration or deployment was performed.
+
+
+
+## Source-level link destination review — 2026-10-27
+
+- The homepage HTML checker now reviews a bounded sample of up to 500 anchor destinations without fetching external URLs. It reports counts for script/data/file schemes, HTTP(S) URLs containing embedded credentials, and malformed/unsupported schemes.
+- Raw destination strings are intentionally excluded from evidence so credentials and query tokens are not copied into findings. Ordinary external-link availability/status is still not checked, and browser-driven navigation behavior remains outside this source-only check.
+- Added a regression test for a JavaScript URL and a credential/query-bearing external URL. Test is committed but has not been run; no deployment or migration was performed.
