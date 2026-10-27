@@ -854,6 +854,46 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
 
 
 @pytest.mark.asyncio
+async def test_paddle_subscription_cancellation_deactivates_linked_license_idempotently(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01cancel123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+    purchase = {"event_id": "evt_purchase_for_cancel", "event_type": "transaction.completed",
+        "data": {"id": "txn_01cancel123", "subscription_id": "sub_01cancel123", "status": "completed",
+        "custom_data": {"license_tier": "starter"}, "customer_id": "ctm_01cancel123",
+        "customer": {"email": "cancel-buyer@example.com", "name": "Cancel Buyer"},
+        "items": [{"price": {"id": "pri_01cancel123"}, "quantity": 1}]}}
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post("/api/v1/billing/paddle-webhook", content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"})
+    provision = await send(purchase)
+    assert provision.status_code == 200
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.client_name == "Cancel Buyer"))).scalar_one()
+        license_id = license_obj.id
+        assert license_obj.is_active is True
+    cancellation = {"event_id": "evt_subscription_cancelled", "event_type": "subscription.canceled",
+        "data": {"id": "sub_01cancel123"}}
+    first = await send(cancellation)
+    assert first.status_code == 200 and first.json()["status"] == "cancellation_applied"
+    second = await send(cancellation)
+    assert second.status_code == 200 and second.json()["status"] == "already_canceled"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.is_active is False
+
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_rejects_invalid_signature_without_provisioning(client, monkeypatch):
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "paddle-test-webhook-secret")
     body = b'{"event_id":"evt_bad","event_type":"transaction.completed","data":{"status":"completed"}}'
