@@ -87,6 +87,12 @@
 - Admin console GET requests now explicitly use browser `cache: "no-store"` for JSON API reads and PDF downloads. After connection succeeds or fails, the password input is cleared; the active key remains only in the page's in-memory variable for the connected session. This is source-level hardening and has not been browser-tested.
 - Production readiness remains unproven until targeted tests, CI, migrations, and end-to-end ownership/security acceptance are verified.
 
+## Operator API key lifecycle — source-level implementation
+
+- Added admin-authenticated endpoints to list a client's API-key metadata, create a key with a one-time secret response, and revoke only a key belonging to the client in the URL. Create/revoke actions write sanitized admin audit records and never persist the raw key.
+- The operator console's selected-client history panel now exposes key listing, create/copy/hide controls, and reasoned, confirmed revocation. Disconnect clears the displayed secret and client key metadata.
+- Source-level implementation only: admin authentication, one-time secret handling, account scoping, concurrency at the 10-key limit, browser behavior, and database compatibility still require the deferred verification phase.
+
 ## Customer API key lifecycle — source-level implementation
 
 - Added license-scoped customer endpoints to list API key metadata, create an API key with a one-time secret response, and revoke a key only when it belongs to the authenticated license.
