@@ -46,6 +46,13 @@
 <div id="apiKeys" class="reports" aria-live="polite"><p class="muted">Connect your account to manage API keys.</p></div>
 <div id="apiKeyStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
+<section class="panel" aria-labelledby="activityHeading">
+<h2 id="activityHeading">Recent audit activity</h2>
+<p class="muted">See recent audit runs associated with this account. Contact details and generated outreach content are never shown in this activity list.</p>
+<div id="auditActivity" class="reports"><p class="muted">Connect your account to load audit activity.</p></div>
+<p id="activityPageStatus" class="muted" aria-live="polite">No activity loaded.</p>
+<div class="report-actions"><button id="refreshActivity" class="secondary" type="button">Refresh activity</button><button id="loadMoreActivity" class="secondary" type="button" hidden>Load more activity</button></div>
+</section>
 <section class="panel">
 <h2>2. Run a website audit</h2>
 <form id="auditForm"><label for="target">Public website URL</label><input id="target" type="url" required maxlength="2048" placeholder="https://example.com"><p class="muted">Only public HTTP/HTTPS websites are accepted. This performs an audit only; it does not change the target website. A run consumes your license quota.</p><button id="runAudit" type="submit">Run audit and generate PDF</button></form><div id="auditStatus" class="status" role="status" aria-live="polite">Connect your credential first.</div>
@@ -261,6 +268,46 @@
       if (!Number.isNaN(expiry.getTime())) $("usageSummary").textContent += " · Expires " + expiry.toLocaleDateString();
     }
   }
+  let activityRows = [], activityTotal = 0, activityLoading = false;
+  function renderActivity() {
+    const container = $("auditActivity"); container.replaceChildren();
+    if (!activityRows.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No audit activity recorded for this account yet.";
+      container.append(empty);
+    }
+    for (const item of activityRows) {
+      const card = document.createElement("article"); card.className = "report";
+      const title = document.createElement("strong"); title.textContent = String(item.domain || "Unknown website");
+      const details = document.createElement("small");
+      const when = item.created_at ? new Date(item.created_at) : null;
+      details.textContent = "Audit #" + item.id + " · " +
+        (when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : "Time not recorded") +
+        " · Mobile score: " + (item.mobile_score == null ? "not available" : item.mobile_score) +
+        " · Speed index: " + (item.speed_index_sec == null ? "not available" : Number(item.speed_index_sec).toFixed(2) + " s") +
+        " · Source: " + (item.source || "not recorded");
+      card.append(title, details); container.append(card);
+    }
+    $("activityPageStatus").textContent = "Showing " + activityRows.length + " of " + activityTotal + " audit records.";
+    $("loadMoreActivity").hidden = activityRows.length >= activityTotal;
+  }
+  async function loadActivity({reset = true} = {}) {
+    if (activityLoading) return;
+    activityLoading = true;
+    const more = $("loadMoreActivity"), refresh = $("refreshActivity");
+    more.disabled = true; refresh.disabled = true;
+    try {
+      const offset = reset ? 0 : activityRows.length;
+      const response = await api("/api/v1/account/activity?limit=20&offset=" + offset);
+      const data = await response.json();
+      const page = Array.isArray(data.items) ? data.items : [];
+      activityRows = reset ? page : [...activityRows, ...page];
+      activityTotal = Math.max(0, Number(data.page && data.page.total) || 0);
+      renderActivity();
+    } finally {
+      activityLoading = false; more.disabled = false; refresh.disabled = false;
+    }
+  }
   async function loadReports({reset = true} = {}) {
     if (reportsLoading) return;
     reportsLoading = true;
@@ -452,6 +499,14 @@
     $("savedEvidenceItems").replaceChildren();
   });
   $("reportFilter").addEventListener("input", renderReports);
+  $("refreshActivity").addEventListener("click", async () => {
+    try { await loadActivity(); setStatus("connectStatus", "Audit activity refreshed.", "success"); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
+  $("loadMoreActivity").addEventListener("click", async () => {
+    try { await loadActivity({reset:false}); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
   $("loadMoreReports").addEventListener("click", async () => {
     try { await loadReports({reset:false}); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
@@ -476,6 +531,7 @@
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
     $("usageReset").textContent = "Period reset: —";
+    activityRows = []; activityTotal = 0; renderActivity();
     $("billingAccount").textContent = "Connect your account to load billing status.";
     apiKeyCreationAllowed = false;
     $("billingEvents").replaceChildren(); setStatus("billingStatus", "Account connection required.");
@@ -492,8 +548,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()]);
-      const names = ["saved reports", "usage and audit access", "API keys"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
