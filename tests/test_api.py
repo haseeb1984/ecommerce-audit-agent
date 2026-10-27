@@ -479,6 +479,40 @@ async def test_invalid_configured_concurrency_limit_fails_closed(client, monkeyp
     assert await table_count(AuditQuotaReservation) == 0
 
 
+
+@pytest.mark.asyncio
+async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access(client):
+    raw_key = "expired-account-key-secret"
+    license_id = await create_license(
+        key="expired-key-owner",
+        quota=5,
+        active=False,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(APIKey(
+            license_id=license_id,
+            api_key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix=raw_key[:10],
+        ))
+        await db.commit()
+
+    headers = {"X-License-Key": "expired-key-owner"}
+    listing = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing.status_code == 200
+    assert len(listing.json()["items"]) == 1
+    key_id = listing.json()["items"][0]["id"]
+    assert "key" not in listing.json()["items"][0]
+
+    revoke = await client.delete(f"/api/v1/account/api-keys/{key_id}", headers=headers)
+    assert revoke.status_code == 200
+    assert revoke.json()["status"] == "revoked"
+
+    listing_after_revoke = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing_after_revoke.status_code == 200
+    assert listing_after_revoke.json()["items"] == []
+
+
 @pytest.mark.asyncio
 async def test_api_key_authentication_and_revocation(client, mock_process_lead):
     api_key = "test-api-key-secret"
