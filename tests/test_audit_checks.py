@@ -1289,3 +1289,35 @@ def test_homepage_flags_unsafe_link_schemes_without_echoing_destinations():
     assert "1 HTTP(S) target(s) containing URL credentials" in finding.evidence
     assert "secret" not in finding.evidence
     assert "token=private" not in finding.evidence
+
+
+
+@pytest.mark.parametrize(
+    ("rel", "should_flag"),
+    [
+        ("", True),
+        ("nofollow", True),
+        ("noopener", False),
+        ("noreferrer", False),
+        ("nofollow noopener", False),
+    ],
+)
+def test_homepage_reviews_target_blank_opener_isolation(rel, should_flag):
+    rel_attribute = f' rel="{rel}"' if rel else ""
+    html = (
+        "<html lang=\"en\"><head><title>Shop</title></head><body>"
+        f'<a href="https://partner.example/" target="_blank"{rel_attribute}>Partner</a>'
+        "</body></html>"
+    )
+    findings = audit_checks.inspect_homepage(
+        html, "https://shop.example/", {"content-type": "text/html"}
+    )
+    matches = [
+        item for item in findings
+        if item.title == "New-tab links lack explicit opener isolation"
+    ]
+    assert bool(matches) is should_flag
+    if matches:
+        assert matches[0].status == "manual_review_required"
+        assert "1 anchor link(s)" in matches[0].evidence
+        assert "partner.example" not in matches[0].evidence
