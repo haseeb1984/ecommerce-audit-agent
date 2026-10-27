@@ -2300,6 +2300,67 @@ async def admin_download_audit_report(report_id: int, request: Request,
     )
 
 
+@app.get("/api/v1/admin/reports/{report_id}/evidence")
+async def admin_report_evidence(
+    report_id: int,
+    request: Request,
+    response: Response,
+    kind: str = Query("check_outcomes", pattern="^(findings|check_outcomes)$"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return bounded persisted report evidence for operators, without exposing PDF bytes."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+
+    report = (await db.execute(
+        select(AuditReport).where(AuditReport.id == report_id)
+    )).scalar_one_or_none()
+    if report is None:
+        raise HTTPException(status_code=404, detail="Audit report not found.")
+    try:
+        metadata = json.loads(report.coverage_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    key = "findings" if kind == "findings" else "check_outcomes"
+    records = metadata.get(key, [])
+    if not isinstance(records, list):
+        records = []
+    states = ("pass", "issue", "warning", "not_assessed", "error")
+    counts = {
+        state: sum(
+            1 for item in records
+            if isinstance(item, dict) and item.get("outcome") == state
+        )
+        for state in states
+    }
+    denominator = len(records)
+    items = []
+    for item in records[offset:offset + limit]:
+        if not isinstance(item, dict):
+            continue
+        # Only return the fields needed for audit review; never return arbitrary metadata.
+        allowed = (
+            "check_id", "category", "page_url", "outcome", "observed_at_utc",
+            "method", "evidence", "evidence_ref", "title", "status", "severity",
+            "finding_id", "description", "recommendation",
+        )
+        items.append({field: item[field] for field in allowed if field in item})
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "report_id": report.id,
+        "domain": report.domain,
+        "kind": kind,
+        "total": denominator,
+        "limit": limit,
+        "offset": offset,
+        "counts": counts if kind == "check_outcomes" else None,
+        "items": items,
+    }
+
+
 @app.get("/api/v1/admin/clients/{license_id}/history")
 async def admin_client_history(license_id: int, request: Request, limit: int = Query(100, ge=1, le=500),
                               db: AsyncSession = Depends(get_async_db)):
