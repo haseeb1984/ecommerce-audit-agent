@@ -2193,3 +2193,72 @@ async def test_robots_txt_records_check_outcome_for_success_and_unavailable_resp
     )
     assert robots_outcome.outcome == expected_outcome
     assert robots_outcome.page_url == "https://shop.example/robots.txt"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "final_url", "expected_outcome"),
+    [
+        (200, "https://shop.example/products/available", "pass"),
+        (503, "https://shop.example/products/available", "error"),
+        (302, "https://external.example/products/available", "not_assessed"),
+    ],
+)
+async def test_sitemap_discovered_url_status_classifies_success_server_error_and_off_origin_redirect(
+    monkeypatch, status, final_url, expected_outcome
+):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    sitemap = (
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://shop.example/products/available</loc></url></urlset>'
+    )
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 200, sitemap, {"content-type": "application/xml"}, url
+        if url == "https://shop.example/products/available":
+            return status, "", {"content-type": "text/html"}, final_url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl("https://shop.example/", outcome_records=outcomes)
+    outcome = next(item for item in outcomes if item.check_id == "sitemap.discovered_url_status")
+    assert outcome.outcome == expected_outcome
+    if expected_outcome == "pass":
+        assert "does not establish indexing" in outcome.evidence.lower()
+    elif expected_outcome == "error":
+        assert "HTTP 503" in outcome.evidence
+    else:
+        assert "off-origin" in outcome.evidence.lower()
+
+
+@pytest.mark.asyncio
+async def test_sitemap_discovered_url_status_records_fetch_exception_as_error(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    sitemap = (
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://shop.example/products/unreachable</loc></url></urlset>'
+    )
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 200, sitemap, {"content-type": "application/xml"}, url
+        if url == "https://shop.example/products/unreachable":
+            raise TimeoutError("synthetic timeout")
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl("https://shop.example/", outcome_records=outcomes)
+    outcome = next(item for item in outcomes if item.check_id == "sitemap.discovered_url_status")
+    assert outcome.outcome == "error"
+    assert "TimeoutError" in outcome.evidence
