@@ -187,11 +187,19 @@ def build_coverage_manifest(
         key: value for key, value in raw_limits.items()
         if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10_000_000
     }
+    raw_module_statuses = context.get("module_statuses") if isinstance(context.get("module_statuses"), dict) else {}
+    allowed_module_states = {"not_started", "running", "completed", "unavailable", "error"}
+    module_statuses = {
+        str(key)[:80]: value
+        for key, value in raw_module_statuses.items()
+        if isinstance(key, str) and value in allowed_module_states
+    }
     safe_run_context = {
         "started_at_utc": str(context.get("started_at_utc") or "")[:40] or None,
         "completed_at_utc": str(context.get("completed_at_utc") or "")[:40] or None,
         "target_scope": str(context.get("target_scope") or "Public-site audit; authentication and active testing are not assumed.")[:500],
         "user_agent": str(context.get("user_agent") or "")[:200] or None,
+        "module_statuses": module_statuses,
         "limits": limits,
         "measurement_context": {
             str(key)[:80]: str(value)[:500]
