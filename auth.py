@@ -111,3 +111,36 @@ async def verify_account_credentials_for_key_revocation(
             detail="Invalid account credentials.",
         )
     return license_obj
+
+
+async def verify_account_credentials_for_billing(
+    api_key: str = Security(API_KEY_HEADER),
+    license_key: str = Security(LICENSE_HEADER),
+    db: AsyncSession = Depends(get_async_db),
+) -> SoftwareLicense:
+    """Authenticate account ownership for billing history/portal, including expired accounts.
+
+    This dependency only resolves the account for billing self-service routes; it does
+    not grant audit, report, or quota access. Revoked API keys remain invalid because
+    lookup requires a currently stored key hash.
+    """
+    if not api_key and not license_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed. Provide 'X-API-Key' or 'X-License-Key' header.",
+        )
+
+    if api_key:
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        stmt = select(SoftwareLicense).join(APIKey).where(APIKey.api_key_hash == key_hash)
+    else:
+        stmt = select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
+
+    result = await db.execute(stmt)
+    license_obj = result.scalar_one_or_none()
+    if license_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid account credentials.",
+        )
+    return license_obj
