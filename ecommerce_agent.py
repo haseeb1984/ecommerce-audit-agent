@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import math
+import ipaddress
 import re
 from urllib.parse import urlsplit, urlunsplit
 
@@ -14,6 +15,54 @@ logger = logging.getLogger(__name__)
 
 FIELD_DATA_METRIC_CATEGORIES = {"GOOD", "NEEDS_IMPROVEMENT", "POOR"}
 FIELD_DATA_OVERALL_CATEGORIES = {"FAST", "AVERAGE", "SLOW", "GOOD", "NEEDS_IMPROVEMENT", "POOR"}
+
+def _normalize_audit_target(value: object) -> str:
+    """Normalize a public HTTP(S) audit target and reject unsafe or ambiguous hosts."""
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 2048 or any(ord(char) < 32 for char in raw):
+        raise ValueError("Enter a valid public website URL or domain.")
+    candidate = raw if "://" in raw else "https://" + raw
+    try:
+        parts = urlsplit(candidate)
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        port = parts.port
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ValueError("Enter a valid public website URL or domain.") from exc
+    if scheme not in {"http", "https"} or not host or parts.username is not None or parts.password is not None:
+        raise ValueError("Only public HTTP(S) website URLs without embedded credentials are supported.")
+    if parts.query or parts.fragment:
+        raise ValueError("Remove query parameters and fragments; audit a public page URL.")
+    if port is not None and port not in {80, 443}:
+        raise ValueError("Custom ports are not supported for public website audits.")
+    host = host.rstrip(".").lower()
+    if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".lan")):
+        raise ValueError("Private and local network targets cannot be audited.")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        raise ValueError("Private, reserved, and local IP addresses cannot be audited.")
+    if address is None:
+        try:
+            ascii_host = host.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ValueError("Enter a valid public website hostname.") from exc
+        labels = ascii_host.split(".")
+        if len(labels) < 2 or any(
+            not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+            or not re.fullmatch(r"[a-z0-9-]+", label)
+            for label in labels
+        ):
+            raise ValueError("Enter a valid public website hostname.")
+        host = ascii_host
+    path = parts.path or "/"
+    if not path.startswith("/") or "\\" in path:
+        raise ValueError("Enter a valid public website URL path.")
+    # PageSpeed should receive a clean URL; credentials, query strings, and fragments never pass through.
+    return urlunsplit(("https", host if address is None else f"[{host}]" if ":" in host else host, path, "", ""))
+
 
 def _safe_pagespeed_url(value: object) -> str | None:
     """Retain only public HTTP(S) URL identity, omitting userinfo, query and fragment."""
@@ -148,10 +197,10 @@ class UniversalEcommerceAgent:
         return ordered
 
     async def run_audit(self, domain: str) -> StoreAuditMetrics:
-        clean_domain = domain.replace("https://", "").replace("http://", "").strip("/")
+        target_url = _normalize_audit_target(domain)
         endpoint = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
         params = {
-            "url": f"https://{clean_domain}",
+            "url": target_url,
             "strategy": "mobile",
             "category": "performance",
         }
