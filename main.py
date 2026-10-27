@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
-from auth import verify_license_or_api_key
+from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, normalize_target, run_phase_one_checks
 from report_generator import render_audit_pdf
@@ -968,10 +968,14 @@ async def create_account_api_key(
 async def revoke_account_api_key(
     key_id: int,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Revoke one API key only when it belongs to the authenticated account."""
+    """Revoke an account-owned API key, including after the license expires.
+
+    The dedicated dependency grants no audit/report access and is used only for
+    this revocation action so expired customers can invalidate compromised keys.
+    """
     from sqlalchemy import delete
 
     result = await db.execute(
