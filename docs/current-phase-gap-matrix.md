@@ -440,3 +440,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 Scope: Paddle signature validation, idempotency, checkout/price entitlement matching, initial purchase, recurring renewal, cancellation, delayed/replayed events, failed delivery recovery, billing history and reconciliation. Preserve existing license continuity and do not resend license secrets on renewal.
 
 Acceptance: deterministic webhook tests for duplicates and out-of-order lifecycle events, plus sandbox notification reconciliation without triggering a new payment. No production billing actions without approval. Status: branch created from shared base; feature implementation not yet completed or verified.
+
+### Billing branch — payment-failure lifecycle visibility
+
+- The verified Paddle webhook now persists `transaction.payment_failed` and `subscription.past_due` events against the linked license, so customer billing history and operator event history can show failures instead of silently ignoring them.
+- Duplicate event IDs are idempotent. A failure event that cannot yet be linked to a provisioned subscription returns retryable HTTP 503 rather than acknowledging and losing the event.
+- A single failed transaction is recorded but does not automatically deactivate the license; Paddle's retry/dunning policy remains authoritative.
+- Added a regression test for payment-failure persistence, duplicate delivery and license access continuity. Tests have not been run.
