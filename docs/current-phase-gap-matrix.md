@@ -435,3 +435,8 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
 
+## Parallel implementation lane — admin operations workflows
+
+Scope: operator overview, client search/pagination, license and API-key management, package entitlements, payment-event reconciliation, retryable email delivery, action logs and non-secret diagnostics. Validate authorization and bounded inputs for every admin route.
+
+Acceptance: route-level authorization tests, audit trail tests, pagination/search edge cases, and UI success/error/loading states. Status: branch created from shared base; feature implementation not yet completed or verified.
