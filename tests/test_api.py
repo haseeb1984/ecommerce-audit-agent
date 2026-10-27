@@ -1756,3 +1756,52 @@ async def test_health_check_returns_not_ready_when_required_schema_columns_are_m
     assert raised.value.detail["missing_tables"] == []
     assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
 
+@pytest.mark.asyncio
+async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimized(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-payment-event-queue-key")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_pending",
+                status="email_pending",
+                recipient_email="pending@example.com",
+                transaction_id="txn_admin_queue_pending",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_failed",
+                status="payment_failed",
+                recipient_email="failed@example.com",
+                transaction_id="txn_admin_queue_failed",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_delivered",
+                status="delivered",
+                recipient_email="delivered@example.com",
+                transaction_id="txn_admin_queue_delivered",
+            ),
+        ])
+        await db.commit()
+
+    headers = {"X-Admin-Key": "test-payment-event-queue-key"}
+    page = await client.get("/api/v1/admin/payment-events?limit=1&offset=0", headers=headers)
+    assert page.status_code == 200
+    assert page.json()["page"]["limit"] == 1
+    assert page.json()["page"]["total"] >= 3
+    assert len(page.json()["items"]) == 1
+    assert page.json()["page"]["has_more"] is True
+    assert "recipient_email" not in page.json()["items"][0]
+    assert "license_key" not in page.json()["items"][0]
+
+    failed = await client.get(
+        "/api/v1/admin/payment-events?status=payment_failed",
+        headers=headers,
+    )
+    assert failed.status_code == 200
+    assert all(item["status"] == "payment_failed" for item in failed.json()["items"])
+    assert any(item["event_id"] == "evt_admin_queue_failed" for item in failed.json()["items"])
+
+    invalid_limit = await client.get("/api/v1/admin/payment-events?limit=101", headers=headers)
+    assert invalid_limit.status_code == 422
+
+
+
