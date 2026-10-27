@@ -171,6 +171,25 @@ def test_coverage_manifest_preserves_only_known_module_lifecycle_states():
         "bounded_crawl": "error",
     }
 
+    # Untrusted/malformed context values must be ignored, not crash audit persistence.
+    malformed = build_coverage_manifest(
+        target_url="https://shop.example/",
+        pages_checked=[],
+        findings=[],
+        limitations=[],
+        run_context={
+            "module_statuses": {
+                "pagespeed": "unavailable",
+                "nested": {"state": "completed"},
+                "list_value": ["completed"],
+                "number_value": 1,
+            },
+        },
+    )
+    assert malformed["audit_run_context"]["module_statuses"] == {
+        "pagespeed": "unavailable",
+    }
+
 
 def test_recorded_observation_keeps_bounded_finding_contract():
     finding = SimpleNamespace(
