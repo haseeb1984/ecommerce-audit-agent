@@ -7,7 +7,7 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
     headers = {"X-Admin-Key": "test-admin-key-only"}
 
     unauthorized = await client.get("/api/v1/admin/packages")
-    assert unauthorized.status_code == 403
+    assert unauthorized.status_code == 401
 
     created = await client.post(
         "/api/v1/admin/packages",
