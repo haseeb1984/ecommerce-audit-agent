@@ -439,4 +439,12 @@ No deployment, database migration, payment, or production-site audit was run as 
 
 Scope: schema/table/column compatibility, migration inventory and safe startup/readiness diagnostics, persistence/ownership consistency, quota reservation integrity and production-migration documentation. Do not execute production migrations or destructive database actions.
 
-Acceptance: schema compatibility tests against model metadata, migration-to-model gap review, test database persistence and rollback/cleanup coverage. Status: branch created from shared base; the main branch's current readiness change is not yet ported to this branch, and the lane is not verified.
+Acceptance: schema compatibility tests against model metadata, migration-to-model gap review, test database persistence and rollback/cleanup coverage. Status: branch created from the shared implementation base; table, mapped-column, and mapped-index readiness checks are now included with regression tests. Tests have not run, and this does not validate SQL types, constraints, migration order, or data integrity.
+
+### Database readiness branch — mapped index verification
+
+- The database-readiness branch extends the endpoint to compare mapped SQLAlchemy indexes for the nine required application tables against PostgreSQL's pg_indexes catalog.
+- Missing indexes now produce HTTP 503 with a bounded missing_indexes list; the endpoint does not attempt to create indexes or run migrations.
+- Added a regression test for an intentionally missing mapped index. Test is committed but has not been run.
+- This is PostgreSQL-specific and checks mapped index names only. SQL types, unique/foreign-key constraints, migration order and production data integrity still require separate acceptance.
+
