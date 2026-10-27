@@ -33,10 +33,14 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
         )
         license_obj = result.scalar_one_or_none()
 
+        expires_at = license_obj.expires_at if license_obj is not None else None
+        if expires_at is not None and expires_at.tzinfo is None:
+            # Normalize legacy SQLite/naive timestamps to UTC before comparison.
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
         if (
             license_obj is None
             or not license_obj.is_active
-            or (license_obj.expires_at and license_obj.expires_at < now)
+            or (expires_at is not None and expires_at <= now)
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
