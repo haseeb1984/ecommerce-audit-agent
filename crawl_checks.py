@@ -417,8 +417,10 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             break
 
     if found_product:
-        # Audit core commerce fields conservatively. This is a source-level completeness
-        # signal only: it does not compare the JSON-LD against the visible/selected variant.
+        # ProductGroup is a variant-family container; commerce fields commonly live
+        # on its Product variants. Do not report missing image/offers on the group
+        # itself as a defect. Validate concrete Product nodes and traverse variant
+        # references already represented inline in the JSON-LD.
         product_nodes: list[dict] = []
 
         def collect_product_nodes(value):
@@ -434,7 +436,7 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
                 item.rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].casefold()
                 for item in types if isinstance(item, str)
             }
-            if normalized_types.intersection({"product", "productgroup"}):
+            if "product" in normalized_types:
                 product_nodes.append(value)
             for key, child in value.items():
                 if key in {"@graph", "mainEntity", "itemListElement", "hasVariant"}:
@@ -445,6 +447,12 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
                 collect_product_nodes(json.loads(script))
             except (json.JSONDecodeError, TypeError):
                 continue
+
+        # A valid ProductGroup without inline Product variants is still evidence
+        # that product-family markup exists; variant-level completeness cannot be
+        # judged from absent variant nodes, so avoid a misleading false positive.
+        if not product_nodes:
+            return []
 
         gaps: set[str] = set()
         for node in product_nodes:
@@ -469,7 +477,7 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             return [_finding(
                 "structured_data", "Product structured data has core commerce fields to review",
                 "manual_review_required", "medium" if {"offers", "offer price", "offer currency", "offer availability"} & gaps else "low",
-                f"Core field(s) not detected in the inspected Product/ProductGroup JSON-LD on {page_url}: {', '.join(sorted(gaps))}. Raw structured-data values are not copied into the report.",
+                f"Core field(s) not detected in the inspected Product JSON-LD on {page_url}: {', '.join(sorted(gaps))}. Raw structured-data values are not copied into the report.",
                 "Product markup can be syntactically present while omitting information important to product understanding and eligible search experiences. Some fields may be intentionally supplied elsewhere or through variant-specific markup; this source-only check does not validate rich-result eligibility or compare data with the visible selected variant.",
                 "Review the rendered product and selected variant. Where applicable, provide accurate product name, image, offer price, ISO currency, and availability that match what customers can actually select and buy. Do not invent prices or stock states.",
                 ["Inspect the rendered page and all Product/Offer entities.", "Compare the selected variant's visible price, currency, image, and stock state with its structured data.", "Validate the final markup using an authoritative structured-data validator."],
