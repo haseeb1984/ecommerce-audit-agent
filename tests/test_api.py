@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import func, select
 
 import main
@@ -1705,3 +1706,23 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
+
+
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_schema_tables_are_missing():
+    class IncompleteSchemaSession:
+        async def execute(self, statement):
+            sql = str(statement)
+            if "SELECT 1" in sql:
+                return SimpleNamespace(scalar=lambda: 1)
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["software_licenses"]))
+
+    with pytest.raises(HTTPException) as raised:
+        await main.health_check(IncompleteSchemaSession())
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail["status"] == "not_ready"
+    assert raised.value.detail["db_connected"] is True
+    assert raised.value.detail["schema_ready"] is False
+    assert "audit_reports" in raised.value.detail["missing_tables"]
+    assert "payment_webhook_events" in raised.value.detail["missing_tables"]
