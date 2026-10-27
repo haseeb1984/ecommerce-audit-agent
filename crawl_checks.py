@@ -486,6 +486,19 @@ def inspect_canonical_declaration(html: str, page_url: str) -> list[AuditFinding
                 page_port = page_parts.port or (443 if page_scheme == "https" else 80)
             except ValueError:
                 target_port = page_port = None
+            if (target_scheme, target_host, target_port) == (page_scheme, page_host, page_port):
+                current_key = (page_parts.path or "/", page_parts.query)
+                target_key = (parts.path or "/", parts.query)
+                if current_key != target_key:
+                    findings.append(_finding(
+                        "indexability", "Canonical target differs from the inspected page URL",
+                        "manual_review_required", "low",
+                        f"The page {page_url} declares a same-origin canonical target at {target_scheme}://{target_host}{parts.path or '/'}" + (f"?{parts.query}" if parts.query else "") + ".",
+                        "A same-origin canonical that points to a different path or query can be intentional for duplicate or parameterized URLs, but it may also be a template or routing mistake. The source check does not determine which URL should be preferred or fetch the target.",
+                        "Confirm that the target is the intended equivalent, preferred URL and that it returns the expected page. Keep non-self canonicals where the site's duplicate-content strategy requires them.",
+                        ["Compare the inspected page and canonical target content.", "Check target status, redirects, indexability directives, and internal-link conventions before changing the canonical."],
+                        page_url,
+                    ))
             if (target_scheme, target_host, target_port) != (page_scheme, page_host, page_port):
                 # Cross-origin canonicals can be intentional, but deserve review
                 # because they consolidate indexing signals onto another origin.
