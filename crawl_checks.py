@@ -27,6 +27,7 @@ from security_checks import (
     inspect_standard_security_headers,
 )
 from dependency_checks import inspect_client_dependency_versions
+from document_basics_checks import inspect_document_basics
 
 from audit_checks import (
     REQUEST_TIMEOUT_SECONDS,
@@ -1645,6 +1646,16 @@ async def run_bounded_site_crawl(
                 outcome_records, check_id="security_headers.standard_headers",
                 category="security_headers", page_url=final_url,
                 findings=standard_header_findings, method="static HTTP response-header review",
+            )
+
+            # Basic document metadata and semantic landmarks are independently recorded.
+            # These are source-level signals, not a rendered accessibility verdict.
+            document_findings = inspect_document_basics(body, final_url)
+            findings.extend(document_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="document.basics_metadata_landmarks",
+                category="technical_seo", page_url=final_url,
+                findings=document_findings, method="static HTML document metadata and landmark inspection",
             )
 
             findings.extend(inspect_hreflang(body, final_url))
