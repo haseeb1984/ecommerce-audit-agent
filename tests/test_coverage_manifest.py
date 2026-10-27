@@ -170,3 +170,24 @@ def test_coverage_manifest_preserves_only_known_module_lifecycle_states():
         "pagespeed": "unavailable",
         "bounded_crawl": "error",
     }
+
+
+def test_recorded_observation_keeps_bounded_finding_contract():
+    finding = SimpleNamespace(
+        category="technical_seo", title="Canonical target", status="verified",
+        severity="medium", source_url="https://shop.example/page?token=secret",
+        explanation="Canonical points to the preferred URL.",
+        recommendation="Review the canonical target.",
+        verification_steps=["Open the page source."],
+        standard_references=["https://developers.google.com/search/docs"],
+    )
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/", pages_checked=[], findings=[finding], limitations=[]
+    )
+    row = manifest["recorded_observations"][0]
+    assert row["finding_id"].startswith("F-")
+    assert row["check_id"] == row["finding_id"]
+    assert row["source_url"] == "https://shop.example/page"
+    assert row["explanation"] == "Canonical points to the preferred URL."
+    assert row["verification_steps"] == ["Open the page source."]
+    assert row["standard_references"] == ["https://developers.google.com/search/docs"]
