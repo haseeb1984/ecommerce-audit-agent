@@ -1412,3 +1412,14 @@ async def test_admin_overview_rejects_out_of_range_page_parameters(client, monke
     negative_offset = await client.get("/api/v1/admin/overview?offset=-1", headers=headers)
     assert too_large.status_code == 422
     assert negative_offset.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_customer_portal_exposes_explicit_disconnect_and_clears_credentials(client):
+    response = await client.get("/app")
+    assert response.status_code == 200
+    assert 'id="disconnectAccount"' in response.text
+    assert "Disconnect &amp; clear account data" in response.text or "Disconnect & clear account data" in response.text
+    assert 'credential = "";' in response.text
+    assert 'setAccountControls(false)' in response.text
+    assert "Credentials were cleared; reconnect to continue." in response.text
