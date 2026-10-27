@@ -12,7 +12,8 @@ from groq import AsyncGroq
 
 logger = logging.getLogger(__name__)
 
-FIELD_DATA_CATEGORIES = {"GOOD", "AVERAGE", "NEEDS IMPROVEMENT", "POOR"}
+FIELD_DATA_METRIC_CATEGORIES = {"GOOD", "NEEDS_IMPROVEMENT", "POOR"}
+FIELD_DATA_OVERALL_CATEGORIES = {"FAST", "AVERAGE", "SLOW", "GOOD", "NEEDS_IMPROVEMENT", "POOR"}
 
 def _safe_pagespeed_url(value: object) -> str | None:
     """Retain only public HTTP(S) URL identity, omitting userinfo, query and fragment."""
@@ -248,7 +249,7 @@ class UniversalEcommerceAgent:
                 if not isinstance(experience, dict):
                     continue
                 overall_category = experience.get("overall_category")
-                if isinstance(overall_category, str) and overall_category.strip().upper() in FIELD_DATA_CATEGORIES:
+                if isinstance(overall_category, str) and overall_category.strip().upper() in FIELD_DATA_OVERALL_CATEGORIES:
                     field_data_context[f"{scope_label}_overall_category"] = overall_category.strip().upper()
                 experience_id = experience.get("id")
                 safe_experience_id = _safe_pagespeed_url(experience_id)
@@ -281,7 +282,7 @@ class UniversalEcommerceAgent:
                             "percentile": percentile,
                             "normalized_value": normalized_value,
                             "unit": unit,
-                            "category": category.strip().upper() if isinstance(category, str) and category.strip().upper() in FIELD_DATA_CATEGORIES else None,
+                            "category": category.strip().upper() if isinstance(category, str) and category.strip().upper() in FIELD_DATA_METRIC_CATEGORIES else None,
                             "source": f"PageSpeed {scope_key} field data",
                         }
             lighthouse_version = lighthouse.get("lighthouseVersion")
