@@ -555,3 +555,26 @@ def test_standard_security_headers_accept_x_frame_options_as_framing_fallback():
         "https://shop.example/",
     )
     assert findings == []
+
+@pytest.mark.asyncio
+async def test_exposure_probes_skip_paths_disallowed_by_crawl_policy(monkeypatch):
+    import security_checks
+
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    monkeypatch.setattr(security_checks, "EXPOSURE_PATHS", ["/private/.env", "/public/.env"])
+    findings, limitations = await security_checks.probe_common_exposure_paths(
+        object(),
+        "https://shop.example/",
+        allowed_url=lambda url: "/private/" not in url,
+    )
+
+    assert requested == ["https://shop.example/public/.env"]
+    assert findings == []
+    assert any("1 of 2 exposure probes were skipped" in item for item in limitations)
+
