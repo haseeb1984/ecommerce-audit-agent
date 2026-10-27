@@ -192,3 +192,10 @@
 - The customer report-email endpoint now also sets private no-store response headers. The existing report ownership check, recipient confirmation, email validation, and attachment-size cap remain in place.
 - Added API regression coverage for allowlisting, credential/query redaction, malformed outcome entries, customer outcome denominator, and private report-email responses. These tests are committed but **not run** under the current implementation-first instruction. No migrations or deployment performed.
 - Phase boundary: this completes the source implementation batch for saved-report evidence access/delivery, not overall SaaS completion. End-to-end acceptance still depends on the later planned verification phase.
+
+
+## Audit run reproducibility metadata — source implementation batch
+
+- Coverage manifests now carry an audit_run_context object with start/completion timestamps, the public unauthenticated audit scope, the declared user agent, bounded crawl/response/evidence limits, measurement-mode notes, recorded check IDs, explicit outcome-state totals, and the limitation count.
+- The metadata is bounded and type-checked before persistence; target/page URLs continue to be normalized without query strings or fragments. This gives saved reports and downstream report rendering a repeatable description of what the run did and did not attempt.
+- The context is descriptive, not a claim that every listed limit was reached or that browser/manual/authorized checks ran. Check outcomes remain the source of execution evidence. Regression coverage was added but not run; no deployment or migration was performed.
