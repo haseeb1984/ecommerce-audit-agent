@@ -140,13 +140,20 @@ async def audit_lead(
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db)
 ):
+    # Validate and canonicalize before reserving quota or calling any external provider.
+    # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
+    try:
+        target_url = normalize_target(domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     license_id = license_obj.id
     reservation_id = None
     try:
         # Reserve quota in a short transaction. No row lock is held during external API calls.
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
-        dossier = await agent.process_lead(domain=domain, user_email=email, source=source)
+        dossier = await agent.process_lead(domain=target_url, user_email=email, source=source)
 
         db_lead = AuditLead(
             license_id=license_id,
