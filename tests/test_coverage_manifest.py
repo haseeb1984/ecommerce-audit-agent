@@ -191,3 +191,24 @@ def test_recorded_observation_keeps_bounded_finding_contract():
     assert row["explanation"] == "Canonical points to the preferred URL."
     assert row["verification_steps"] == ["Open the page source."]
     assert row["standard_references"] == ["https://developers.google.com/search/docs"]
+
+
+def test_recorded_observation_redacts_credentials_from_text_fields():
+    finding = SimpleNamespace(
+        category="security_headers",
+        title="Header review",
+        status="manual_review_required",
+        severity="medium",
+        source_url="https://shop.example/",
+        evidence="Authorization: Bearer abc.def.ghi api_key=secret123 and https://shop.example/path?token=hidden",
+        explanation="Review the response without exposing secret=private-value.",
+    )
+    manifest = build_coverage_manifest(
+        target_url="https://shop.example/", pages_checked=[], findings=[finding], limitations=[]
+    )
+    row = manifest["recorded_observations"][0]
+    assert "abc.def.ghi" not in row["evidence"]
+    assert "secret123" not in row["evidence"]
+    assert "token=hidden" not in row["evidence"]
+    assert "private-value" not in row["explanation"]
+    assert "[REDACTED]" in row["evidence"]
