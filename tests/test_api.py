@@ -1047,6 +1047,84 @@ async def test_paddle_subscription_cancellation_deactivates_linked_license_idemp
 
 
 @pytest.mark.asyncio
+async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_late_renewal123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(
+            secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+        ).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_late_renewal_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_late_renewal_purchase",
+            "subscription_id": "sub_late_renewal123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_late_renewal123",
+            "customer": {"email": "late-renewal@example.com", "name": "Late Renewal"},
+            "items": [{"price": {"id": "pri_late_renewal123"}, "quantity": 1}],
+        },
+    }
+    assert (await send(purchase)).status_code == 200
+
+    cancellation = {
+        "event_id": "evt_late_renewal_cancel",
+        "event_type": "subscription.canceled",
+        "data": {"id": "sub_late_renewal123"},
+    }
+    canceled = await send(cancellation)
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] == "cancellation_applied"
+
+    late_renewal = {
+        "event_id": "evt_late_renewal_paid_late",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_late_renewal_paid_late",
+            "subscription_id": "sub_late_renewal123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_late_renewal123",
+            "customer": {"email": "late-renewal@example.com", "name": "Late Renewal"},
+            "items": [{"price": {"id": "pri_late_renewal123"}, "quantity": 1}],
+        },
+    }
+    response = await send(late_renewal)
+    assert response.status_code == 200
+    assert response.json()["status"] == "subscription_canceled"
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Late Renewal")
+        )).scalar_one()
+        assert license_obj.is_active is False
+        events = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == "sub_late_renewal123"
+            )
+        )).scalars().all()
+    assert len(events) == 1
+    assert events[0].status == "subscription_canceled"
+
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_rejects_invalid_signature_without_provisioning(client, monkeypatch):
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "paddle-test-webhook-secret")
     body = b'{"event_id":"evt_bad","event_type":"transaction.completed","data":{"status":"completed"}}'
