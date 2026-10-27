@@ -1540,6 +1540,19 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
         raise HTTPException(status_code=502, detail="Unable to start Paddle checkout; verify billing configuration.") from exc
 
 
+async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
+    """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        # SQLite has no advisory-lock function. Production uses PostgreSQL, where
+        # the transaction-scoped lock protects against concurrent webhook races.
+        return
+    await db.execute(
+        text(f"SELECT pg_advisory_xact_lock(hashtext(:{parameter_name}))"),
+        {parameter_name: resource_id},
+    )
+
+
 @app.post("/api/v1/billing/paddle-webhook")
 async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_db)):
     """Verify Paddle signatures and provision licenses idempotently after transaction completion."""
@@ -1597,10 +1610,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         if not subscription_id:
             raise HTTPException(status_code=400, detail="Paddle payment-failure event has no subscription ID.")
         from sqlalchemy import select
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
-            {"subscription_id": subscription_id},
-        )
+        await _lock_paddle_webhook_resource(db, subscription_id)
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -1645,10 +1655,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         from sqlalchemy import select, update
         # Serialize lifecycle transitions for this subscription. The advisory lock
         # is transaction-scoped and avoids a late renewal racing a cancellation.
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
-            {"subscription_id": subscription_id},
-        )
+        await _lock_paddle_webhook_resource(db, subscription_id)
         duplicate_cancellation = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -1718,10 +1725,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if subscription_id:
         # Use the same subscription-scoped lock as cancellation so lifecycle state
         # transitions are serialized in PostgreSQL.
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
-            {"subscription_id": subscription_id},
-        )
+        await _lock_paddle_webhook_resource(db, subscription_id)
         linked_subscription_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.subscription_id == subscription_id)
@@ -1779,10 +1783,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # Serialize provisioning for this purchase before looking up its event.
         # This closes the race where distinct event IDs arrive simultaneously
         # before either request inserts a webhook record.
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:transaction_id))"),
-            {"transaction_id": transaction_id},
-        )
+        await _lock_paddle_webhook_resource(db, transaction_id, "transaction_id")
         prior_transaction_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.transaction_id == transaction_id)
