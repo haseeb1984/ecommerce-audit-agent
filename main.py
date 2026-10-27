@@ -823,6 +823,58 @@ async def account_billing_history(
     }
 
 
+@app.post("/api/v1/account/billing-portal")
+async def create_account_billing_portal(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Create a short-lived Paddle customer portal session for the authenticated license."""
+    from sqlalchemy import select
+
+    if not os.getenv("PADDLE_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="Self-service billing is not configured.")
+    events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.license_id == license_obj.id,
+            PaymentWebhookEvent.paddle_customer_id.is_not(None),
+        )
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(20)
+    )).scalars().all()
+    customer_id = next((item.paddle_customer_id for item in events if item.paddle_customer_id), None)
+    if not customer_id or not re.fullmatch(r"ctm_[A-Za-z0-9]+", customer_id):
+        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
+    subscription_ids = list(dict.fromkeys(
+        item.subscription_id for item in events
+        if item.subscription_id and re.fullmatch(r"sub_[A-Za-z0-9]+", item.subscription_id)
+    ))
+    payload = {"subscription_ids": subscription_ids} if subscription_ids else {}
+    try:
+        result = await asyncio.to_thread(
+            _paddle_api_request,
+            f"/customers/{customer_id}/portal-sessions",
+            "POST",
+            payload,
+        )
+        data = result.get("data") or {}
+        urls = data.get("urls") or {}
+        general = urls.get("general") or {}
+        portal_url = general.get("overview") or data.get("url")
+        parsed = urlsplit(portal_url or "")
+        if parsed.scheme != "https" or not parsed.hostname or not (
+            parsed.hostname == "paddle.com" or parsed.hostname.endswith(".paddle.com")
+        ):
+            raise RuntimeError("Paddle did not return a valid customer portal URL")
+    except Exception as exc:
+        logger.error("Paddle customer portal creation failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Unable to open self-service billing. Please retry later.") from None
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"portal_url": portal_url, "expires_in_seconds": 900}
+
+
 @app.get("/api/v1/account/api-keys")
 async def list_account_api_keys(
     response: Response,
@@ -1379,6 +1431,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             event_id=event_id, status="email_pending", license_id=license_obj.id,
             recipient_email=recipient, transaction_id=str(transaction.get("id") or "")[:100] or None,
             subscription_id=str(transaction.get("subscription_id") or "")[:100] or None,
+            paddle_customer_id=customer_id[:100] or None,
         )
         db.add(webhook_event)
         await db.commit()
@@ -1388,6 +1441,10 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         webhook_event.transaction_id = str(transaction.get("id") or "")[:100] or None
     if not webhook_event.subscription_id:
         webhook_event.subscription_id = str(transaction.get("subscription_id") or "")[:100] or None
+    if not webhook_event.paddle_customer_id:
+        event_customer = transaction.get("customer") or {}
+        event_customer_id = str(transaction.get("customer_id") or event_customer.get("id") or "").strip()
+        webhook_event.paddle_customer_id = event_customer_id[:100] or None
     await db.commit()
 
     # Claim email delivery atomically so simultaneous Paddle retries cannot send
