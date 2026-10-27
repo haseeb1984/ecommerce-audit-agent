@@ -1878,6 +1878,9 @@ async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access
     listing = await client.get("/api/v1/account/api-keys", headers=headers)
     assert listing.status_code == 200
     assert len(listing.json()["items"]) == 1
+    assert listing.json()["max_keys"] == 10
+    assert listing.json()["key_count"] == 1
+    assert listing.json()["keys_remaining"] == 9
     key_id = listing.json()["items"][0]["id"]
     assert "key" not in listing.json()["items"][0]
 
