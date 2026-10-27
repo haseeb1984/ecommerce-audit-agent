@@ -1057,7 +1057,7 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_late_renewal123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_laterenewal123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_FROM", "reports@example.com")
@@ -1085,7 +1085,7 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
             "custom_data": {"license_tier": "starter"},
             "customer_id": "ctm_late_renewal123",
             "customer": {"email": "late-renewal@example.com", "name": "Late Renewal"},
-            "items": [{"price": {"id": "pri_late_renewal123"}, "quantity": 1}],
+            "items": [{"price": {"id": "pri_laterenewal123"}, "quantity": 1}],
         },
     }
     assert (await send(purchase)).status_code == 200
@@ -1109,7 +1109,7 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
             "custom_data": {"license_tier": "starter"},
             "customer_id": "ctm_late_renewal123",
             "customer": {"email": "late-renewal@example.com", "name": "Late Renewal"},
-            "items": [{"price": {"id": "pri_late_renewal123"}, "quantity": 1}],
+            "items": [{"price": {"id": "pri_laterenewal123"}, "quantity": 1}],
         },
     }
     response = await send(late_renewal)
@@ -1798,7 +1798,7 @@ async def test_paddle_payment_failure_is_recorded_without_immediately_deactivati
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_payment_failure123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_paymentfailure123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
     monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
 
@@ -1822,7 +1822,7 @@ async def test_paddle_payment_failure_is_recorded_without_immediately_deactivati
             "custom_data": {"license_tier": "starter"},
             "customer_id": "ctm_payment_failure123",
             "customer": {"email": "payment-failure@example.com", "name": "Payment Failure"},
-            "items": [{"price": {"id": "pri_payment_failure123"}, "quantity": 1}],
+            "items": [{"price": {"id": "pri_paymentfailure123"}, "quantity": 1}],
         },
     }
     provision = await send(purchase)
