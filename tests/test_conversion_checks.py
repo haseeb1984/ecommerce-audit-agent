@@ -361,3 +361,18 @@ def test_does_not_flag_controls_with_aria_labelledby_or_title():
     """
     findings = inspect_conversion_html(html, "https://shop.example/")
     assert not any(f.title == "Form controls may lack accessible labels" for f in findings)
+
+
+def test_http_form_action_evidence_never_exposes_url_userinfo():
+    findings = inspect_conversion_html(
+        '<html><body><form action="http://merchant-user:private-pass@forms.vendor.example:8080/submit?token=secret">'
+        '<input name="email" type="email"><button>Send</button></form></body></html>',
+        "https://shop.example/",
+    )
+    insecure = next(f for f in findings if f.title == "Form submission may downgrade to unencrypted HTTP")
+    external = next(f for f in findings if f.title == "External form destination needs trust review")
+    for finding in (insecure, external):
+        assert "forms.vendor.example:8080/submit" in finding.evidence
+        assert "merchant-user" not in finding.evidence
+        assert "private-pass" not in finding.evidence
+        assert "token=secret" not in finding.evidence
