@@ -1520,6 +1520,16 @@ async def run_bounded_site_crawl(
 
             if url not in pages_checked:
                 pages_checked.append(url)
+            if page_headers.get("x-audit-decoding-fallback") == "unsupported-or-invalid-charset":
+                findings.append(_finding(
+                    "crawl", "Page text was decoded with a fallback charset",
+                    "not_tested", "info",
+                    f"The response for {final_url} declared an unsupported or invalid character encoding; UTF-8 replacement decoding was used for source inspection.",
+                    "Some text may be replaced or misread, so checks that depend on exact page text or markup content may be incomplete. This does not by itself indicate a site defect.",
+                    "Configure the response with a valid, accurate Content-Type charset and retry the audit.",
+                    ["Inspect the Content-Type response header.", "Confirm the declared encoding matches the actual response bytes and rerun the audit."],
+                    final_url,
+                ))
             if page_status < 200 or page_status >= 400:
                 findings.append(_finding(
                     "broken_internal_links", "Internal URL returned an error",
