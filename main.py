@@ -2456,10 +2456,13 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
         raise HTTPException(status_code=404, detail="Client not found.")
     if "tier" in changes:
         package = (await db.execute(text("""
-            SELECT monthly_audit_allowance FROM saas_plan_packages WHERE tier=:tier
+            SELECT monthly_audit_allowance, is_active
+            FROM saas_plan_packages WHERE tier=:tier
         """), {"tier": changes["tier"]})).mappings().first()
         if package is None:
             raise HTTPException(status_code=422, detail="Select a package that exists in admin package management.")
+        if not bool(package["is_active"]):
+            raise HTTPException(status_code=422, detail="Cannot assign a deactivated package. Reactivate it first or choose an active package.")
         if "max_monthly_audits" not in changes:
             changes["max_monthly_audits"] = int(package["monthly_audit_allowance"])
     allowed = {"client_name", "tier", "max_monthly_audits", "is_active", "expires_at"}
