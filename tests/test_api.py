@@ -118,7 +118,6 @@ def test_smtp_configuration_status_accepts_valid_unauthenticated_starttls(monkey
     "service.internal",
     "https://user:password@shop.example",
     "https://shop.example:8443",
-    "https://shop.example/?token=secret",
     "javascript:alert(1)",
     "not a valid hostname",
 ])
@@ -135,6 +134,14 @@ def test_audit_target_normalization_rejects_unsafe_or_ambiguous_targets(target):
 ])
 def test_audit_target_normalization_canonicalizes_public_targets(target, expected):
     assert main.agent._normalize_audit_target(target) == expected
+
+
+
+
+def test_audit_target_normalization_strips_query_and_fragment_for_provider_privacy():
+    assert main.agent._normalize_audit_target(
+        "https://shop.example/products?token=secret#checkout"
+    ) == "https://shop.example/products"
 
 
 def test_coverage_manifest_does_not_infer_aria_or_alt_text_from_general_accessibility():
@@ -359,7 +366,7 @@ async def test_successful_audit_saves_exactly_one_record_and_releases_reservatio
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["audit"]["domain"] == "shop.example"
+    assert response.json()["audit"]["domain"] == "https://shop.example/"
     assert await table_count(AuditLead) == 1
     assert await table_count(AuditQuotaReservation) == 0
 
