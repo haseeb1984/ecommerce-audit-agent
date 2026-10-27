@@ -403,3 +403,22 @@ def test_aria_hidden_nonfocusable_content_does_not_trigger_focusable_finding():
         f.title == "Focusable controls may be hidden from assistive technology"
         for f in findings
     )
+
+
+
+def test_manual_wcag_review_checklist_is_explicit_and_not_a_conformance_claim():
+    from accessibility_checks import MANUAL_WCAG_REVIEW_CHECKLIST
+
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main><p>Store</p></main></body></html>',
+        "https://shop.example/",
+    )
+    checklist = next(
+        finding for finding in findings
+        if finding.title == "Manual WCAG 2.2 A/AA review checklist remains required"
+    )
+    assert checklist.status == "manual_review_required"
+    assert len(MANUAL_WCAG_REVIEW_CHECKLIST) >= 6
+    assert checklist.verification_steps == list(MANUAL_WCAG_REVIEW_CHECKLIST)
+    assert "cannot establish WCAG conformance" in checklist.explanation
+    assert checklist.standard_references == ["https://www.w3.org/TR/WCAG22/"]
