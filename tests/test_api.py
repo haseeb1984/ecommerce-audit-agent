@@ -953,6 +953,60 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
 
 
 @pytest.mark.asyncio
+async def test_paddle_subscription_renewal_reuses_existing_license_without_resending_key(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_renewal123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    sent = []
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: sent.append(args))
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {"event_id": "evt_renewal_purchase", "event_type": "transaction.completed",
+        "data": {"id": "txn_renewal_first", "subscription_id": "sub_renewal123",
+        "status": "completed", "custom_data": {"license_tier": "starter"},
+        "customer_id": "ctm_renewal123", "customer": {"email": "renewal@example.com", "name": "Renewal Buyer"},
+        "items": [{"price": {"id": "pri_renewal123"}, "quantity": 1}]}}
+    first = await send(purchase)
+    assert first.status_code == 200 and first.json()["status"] == "provisioned"
+    assert len(sent) == 1
+
+    renewal = {"event_id": "evt_renewal_second", "event_type": "transaction.completed",
+        "data": {"id": "txn_renewal_second", "subscription_id": "sub_renewal123",
+        "status": "completed", "custom_data": {"license_tier": "starter"},
+        "customer_id": "ctm_renewal123", "customer": {"email": "renewal@example.com", "name": "Renewal Buyer"},
+        "items": [{"price": {"id": "pri_renewal123"}, "quantity": 1}]}}
+    renewed = await send(renewal)
+    assert renewed.status_code == 200
+    assert renewed.json()["status"] == "subscription_renewed"
+    assert len(sent) == 1
+
+    duplicate = await send(renewal)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
+    async with AsyncSessionLocal() as db:
+        licenses = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.client_name == "Renewal Buyer"))).scalars().all()
+        events = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.subscription_id == "sub_renewal123"))).scalars().all()
+    assert len(licenses) == 1
+    assert len(events) == 2
+    assert {item.event_id for item in events} == {"evt_renewal_purchase", "evt_renewal_second"}
+
+
+@pytest.mark.asyncio
 async def test_paddle_subscription_cancellation_deactivates_linked_license_idempotently(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
