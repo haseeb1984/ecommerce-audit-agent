@@ -1039,6 +1039,17 @@ async def run_bounded_site_crawl(
                     final_home or normalized,
                 ))
                 limitations.append(f"Homepage HTML checks were skipped because the final response returned HTTP {status}.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="crawl.bounded_crawl",
+                        category="crawlability",
+                        page_url=final_home or normalized,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded same-origin crawl",
+                        evidence=f"Homepage returned HTTP {status}; HTML page checks were not executed.",
+                        evidence_ref="crawl.bounded_crawl",
+                    ))
                 return findings, pages_checked, limitations
             if "text/html" not in headers.get("content-type", "").lower():
                 findings.append(_finding(
@@ -1051,6 +1062,17 @@ async def run_bounded_site_crawl(
                     final_home or normalized,
                 ))
                 limitations.append("Homepage HTML checks were skipped because the final response was not text/html.")
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="crawl.bounded_crawl",
+                        category="crawlability",
+                        page_url=final_home or normalized,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="bounded same-origin crawl",
+                        evidence="Homepage response was not text/html; HTML page checks were not executed.",
+                        evidence_ref="crawl.bounded_crawl",
+                    ))
                 return findings, pages_checked, limitations
             dependency_findings, dependency_limitations = await inspect_client_dependency_versions(
                 homepage, final_home
@@ -1058,6 +1080,17 @@ async def run_bounded_site_crawl(
             findings.extend(dependency_findings)
             limitations.extend(dependency_limitations)
         except Exception as exc:
+            if outcome_records is not None:
+                outcome_records.append(CheckOutcome(
+                    check_id="crawl.bounded_crawl",
+                    category="crawlability",
+                    page_url=normalized,
+                    outcome="error",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded same-origin crawl",
+                    evidence=f"Homepage fetch failed with {type(exc).__name__}; page-level outcomes are unavailable.",
+                    evidence_ref="crawl.bounded_crawl",
+                ))
             return findings, pages_checked, limitations + [
                 f"Bounded crawl could not fetch the homepage: {type(exc).__name__}."
             ]
