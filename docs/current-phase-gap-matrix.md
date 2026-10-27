@@ -283,3 +283,10 @@
 - After successful connection, the credential input is cleared from the visible form while the in-memory credential remains available for authenticated requests. On failed connection, the credential is cleared from both the form and in-memory state to avoid a stale failed identity.
 - Account-only controls are disabled while disconnected; disconnect also clears the target URL and returns the audit UI to its disconnected state.
 - Added a portal regression test for disconnect affordance and credential cleanup behavior. Tests have not been run and no deployment was performed.
+
+## Customer billing recovery and partial account access — 2026-10-27
+
+- Customer account connection now loads billing history independently before attempting audit/report/usage/API-key features. A restricted or expired audit entitlement no longer necessarily blocks the customer from reaching billing management.
+- The dashboard reports which account features are unavailable and disables audit/API-key actions unless report history and usage access both load; billing controls remain available after billing authentication succeeds. Credentials are cleared from the visible input after the attempt, and failed overall authentication clears in-memory credentials.
+- Added a portal regression assertion for partial-access handling. Tests have not been run and no deployment or migration was performed.
+- Remaining release work is still substantial: run the complete test suite, browser acceptance, validate subscription/webhook lifecycle against the existing Sandbox records, confirm production schema migration state, and execute the licensed audit → saved report → ownership isolation → consented email journey before any release approval.
