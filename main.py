@@ -1274,17 +1274,22 @@ def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
 async def list_audit_reports(
     response: Response,
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000000),
+    domain: str = Query(default="", max_length=253),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List only reports owned by the authenticated license; never expose PDF bytes here."""
     from sqlalchemy import select, func as sql_func
+    filters = [AuditReport.license_id == license_obj.id]
+    normalized_domain = domain.strip().lower().replace("%", "").replace("_", "")
+    if normalized_domain:
+        filters.append(AuditReport.domain.ilike(f"%{normalized_domain}%"))
     total = (await db.execute(
-        select(sql_func.count(AuditReport.id)).where(AuditReport.license_id == license_obj.id)
+        select(sql_func.count(AuditReport.id)).where(*filters)
     )).scalar_one()
     rows = (await db.execute(
-        select(AuditReport).where(AuditReport.license_id == license_obj.id)
+        select(AuditReport).where(*filters)
         .order_by(AuditReport.created_at.desc(), AuditReport.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
