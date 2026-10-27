@@ -940,18 +940,23 @@ async def account_audit_activity(
     response: Response,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=10000000),
+    domain: str = Query(default="", max_length=253),
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return bounded audit activity for the authenticated customer without lead-contact data."""
+    """Return bounded, optionally domain-filtered audit activity without lead-contact data."""
     from sqlalchemy import select, func as sql_func
 
-    base = select(AuditLead).where(AuditLead.license_id == license_obj.id)
+    filters = [AuditLead.license_id == license_obj.id]
+    normalized_domain = domain.strip().lower().replace("%", "").replace("_", "")
+    if normalized_domain:
+        filters.append(AuditLead.domain.ilike(f"%{normalized_domain}%"))
     total = int((await db.execute(
-        select(sql_func.count(AuditLead.id)).where(AuditLead.license_id == license_obj.id)
+        select(sql_func.count(AuditLead.id)).where(*filters)
     )).scalar_one() or 0)
     rows = (await db.execute(
-        base.order_by(AuditLead.created_at.desc(), AuditLead.id.desc())
+        select(AuditLead).where(*filters)
+        .order_by(AuditLead.created_at.desc(), AuditLead.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
@@ -967,7 +972,7 @@ async def account_audit_activity(
         } for row in rows],
         "page": {
             "limit": limit, "offset": offset, "total": total,
-            "has_more": offset + len(rows) < total,
+            "has_more": offset + len(rows) < total, "domain": normalized_domain,
         },
     }
 
