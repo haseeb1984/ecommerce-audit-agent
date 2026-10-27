@@ -259,7 +259,9 @@ async def comprehensive_audit_pdf(
         crawl_completed = False
         conversion_completed = False
         try:
-            crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(target_url)
+            crawl_findings, crawl_pages, crawl_limitations = await run_bounded_site_crawl(
+                target_url, outcome_records=result.check_outcomes
+            )
             # A normal return can still mean the homepage was non-HTML/unavailable;
             # count the bounded crawl as completed only when it recorded a page.
             crawl_completed = bool(crawl_pages)
