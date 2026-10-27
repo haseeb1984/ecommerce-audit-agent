@@ -2095,6 +2095,10 @@ async def run_bounded_site_crawl(
                             and "structured data detected" in str(getattr(item, "title", "")).lower()
                             and "not detected" not in str(getattr(item, "title", "")).lower()
                         )
+                        and not (
+                            check_id == "trust.signals"
+                            and str(getattr(item, "title", "")).lower().startswith("trust signal detected")
+                        )
                     ]
                     if actionable_verified:
                         outcome = "issue"
