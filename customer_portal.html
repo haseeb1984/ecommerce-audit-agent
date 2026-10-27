@@ -49,6 +49,8 @@
 <section class="panel" aria-labelledby="activityHeading">
 <h2 id="activityHeading">Recent audit activity</h2>
 <p class="muted">See recent audit runs associated with this account. Contact details and generated outreach content are never shown in this activity list.</p>
+<label for="activityDomainFilter">Filter by website</label>
+<div class="report-actions"><input id="activityDomainFilter" type="search" maxlength="253" placeholder="example.com" autocomplete="off"><button id="applyActivityFilter" class="secondary" type="button">Apply filter</button></div>
 <div id="auditActivity" class="reports"><p class="muted">Connect your account to load audit activity.</p></div>
 <p id="activityPageStatus" class="muted" aria-live="polite">No activity loaded.</p>
 <div class="report-actions"><button id="refreshActivity" class="secondary" type="button">Refresh activity</button><button id="loadMoreActivity" class="secondary" type="button" hidden>Load more activity</button></div>
@@ -298,7 +300,8 @@
     more.disabled = true; refresh.disabled = true;
     try {
       const offset = reset ? 0 : activityRows.length;
-      const response = await api("/api/v1/account/activity?limit=20&offset=" + offset);
+      const query = new URLSearchParams({limit:"20", offset:String(offset), domain:$("activityDomainFilter").value.trim()});
+      const response = await api("/api/v1/account/activity?" + query.toString());
       const data = await response.json();
       const page = Array.isArray(data.items) ? data.items : [];
       activityRows = reset ? page : [...activityRows, ...page];
@@ -499,6 +502,13 @@
     $("savedEvidenceItems").replaceChildren();
   });
   $("reportFilter").addEventListener("input", renderReports);
+  $("applyActivityFilter").addEventListener("click", async () => {
+    try { await loadActivity(); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
+  $("activityDomainFilter").addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); loadActivity().catch(e => setStatus("connectStatus", e.message, "error")); }
+  });
   $("refreshActivity").addEventListener("click", async () => {
     try { await loadActivity(); setStatus("connectStatus", "Audit activity refreshed.", "success"); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
