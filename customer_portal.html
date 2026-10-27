@@ -149,13 +149,31 @@
     for (const item of events) {
       const card = document.createElement("article"); card.className = "report";
       const meta = document.createElement("div");
-      const title = document.createElement("strong"); title.textContent = "Payment event · " + String(item.status || "unknown").replaceAll("_", " ");
+      const title = document.createElement("strong");
+      const billingLabels = {
+        payment_failed: "Payment failed — review billing",
+        subscription_past_due: "Subscription past due — review billing",
+        subscription_canceled: "Subscription canceled",
+        email_pending: "License email pending",
+        email_sending: "License email sending",
+        delivered: "Payment processed and license delivered"
+      };
+      title.textContent = billingLabels[item.status] || ("Billing event · " + String(item.status || "unknown").replaceAll("_", " "));
       const detail = document.createElement("small");
       detail.textContent = "Event " + item.event_id + " · Transaction " + (item.transaction_id || "not recorded") +
         " · Subscription " + (item.subscription_id || "not recorded") +
         " · Created " + (item.created_at ? new Date(item.created_at).toLocaleString() : "date unavailable") +
         " · Updated " + (item.updated_at ? new Date(item.updated_at).toLocaleString() : "date unavailable");
-      meta.append(title, detail); card.append(meta); container.append(card);
+      meta.append(title, detail);
+      if (["payment_failed", "subscription_past_due"].includes(item.status)) {
+        const guidance = document.createElement("p");
+        guidance.className = "muted";
+        guidance.textContent = "Paddle reported a payment issue. Use “Manage subscription & billing” above to review available billing actions. A single failed payment does not by itself confirm that access has been revoked.";
+        card.append(meta, guidance);
+      } else {
+        card.append(meta);
+      }
+      container.append(card);
     }
     setStatus("billingStatus", "Loaded " + events.length + " recent billing event(s).", "success");
   }
