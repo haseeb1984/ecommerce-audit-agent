@@ -311,3 +311,10 @@
 - Added a shared target-normalization gate before calling PageSpeed: only HTTP(S) URL input is accepted, embedded credentials/query/fragment/custom ports are rejected, local/private IP literals and common local hostnames are blocked, and internationalized hostnames are canonicalized.
 - Audit requests now pass the normalized URL to PageSpeed instead of naïvely concatenating arbitrary input into a URL. This is a defense-in-depth input gate, not a claim of complete DNS-rebinding/SSRF protection for a future direct crawler; DNS resolution and redirect-safe fetching remain required before implementing direct crawling.
 - Added parameterized positive and negative regression coverage. Tests are not run in this implementation batch; do not treat this as release verified.
+
+
+## Licensed audit entry-point validation — 2026-10-27
+
+- The legacy `/api/v1/audit-lead` endpoint now applies the same bounded public-target normalization used by the comprehensive audit before reserving quota or calling external providers. Invalid targets return HTTP 422 without creating an audit lead or quota reservation.
+- Added API-level regression coverage for local/private addresses, URL userinfo, query strings, and custom ports, including assertions that rejected requests do not reserve quota or persist leads.
+- This closes a gap at the older API boundary; it does not replace the DNS-pinned resolver and redirect checks used by the bounded crawler. Tests have not been run in this batch; no production data or deployment was changed.
