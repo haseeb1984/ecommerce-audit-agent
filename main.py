@@ -1484,7 +1484,7 @@ def _configured_payment_plans() -> list[dict]:
     plans = []
     for tier, label, default_quota in (("STARTER", "Starter", 100), ("PRO", "Pro", 500), ("BUSINESS", "Business", 2000)):
         price_id = os.getenv(f"PADDLE_PRICE_ID_{tier}", "").strip()
-        if not re.fullmatch(r"pri_[a-z0-9]+", price_id): continue
+        if not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id): continue
         try: quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
         except ValueError: continue
         if quota < 1: continue
@@ -1499,8 +1499,11 @@ class PaddleCheckoutRequest(BaseModel):
 @app.get("/api/v1/billing/plans")
 async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
     """Expose active operator-managed plans only when payment delivery is configured."""
-    ready = bool(os.getenv("PADDLE_API_KEY", "").strip() and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
-                 and os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip())
+    ready = bool(
+        os.getenv("PADDLE_API_KEY", "").strip()
+        and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
+        and _smtp_configuration_status()["configured"]
+    )
     plans = await _db_payment_plans(db, active_only=True) if ready else []
     plans = [p for p in plans if p.get("price_id")]
     return {"checkout_provider": "Paddle", "configured": bool(plans),
