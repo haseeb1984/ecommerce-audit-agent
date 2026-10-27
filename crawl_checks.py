@@ -2255,4 +2255,17 @@ async def run_bounded_site_crawl(
 
     if len(candidates) >= MAX_CRAWL_PAGES - 1:
         limitations.append(f"The crawler reached its {MAX_CRAWL_PAGES}-page budget; additional links were not inspected.")
+    # Make sitemap coverage limits explicit. Discovery is not equivalent to
+    # fetching every sitemap URL: the shared page budget may only sample them.
+    checked_keys = {_canonical_page_url(value) for value in pages_checked}
+    discovered_sitemap_keys = {
+        _canonical_page_url(value)
+        for value in sitemap_urls
+        if isinstance(value, str) and value
+    }
+    unchecked_sitemap_count = len(discovered_sitemap_keys - checked_keys)
+    if unchecked_sitemap_count:
+        limitations.append(
+            f"{unchecked_sitemap_count} discovered sitemap URL(s) were not fetched during this audit because sitemap discovery shares the bounded crawl page budget; sitemap inclusion alone does not establish URL status, canonical consistency, or indexability."
+        )
     return findings, pages_checked, limitations
