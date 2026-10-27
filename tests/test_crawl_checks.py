@@ -2111,3 +2111,51 @@ async def test_llms_txt_check_records_outcome_when_optional_file_is_missing(monk
     assert llms_outcome.outcome in {"issue", "warning", "pass"}
     assert llms_outcome.page_url == "https://shop.example/llms.txt"
     assert any("llms.txt" in item.title.lower() for item in findings)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("robots_status", "expected_outcome"),
+    [(200, "pass"), (403, "not_assessed"), (404, "not_assessed"), (500, "error")],
+)
+async def test_robots_txt_records_check_outcome_for_success_and_unavailable_responses(
+    monkeypatch, robots_status, expected_outcome
+):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url == "https://shop.example/products/one":
+            return (
+                200,
+                '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url == "https://shop.example/llms.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url == "https://shop.example/robots.txt":
+            body = "User-agent: *\\nAllow: /\\n" if robots_status == 200 else ""
+            return robots_status, body, {"content-type": "text/plain"}, url
+        if url == "https://shop.example/sitemap.xml":
+            return 404, "", {"content-type": "application/xml"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    robots_outcome = next(
+        item for item in outcomes if item.check_id == "robots_txt.discovery_rules"
+    )
+    assert robots_outcome.outcome == expected_outcome
+    assert robots_outcome.page_url == "https://shop.example/robots.txt"
