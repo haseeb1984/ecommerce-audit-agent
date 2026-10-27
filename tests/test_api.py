@@ -73,6 +73,42 @@ def mock_process_lead(monkeypatch):
     return fake_process_lead
 
 
+def test_smtp_configuration_status_reports_missing_settings_without_exposing_values(monkeypatch):
+    for name in ("SMTP_HOST", "SMTP_FROM", "SMTP_PORT", "SMTP_TLS_MODE", "SMTP_USERNAME", "SMTP_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+
+    status = main._smtp_configuration_status()
+    assert status["configured"] is False
+    assert "SMTP_HOST missing" in status["issues"]
+    assert "SMTP_FROM missing" in status["issues"]
+    assert all("secret" not in issue.lower() for issue in status["issues"])
+
+
+def test_smtp_configuration_status_validates_port_tls_and_auth_pair(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "mail.example.test")
+    monkeypatch.setenv("SMTP_FROM", "billing@example.test")
+    monkeypatch.setenv("SMTP_PORT", "not-a-port")
+    monkeypatch.setenv("SMTP_TLS_MODE", "plaintext")
+    monkeypatch.setenv("SMTP_USERNAME", "mailer")
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    status = main._smtp_configuration_status()
+    assert status["configured"] is False
+    assert "SMTP_PORT must be an integer from 1 to 65535" in status["issues"]
+    assert "SMTP_TLS_MODE must be starttls or ssl" in status["issues"]
+    assert "SMTP_USERNAME and SMTP_PASSWORD must both be set or both be empty" in status["issues"]
+
+
+def test_smtp_configuration_status_accepts_valid_unauthenticated_starttls(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "mail.example.test")
+    monkeypatch.setenv("SMTP_FROM", "billing@example.test")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_TLS_MODE", "starttls")
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    assert main._smtp_configuration_status() == {"configured": True, "issues": []}
+
 def test_coverage_manifest_does_not_infer_aria_or_alt_text_from_general_accessibility():
     finding = SimpleNamespace(
         category="accessibility",
