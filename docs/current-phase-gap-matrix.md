@@ -87,6 +87,11 @@
 - Admin console GET requests now explicitly use browser `cache: "no-store"` for JSON API reads and PDF downloads. After connection succeeds or fails, the password input is cleared; the active key remains only in the page's in-memory variable for the connected session. This is source-level hardening and has not been browser-tested.
 - Production readiness remains unproven until targeted tests, CI, migrations, and end-to-end ownership/security acceptance are verified.
 
+## Package entitlement guard — source-level implementation
+
+- The admin client-update endpoint now refuses to assign a package marked inactive in `saas_plan_packages`. Operators must reactivate the package first or select an active package; this avoids creating new entitlements against a deliberately retired package. Existing clients on a subsequently deactivated package are not automatically changed.
+- This guard is a source-level change only. No tests have been run and the change has not been deployed.
+
 ## Self-service Paddle billing portal — source-level implementation
 
 - Added a nullable `paddle_customer_id` field to the payment-event model and an idempotent migration at `migrations/20261027_paddle_customer_portal.sql`. The migration is committed only; it has not been applied to any database.
