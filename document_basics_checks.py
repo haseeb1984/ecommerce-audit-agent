@@ -153,6 +153,19 @@ def inspect_document_basics(html: str, page_url: str) -> list[AuditFinding]:
             ["Inspect source and rendered head for duplicate description elements.", "Check whether templates or client-side scripts inject metadata."],
             page_url,
         ))
+    long_descriptions = [value for value in descriptions if len(value) > 320]
+    if long_descriptions:
+        findings.append(_finding(
+            "on_page_seo",
+            "Meta description is unusually long",
+            "manual_review_required",
+            "info",
+            f"At least one meta description on {page_url} exceeds 320 characters; the returned description text is not reproduced in this finding.",
+            "Search snippets are presentation-dependent and search engines may truncate or generate alternate text. Character count alone does not establish a defect or ranking impact.",
+            "Review whether the description communicates the page's main value early and remove unnecessary boilerplate. Keep it accurate rather than targeting a fixed character limit.",
+            ["Review the description in the rendered head.", "Preview how the page may appear in search results, while recognizing that snippets can vary."],
+            page_url,
+        ))
     if not parser.landmarks:
         findings.append(_finding(
             "accessibility",
