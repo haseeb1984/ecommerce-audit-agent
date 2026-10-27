@@ -41,7 +41,7 @@ from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
 from quota import reserve_audit_slot, release_audit_reservation
-from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, normalize_target, run_phase_one_checks
+from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -245,7 +245,7 @@ async def audit_lead(
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
-        target_url = normalize_target(domain)
+        target_url = agent._normalize_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -310,7 +310,7 @@ async def comprehensive_audit_pdf(
 ):
     """Create a phase-one evidence report as a PDF, using the existing license quota."""
     try:
-        target_url = normalize_target(domain)
+        target_url = agent._normalize_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
