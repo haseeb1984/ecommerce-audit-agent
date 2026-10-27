@@ -1902,6 +1902,9 @@ async def admin_update_package(tier: str, payload: AdminPackageInput, request: R
         """), {"price_id": values["paddle_price_id"], "tier": tier})).scalar_one_or_none()
         if duplicate:
             raise HTTPException(status_code=409, detail="That Paddle price is already assigned to another package.")
+    previous_allowance = (await db.execute(text("""
+        SELECT monthly_audit_allowance FROM saas_plan_packages WHERE tier=:tier
+    """), {"tier": tier})).scalar_one_or_none()
     result = await db.execute(text("""
         UPDATE saas_plan_packages SET label=:label,
           monthly_audit_allowance=:monthly_audit_allowance,
@@ -1912,11 +1915,17 @@ async def admin_update_package(tier: str, payload: AdminPackageInput, request: R
     if result.rowcount == 0:
         await db.rollback()
         raise HTTPException(status_code=404, detail="Package not found.")
-    # Keep existing licenses on this tier consistent with the package monthly allowance.
-    await db.execute(text("""
-        UPDATE software_licenses SET max_monthly_audits=:allowance
-        WHERE LOWER(tier)=:tier
-    """), {"allowance": values["monthly_audit_allowance"], "tier": tier})
+    # Update inherited quotas only. Preserve per-client overrides configured by
+    # an operator through the client-management endpoint.
+    if previous_allowance is not None and int(previous_allowance) != values["monthly_audit_allowance"]:
+        await db.execute(text("""
+            UPDATE software_licenses SET max_monthly_audits=:allowance
+            WHERE LOWER(tier)=:tier AND max_monthly_audits=:previous_allowance
+        """), {
+            "allowance": values["monthly_audit_allowance"],
+            "tier": tier,
+            "previous_allowance": int(previous_allowance),
+        })
     await _write_admin_log(db, "package.updated", "package", tier, {
         "monthly_audit_allowance": values["monthly_audit_allowance"],
         "max_concurrent_audits": values["max_concurrent_audits"], "is_active": values["is_active"]})
