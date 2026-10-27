@@ -6,6 +6,7 @@ URLs, stays on the audited origin, and never submits forms or authenticates.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from defusedxml import ElementTree as ET
 from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
@@ -36,6 +37,7 @@ from audit_checks import (
     _safe_get,
     normalize_target,
     _PageParser,
+    CheckOutcome,
 )
 
 
@@ -998,7 +1000,10 @@ def inspect_llms_txt(body: str, status: int, source_url: str, content_type: str 
     )]
 
 
-async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[str], list[str]]:
+async def run_bounded_site_crawl(
+    target: str,
+    outcome_records: list[CheckOutcome] | None = None,
+) -> tuple[list[AuditFinding], list[str], list[str]]:
     """Inspect a capped set of same-origin HTML links; no form submission or login."""
     normalized = normalize_target(target)
     parsed_target = urlsplit(normalized)
@@ -1495,6 +1500,7 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
             if "text/html" not in page_headers.get("content-type", "").lower():
                 continue
 
+            page_findings_start = len(findings)
             page_parser = _PageParser()
             page_parser.feed(body)
 
@@ -2020,6 +2026,50 @@ async def run_bounded_site_crawl(target: str) -> tuple[list[AuditFinding], list[
                     "Search engines may create their own snippets; a relevant description can help summarize the page.",
                     "Add a useful, page-specific description where appropriate.",
                     ["Inspect the page source.", "Recheck with an SEO crawler."], url,
+                ))
+
+        # Record explicit outcomes for every source-check family actually run on
+        # each successfully fetched HTML page. An empty finding list is a pass only
+        # for that executed source check; manual-review findings remain warnings.
+        if outcome_records is not None:
+            page_check_families = (
+                ("structured_data.product", "structured_data", "Product/category structured-data source inspection"),
+                ("ecommerce_catalog.navigation", "ecommerce_catalog", "Product variant and listing navigation source inspection"),
+                ("security.headers_and_forms", "security", "HTTP security headers and sensitive GET-form source inspection"),
+                ("indexability.canonical", "indexability", "Canonical declaration source inspection"),
+                ("international_seo.hreflang", "international_seo", "Hreflang declaration source inspection"),
+                ("mobile_ux.viewport", "mobile_ux", "Mobile viewport source inspection"),
+                ("performance.static_signals", "performance", "Static HTML performance signal inspection"),
+                ("accessibility.static_signals", "accessibility", "Static HTML accessibility signal inspection"),
+                ("aria_alt_text.images", "aria_alt_text", "Image alternative-text source inspection"),
+                ("trust.signals", "trust", "Trust signal source inspection"),
+                ("pixel_analytics.consent_signals", "pixel_analytics", "Tracking and consent source signal inspection"),
+                ("on_page_seo.metadata", "on_page_seo", "Page title and meta description source inspection"),
+            )
+            page_findings = findings[page_findings_start:]
+            for check_id, category, method in page_check_families:
+                matching = [item for item in page_findings if item.category == category]
+                if any(getattr(item, "status", "") == "not_tested" for item in matching):
+                    outcome = "not_assessed"
+                elif any(getattr(item, "status", "") == "verified" for item in matching):
+                    outcome = "issue"
+                elif matching:
+                    outcome = "warning"
+                else:
+                    outcome = "pass"
+                outcome_records.append(CheckOutcome(
+                    check_id=check_id,
+                    category=category,
+                    page_url=final_url,
+                    outcome=outcome,
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method=method + "; bounded initial-HTML inspection only",
+                    evidence=(
+                        f"{len(matching)} related finding(s) recorded on this page."
+                        if matching else
+                        "This source-check family ran on the returned HTML and produced no finding; this does not imply rendered-browser or full-site coverage."
+                    ),
+                    evidence_ref=check_id,
                 ))
 
         for title, urls in title_pages.items():
