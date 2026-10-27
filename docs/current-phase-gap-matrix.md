@@ -382,3 +382,11 @@ A 100% completion claim is withheld until every applicable requirement below has
 6. Claim 100% implementation only when all in-scope requirement rows pass code/test acceptance. Keep production rollout readiness as a separate gate requiring approved environment/migration and live-workflow evidence.
 
 No deployment, database migration, payment, or production-site audit was run as part of this checklist update.
+
+
+## Bounded homepage anchor retention — 2026-10-28
+
+- The HTML parser now retains at most 500 anchor href values as well as at most 500 anchor attribute records. It still counts all anchors, so link-count reporting is not silently truncated.
+- The cap matches existing homepage source-review and crawl-discovery limits; anchors beyond the retained window do not affect these bounded checks.
+- Added a regression test with 750 links to assert total counting and bounded retained state.
+- Verification status: source/test committed only; this new test and the full suite have not yet been executed in a clean environment.
