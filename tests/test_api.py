@@ -1726,3 +1726,33 @@ async def test_health_check_returns_not_ready_when_required_schema_tables_are_mi
     assert raised.value.detail["schema_ready"] is False
     assert "audit_reports" in raised.value.detail["missing_tables"]
     assert "payment_webhook_events" in raised.value.detail["missing_tables"]
+
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_schema_columns_are_missing():
+    required_tables = set(main.Base.metadata.tables)
+    existing_columns = [
+        (table_name, column.name)
+        for table_name, table in main.Base.metadata.tables.items()
+        for column in table.columns
+        if not (table_name == "software_licenses" and column.name == "license_key")
+    ]
+
+    class IncompleteColumnSchemaSession:
+        async def execute(self, statement):
+            sql = str(statement)
+            if "SELECT 1" in sql:
+                return SimpleNamespace(scalar=lambda: 1)
+            if "information_schema.tables" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
+            return SimpleNamespace(all=lambda: existing_columns)
+
+    with pytest.raises(HTTPException) as raised:
+        await main.health_check(IncompleteColumnSchemaSession())
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail["status"] == "not_ready"
+    assert raised.value.detail["db_connected"] is True
+    assert raised.value.detail["schema_ready"] is False
+    assert raised.value.detail["missing_tables"] == []
+    assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
+
