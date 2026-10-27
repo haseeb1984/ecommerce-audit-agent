@@ -87,6 +87,13 @@
 - Admin console GET requests now explicitly use browser `cache: "no-store"` for JSON API reads and PDF downloads. After connection succeeds or fails, the password input is cleared; the active key remains only in the page's in-memory variable for the connected session. This is source-level hardening and has not been browser-tested.
 - Production readiness remains unproven until targeted tests, CI, migrations, and end-to-end ownership/security acceptance are verified.
 
+## Self-service Paddle billing portal — source-level implementation
+
+- Added a nullable `paddle_customer_id` field to the payment-event model and an idempotent migration at `migrations/20261027_paddle_customer_portal.sql`. The migration is committed only; it has not been applied to any database.
+- Verified Paddle transaction webhooks now persist the customer reference, and the authenticated account endpoint requests a Paddle portal session scoped to that customer's linked subscription IDs. Returned portal URLs are accepted only over HTTPS on a `paddle.com` subdomain.
+- The customer dashboard now offers “Manage subscription & billing” and a billing-history refresh action.
+- Release dependency: apply the reviewed migration before deploying code that queries `paddle_customer_id`. Older transactions that predate customer-ID capture may not support portal access until reconciled. No live Paddle portal session or browser behavior has been tested.
+
 ## Customer billing history — source-level implementation
 
 - Added an authenticated `/api/v1/account/billing-history` endpoint scoped to the verified license, returning at most 50 recent payment provisioning events and account tier/status/expiry metadata. It does not return recipient email or payment instrument details and sends private no-store headers.
