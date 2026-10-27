@@ -435,3 +435,8 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
 
+## Parallel implementation lane — billing lifecycle acceptance
+
+Scope: Paddle signature validation, idempotency, checkout/price entitlement matching, initial purchase, recurring renewal, cancellation, delayed/replayed events, failed delivery recovery, billing history and reconciliation. Preserve existing license continuity and do not resend license secrets on renewal.
+
+Acceptance: deterministic webhook tests for duplicates and out-of-order lifecycle events, plus sandbox notification reconciliation without triggering a new payment. No production billing actions without approval. Status: branch created from shared base; feature implementation not yet completed or verified.
