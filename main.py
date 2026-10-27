@@ -1299,6 +1299,7 @@ async def list_audit_reports(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "domain": normalized_domain,
         "reports": [
             {
                 "id": row.id,
