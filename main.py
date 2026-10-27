@@ -497,6 +497,7 @@ async def comprehensive_audit_pdf(
             findings=result.findings,
             limitations=result.limitations,
             executed_categories=sorted(executed_categories),
+            check_outcomes=result.check_outcomes,
         )
         pdf_bytes = render_audit_pdf(
             result,
