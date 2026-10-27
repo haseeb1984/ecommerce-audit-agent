@@ -968,13 +968,25 @@ async def get_audit_report_evidence(
 
 
 
+def _configured_smtp_port() -> int:
+    """Validate SMTP port configuration before opening a network connection."""
+    raw_port = os.getenv("SMTP_PORT", "587").strip()
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("SMTP port configuration is invalid") from exc
+    if not 1 <= port <= 65535:
+        raise RuntimeError("SMTP port configuration is invalid")
+    return port
+
+
 def _send_license_email(recipient: str, license_key: str, tier: str, quota: int) -> None:
     """Deliver a newly provisioned license using SMTP secrets from the runtime environment."""
     host = os.getenv("SMTP_HOST", "").strip()
     sender = os.getenv("SMTP_FROM", "").strip()
     if not host or not sender:
         raise RuntimeError("Email delivery is not configured")
-    port = int(os.getenv("SMTP_PORT", "587"))
+    port = _configured_smtp_port()
     username = os.getenv("SMTP_USERNAME", "")
     password = os.getenv("SMTP_PASSWORD", "")
     mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
@@ -1245,7 +1257,7 @@ def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: byte
     sender = os.getenv("SMTP_FROM", "").strip()
     if not host or not sender:
         raise RuntimeError("Email delivery is not configured")
-    port = int(os.getenv("SMTP_PORT", "587"))
+    port = _configured_smtp_port()
     username = os.getenv("SMTP_USERNAME", "")
     password = os.getenv("SMTP_PASSWORD", "")
     mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
