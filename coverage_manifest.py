@@ -81,6 +81,7 @@ def build_coverage_manifest(
     limitations: list[str],
     executed_categories: list[str] | tuple[str, ...] = (),
     check_outcomes: list[Any] | tuple[Any, ...] = (),
+    run_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build coverage from findings plus explicit records of successfully run check groups.
 
@@ -180,8 +181,35 @@ def build_coverage_manifest(
         safe_url for page_url in pages_checked
         if (safe_url := _safe_evidence_url(page_url)) is not None
     ))
+    context = run_context if isinstance(run_context, dict) else {}
+    raw_limits = context.get("limits") if isinstance(context.get("limits"), dict) else {}
+    limits = {
+        key: value for key, value in raw_limits.items()
+        if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10_000_000
+    }
+    safe_run_context = {
+        "started_at_utc": str(context.get("started_at_utc") or "")[:40] or None,
+        "completed_at_utc": str(context.get("completed_at_utc") or "")[:40] or None,
+        "target_scope": str(context.get("target_scope") or "Public-site audit; authentication and active testing are not assumed.")[:500],
+        "user_agent": str(context.get("user_agent") or "")[:200] or None,
+        "limits": limits,
+        "measurement_context": {
+            str(key)[:80]: str(value)[:500]
+            for key, value in (context.get("measurement_context") or {}).items()
+            if isinstance(key, str) and isinstance(value, (str, int, float, bool))
+        } if isinstance(context.get("measurement_context"), dict) else {},
+        "check_ids_recorded": sorted(outcomes_by_check.keys())[:500],
+        "check_outcome_record_count": sum(len(records) for records in outcomes_by_check.values()),
+        "check_outcome_state_counts": dict(Counter(
+            str(getattr(outcome, "outcome", "unknown")).lower()
+            for outcome in check_outcomes
+            if str(getattr(outcome, "outcome", "unknown")).lower() in {"pass", "issue", "warning", "not_assessed", "error"}
+        )),
+        "limitations_count": len(list(dict.fromkeys(limitations))),
+    }
     return {
-        "schema_version": 3,
+        "schema_version": 4,
+        "audit_run_context": safe_run_context,
         "coverage_level": "category_signal_coverage_not_individual_check_coverage",
         "target_url": safe_target_url,
         "pages_checked": safe_pages_checked,
