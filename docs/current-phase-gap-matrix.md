@@ -671,3 +671,37 @@ Issue checklist:
 25. Explicitly record unverified runtime and production boundaries.
 
 Verification boundary: GitHub source changes and readback only. No automated tests, live database acceptance, production migration, deployment, or live billing actions were run. PDF/report refinement remains deferred to the final phase.
+
+
+## Customer entitlement and quota visibility — implementation batch
+
+Expanded the authenticated account-usage response with plan label/availability, concurrent audit limit, consumed count, normalized quota state, and a customer-safe entitlement state. The customer portal now explains near-limit, exhausted quota, expired/inactive account, inactive plan, and unconfigured quota states instead of showing only a numeric usage bar. This is explanatory visibility; it does not change the audit reservation policy or automatically suspend existing subscriptions when a plan is hidden from new purchases.
+
+Issue checklist addressed:
+1. Expose human-readable plan label.
+2. Expose whether the current plan is available in the catalogue.
+3. Expose the configured monthly limit.
+4. Expose completed audits.
+5. Expose in-progress reservations.
+6. Expose total consumed slots.
+7. Expose remaining monthly slots.
+8. Expose normalized usage percentage.
+9. Expose near-limit state at 80% usage.
+10. Expose exhausted quota state.
+11. Expose account inactive state.
+12. Expose expired license state.
+13. Expose inactive plan state.
+14. Expose missing/zero quota configuration.
+15. Expose configured concurrent audit limit.
+16. Normalize naive expiry timestamps as UTC.
+17. Keep account usage response private/no-store.
+18. Avoid returning license/API key secrets.
+19. Retain fallback allowance for legacy/unlisted tiers.
+20. Retain month-boundary reset calculation.
+21. Keep account usage authentication requirement.
+22. Distinguish plan availability from license active flag.
+23. Distinguish quota exhaustion from account expiry.
+24. Render clear customer-facing status explanations.
+25. Document that this batch adds visibility, not automatic entitlement mutations.
+
+Verification boundary: source changes were committed and readback verification is pending. Automated tests, browser runtime checks, and database-backed acceptance have not been run. No production migration/deployment or live billing action was performed. PDF/report refinement remains reserved for the final phase.
