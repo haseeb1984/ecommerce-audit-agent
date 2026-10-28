@@ -512,3 +512,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Updated the existing report-history migration to add the current payment webhook transaction, subscription, and Paddle customer identifier columns with idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. This matters because `CREATE TABLE IF NOT EXISTS` alone does not update an already-created table.
 - Added idempotent indexes for those three identifiers to align with the SQLAlchemy model.
 - Source-to-model checks were performed by re-reading both files. SQL has **not** been applied to production, and database integration tests have not been run. Apply only through the approved migration process.
+
+
+## Subscription cancellation ordering hardening — 2026-10-28
+
+- Hardened the completed-transaction handler to check for any recorded `subscription_canceled` event for the subscription, rather than relying only on whichever lifecycle event has the latest timestamp.
+- This closes an ordering gap where a payment-failure or `past_due` event delivered after cancellation could become the newest record and hide the cancellation guard from a later delayed `transaction.completed` event.
+- Added a regression journey for purchase → cancellation → payment failure → late completed transaction. It asserts that the failure remains visible in billing history, the late transaction is not recorded as a renewal, and the license remains inactive.
+- Source edits and regression coverage are committed. The test has not been executed in this environment; Paddle sandbox ordering, PostgreSQL concurrency behavior, full suite results, schema migration state, and customer/admin end-to-end acceptance remain pending. No production migration, deployment, or infrastructure change was performed.
