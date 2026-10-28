@@ -483,3 +483,12 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added an explicit `technical_seo.meta_refresh` outcome for each successfully inspected HTML page, including a pass only when the static source check completed without a signal.
 - Corrected the generic outcome recorder so product structured-data, catalog navigation, and hreflang outcomes are only emitted when the URL/source makes those checks applicable; homepage-only checks no longer imply product/catalog checks passed.
 - Added a focused crawl regression test for outcome presence and non-applicable check suppression. Tests have not been executed; this remains source-level implementation pending CI and representative audit acceptance.
+
+
+
+## Audit evidence URL privacy hardening — 2026-10-28
+
+- Persisted audit metadata URLs now reject loopback, private, link-local, reserved/non-global IP literals and local/test-only hostnames, in addition to rejecting credentials and non-HTTP(S) schemes.
+- Public HTTP(S) metadata URLs still have query strings and fragments removed before persistence, and default ports remain normalized.
+- Added regression cases for common private IPv4/IPv6 targets, cloud metadata IPs, local hostnames, and public URL normalization/redaction.
+- Source and tests are committed; the tests have not been executed. This is a metadata-safety boundary, not a substitute for the crawler's DNS-pinned fetch and redirect checks. No deployment, migration, live crawl, or PDF work was performed.
