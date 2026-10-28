@@ -1669,7 +1669,11 @@ async def run_bounded_site_crawl(
                 or not base_parts.hostname
                 or base_parts.username is not None
                 or base_parts.password is not None
+                or not _same_origin(link_resolution_base, final_home)
             ):
+                # A hostile or misconfigured cross-origin <base> must not change
+                # how this bounded crawler resolves relative links. Fall back to
+                # the final homepage so eligible same-origin paths remain discoverable.
                 link_resolution_base = final_home
         except (ValueError, UnicodeError):
             link_resolution_base = final_home
