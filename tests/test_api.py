@@ -561,7 +561,7 @@ async def test_missing_domain_is_rejected(client):
 
 
 @pytest.mark.asyncio
-async def test_report_history_is_scoped_to_authenticated_license(client):
+async def test_report_history_is_scoped_to_authenticated_license(client, monkeypatch):
     owner_id = await create_license(key="report-owner")
     other_id = await create_license(key="report-other")
     async with AsyncSessionLocal() as db:
@@ -2066,7 +2066,7 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity()])" in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
@@ -2622,17 +2622,15 @@ async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_min
     assert secret not in listed.text
     assert "api_key_hash" not in listed.text
 
-    foreign_revoke = await client.delete(
-        f"/api/v1/admin/clients/{second_client_id}/api-keys/{key_id}",
-        headers=headers,
-        json={"reason": "must not cross client boundary"},
+    foreign_revoke = await client.request(
+        "DELETE", f"/api/v1/admin/clients/{second_client_id}/api-keys/{key_id}",
+        headers=headers, json={"reason": "must not cross client boundary"},
     )
     assert foreign_revoke.status_code == 404
 
-    revoked = await client.delete(
-        f"/api/v1/admin/clients/{first_client_id}/api-keys/{key_id}",
-        headers=headers,
-        json={"reason": "rotation after integration test"},
+    revoked = await client.request(
+        "DELETE", f"/api/v1/admin/clients/{first_client_id}/api-keys/{key_id}",
+        headers=headers, json={"reason": "rotation after integration test"},
     )
     assert revoked.status_code == 200
     assert revoked.json()["status"] == "revoked"
