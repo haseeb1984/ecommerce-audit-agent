@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS saas_plan_packages (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Keep Paddle price-to-plan assignment unique even when two admin requests race.
+-- Existing duplicate non-NULL price IDs must be reconciled before this index can be created.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_plan_packages_paddle_price_id
+    ON saas_plan_packages (paddle_price_id) WHERE paddle_price_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
     id BIGSERIAL PRIMARY KEY,
     action VARCHAR(80) NOT NULL,
