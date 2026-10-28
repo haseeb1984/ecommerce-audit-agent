@@ -739,3 +739,10 @@ Feature issue checklist:
 25. Record that live database and end-to-end acceptance remain outstanding.
 
 Verification boundary: quota.py was updated and read back from the feature branch. Automated tests, database-backed acceptance, concurrent-request testing, and browser checks were not run. No migration, deployment, or live billing action was performed. PDF/report refinement remains deferred to the final phase.
+
+
+## Test-blocking fixes — current CI validation batch
+
+Current full GitHub Actions run 40740545876 exposed regressions on the current feature-chain head. Fixes in this batch address the common causes first: ReportLab multiBuild bookmark stability and monkeypatch-safe Paragraph type checks; optional business-context normalization; external form actions with URL userinfo are still identified while evidence omits credentials/query strings; missing trust cues explicitly distinguish absence from authenticity; and environment-configured Paddle plans remain available only when the plan catalogue is empty. Customer portal assertions now include the profile loader added by the account-profile feature.
+
+Validation result before fixes: dependency installation and dependency vulnerability audit passed; the backend test step failed. The failures include report rendering, crawl discovery/outcomes, payment lifecycle setup, conversion evidence, trust wording, and stale portal/admin expectations. This batch is not considered fully verified until a fresh CI run completes. No deployment, production migration, or real payment action was performed.
