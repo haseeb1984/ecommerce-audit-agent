@@ -621,3 +621,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The customer portal now loads profile metadata on connect, lets the customer update the account display name, and clears profile data when disconnecting or switching credentials. Profile responses use private no-store cache headers.
 - The editable field is the account display name only. Billing-provider identity, email address, subscription plan, and payment details are not changed by this feature.
 - Source-level implementation only; API validation, ownership isolation, browser session switching, and persistence require the planned verification phase.
+
+
+## Customer billing attention summary — implementation batch
+
+- The authenticated billing-history response now includes a separate, bounded list of the ten most recently updated payment-failure, past-due, cancellation, or license-email-delivery events for that same license. It uses the existing account ownership filter and private no-store response policy.
+- The customer portal surfaces those events above the full billing history with plain-language labels and safe next steps. It does not claim a failed payment automatically disables access, does not expose recipient email or credentials, and directs payment actions to the Paddle billing portal.
+- The attention list is cleared when the customer disconnects or switches identity. The full paginated event history remains unchanged.
+- Source-level implementation only; database-backed ownership, browser session-switching, and real Paddle lifecycle behavior still require the planned verification phase. No migration, deployment, payment action, or PDF/report refinement was performed.
