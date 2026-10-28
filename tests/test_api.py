@@ -1995,6 +1995,11 @@ async def test_admin_overview_filters_clients_by_status_and_package(client, monk
     inactive_page = await client.get("/api/v1/admin/overview?client_status=inactive", headers=headers)
     assert inactive_page.status_code == 200, inactive_page.text
     assert {row["client_name"] for row in inactive_page.json()["clients"]} == {"Filter Inactive"}
+    exact_tier = await client.get("/api/v1/admin/overview?tier_filter=STARTER", headers=headers)
+    wildcard_tier = await client.get("/api/v1/admin/overview?tier_filter=%25", headers=headers)
+    assert exact_tier.status_code == wildcard_tier.status_code == 200
+    assert {row["client_name"] for row in exact_tier.json()["clients"]} == {"Filter Active"}
+    assert wildcard_tier.json()["clients"] == []
 
 
 @pytest.mark.asyncio
