@@ -2474,6 +2474,11 @@ async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[
         query += " WHERE is_active = TRUE"
     query += " ORDER BY monthly_audit_allowance ASC, tier ASC"
     rows = (await db.execute(text(query))).mappings().all()
+    if not rows:
+        # Preserve environment-configured plans for installations that have not
+        # populated the operator catalogue yet. Once any catalogue rows exist,
+        # the database remains authoritative and disabled tiers are not revived.
+        return _configured_payment_plans()
     plans = []
     for row in rows:
         tier = str(row["tier"] or "").strip().lower()
