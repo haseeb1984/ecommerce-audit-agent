@@ -1945,7 +1945,7 @@ async def run_bounded_site_crawl(
             hreflang_findings = inspect_hreflang(body, final_url)
             findings.extend(hreflang_findings)
             # hreflang is optional; record it only when the source actually declares it.
-            if hreflang_findings or re.search(r"(?is)<link\\b[^>]*\\b hreflang\\s*=", body[:500_000]):
+            if hreflang_findings or re.search(r"(?is)<link\b[^>]*\bhreflang\s*=", body[:500_000]):
                 _record_static_check_outcome(
                     outcome_records, check_id="international_seo.hreflang_consistency",
                     category="international_seo", page_url=final_url,
