@@ -1009,6 +1009,19 @@ async def test_paddle_webhook_rejects_valid_json_with_invalid_object_shapes(clie
     assert invalid_items.status_code == 400
     assert invalid_items.json()["detail"] == "Paddle transaction items must be a JSON array."
 
+    invalid_customer = await send({
+        "event_id": "evt_invalid_customer_shape",
+        "event_type": "transaction.completed",
+        "data": {
+            "status": "completed",
+            "custom_data": {},
+            "customer": ["not", "an", "object"],
+            "items": [],
+        },
+    })
+    assert invalid_customer.status_code == 400
+    assert invalid_customer.json()["detail"] == "Paddle transaction customer must be a JSON object."
+
 
 @pytest.mark.asyncio
 async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_idempotent(client, monkeypatch):
