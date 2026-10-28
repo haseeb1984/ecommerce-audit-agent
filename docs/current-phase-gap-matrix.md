@@ -540,3 +540,13 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Customer portal: obsolete connection attempts no longer clear a newer session's credential/state or re-enable the Connect button while a newer attempt is still active. Empty credential submissions do not invalidate an in-progress session.
 - Administrator portal: the shared API helper checks the administrator-session generation after response parsing; connect attempts are generation-scoped, and disconnect/clear invalidates pending requests. Obsolete connect failures no longer clear a newer administrator session.
 - Code changes were committed and read back from the feature branch. Browser-based race reproduction and JavaScript syntax/runtime checks have not been executed. Some administrator action handlers use direct fetch calls outside the shared API helper and remain a separate review item; full admin workflow acceptance is still pending. No deployment, database migration, production audit, or PDF/report refinement was performed.
+
+
+
+## Full administrator action session isolation + API-key lifecycle acceptance coverage — 2026-10-28
+
+- The operator console now routes all direct request paths (client edits, package changes, payment reconciliation/email retry, report PDF/evidence downloads, and client API-key management) through a generation-guarded fetch wrapper, not only requests using the shared JSON API helper.
+- The wrapper rejects responses when the administrator disconnects or starts a different connection attempt, and re-checks session identity after JSON, text, or PDF blob parsing and before evaluating response success. This prevents a delayed response from an old admin session from being treated as current.
+- Added API regression coverage for the complete admin-issued API-key lifecycle: create once-only secret, no-store response, metadata-only listing, foreign-client revoke rejection, successful scoped revoke, empty post-revoke listing, audit-log entries, and secret absence from audit details.
+- Source files were committed and read back. The Python suite and browser-based session-race tests have **not** been executed in this environment; the new test remains unverified until CI runs. This batch does not imply full SaaS completion or production readiness.
+- Remaining broad gates: line-by-line requirement traceability, integrated customer audit-to-report/email journey, complete audit-module acceptance, current full-suite/static/browser verification, migration readiness, and deployment approval. PDF/report refinement remains intentionally reserved for the final phase; no deployment, migration, or live customer-site audit was run.
