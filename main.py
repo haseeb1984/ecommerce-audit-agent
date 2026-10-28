@@ -2669,12 +2669,13 @@ async def admin_retry_license_email(event_id: str, request: Request,
     if license_obj is None:
         raise HTTPException(status_code=409, detail="The license linked to this payment event is unavailable.")
 
+    event.recipient_email = recipient
     event.status = "email_sending"
     event.updated_at = now
     await db.commit()
     try:
         await asyncio.to_thread(
-            _send_license_email, event.recipient_email, license_obj.license_key,
+            _send_license_email, recipient, license_obj.license_key,
             license_obj.tier, license_obj.max_monthly_audits,
         )
     except Exception as exc:
