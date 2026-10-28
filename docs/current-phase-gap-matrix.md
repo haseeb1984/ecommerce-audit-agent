@@ -59,7 +59,7 @@
 
 ## Repository-only work completed — bounded dependency advisory response
 
-- The frontend CDN dependency advisory checker now caps the OSV batch response at 1,000,000 bytes before JSON parsing. An oversized response is handled as an incomplete/not-tested lookup, never as a clean dependency scan. The regression test covers this path; neither the new test nor the broader suite has been executed in this batch.
+- The frontend CDN dependency advisory checker now streams the OSV batch response and stops reading once it exceeds the 1,000,000-byte budget, before JSON parsing. An oversized response is handled as an incomplete/not-tested lookup, never as a clean dependency scan. The regression test covers this path; neither the new test nor the broader suite has been executed in this batch.
 - This is a defensive reliability improvement, not full software composition analysis. Lockfiles, bundled/self-hosted assets, server dependencies, and live release acceptance remain open.
 
 ## Current evidence-backed matrix
