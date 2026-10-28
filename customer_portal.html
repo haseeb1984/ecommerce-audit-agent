@@ -207,12 +207,17 @@
     }
   }
   async function loadApiKeys() {
-    const response = await api("/api/v1/account/api-keys");
-    const data = await response.json();
-    apiKeyRows = Array.isArray(data.items) ? data.items : [];
-    apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
-    apiKeyCreationAllowed = data.can_create === true;
-    renderApiKeys();
+    try {
+      const response = await api("/api/v1/account/api-keys");
+      const data = await response.json();
+      apiKeyRows = Array.isArray(data.items) ? data.items : [];
+      apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
+      apiKeyCreationAllowed = data.can_create === true;
+      renderApiKeys();
+    } catch (error) {
+      setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
+      throw error;
+    }
   }
   function renderApiKeys() {
     const container = $("apiKeys"); container.replaceChildren();
@@ -325,6 +330,8 @@
       activityRows = reset ? page : [...activityRows, ...page];
       activityTotal = Math.max(0, Number(data.page && data.page.total) || 0);
       renderActivity();
+    } catch (error) {
+      $("activityPageStatus").textContent = "Unable to load audit activity. " + error.message;
     } finally {
       activityLoading = false; more.disabled = false; refresh.disabled = false;
     }
@@ -348,6 +355,9 @@
       $("reportPaginationStatus").textContent = "Loaded " + loadedReports.length + " of " + reportsTotal + " matching saved reports.";
       moreButton.hidden = loadedReports.length >= reportsTotal;
       renderReports();
+    } catch (error) {
+      $("reportPaginationStatus").textContent = "Unable to load saved reports. " + error.message;
+      moreButton.hidden = loadedReports.length >= reportsTotal;
     } finally {
       reportsLoading = false;
       moreButton.disabled = false;
