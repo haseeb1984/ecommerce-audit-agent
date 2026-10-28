@@ -2528,7 +2528,7 @@ async def test_admin_action_history_is_paginated_and_validated(client, monkeypat
     assert (await client.get("/api/v1/admin/actions?offset=-1", headers=headers)).status_code == 422
 
 
-def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_secrets(client, monkeypatch):
+async def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_secrets(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-legacy")
     async with AsyncSessionLocal() as db:
         db.add_all([
