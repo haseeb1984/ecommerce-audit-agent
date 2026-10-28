@@ -1297,10 +1297,11 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
                 PaymentWebhookEvent.subscription_id == "sub_late_renewal123"
             )
         )).scalars().all()
-    assert len(events) == 2
+    assert len(events) == 3
     statuses = {item.event_id: item.status for item in events}
     assert statuses["evt_late_renewal_purchase"] == "delivered"
     assert statuses["evt_late_renewal_cancel"] == "subscription_canceled"
+    assert statuses["evt_late_renewal_paid_late"] == "subscription_canceled"
 
 
 @pytest.mark.asyncio
@@ -2286,6 +2287,7 @@ async def test_admin_payment_reconciliation_rejects_malformed_provider_shapes(cl
         db.add(PaymentWebhookEvent(
             event_id="evt_reconcile_shape",
             status="payment_failed",
+            recipient_email="reconcile-shape@example.com",
             transaction_id="txn_reconcile_shape",
         ))
         await db.commit()
