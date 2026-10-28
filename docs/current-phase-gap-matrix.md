@@ -637,3 +637,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added bounded lifecycle attention records and counts for payment failures, past-due subscriptions, and cancellations, plus a count of email-send markers older than ten minutes.
 - Updated the administrator console to show separate license-email recovery and billing-lifecycle queues. Email retry controls are shown only for pending email delivery; ordinary lifecycle events are informational and do not expose recipient email addresses in the lifecycle queue.
 - Source-level implementation and GitHub readback only. No automated test, live Paddle reconciliation, production database migration, or deployment was run. PDF/report work remains deferred.
+
+
+## Administrator license lifecycle diagnostics — multi-gap batch
+
+- Added seven aggregate license metrics: total, inactive, expired, expiring within seven days, no expiry date, zero/negative monthly quota, and active-but-expired records.
+- Added a bounded (100-row) operator exception queue with client ID/name, tier, active state, expiry, quota and explicit flags; no license keys or API-key secrets are returned. The queue is read-only and does not automatically suspend, extend, or mutate access.
+- Added operator-console metrics and an account-management handoff for exceptions. The handoff only edits clients already present on the current client page; operators must search/select other clients in client management first.
+- Source/readback verification only. Automated tests, browser interaction, production database compatibility and lifecycle acceptance have not been run. No migration, deployment, billing action, or PDF/report refinement was performed.
