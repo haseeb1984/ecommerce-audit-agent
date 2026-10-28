@@ -467,4 +467,6 @@ No deployment, database migration, payment, or production-site audit was run as 
 
 - `GET /api/v1/admin/actions` now supports bounded `limit`/`offset` pagination, total count, and `has_more`, retaining newest-first deterministic ordering by creation timestamp and ID.
 - The operator console now supports Load more activity and clears its pagination state when disconnecting, alongside the existing refresh behavior.
-- Added regression coverage for page ordering, pagination metadata, unauthenticated requests, and invalid pagination values. Tests have not been executed; this is source-level implementation, not release acceptance.
+- Added regression coverage for page ordering, pagination metadata, unauthenticated requests, invalid pagination values, and private no-store response headers.
+- Hardened legacy activity-log reads: malformed JSON and non-object payloads no longer break the entire page; stored detail values are re-sanitized before returning to the operator console.
+- Added regression coverage for malformed legacy details and secret-key redaction. Tests have not been executed; this is source-level implementation, not release acceptance.
