@@ -1712,6 +1712,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             # the original purchase event is reconciled and the subscription is linked.
             raise HTTPException(status_code=503, detail="Payment-failure event is awaiting subscription reconciliation.")
         customer = transaction.get("customer") or {}
+        if not isinstance(customer, dict):
+            raise HTTPException(status_code=400, detail="Paddle lifecycle event customer must be a JSON object.")
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         status = "payment_failed" if event_type == "transaction.payment_failed" else "subscription_past_due"
         db.add(PaymentWebhookEvent(
