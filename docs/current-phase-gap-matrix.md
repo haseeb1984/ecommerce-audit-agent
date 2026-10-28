@@ -557,3 +557,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added API regression coverage for the complete admin-issued API-key lifecycle: create once-only secret, no-store response, metadata-only listing, foreign-client revoke rejection, successful scoped revoke, empty post-revoke listing, audit-log entries, and secret absence from audit details.
 - Source files were committed and read back. The Python suite and browser-based session-race tests have **not** been executed in this environment; the new test remains unverified until CI runs. This batch does not imply full SaaS completion or production readiness.
 - Remaining broad gates: line-by-line requirement traceability, integrated customer audit-to-report/email journey, complete audit-module acceptance, current full-suite/static/browser verification, migration readiness, and deployment approval. PDF/report refinement remains intentionally reserved for the final phase; no deployment, migration, or live customer-site audit was run.
+
+## Latest implementation batch — checkout redirect hardening
+
+- Customer plan loading now uses no-store fetches, validates the plans payload before replacing the existing view, builds the updated plan list off-DOM, and shows a controlled fallback for malformed/empty responses rather than partially rendering data.
+- The customer checkout flow now handles non-JSON error responses, validates the returned checkout URL as HTTPS on the exact `paddle.com` domain or a true subdomain, and rejects credentials or non-Paddle destinations before browser navigation.
+- Regression tests cover malicious checkout destinations including lookalike domains, embedded credentials, HTTP, and JavaScript URLs; the existing positive test continues to assert that checkout uses the server-configured price rather than client-supplied amounts.
+- Source changes committed on `integration/saas-feature-batch`: customer portal `6e3c8a6`; checkout destination regression tests `ee6c6ec`.
+- Verification status: source readback and diff intent checked through GitHub. A fresh GitHub Actions run has not been produced for this branch update, so these new tests are **not yet reported as executed**. Vercel remains out of scope because its build quota is exhausted. PDF generation/report refinement remains deferred to the final phase.
