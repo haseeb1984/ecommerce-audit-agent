@@ -143,33 +143,64 @@
   async function loadPlans() {
     const container = $("plans");
     try {
-      const response = await fetch("/api/v1/billing/plans");
+      const response = await fetch("/api/v1/billing/plans", {cache: "no-store"});
       if (!response.ok) throw new Error("Plan list is unavailable.");
       const data = await response.json();
-      container.replaceChildren();
-      if (!data.plans || !data.plans.length) {
-        container.textContent = "Paddle checkout is not configured yet. Paddle API key, price IDs, webhook secret, and SMTP delivery must be set by the operator.";
+      if (!data || !Array.isArray(data.plans)) throw new Error("Plan list returned an invalid response.");
+      const cards = document.createDocumentFragment();
+      if (!data.plans.length) {
+        const message = document.createElement("p");
+        message.textContent = "Paddle checkout is not configured yet. Paddle API key, price IDs, webhook secret, and SMTP delivery must be set by the operator.";
+        cards.append(message);
+        container.replaceChildren(cards);
         return;
       }
       for (const plan of data.plans) {
+        if (!plan || typeof plan.tier !== "string" || typeof plan.label !== "string") continue;
         const card = document.createElement("article"); card.className = "report";
         const meta = document.createElement("div");
         const title = document.createElement("strong"); title.textContent = plan.label;
-        const quota = document.createElement("small"); quota.textContent = plan.monthly_audit_allowance + " audits per month";
+        const quota = document.createElement("small"); quota.textContent = Number(plan.monthly_audit_allowance) + " audits per month";
         meta.append(title, quota);
         const link = document.createElement("button"); link.type = "button"; link.textContent = "Continue to Paddle checkout";
         link.addEventListener("click", async () => {
           link.disabled = true;
           try {
-            const checkoutResponse = await fetch("/api/v1/billing/checkout", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tier: plan.tier})});
-            const checkoutData = await checkoutResponse.json();
-            if (!checkoutResponse.ok || !checkoutData.checkout_url) throw new Error(checkoutData.detail || "Unable to start Paddle checkout.");
-            window.location.assign(checkoutData.checkout_url);
-          } catch (error) { setStatus("connectStatus", error.message, "error"); link.disabled = false; }
+            const checkoutResponse = await fetch("/api/v1/billing/checkout", {
+              method: "POST", cache: "no-store",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({tier: plan.tier})
+            });
+            let checkoutData = {};
+            try { checkoutData = await checkoutResponse.json(); } catch (_) {}
+            if (!checkoutResponse.ok) throw new Error(checkoutData.detail || "Unable to start Paddle checkout.");
+            if (typeof checkoutData.checkout_url !== "string") throw new Error("Paddle did not return a checkout URL.");
+            let checkoutUrl;
+            try { checkoutUrl = new URL(checkoutData.checkout_url); } catch (_) { throw new Error("Paddle returned an invalid checkout URL."); }
+            const checkoutHost = checkoutUrl.hostname.toLowerCase();
+            if (checkoutUrl.protocol !== "https:" || checkoutUrl.username || checkoutUrl.password ||
+                !(checkoutHost === "paddle.com" || checkoutHost.endsWith(".paddle.com"))) {
+              throw new Error("Checkout destination failed the Paddle security check.");
+            }
+            window.location.assign(checkoutUrl.href);
+          } catch (error) {
+            setStatus("connectStatus", error && error.message ? error.message : "Unable to start Paddle checkout.", "error");
+            link.disabled = false;
+          }
         });
-        card.append(meta, link); container.append(card);
+        card.append(meta, link); cards.append(card);
       }
-    } catch (e) { container.textContent = e.message; }
+      if (!cards.childNodes.length) {
+        const message = document.createElement("p");
+        message.textContent = "No valid checkout plans are currently available.";
+        cards.append(message);
+      }
+      container.replaceChildren(cards);
+    } catch (e) {
+      const message = document.createElement("p");
+      message.textContent = e && e.message ? e.message : "Plan list is unavailable.";
+      container.replaceChildren(message);
+    }
   }
   async function loadBillingHistory(reset = true) {
     if (billingLoading) return;
