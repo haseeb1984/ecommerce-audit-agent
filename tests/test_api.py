@@ -2624,3 +2624,31 @@ async def test_account_api_key_creation_enforces_ten_key_cap(client):
             select(APIKey).where(APIKey.license_id == license_id)
         )).scalars().all()
         assert len(rows) == 10
+
+@pytest.mark.asyncio
+async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-cap")
+    license_id = await create_license(key="admin-api-key-cap-license", quota=5)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            APIKey(
+                license_id=license_id,
+                api_key_hash=hashlib.sha256(f"admin-existing-key-{i}".encode()).hexdigest(),
+                key_prefix=f"eaa_a{i:03d}",
+            )
+            for i in range(10)
+        ])
+        await db.commit()
+
+    response = await client.post(
+        f"/api/v1/admin/clients/{license_id}/api-keys",
+        headers={"X-Admin-Key": "test-admin-key-cap"},
+        json={"client_id": license_id, "label": "cap regression"},
+    )
+    assert response.status_code == 409
+    assert "10 API keys" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert len(rows) == 10
