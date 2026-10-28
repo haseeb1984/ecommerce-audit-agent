@@ -107,7 +107,7 @@ async function refreshPaymentEvents(offset=0){
    row.append(heading,details);
    const actions=el("div",undefined,"row");
    if(item.transaction_id){const reconcile=el("button","Reconcile","secondary");reconcile.addEventListener("click",()=>reconcilePayment(item.event_id,row));actions.append(reconcile)}
-   if(["email_pending","email_sending"].includes(item.status)){const retry=el("button","Retry license email","secondary");retry.addEventListener("click",()=>retryLicenseEmail({event_id:item.event_id},retry));actions.append(retry)}
+   if(["email_pending","email_sending"].includes(item.status)){const retry=el("button","Retry license email","secondary");retry.addEventListener("click",()=>retryLicenseEmail(item.event_id,retry));actions.append(retry)}
    if(actions.childNodes.length)row.append(actions);
    box.append(row);
   }
