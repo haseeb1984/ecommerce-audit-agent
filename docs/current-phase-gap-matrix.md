@@ -587,3 +587,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The existing creation path uses a per-license row lock on databases supporting row locks before counting and inserting, protecting the cap against simultaneous requests in production PostgreSQL.
 - Verification in this batch is source/test review and GitHub readback only. The test has been added but **has not been executed** because no fresh GitHub Actions run is available for the latest branch changes. Vercel is not used. PDF/report refinement remains deferred to the final phase.
 
+
+## Latest implementation batch — admin-issued API-key cap coverage
+
+- Added a matching regression test for the administrator API-key creation endpoint: with ten existing keys for a customer, a new admin-issued key must return HTTP 409 and the database must remain at ten keys.
+- This covers the second entry point to the same account key limit; the backend already serializes admin key creation on the customer license row and records creation/revocation in the admin action log.
+- GitHub source and test changes are reviewed/read back, but this new test is not claimed as executed: no fresh Actions run is available for the latest branch. Vercel is not used. PDF/report refinement remains deferred.
+
