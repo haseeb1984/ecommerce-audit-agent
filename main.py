@@ -2670,10 +2670,14 @@ async def admin_reconcile_payment(event_id: str, request: Request,
         provider_transaction_id = str(data.get("id") or "").strip()
         if not provider_transaction_id or not hmac.compare_digest(provider_transaction_id, event.transaction_id):
             raise HTTPException(status_code=502, detail="Paddle returned a transaction that does not match the recorded payment.")
-        details = data.get("details") or {}
+        details = data.get("details", {})
+        if details is None:
+            details = {}
         if not isinstance(details, dict):
             raise HTTPException(status_code=502, detail="Paddle returned invalid transaction details.")
-        totals = details.get("totals") or {}
+        totals = details.get("totals", {})
+        if totals is None:
+            totals = {}
         if not isinstance(totals, dict):
             raise HTTPException(status_code=502, detail="Paddle returned invalid transaction totals.")
         subscription_id = str(data.get("subscription_id") or "").strip()
