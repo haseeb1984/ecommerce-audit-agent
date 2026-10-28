@@ -6,7 +6,7 @@ def test_detected_trust_cues_are_presence_signals_not_authenticity_claims():
     <a href="/contact">Contact us</a><a href="/returns">Returns policy</a></body></html>"""
     findings = inspect_trust_signals(html, "https://shop.example/")
     assert len(findings) == 5
-    assert all(f.category == "trust_inspector" and f.status == "verified" for f in findings)
+    assert all(f.category == "trust_inspector" and f.status == "manual_review_required" for f in findings)
     assert all("does not prove" in f.explanation for f in findings)
 
 def test_absent_cues_require_manual_review_and_are_not_failures():
