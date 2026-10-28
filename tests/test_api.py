@@ -735,6 +735,7 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
 @pytest.mark.asyncio
 async def test_report_history_supports_stable_offset_pagination(client):
     license_id = await create_license(key="report-pagination-owner")
+    other_license_id = await create_license(key="report-pagination-other")
     async with AsyncSessionLocal() as db:
         db.add_all([
             AuditReport(
@@ -747,6 +748,14 @@ async def test_report_history_supports_stable_offset_pagination(client):
             )
             for index in range(3)
         ])
+        db.add(AuditReport(
+            license_id=other_license_id,
+            domain="shop-1.example",
+            pdf_bytes=b"%PDF-other",
+            coverage_json="{}",
+            finding_count=99,
+            created_at=datetime.now(timezone.utc) + timedelta(days=1),
+        ))
         await db.commit()
 
     headers = {"X-License-Key": "report-pagination-owner"}
@@ -767,6 +776,8 @@ async def test_report_history_supports_stable_offset_pagination(client):
     assert filtered.json()["reports"][0]["domain"] == "shop-1.example"
     assert wildcard.json()["total"] == 3
     assert wildcard.json()["domain"] == ""
+    assert all(row["finding_count"] != 99 for row in filtered.json()["reports"])
+    assert (await client.get("/api/v1/reports?offset=10000001", headers=headers)).status_code == 422
 
 
 @pytest.mark.asyncio
