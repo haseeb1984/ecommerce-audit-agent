@@ -111,9 +111,9 @@
 
 ## Customer billing history — source-level implementation
 
-- Added an authenticated `/api/v1/account/billing-history` endpoint scoped to the verified license, returning at most 50 recent payment provisioning events and account tier/status/expiry metadata. It does not return recipient email or payment instrument details and sends private no-store headers.
-- Added the billing history section to the customer portal, showing event status, transaction/subscription identifiers, and created/updated timestamps. Billing data is cleared when account data is reset or credentials change.
-- A source inspection also found and corrected literal escaped-newline sequences in the customer portal script introduced during earlier API-key UI edits. No browser or automated tests have been run; syntax and runtime behavior still need the deferred verification phase.
+- The authenticated `/api/v1/account/billing-history` endpoint is scoped to the verified license and now supports bounded `limit`/`offset` pagination with total count and `has_more` metadata, plus account tier/status/expiry metadata. It does not return recipient email or payment instrument details and sends private no-store headers.
+- The customer portal shows event status, transaction/subscription identifiers, and created/updated timestamps, with a Load more control and refresh-from-first-page behavior. Billing data is cleared when account data is reset or credentials change.
+- Added API regression coverage for ordering, multiple pages, ownership isolation, authentication, invalid pagination, and no-store headers. Tests are committed but have not been run; browser/runtime behavior and production migration compatibility remain unverified.
 
 ## Operator API key lifecycle — source-level implementation
 
@@ -461,3 +461,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added a protected `/api/v1/admin/payment-events` endpoint with bounded limit/offset pagination and exact status filtering. Response fields are allowlisted to event/lifecycle identifiers and timestamps; customer email and license secrets are not returned.
 - Added an operator-console queue with status filtering, paging, reconciliation and pending license-email retry actions.
 - Added API regression coverage for pagination, filtering, validation and response minimization. Tests have not been run.
+
+
+## Administrator activity history — implementation batch
+
+- `GET /api/v1/admin/actions` now supports bounded `limit`/`offset` pagination, total count, and `has_more`, retaining newest-first deterministic ordering by creation timestamp and ID.
+- The operator console now supports Load more activity and clears its pagination state when disconnecting, alongside the existing refresh behavior.
+- Added regression coverage for page ordering, pagination metadata, unauthenticated requests, and invalid pagination values. Tests have not been executed; this is source-level implementation, not release acceptance.
