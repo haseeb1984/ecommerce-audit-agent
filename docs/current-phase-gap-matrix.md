@@ -527,3 +527,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Strengthened the billing-history pagination/ownership test so it checks the exact seeded foreign-account event ID, transaction identifier, and email are absent from the authenticated customer's response.
 - Added explicit allowlist assertions that customer billing-history items omit recipient email and Paddle customer ID; the API response remains scoped to the authenticated license and retains private no-store caching.
 - This batch tightens regression coverage around an existing backend security boundary; it does not change the customer API contract. The tests have not been executed, so assertions are source-reviewed only. Full suite, browser acceptance, and production readiness remain pending.
+
+## Customer portal identity-switch race guard — implementation batch (2026-10-28)
+
+- Authenticated customer-portal requests now capture an account-session generation before sending the request and reject late responses if the user starts another connection attempt or disconnects before the response returns.
+- This prevents an in-flight response for a prior credential from repopulating saved reports, activity, usage, billing, or API-key UI after account data was cleared or another identity was selected.
+- The source was committed and read back from the feature branch. Browser-level race reproduction and automated JavaScript tests have not been run; complete customer workflow acceptance remains pending. No database migration, production audit, PDF/report refinement, or deployment was performed.
