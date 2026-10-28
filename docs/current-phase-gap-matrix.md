@@ -637,3 +637,37 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added bounded lifecycle attention records and counts for payment failures, past-due subscriptions, and cancellations, plus a count of email-send markers older than ten minutes.
 - Updated the administrator console to show separate license-email recovery and billing-lifecycle queues. Email retry controls are shown only for pending email delivery; ordinary lifecycle events are informational and do not expose recipient email addresses in the lifecycle queue.
 - Source-level implementation and GitHub readback only. No automated test, live Paddle reconciliation, production database migration, or deployment was run. PDF/report work remains deferred.
+
+
+## Admin license expiry operations — implementation batch
+
+This batch adds separate counts for expired licenses, active licenses expiring within seven days, active licenses expiring within thirty days, licenses without expiry dates, and licenses with the inactive flag. The operator account-status filter now includes seven-day expiry, thirty-day expiry, and no-expiry cohorts. No automatic suspension, renewal, payment mutation, or entitlement extension is performed.
+
+Issue checklist:
+1. Separate expired-license metric.
+2. Seven-day expiry metric.
+3. Thirty-day expiry metric.
+4. Missing-expiry metric.
+5. Explicit inactive-flag metric.
+6. Seven-day expiry filter.
+7. Thirty-day expiry filter.
+8. Missing-expiry filter.
+9. Preserve authenticated admin access.
+10. Keep expiry filters server-side.
+11. Preserve existing bounded pagination.
+12. Keep exact package-tier filtering.
+13. Preserve sanitized search matching.
+14. Keep existing active/inactive filters.
+15. Keep expired status precedence.
+16. Use UTC-aware comparison boundaries.
+17. Make renewal urgency visible in summary metrics.
+18. Distinguish expiry from inactive status.
+19. Avoid exposing customer credentials in metrics.
+20. Avoid automatic account suspension.
+21. Avoid automatic entitlement extension.
+22. Keep billing lifecycle actions separate.
+23. Preserve existing account-management controls.
+24. Keep changes confined to source and docs.
+25. Explicitly record unverified runtime and production boundaries.
+
+Verification boundary: GitHub source changes and readback only. No automated tests, live database acceptance, production migration, deployment, or live billing actions were run. PDF/report refinement remains deferred to the final phase.
