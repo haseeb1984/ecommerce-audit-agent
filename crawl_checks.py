@@ -1657,26 +1657,27 @@ async def run_bounded_site_crawl(
         # HTML's first <base href> changes how relative anchor links resolve.
         # Treat it as untrusted input: all resolved candidates still pass the
         # existing HTTP(S), credential, same-origin, robots and file-type gates.
-        try:
-            link_resolution_base = (
-                urljoin(final_home, link_parser.base_href)
-                if link_parser.base_href else final_home
-            )
-            base_parts = urlsplit(link_resolution_base)
-            _ = base_parts.port
-            if (
-                base_parts.scheme.lower() not in {"http", "https"}
-                or not base_parts.hostname
-                or base_parts.username is not None
-                or base_parts.password is not None
-                or not _same_origin(link_resolution_base, final_home)
-            ):
-                # A hostile or misconfigured cross-origin <base> must not change
-                # how this bounded crawler resolves relative links. Fall back to
-                # the final homepage so eligible same-origin paths remain discoverable.
-                link_resolution_base = final_home
-        except (ValueError, UnicodeError):
-            link_resolution_base = final_home
+        link_resolution_base: str | None = final_home
+        if link_parser.base_href:
+            try:
+                proposed_base = urljoin(final_home, link_parser.base_href)
+                base_parts = urlsplit(proposed_base)
+                _ = base_parts.port
+                if (
+                    base_parts.scheme.lower() not in {"http", "https"}
+                    or not base_parts.hostname
+                    or base_parts.username is not None
+                    or base_parts.password is not None
+                    or not _same_origin(proposed_base, final_home)
+                ):
+                    # HTML base changes the meaning of every relative link. If it
+                    # points off-origin or is malformed, skip relative anchors
+                    # rather than silently reinterpreting them against the homepage.
+                    link_resolution_base = None
+                else:
+                    link_resolution_base = proposed_base
+            except (ValueError, UnicodeError):
+                link_resolution_base = None
 
         discovery_hrefs = [
             *link_parser.links[:MAX_LINKS_FROM_HOME],
@@ -1691,7 +1692,13 @@ async def run_bounded_site_crawl(
             # authority (for example, an unmatched IPv6 bracket) must not abort
             # discovery for the remaining valid URLs.
             try:
-                absolute = urljoin(link_resolution_base if href in link_parser.links else final_home, href)
+                is_page_link = href in link_parser.links
+                # Relative anchors cannot be safely resolved when a malformed or
+                # off-origin base element was present. Absolute same-origin links
+                # still pass the normal origin and robots checks below.
+                if is_page_link and link_resolution_base is None and not urlsplit(href).scheme and not href.startswith("//"):
+                    continue
+                absolute = urljoin((link_resolution_base or final_home) if is_page_link else final_home, href)
                 parts = urlsplit(absolute)
                 if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
                     continue
