@@ -51,6 +51,37 @@ async def test_sitemap_discovered_url_status_is_recorded_without_claiming_indexi
     assert "https://shop.example/products/missing" in checked
 
 @pytest.mark.asyncio
+async def test_bounded_crawl_records_additional_page_check_outcomes_without_false_applicability(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return 200, (
+                '<html><head><title>Store</title><link rel="canonical" href="/">'
+                '</head><body><form method="GET" action="/search">'
+                '<input name="q"></form></body></html>'
+            ), {"content-type": "text/html"}, url
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt",
+                   "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+    outcome_ids = {item.check_id for item in outcomes}
+    assert "indexability.canonical_declaration" in outcome_ids
+    assert "security.sensitive_get_forms" in outcome_ids
+    assert "technical_seo.meta_refresh" in outcome_ids
+    assert "privacy.detected_tracking_signals" in outcome_ids
+    # Product-only checks must not be reported as passing on the homepage.
+    assert "structured_data.product_presence" not in outcome_ids
+    assert "ecommerce.catalog_navigation" not in outcome_ids
+
+
+@pytest.mark.asyncio
 async def test_crawl_resolves_relative_links_using_same_origin_base_href(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
     pages = {
