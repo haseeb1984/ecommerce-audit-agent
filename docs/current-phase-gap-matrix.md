@@ -492,3 +492,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Public HTTP(S) metadata URLs still have query strings and fragments removed before persistence, and default ports remain normalized.
 - Added regression cases for common private IPv4/IPv6 targets, cloud metadata IPs, local hostnames, and public URL normalization/redaction.
 - Source and tests are committed; the tests have not been executed. This is a metadata-safety boundary, not a substitute for the crawler's DNS-pinned fetch and redirect checks. No deployment, migration, live crawl, or PDF work was performed.
+
+
+## Coverage-manifest evidence URL privacy — 2026-10-28
+
+- The coverage manifest now applies the same private/non-public host exclusion used by persisted audit metadata: loopback, non-global IP literals, and local/internal/test-only hostnames are excluded from target URLs, sampled page URLs, and page-scoped outcome summaries.
+- Public URL query strings and fragments continue to be removed; public IPv6 literals remain supported.
+- Added regression coverage for local/private hosts and safe public-page retention. Tests are committed but have not been executed.
+- This is evidence-output hygiene only. It does not replace crawler-side DNS resolution, redirect validation, or network egress controls.
