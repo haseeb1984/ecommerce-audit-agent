@@ -2189,3 +2189,27 @@ def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_sec
     assert sensitive["api_key"] == "[REDACTED]"
     assert sensitive["nested"]["access_token"] == "[REDACTED]"
     assert "hunter2" not in sensitive["note"]
+
+
+
+@pytest.mark.parametrize("value", [
+    "http://127.0.0.1/private",
+    "http://10.0.0.4/internal",
+    "http://[::1]/admin",
+    "http://169.254.169.254/latest/meta-data",
+    "https://localhost/private",
+    "https://service.internal/debug",
+    "https://store.local/account",
+    "https://shop.example.test/private",
+])
+def test_audit_metadata_url_excludes_private_or_nonpublic_hosts(value):
+    assert main._safe_audit_metadata_url(value) is None
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("HTTPS://Shop.Example/products?token=private#details", "https://shop.example/products"),
+    ("https://shop.example:8443/products?session=secret", "https://shop.example:8443/products"),
+    ("https://[2606:4700:4700::1111]/?token=secret", "https://[2606:4700:4700::1111]/"),
+])
+def test_audit_metadata_url_preserves_public_targets_and_redacts_secrets(value, expected):
+    assert main._safe_audit_metadata_url(value) == expected
