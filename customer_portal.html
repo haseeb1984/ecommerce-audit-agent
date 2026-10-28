@@ -395,7 +395,17 @@
     const pending = Math.max(0, Number(usage.in_progress) || 0);
     const limit = Math.max(0, Number(usage.monthly_limit) || 0);
     const percent = Math.max(0, Math.min(100, Number(usage.usage_percent) || 0));
-    $("usageSummary").textContent = (usage.tier || "Plan") + " plan · " + used + " completed" + (pending ? " · " + pending + " in progress" : "") + " of " + limit + " monthly audits used";
+    const planLabel = usage.plan_label || usage.tier || "Plan";
+    $("usageSummary").textContent = planLabel + " plan · " + used + " completed" + (pending ? " · " + pending + " in progress" : "") + " of " + limit + " monthly audits used";
+    if (usage.quota_state === "exhausted") $("usageSummary").textContent += " · Monthly quota exhausted";
+    else if (usage.quota_state === "near_limit") $("usageSummary").textContent += " · Near monthly limit";
+    if (usage.entitlement_state && usage.entitlement_state !== "active") {
+      const states = {inactive:"Account inactive", expired:"License expired", plan_inactive:"Plan unavailable", quota_unavailable:"Quota is not configured", quota_exhausted:"No monthly audits remaining"};
+      $("usageSummary").textContent += " · " + (states[usage.entitlement_state] || "Entitlement requires attention");
+    }
+    if (usage.max_concurrent_audits !== null && usage.max_concurrent_audits !== undefined) {
+      $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0) + " · Concurrent audit limit: " + Number(usage.max_concurrent_audits);
+    }
     $("usageFill").style.width = percent + "%";
     $("usageBar").setAttribute("aria-valuenow", String(Math.round(percent)));
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
