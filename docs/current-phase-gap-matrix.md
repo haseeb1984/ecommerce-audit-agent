@@ -602,3 +602,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 - This matters because checkout launch URLs can contain a short-lived Paddle transaction identifier in the query string; the browser should not retain the launch response in a reusable cache.
 - Extended the existing browser-security-header API regression test to cover `/checkout?_ptxn=...` alongside customer and administrator portal pages.
 - Source and regression test are committed and read back from the feature branch. Tests have **not** been executed and no fresh GitHub Actions run is available. No Paddle transaction, migration, deployment, or PDF/report work was performed.
+
+## Configured Paddle checkout destination validation — implementation batch (2026-10-28)
+
+- The backend now validates `PADDLE_CHECKOUT_URL` with the same strict HTTPS/Paddle-host allowlist used for URLs returned by Paddle, rejecting lookalike domains and embedded credentials before making the transaction API request.
+- Added parameterized API regression coverage for untrusted configured destinations and verifies the Paddle request is not called when configuration is invalid.
+- Code and tests are committed to `integration/saas-feature-batch`. Tests have **not** been executed in this environment; no fresh GitHub Actions run is available. Vercel remains unused due to the build-quota limitation. PDF/report refinement remains deferred to the final phase.
