@@ -341,10 +341,15 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             resolved_action = urljoin(final_url, action.strip() or final_url)
             action_parts = urlsplit(resolved_action)
             action_port = action_parts.port  # Force validation of malformed explicit ports.
-            action_origin = _normalized_http_origin(resolved_action)
+            action_scheme = action_parts.scheme.lower()
+            action_host = (action_parts.hostname or "").rstrip(".").lower()
+            if action_scheme not in {"http", "https"} or not action_host:
+                continue
+            # Userinfo makes a destination unsafe to use as evidence, but it must
+            # not hide an external endpoint from the manual-review inventory.
+            default_port = 443 if action_scheme == "https" else 80
+            action_origin = (action_scheme, action_host, action_port or default_port)
         except (ValueError, UnicodeError):
-            continue
-        if action_origin is None:
             continue
         action_scheme, action_host, normalized_port = action_origin
         if final_origin is None or action_origin != final_origin:
