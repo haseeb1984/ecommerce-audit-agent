@@ -2131,6 +2131,8 @@ async def test_admin_action_history_is_paginated_and_validated(client, monkeypat
     headers = {"X-Admin-Key": "test-admin-actions-pagination"}
     first = await client.get("/api/v1/admin/actions?limit=2&offset=0", headers=headers)
     assert first.status_code == 200, first.text
+    assert first.headers["cache-control"] == "no-store, private"
+    assert first.headers["pragma"] == "no-cache"
     payload = first.json()
     assert payload["page"]["limit"] == 2
     assert payload["page"]["offset"] == 0
