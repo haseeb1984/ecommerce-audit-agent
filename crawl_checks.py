@@ -1902,10 +1902,34 @@ async def run_bounded_site_crawl(
                         # A malformed link must not stop inspection of other links.
                         continue
 
-            findings.extend(inspect_product_page_schema_presence(body, final_url))
-            findings.extend(inspect_ecommerce_catalog_navigation(body, final_url))
-            findings.extend(inspect_sensitive_get_forms(body, final_url))
-            findings.extend(inspect_canonical_declaration(body, final_url))
+            product_schema_findings = inspect_product_page_schema_presence(body, final_url)
+            findings.extend(product_schema_findings)
+            if product_schema_findings:
+                _record_static_check_outcome(
+                    outcome_records, check_id="structured_data.product",
+                    category="structured_data", page_url=final_url,
+                    findings=product_schema_findings,
+                    method="static product-route JSON-LD presence and parseability review",
+                )
+            catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
+            findings.extend(catalog_findings)
+            if catalog_findings:
+                _record_static_check_outcome(
+                    outcome_records, check_id="ecommerce_catalog.navigation",
+                    category="ecommerce_catalog", page_url=final_url,
+                    findings=catalog_findings,
+                    method="static ecommerce product/category route and navigation review",
+                )
+            sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
+            findings.extend(sensitive_form_findings)
+            canonical_findings = inspect_canonical_declaration(body, final_url)
+            findings.extend(canonical_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="indexability.canonical",
+                category="indexability", page_url=final_url,
+                findings=canonical_findings,
+                method="static HTML canonical-link declaration review",
+            )
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
