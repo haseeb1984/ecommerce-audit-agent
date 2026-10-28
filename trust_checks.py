@@ -75,7 +75,7 @@ def inspect_trust_signals(html: str, source_url: str) -> list[AuditFinding]:
             if text_match: details.append("matching text was found in returned HTML")
             if asset_match: details.append("matching image/asset attributes or component labels were found")
             findings.append(_finding(
-                "trust_inspector", f"{label} detected in source", "verified", "info",
+                "trust_inspector", f"{label} detected in source", "manual_review_required", "info",
                 f"{label} were detected on {source_url}: " + "; ".join(details) + ".",
                 "This is only a source-level presence signal. It does not prove a badge is genuine, a payment method is available at checkout, a guarantee is honored, reviews are authentic, or a policy is legally adequate.",
                 "Manually confirm the signal is visible and accurate in the rendered customer journey. Verify third-party badges with their provider and ensure policies match actual operations.",
