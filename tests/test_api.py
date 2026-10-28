@@ -2479,7 +2479,7 @@ async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_min
     async with AsyncSessionLocal() as db:
         actions = (await db.execute(
             select(SaaSAdminActionLog).where(
-                SaaSAdminActionLog.entity_id == first_client_id,
+                SaaSAdminActionLog.entity_id == str(first_client_id),
                 SaaSAdminActionLog.action.in_([
                     "client.api_key_created",
                     "client.api_key_revoked",
