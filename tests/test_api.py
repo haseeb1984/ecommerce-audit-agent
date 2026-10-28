@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
 from coverage_manifest import build_coverage_manifest
@@ -2112,3 +2112,38 @@ async def test_customer_billing_history_is_paginated_scoped_and_validated(client
     assert (await client.get("/api/v1/account/billing-history")).status_code == 401
     assert (await client.get("/api/v1/account/billing-history?limit=101", headers=headers)).status_code == 422
     assert (await client.get("/api/v1/account/billing-history?offset=-1", headers=headers)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_action_history_is_paginated_and_validated(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-pagination")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            SaaSAdminActionLog(action="package_created", entity_type="package", entity_id="starter",
+                               details_json='{"tier":"starter"}'),
+            SaaSAdminActionLog(action="client_updated", entity_type="client", entity_id="12",
+                               details_json='{"field":"is_active"}'),
+            SaaSAdminActionLog(action="key_revoked", entity_type="api_key", entity_id="31",
+                               details_json='{"reason":"rotation"}'),
+        ])
+        await db.commit()
+
+    headers = {"X-Admin-Key": "test-admin-actions-pagination"}
+    first = await client.get("/api/v1/admin/actions?limit=2&offset=0", headers=headers)
+    assert first.status_code == 200, first.text
+    payload = first.json()
+    assert payload["page"]["limit"] == 2
+    assert payload["page"]["offset"] == 0
+    assert payload["page"]["total"] >= 3
+    assert payload["page"]["has_more"] is True
+    assert len(payload["actions"]) == 2
+    assert payload["actions"][0]["id"] > payload["actions"][1]["id"]
+
+    second = await client.get("/api/v1/admin/actions?limit=2&offset=2", headers=headers)
+    assert second.status_code == 200
+    assert len(second.json()["actions"]) >= 1
+    assert second.json()["page"]["has_more"] is False
+
+    assert (await client.get("/api/v1/admin/actions")).status_code == 401
+    assert (await client.get("/api/v1/admin/actions?limit=201", headers=headers)).status_code == 422
+    assert (await client.get("/api/v1/admin/actions?offset=-1", headers=headers)).status_code == 422
