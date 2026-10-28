@@ -94,25 +94,29 @@ async function refreshActions(reset=true){
  }finally{actionsLoading=false;more.disabled=!actionsTotal||actionsOffset>=actionsTotal}
 }
 async function refreshPaymentEvents(offset=0){
- const limit=25,query=new URLSearchParams({limit:String(limit),offset:String(offset)});
- const selected=$("paymentEventStatus").value;if(selected)query.set("status",selected);
- const d=await api("/api/v1/admin/payment-events?"+query.toString()),box=$("paymentEvents");
- paymentEventOffset=Number(d.page.offset)||0;box.replaceChildren();
- if(!d.items.length){box.append(el("p","No payment events match this filter.","muted"))}
- for(const item of d.items){
-  const row=el("div",undefined,"historyitem");
-  const heading=el("strong",item.status+" · "+item.event_id);
-  const details=el("span","License #"+(item.license_id??"unlinked")+" · Transaction "+(item.transaction_id||"—")+" · Subscription "+(item.subscription_id||"—")+" · "+date(item.created_at),"small");
-  row.append(heading,details);
-  const actions=el("div",undefined,"row");
-  if(item.transaction_id){const reconcile=el("button","Reconcile","secondary");reconcile.addEventListener("click",()=>reconcilePayment(item.event_id,row));actions.append(reconcile)}
-  if(["email_pending","email_sending"].includes(item.status)){const retry=el("button","Retry license email","secondary");retry.addEventListener("click",()=>retryLicenseEmail({event_id:item.event_id},retry));actions.append(retry)}
-  if(actions.childNodes.length)row.append(actions);
-  box.append(row);
+ try{
+  const limit=25,query=new URLSearchParams({limit:String(limit),offset:String(offset)});
+  const selected=$("paymentEventStatus").value;if(selected)query.set("status",selected);
+  const d=await api("/api/v1/admin/payment-events?"+query.toString()),box=$("paymentEvents");
+  paymentEventOffset=Number(d.page.offset)||0;box.replaceChildren();
+  if(!d.items.length){box.append(el("p","No payment events match this filter.","muted"))}
+  for(const item of d.items){
+   const row=el("div",undefined,"historyitem");
+   const heading=el("strong",item.status+" · "+item.event_id);
+   const details=el("span","License #"+(item.license_id??"unlinked")+" · Transaction "+(item.transaction_id||"—")+" · Subscription "+(item.subscription_id||"—")+" · "+date(item.created_at),"small");
+   row.append(heading,details);
+   const actions=el("div",undefined,"row");
+   if(item.transaction_id){const reconcile=el("button","Reconcile","secondary");reconcile.addEventListener("click",()=>reconcilePayment(item.event_id,row));actions.append(reconcile)}
+   if(["email_pending","email_sending"].includes(item.status)){const retry=el("button","Retry license email","secondary");retry.addEventListener("click",()=>retryLicenseEmail({event_id:item.event_id},retry));actions.append(retry)}
+   if(actions.childNodes.length)row.append(actions);
+   box.append(row);
+  }
+  $("paymentEventsPageInfo").textContent=d.page.total?("Showing "+(paymentEventOffset+1)+"–"+(paymentEventOffset+d.items.length)+" of "+d.page.total):"0 events";
+  $("paymentEventsPrev").disabled=paymentEventOffset<=0;
+  $("paymentEventsNext").disabled=!d.page.has_more;
+ }catch(error){
+  status("Unable to load payment events. "+error.message,"error");
  }
- $("paymentEventsPageInfo").textContent=d.page.total?("Showing "+(paymentEventOffset+1)+"–"+(paymentEventOffset+d.items.length)+" of "+d.page.total):"0 events";
- $("paymentEventsPrev").disabled=paymentEventOffset<=0;
- $("paymentEventsNext").disabled=!d.page.has_more;
 }
 async function refreshPackages(){
  const d=await api("/api/v1/admin/packages"),body=$("packages");body.replaceChildren();
