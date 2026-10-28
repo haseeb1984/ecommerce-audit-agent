@@ -607,8 +607,24 @@ async def test_report_history_is_scoped_to_authenticated_license(client):
 
     forbidden_pdf = await client.get(f"/api/v1/reports/{private_id}/pdf", headers=headers)
     forbidden_coverage = await client.get(f"/api/v1/reports/{private_id}/coverage", headers=headers)
+    forbidden_evidence = await client.get(f"/api/v1/reports/{private_id}/evidence", headers=headers)
+    email_called = False
+
+    def fake_send_pdf_email(recipient, domain, report_id, pdf_bytes):
+        nonlocal email_called
+        email_called = True
+
+    monkeypatch.setattr(main, "_send_pdf_email", fake_send_pdf_email)
+    forbidden_email = await client.post(
+        f"/api/v1/reports/{private_id}/email",
+        headers=headers,
+        json={"recipient_email": "recipient@example.com", "recipient_confirmed": True},
+    )
     assert forbidden_pdf.status_code == 404
     assert forbidden_coverage.status_code == 404
+    assert forbidden_evidence.status_code == 404
+    assert forbidden_email.status_code == 404
+    assert email_called is False
 
 
 @pytest.mark.asyncio
