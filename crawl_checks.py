@@ -2486,6 +2486,8 @@ async def run_bounded_site_crawl(
                 ("trust.signals", "trust", "Trust signal source inspection"),
                 ("pixel_analytics.consent_signals", "pixel_analytics", "Tracking and consent source signal inspection"),
                 ("on_page_seo.metadata", "on_page_seo", "Page title and meta description source inspection"),
+                ("structured_data.product", "structured_data", "Product structured-data source inspection"),
+                ("ecommerce_catalog.navigation", "ecommerce_catalog", "Product and catalog navigation source inspection"),
             )
             page_findings = findings[page_findings_start:]
             for check_id, category, method in page_check_families:
