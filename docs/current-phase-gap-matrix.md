@@ -614,3 +614,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Extended the existing two-license report isolation API test beyond listing, PDF download, and coverage metadata to also request the foreign license's detailed evidence and email endpoints.
 - The regression asserts both foreign-report endpoints return 404 and that the email sender is never invoked, protecting stored report contents and preventing cross-account email delivery.
 - Test source is committed and read back from the feature branch. The test has **not** been executed; fresh GitHub Actions runs remain unavailable and the Vercel build quota remains exhausted. This is source-level acceptance coverage, not a claim of runtime verification. PDF/report refinement remains deferred to the final phase.
+
+## Customer account profile — source-level implementation
+
+- Added authenticated `GET /api/v1/account/profile` and `PATCH /api/v1/account/profile` endpoints. Responses expose only the customer display name, plan tier, account status, creation date, and expiry; credentials and payment secrets are not returned.
+- The customer portal now loads profile metadata on connect, lets the customer update the account display name, and clears profile data when disconnecting or switching credentials. Profile responses use private no-store cache headers.
+- The editable field is the account display name only. Billing-provider identity, email address, subscription plan, and payment details are not changed by this feature.
+- Source-level implementation only; API validation, ownership isolation, browser session switching, and persistence require the planned verification phase.
