@@ -2075,3 +2075,40 @@ async def test_customer_audit_activity_requires_auth_and_bounds_pagination(clien
     invalid_offset = await client.get("/api/v1/account/activity?offset=-1", headers=headers)
     assert invalid_limit.status_code == 422
     assert invalid_offset.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_customer_billing_history_is_paginated_scoped_and_validated(client):
+    owner_id = await create_license(key="billing-history-owner")
+    other_id = await create_license(key="billing-history-other")
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(event_id="evt_billing_owner_a", license_id=owner_id, status="delivered",
+                                transaction_id="txn-owner-a", created_at=now - timedelta(minutes=2)),
+            PaymentWebhookEvent(event_id="evt_billing_owner_b", license_id=owner_id, status="payment_failed",
+                                transaction_id="txn-owner-b", created_at=now - timedelta(minutes=1)),
+            PaymentWebhookEvent(event_id="evt_billing_owner_c", license_id=owner_id, status="delivered",
+                                transaction_id="txn-owner-c", created_at=now),
+            PaymentWebhookEvent(event_id="evt_billing_other_secret", license_id=other_id, status="delivered",
+                                transaction_id="txn-other-secret", created_at=now),
+        ])
+        await db.commit()
+
+    headers = {"X-License-Key": "billing-history-owner"}
+    first = await client.get("/api/v1/account/billing-history?limit=2&offset=0", headers=headers)
+    assert first.status_code == 200, first.text
+    data = first.json()
+    assert data["page"] == {"limit": 2, "offset": 0, "total": 3, "has_more": True}
+    assert [item["event_id"] for item in data["items"]] == ["evt_billing_owner_c", "evt_billing_owner_b"]
+    assert "evt_billing_other_secret" not in first.text
+    assert first.headers["cache-control"] == "no-store, private"
+
+    second = await client.get("/api/v1/account/billing-history?limit=2&offset=2", headers=headers)
+    assert second.status_code == 200
+    assert [item["event_id"] for item in second.json()["items"]] == ["evt_billing_owner_a"]
+    assert second.json()["page"]["has_more"] is False
+
+    assert (await client.get("/api/v1/account/billing-history")).status_code == 401
+    assert (await client.get("/api/v1/account/billing-history?limit=101", headers=headers)).status_code == 422
+    assert (await client.get("/api/v1/account/billing-history?offset=-1", headers=headers)).status_code == 422
