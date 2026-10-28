@@ -2648,7 +2648,7 @@ async def admin_retry_license_email(event_id: str, request: Request,
             detail="This payment event is not awaiting license email delivery.",
         )
     recipient = str(event.recipient_email or "").strip()
-    if len(recipient) > 254 or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", recipient):
+    if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
         raise HTTPException(
             status_code=409,
             detail="This payment event has no valid recipient email for delivery.",
