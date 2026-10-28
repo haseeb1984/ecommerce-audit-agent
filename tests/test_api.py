@@ -992,7 +992,22 @@ async def test_paddle_webhook_rejects_valid_json_with_invalid_object_shapes(clie
     })
     assert oversized_id.status_code == 400
     assert oversized_id.json()["detail"] == "Paddle event ID is missing or invalid."
-@pytest.mark.asyncio
+
+    invalid_custom_data = await send({
+        "event_id": "evt_invalid_custom_data_shape",
+        "event_type": "transaction.completed",
+        "data": {"status": "completed", "custom_data": ["not", "an", "object"]},
+    })
+    assert invalid_custom_data.status_code == 400
+    assert invalid_custom_data.json()["detail"] == "Paddle transaction custom_data must be a JSON object."
+
+    invalid_items = await send({
+        "event_id": "evt_invalid_items_shape",
+        "event_type": "transaction.completed",
+        "data": {"status": "completed", "custom_data": {}, "items": {"not": "an array"}},
+    })
+    assert invalid_items.status_code == 400
+    assert invalid_items.json()["detail"] == "Paddle transaction items must be a JSON array."@pytest.mark.asyncio
 async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_idempotent(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
