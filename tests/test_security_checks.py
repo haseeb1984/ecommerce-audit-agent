@@ -586,7 +586,7 @@ def test_git_config_exposure_requires_git_config_signatures_and_omits_values():
     findings = inspect_exposure_response(
         "/.git/config",
         200,
-        "[core]\\nrepositoryformatversion = 0\\n[remote \"origin\"]\\nurl = https://user:secret@example.invalid/repo.git",
+        "[core]\nrepositoryformatversion = 0\n[remote \"origin\"]\nurl = https://user:secret@example.invalid/repo.git",
         {"content-type": "text/plain"},
         "https://shop.example/.git/config",
     )
@@ -607,3 +607,17 @@ def test_git_config_exposure_does_not_flag_generic_html_200_response():
         {"content-type": "text/html"},
         "https://shop.example/.git/config",
     ) == []
+
+
+def test_git_config_exposure_ignores_generic_text_without_required_structure():
+    from security_checks import inspect_exposure_response
+
+    for body in (
+        "[core]\nrepositoryformatversion = nope",
+        "[remote \"origin\"]\nurl = https://example.invalid/repo.git",
+        "<html><body>[core] repositoryformatversion = 0</body></html>",
+    ):
+        assert inspect_exposure_response(
+            "/.git/config", 200, body, {"content-type": "text/plain"},
+            "https://shop.example/.git/config",
+        ) == []
