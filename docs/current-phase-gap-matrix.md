@@ -608,3 +608,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The backend now validates `PADDLE_CHECKOUT_URL` with the same strict HTTPS/Paddle-host allowlist used for URLs returned by Paddle, rejecting lookalike domains and embedded credentials before making the transaction API request.
 - Added API regression coverage for trusted configured destinations and parameterized untrusted destinations; invalid configuration must return HTTP 503 before the Paddle request is called.
 - Code and tests are committed to `integration/saas-feature-batch`. Tests have **not** been executed in this environment; no fresh GitHub Actions run is available. Vercel remains unused due to the build-quota limitation. PDF/report refinement remains deferred to the final phase.
+
+## Saved-report ownership isolation acceptance extension — implementation batch (2026-10-28)
+
+- Extended the existing two-license report isolation API test beyond listing, PDF download, and coverage metadata to also request the foreign license's detailed evidence and email endpoints.
+- The regression asserts both foreign-report endpoints return 404 and that the email sender is never invoked, protecting stored report contents and preventing cross-account email delivery.
+- Test source is committed and read back from the feature branch. The test has **not** been executed; fresh GitHub Actions runs remain unavailable and the Vercel build quota remains exhausted. This is source-level acceptance coverage, not a claim of runtime verification. PDF/report refinement remains deferred to the final phase.
