@@ -112,9 +112,27 @@
   async function api(path, options = {}) {
     const requestSessionVersion = accountSessionVersion;
     const response = await fetch(path, {...options, headers: {...authHeaders(), ...(options.headers || {})}});
-    if (requestSessionVersion !== accountSessionVersion) {
-      throw new Error("Account connection changed while this request was in progress. Reload the current account view.");
-    }
+    const assertCurrentSession = () => {
+      if (requestSessionVersion !== accountSessionVersion) {
+        throw new Error("Account connection changed while this request was in progress. Reload the current account view.");
+      }
+    };
+    assertCurrentSession();
+    // Protect both response arrival and asynchronous body parsing. Without the latter,
+    // a disconnect during JSON/PDF streaming could still update the new account's UI
+    // or download a report from the previous account.
+    const parseJson = response.json.bind(response);
+    response.json = async (...args) => {
+      const body = await parseJson(...args);
+      assertCurrentSession();
+      return body;
+    };
+    const readBlob = response.blob.bind(response);
+    response.blob = async (...args) => {
+      const body = await readBlob(...args);
+      assertCurrentSession();
+      return body;
+    };
     if (!response.ok) {
       let message = "Request failed (" + response.status + ")";
       try { const body = await response.json(); if (body.detail) message += ": " + body.detail; } catch {}
@@ -587,12 +605,12 @@
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("connect").addEventListener("click", async () => {
-    // A new connection attempt invalidates responses from any earlier identity,
-    // including when the new credential text happens to match a prior one.
-    accountSessionVersion += 1;
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
     if (!nextCredential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
+    // A new connection attempt invalidates responses from any earlier identity,
+    // including when the new credential text happens to match a prior one.
+    const attemptSessionVersion = ++accountSessionVersion;
     // Clear previously displayed account data before attempting a new identity, including
     // failed reconnects, so a shared browser does not leave another account's history visible.
     if (nextCredential !== credential || nextHeaderName !== headerName) clearAccountView();
@@ -612,12 +630,16 @@
       setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
       setStatus("connectStatus", unavailable.length ? "Connected for billing. Unavailable features: " + unavailable.join(", ") + ". Credential input cleared." : "Connected. Report history, quota, API keys, and billing history are loaded. Credential input cleared.", unavailable.length ? "error" : "success");
     } catch (e) {
+      // An obsolete connection attempt must not clear or overwrite a newer session.
+      if (attemptSessionVersion !== accountSessionVersion) return;
       clearAccountView();
       credential = "";
       $("credential").value = "";
       setAccountControls(false);
       setStatus("connectStatus", e.message + " Credentials were cleared; reconnect to continue.", "error");
-    } finally { $("connect").disabled = false; }
+    } finally {
+      if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
+    }
   });
   $("disconnectAccount").addEventListener("click", () => {
     accountSessionVersion += 1;
@@ -672,6 +694,7 @@
   $("auditForm").addEventListener("submit", async event => {
     event.preventDefault();
     if (!credential) { setStatus("auditStatus", "Connect your license or API key first.", "error"); return; }
+    const auditSessionVersion = accountSessionVersion;
     const button = $("runAudit"); button.disabled = true; setStatus("auditStatus", "Audit running. Please wait for the report response.");
     try {
       const target = $("target").value.trim();
@@ -683,8 +706,11 @@
       setStatus("auditStatus", "PDF generated and saved to your account." + (reportId ? " Report ID: " + reportId + "." : "") + " Refreshing report history.", "success");
       await loadReports();
       await loadUsage();
-    } catch (e) { setStatus("auditStatus", e.message, "error"); }
-    finally { button.disabled = false; }
+    } catch (e) {
+      if (auditSessionVersion === accountSessionVersion) setStatus("auditStatus", e.message, "error");
+    } finally {
+      if (auditSessionVersion === accountSessionVersion) button.disabled = false;
+    }
   });
 })();
 </script>
