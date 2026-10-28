@@ -4,6 +4,7 @@ import hmac
 import json
 import time
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
@@ -2213,3 +2214,13 @@ def test_audit_metadata_url_excludes_private_or_nonpublic_hosts(value):
 ])
 def test_audit_metadata_url_preserves_public_targets_and_redacts_secrets(value, expected):
     assert main._safe_audit_metadata_url(value) == expected
+
+
+def test_payment_webhook_migration_matches_current_model_columns_and_indexes():
+    migration = Path(__file__).resolve().parents[1] / "migrations" / "2026-10-22-audit-reports.sql"
+    sql = migration.read_text(encoding="utf-8").lower()
+
+    for column in ("transaction_id", "subscription_id", "paddle_customer_id"):
+        assert f"add column if not exists {column} varchar(100) null" in sql
+        assert f"ix_payment_webhook_events_{column}" in sql
+
