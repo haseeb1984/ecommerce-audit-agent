@@ -1069,6 +1069,19 @@ async def account_billing_history(
         .offset(offset)
         .limit(limit)
     )).scalars().all()
+    # Keep a compact, separately surfaced queue of recent events that may need
+    # customer attention. This is deliberately not presented as authoritative
+    # subscription state: Paddle's portal remains the source for payment actions.
+    attention_statuses = (
+        "payment_failed", "subscription_past_due", "subscription_canceled",
+        "email_pending", "email_sending",
+    )
+    attention_events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(ownership_filter, PaymentWebhookEvent.status.in_(attention_statuses))
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(10)
+    )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -1088,6 +1101,15 @@ async def account_billing_history(
                 "updated_at": item.updated_at.isoformat() if item.updated_at else None,
             }
             for item in events
+        ],
+        "attention_items": [
+            {
+                "event_id": item.event_id,
+                "status": item.status,
+                "subscription_id": item.subscription_id,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            }
+            for item in attention_events
         ],
         "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(events) < total},
     }
