@@ -11,6 +11,13 @@
 - **Not established in repository:** current backend files/routes do not demonstrate the feature; inspect connected frontend/product work before assuming no work exists elsewhere.
 - **Blocked / hold:** do not proceed until the stated dependency or approval is resolved.
 
+## Latest implementation batch — audit target privacy and validation
+
+- The audit API rejects query-bearing targets with HTTP 422 before quota reservation, lead persistence, or external audit-provider work. This avoids silently changing a user-supplied parameterized URL into a different page while preventing query parameters from reaching downstream providers.
+- The lower-level canonical audit URL normalizer removes query strings and fragments from the provider-facing URL as defense in depth.
+- Existing regression coverage includes a query-bearing audit target in the pre-quota rejection cases and explicit normalizer assertions that query/fragment values are omitted. Source changes were read back from the branch; a fresh CI run and runtime tests are still pending.
+- This does not authorize auditing private/local hosts, expand crawl scope, or imply production verification. No deployment, production migration, live-site audit, or PDF generation was performed.
+
 ## Additional repository-only work completed (no deployment or workflow run)
 
 - Customer report history now uses the API's `limit`/`offset` pagination and `total` count, with a load-more control instead of silently stopping at the first 50 records.
