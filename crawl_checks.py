@@ -2543,6 +2543,15 @@ async def run_bounded_site_crawl(
                         outcome = "warning"
                     else:
                         outcome = "pass"
+                # Some specialized checks (for example Product JSON-LD) record
+                # richer outcomes earlier in the page pass. Do not append a second
+                # generic family outcome for the same check and canonical page.
+                if any(
+                    item.check_id == check_id
+                    and _canonical_page_url(item.page_url) == _canonical_page_url(final_url)
+                    for item in outcome_records
+                ):
+                    continue
                 outcome_records.append(CheckOutcome(
                     check_id=check_id,
                     category=category,
