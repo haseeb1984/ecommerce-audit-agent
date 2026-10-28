@@ -2448,11 +2448,22 @@ async def admin_action_history(
         ORDER BY created_at DESC, id DESC
         LIMIT :limit OFFSET :offset
     """), {"limit": limit, "offset": offset})).mappings().all()
-    actions = [{
-        "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
-        "entity_id": row["entity_id"], "details": json.loads(row["details_json"] or "{}"),
-        "created_at": row["created_at"].isoformat() if row["created_at"] else None
-    } for row in rows]
+    actions = []
+    for row in rows:
+        # Older rows may predate write-time sanitization or may have been manually
+        # edited. Never let one malformed payload break the whole activity page.
+        try:
+            parsed_details = json.loads(row["details_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_details = {"_warning": "Stored activity details were invalid and have been omitted."}
+        if not isinstance(parsed_details, dict):
+            parsed_details = {"_warning": "Stored activity details were not an object and have been omitted."}
+        safe_details = _sanitize_admin_log_value(parsed_details)
+        actions.append({
+            "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
+            "entity_id": row["entity_id"], "details": safe_details,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None
+        })
     return {
         "actions": actions,
         "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(actions) < total},
