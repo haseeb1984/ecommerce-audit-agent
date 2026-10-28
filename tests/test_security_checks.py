@@ -578,3 +578,32 @@ async def test_exposure_probes_skip_paths_disallowed_by_crawl_policy(monkeypatch
     assert findings == []
     assert any("1 of 2 exposure probes were skipped" in item for item in limitations)
 
+
+
+def test_git_config_exposure_requires_git_config_signatures_and_omits_values():
+    from security_checks import inspect_exposure_response
+
+    findings = inspect_exposure_response(
+        "/.git/config",
+        200,
+        "[core]\\nrepositoryformatversion = 0\\n[remote \"origin\"]\\nurl = https://user:secret@example.invalid/repo.git",
+        {"content-type": "text/plain"},
+        "https://shop.example/.git/config",
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == "high"
+    assert "Git repository configuration" in findings[0].title
+    assert "user:secret" not in findings[0].evidence
+    assert "example.invalid" not in findings[0].evidence
+
+
+def test_git_config_exposure_does_not_flag_generic_html_200_response():
+    from security_checks import inspect_exposure_response
+
+    assert inspect_exposure_response(
+        "/.git/config",
+        200,
+        "<html><body>Storefront fallback</body></html>",
+        {"content-type": "text/html"},
+        "https://shop.example/.git/config",
+    ) == []
