@@ -565,3 +565,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Regression tests cover malicious checkout destinations including lookalike domains, embedded credentials, HTTP, and JavaScript URLs; the existing positive test continues to assert that checkout uses the server-configured price rather than client-supplied amounts.
 - Source changes committed on `integration/saas-feature-batch`: customer portal `6e3c8a6`; checkout destination regression tests `ee6c6ec`.
 - Verification status: source readback and diff intent checked through GitHub. A fresh GitHub Actions run has not been produced for this branch update, so these new tests are **not yet reported as executed**. Vercel remains out of scope because its build quota is exhausted. PDF generation/report refinement remains deferred to the final phase.
+
+## Latest implementation batch — shared Paddle redirect validation
+
+- Extracted a shared backend URL validator for Paddle-hosted checkout and customer billing-portal links. It requires a trimmed HTTPS URL, validates malformed port syntax, rejects embedded username/password credentials, normalizes hostname case, and accepts only `paddle.com` or a true subdomain.
+- Checkout creation and self-service billing portal now use the same policy, closing the previous inconsistency where the portal URL accepted embedded credentials.
+- Added parametrized regression coverage for valid Paddle URLs, mixed-case hostnames, lookalike domains, embedded credentials, HTTP, JavaScript URLs, malformed ports, whitespace, and non-string values.
+- Source commits on `integration/saas-feature-batch`: backend `dd6d4db`; tests `35f6516`.
+- Verification status: changes are committed and the files were read back from GitHub. No fresh Actions run has been returned for this branch update, so the new tests are not claimed as executed. PDF/report refinements remain deferred until the final phase.
