@@ -2993,7 +2993,7 @@ async def admin_overview(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10000000),
     search: str = Query(default="", max_length=100),
-    client_status: str = Query(default="all", pattern="^(all|active|inactive|expired)$"),
+    client_status: str = Query(default="all", pattern="^(all|active|inactive|expired|expiring_7d|expiring_30d|no_expiry)$"),
     tier_filter: str = Query(default="", max_length=50),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -3034,6 +3034,12 @@ async def admin_overview(
     elif client_status == "expired":
         filters.append(SoftwareLicense.expires_at.is_not(None))
         filters.append(SoftwareLicense.expires_at < now)
+    elif client_status == "expiring_7d":
+        filters.extend([SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=7)])
+    elif client_status == "expiring_30d":
+        filters.extend([SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=30)])
+    elif client_status == "no_expiry":
+        filters.append(SoftwareLicense.expires_at.is_(None))
     if filters:
         count_query = count_query.where(*filters)
         filtered_query = filtered_query.where(*filters)
@@ -3049,6 +3055,11 @@ async def admin_overview(
             (SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now),
         )
     )).scalar_one() or 0)
+    expired_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.expires_at.is_not(None), SoftwareLicense.expires_at < now))).scalar_one() or 0)
+    expiring_7d_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=7)))).scalar_one() or 0)
+    expiring_30d_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=30)))).scalar_one() or 0)
+    no_expiry_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.expires_at.is_(None)))).scalar_one() or 0)
+    inactive_flag_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(False)))).scalar_one() or 0)
     total_leads = (await db.execute(select(sql_func.count(AuditLead.id)))).scalar_one()
     total_reports = (await db.execute(select(sql_func.count(AuditReport.id)))).scalar_one()
     total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
@@ -3110,6 +3121,11 @@ async def admin_overview(
         "summary": {
             "clients_total": total_clients, "clients_active": active_clients,
             "clients_inactive_or_expired": total_clients - active_clients,
+            "clients_expired": expired_clients,
+            "clients_expiring_7_days": expiring_7d_clients,
+            "clients_expiring_30_days": expiring_30d_clients,
+            "clients_without_expiry": no_expiry_clients,
+            "clients_inactive_flag": inactive_flag_clients,
             "audits_this_month": int(monthly_leads or 0), "audits_all_time": int(total_leads or 0),
             "reports_saved": int(total_reports or 0), "active_audit_reservations": int(total_reservations or 0),
             "payment_webhook_events": int(total_webhooks or 0),
