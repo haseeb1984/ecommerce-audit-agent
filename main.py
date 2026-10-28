@@ -2742,7 +2742,9 @@ async def admin_overview(
         filters.append(client_filter)
     normalized_tier = tier_filter.strip().lower()
     if normalized_tier:
-        filters.append(SoftwareLicense.tier.ilike(normalized_tier))
+        # The operator UI describes this as an exact tier filter; do not let
+        # percent/underscore input broaden the query through SQL wildcard rules.
+        filters.append(sql_func.lower(SoftwareLicense.tier) == normalized_tier)
     # Expiry takes precedence over the active flag: an expired but still-enabled
     # record must not be shown as active in the operator's recovery workflow.
     if client_status == "active":
