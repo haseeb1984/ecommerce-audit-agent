@@ -1386,6 +1386,30 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "checkout_url",
+    [
+        "https://evil.example/checkout",
+        "https://paddle.com.evil.example/checkout",
+        "https://user:password@pay.paddle.com/checkout",
+        "http://pay.paddle.com/checkout",
+        "javascript:alert(1)",
+    ],
+)
+async def test_paddle_checkout_rejects_untrusted_checkout_destinations(client, monkeypatch, checkout_url):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+
+    def fake_request(path, method="GET", payload=None):
+        return {"data": {"id": "txn_01abc123", "checkout": {"url": checkout_url}}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Unable to start Paddle checkout; verify billing configuration."
+
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_retries_pending_license_email_without_duplicate_license(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
