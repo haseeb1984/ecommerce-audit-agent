@@ -2421,3 +2421,75 @@ def test_payment_webhook_migration_matches_current_model_columns_and_indexes():
         assert f"add column if not exists {column} varchar(100) null" in sql
         assert f"ix_payment_webhook_events_{column}" in sql
 
+
+
+
+@pytest.mark.asyncio
+async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_minimized(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-client-key-lifecycle")
+    first_client_id = await create_license(key="admin-key-owner-one")
+    second_client_id = await create_license(key="admin-key-owner-two")
+    headers = {"X-Admin-Key": "test-admin-client-key-lifecycle"}
+
+    created = await client.post(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys",
+        headers=headers,
+        json={"client_id": first_client_id, "label": "integration key"},
+    )
+    assert created.status_code == 201
+    secret = created.json()["key"]
+    key_id = created.json()["id"]
+    assert secret.startswith("eaa_")
+    assert created.headers["cache-control"] == "no-store, private"
+
+    listed = await client.get(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "no-store, private"
+    assert len(listed.json()["items"]) == 1
+    assert listed.json()["items"][0]["id"] == key_id
+    assert listed.json()["items"][0]["key_prefix"] == secret[:10]
+    assert secret not in listed.text
+    assert "api_key_hash" not in listed.text
+
+    foreign_revoke = await client.delete(
+        f"/api/v1/admin/clients/{second_client_id}/api-keys/{key_id}",
+        headers=headers,
+        json={"reason": "must not cross client boundary"},
+    )
+    assert foreign_revoke.status_code == 404
+
+    revoked = await client.delete(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys/{key_id}",
+        headers=headers,
+        json={"reason": "rotation after integration test"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+
+    after_revoke = await client.get(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys",
+        headers=headers,
+    )
+    assert after_revoke.status_code == 200
+    assert after_revoke.json()["items"] == []
+
+    async with AsyncSessionLocal() as db:
+        actions = (await db.execute(
+            select(SaaSAdminActionLog).where(
+                SaaSAdminActionLog.entity_id == first_client_id,
+                SaaSAdminActionLog.action.in_([
+                    "client.api_key_created",
+                    "client.api_key_revoked",
+                ]),
+            ).order_by(SaaSAdminActionLog.id.asc())
+        )).scalars().all()
+        assert [item.action for item in actions] == [
+            "client.api_key_created",
+            "client.api_key_revoked",
+        ]
+        details = [json.loads(item.details_json) if isinstance(item.details_json, str) else item.details_json for item in actions]
+        assert details[1]["reason"] == "rotation after integration test"
+        assert all(secret not in json.dumps(item) for item in details)
