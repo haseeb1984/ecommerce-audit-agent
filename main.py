@@ -1804,10 +1804,20 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             .order_by(PaymentWebhookEvent.updated_at.desc())
             .limit(1)
         )).scalar_one_or_none()
-        if linked_subscription_event is not None and linked_subscription_event.status == "subscription_canceled":
-            # A late/replayed payment event is not proof that a canceled subscription
-            # has been reinstated. Require a separately verified lifecycle/reconcile
-            # action instead of silently restoring account access.
+        # Cancellation is sticky across later payment-failure/past-due events.
+        # Checking only the newest event would let a later failure record hide the
+        # cancellation and make a delayed transaction.completed event reactivate access.
+        cancellation_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.status == "subscription_canceled",
+            )
+            .limit(1)
+        )).scalar_one_or_none()
+        if cancellation_event is not None:
+            # A payment event is not proof that a canceled subscription was resumed.
+            # Require a separately verified lifecycle/reconciliation action.
             return {"status": "subscription_canceled", "event_id": event_id}
         if linked_subscription_event is not None and linked_subscription_event.license_id is not None:
             linked_license = (await db.execute(
