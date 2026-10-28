@@ -231,3 +231,25 @@ def test_recorded_observation_redacts_credentials_from_text_fields():
     assert "token=hidden" not in row["evidence"]
     assert "private-value" not in row["explanation"]
     assert "[REDACTED]" in row["evidence"]
+
+
+def test_coverage_manifest_excludes_local_and_private_evidence_hosts():
+    finding = SimpleNamespace(
+        category="technical_seo", title="Canonical target",
+        status="manual_review_required", severity="low",
+        source_url="https://shop.example/product?token=secret",
+    )
+    manifest = build_coverage_manifest(
+        target_url="http://127.0.0.1/",
+        pages_checked=[
+            "http://127.0.0.1/private", "http://10.0.0.8/internal",
+            "http://[::1]/admin", "https://localhost/private",
+            "https://service.internal/debug", "https://shop.example.test/private",
+            "https://shop.example/",
+        ],
+        findings=[finding], limitations=[],
+    )
+    assert manifest["target_url"] is None
+    assert manifest["pages_checked"] == ["https://shop.example/"]
+    assert manifest["pages_checked_count"] == 1
+    assert "127.0.0.1" not in str(manifest)
