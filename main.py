@@ -2430,19 +2430,33 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
 
 
 @app.get("/api/v1/admin/actions")
-async def admin_action_history(request: Request, limit: int = Query(100, ge=1, le=500),
-                              db: AsyncSession = Depends(get_async_db)):
+async def admin_action_history(
+    request: Request,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1000000),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded, newest-first page of sanitized administrator activity."""
     _require_admin_key(request)
     await _ensure_admin_tables(db)
+    total = int((await db.execute(text(
+        "SELECT COUNT(*) FROM saas_admin_action_logs"
+    ))).scalar_one() or 0)
     rows = (await db.execute(text("""
         SELECT id, action, entity_type, entity_id, details_json, created_at
-        FROM saas_admin_action_logs ORDER BY created_at DESC, id DESC LIMIT :limit
-    """), {"limit": limit})).mappings().all()
-    return {"actions": [{
+        FROM saas_admin_action_logs
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+    """), {"limit": limit, "offset": offset})).mappings().all()
+    actions = [{
         "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
         "entity_id": row["entity_id"], "details": json.loads(row["details_json"] or "{}"),
         "created_at": row["created_at"].isoformat() if row["created_at"] else None
-    } for row in rows]}
+    } for row in rows]
+    return {
+        "actions": actions,
+        "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(actions) < total},
+    }
 
 
 # ----------------------- Admin operations dashboard -----------------------
