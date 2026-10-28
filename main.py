@@ -246,6 +246,13 @@ async def audit_lead(
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
+        raw_target = domain.strip()
+        candidate_target = raw_target if "://" in raw_target else "https://" + raw_target
+        # The API rejects query strings rather than silently auditing a different URL.
+        # Query parameters may contain tokens or customer data; the lower-level
+        # normalizer still strips them for safe provider-facing canonicalization.
+        if urlsplit(candidate_target).query:
+            raise ValueError("Query strings are not accepted for audit targets; submit the public page URL without parameters.")
         target_url = agent._normalize_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
