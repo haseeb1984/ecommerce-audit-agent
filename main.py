@@ -2881,13 +2881,37 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         logger.error("Admin database diagnostic failed (error_type=%s)", type(exc).__name__)
         database_status = "unavailable"
 
+    # Keep delivery recovery metrics separate from ordinary subscription lifecycle
+    # events; a payment failure or cancellation is not a pending license email.
+    email_recovery_statuses = ("email_pending", "email_sending")
     pending_email = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)).where(
-        PaymentWebhookEvent.status != "delivered"
+        PaymentWebhookEvent.status.in_(email_recovery_statuses)
     ))).scalar_one()
     payment_events = (await db.execute(
-        select(PaymentWebhookEvent).where(PaymentWebhookEvent.status != "delivered")
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.status.in_(email_recovery_statuses))
         .order_by(PaymentWebhookEvent.updated_at.asc()).limit(50)
     )).scalars().all()
+    billing_attention_statuses = ("payment_failed", "subscription_past_due", "subscription_canceled")
+    billing_attention_counts = {}
+    for lifecycle_status in billing_attention_statuses:
+        billing_attention_counts[lifecycle_status] = int((await db.execute(
+            select(sql_func.count(PaymentWebhookEvent.event_id)).where(
+                PaymentWebhookEvent.status == lifecycle_status
+            )
+        )).scalar_one() or 0)
+    billing_attention_events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.status.in_(billing_attention_statuses))
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(50)
+    )).scalars().all()
+    stale_email_sending_count = int((await db.execute(
+        select(sql_func.count(PaymentWebhookEvent.event_id)).where(
+            PaymentWebhookEvent.status == "email_sending",
+            PaymentWebhookEvent.updated_at <= now - __import__("datetime").timedelta(minutes=10),
+        )
+    )).scalar_one() or 0)
     expired_reservation_count = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at <= now
     ))).scalar_one()
@@ -2921,6 +2945,11 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         },
         "counts": {
             "pending_payment_email_events": int(pending_email or 0),
+            "stale_payment_email_attempts": stale_email_sending_count,
+            "billing_attention_events": sum(billing_attention_counts.values()),
+            "payment_failed_events": billing_attention_counts["payment_failed"],
+            "subscription_past_due_events": billing_attention_counts["subscription_past_due"],
+            "subscription_canceled_events": billing_attention_counts["subscription_canceled"],
             "expired_quota_reservations": int(expired_reservation_count or 0),
             "active_quota_reservations": int(active_reservations or 0),
             "audit_and_operation_failures_24h": int(failures_24h or 0),
@@ -2940,6 +2969,15 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in payment_events],
+        "billing_attention_events": [{
+            "event_id": item.event_id,
+            "transaction_id": item.transaction_id,
+            "subscription_id": item.subscription_id,
+            "status": item.status,
+            "license_id": item.license_id,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in billing_attention_events],
         "expired_reservations": [{
             "id": item.id,
             "license_id": item.license_id,
