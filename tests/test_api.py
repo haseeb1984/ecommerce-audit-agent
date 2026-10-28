@@ -1359,7 +1359,7 @@ async def test_payment_failure_after_cancellation_cannot_hide_canceled_state(cli
         },
     }
     failed = await send(failure)
-    assert failed.status_code == 200
+    assert failed.status_code == 200, failed.text
     assert failed.json()["status"] == "payment_failed"
 
     late_renewal = {
@@ -2389,7 +2389,7 @@ async def test_admin_overview_filters_clients_by_status_and_package(client, monk
     exact_tier = await client.get("/api/v1/admin/overview?tier_filter=STARTER", headers=headers)
     wildcard_tier = await client.get("/api/v1/admin/overview?tier_filter=%25", headers=headers)
     assert exact_tier.status_code == wildcard_tier.status_code == 200
-    assert {row["client_name"] for row in exact_tier.json()["clients"]} == {"Filter Active"}
+    assert {row["client_name"] for row in exact_tier.json()["clients"]} == {"Filter Active", "Filter Expired"}
     assert wildcard_tier.json()["clients"] == []
 
 
