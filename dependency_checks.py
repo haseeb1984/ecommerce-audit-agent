@@ -21,6 +21,18 @@ OSV_QUERY_URL = "https://api.osv.dev/v1/querybatch"
 _VERSION = r"(?P<version>\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)"
 
 
+async def _read_limited_response(response, limit: int) -> bytes:
+    """Read an HTTP response incrementally and stop as soon as its byte budget is exceeded."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.content.iter_chunked(65536):
+        total += len(chunk)
+        if total > limit:
+            raise ValueError("OSV response exceeded the configured size limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 class _ScriptSourceParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -112,9 +124,7 @@ async def inspect_client_dependency_versions(html: str, page_url: str) -> tuple[
             ) as response:
                 if response.status != 200:
                     raise RuntimeError(f"OSV returned HTTP {response.status}")
-                raw_payload = await response.read()
-                if len(raw_payload) > MAX_OSV_RESPONSE_BYTES:
-                    raise ValueError("OSV response exceeded the configured size limit")
+                raw_payload = await _read_limited_response(response, MAX_OSV_RESPONSE_BYTES)
                 payload = json.loads(raw_payload)
         results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(results, list) or len(results) != len(dependencies):
