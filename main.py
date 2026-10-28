@@ -1617,8 +1617,8 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
                    "custom_data": {"license_tier": plan["tier"]}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
     if checkout_url:
-        parsed = urlsplit(checkout_url)
-        if parsed.scheme != "https" or not parsed.hostname:
+        # Only forward configured hosted-checkout destinations on Paddle domains.
+        if not _is_valid_paddle_hosted_url(checkout_url):
             raise HTTPException(status_code=503, detail="Paddle checkout URL configuration is invalid.")
         transaction["checkout"] = {"url": checkout_url}
     try:
