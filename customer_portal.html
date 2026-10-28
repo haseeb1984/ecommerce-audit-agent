@@ -34,7 +34,7 @@
 <h2 id="billingHistoryHeading">Billing history</h2>
 <p class="muted">View recent payment provisioning events associated with your connected account. This history does not expose payment details or allow refunds.</p>
 <div id="billingAccount" class="muted">Connect your account to load billing status.</div>
-<div class="report-actions" style="margin:12px 0"><button id="openBillingPortal" type="button">Manage subscription & billing</button><button id="refreshBillingHistory" class="secondary" type="button">Refresh billing history</button></div>
+<div class="report-actions" style="margin:12px 0"><button id="openBillingPortal" type="button">Manage subscription & billing</button><button id="refreshBillingHistory" class="secondary" type="button">Refresh billing history</button><button id="loadMoreBillingHistory" class="secondary" type="button" disabled>Load more history</button></div>
 <div id="billingEvents" class="reports"><p class="muted">No billing history loaded.</p></div>
 <div id="billingStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
@@ -89,6 +89,9 @@
   let apiKeyLimit = 10;
   let apiKeyCreationAllowed = false;
   let newlyCreatedApiKey = "";
+  let billingOffset = 0;
+  let billingTotal = 0;
+  let billingLoading = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -143,16 +146,22 @@
       }
     } catch (e) { container.textContent = e.message; }
   }
-  async function loadBillingHistory() {
-    const response = await api("/api/v1/account/billing-history");
+  async function loadBillingHistory(reset = true) {
+    if (billingLoading) return;
+    billingLoading = true;
+    const button = $("loadMoreBillingHistory"); button.disabled = true;
+    try {
+    const requestedOffset = reset ? 0 : billingOffset;
+    const response = await api("/api/v1/account/billing-history?limit=50&offset=" + requestedOffset);
     const data = await response.json();
     const account = data.account || {};
     $("billingAccount").textContent = (account.client_name || "Account") + " · Plan " + (account.tier || "unassigned") +
       " · " + (account.is_active ? "Active" : "Inactive") +
       " · Expires " + (account.expires_at ? new Date(account.expires_at).toLocaleDateString() : "no expiry recorded");
-    const container = $("billingEvents"); container.replaceChildren();
+    const container = $("billingEvents"); if (reset) container.replaceChildren();
     const events = Array.isArray(data.items) ? data.items : [];
-    if (!events.length) {
+    const page = data.page || {}; billingOffset = requestedOffset + events.length; billingTotal = Number(page.total) || 0;
+    if (!events.length && reset) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No payment provisioning events are associated with this account yet.";
       container.append(empty);
@@ -186,7 +195,9 @@
       }
       container.append(card);
     }
-    setStatus("billingStatus", "Loaded " + events.length + " recent billing event(s).", "success");
+    setStatus("billingStatus", "Loaded " + billingOffset + " of " + billingTotal + " billing event(s).", "success");
+    button.disabled = !page.has_more;
+    } finally { billingLoading = false; button.disabled = !billingTotal || billingOffset >= billingTotal; }
   }
   async function loadApiKeys() {
     const response = await api("/api/v1/account/api-keys");
@@ -548,7 +559,7 @@
     activityRows = []; activityTotal = 0; renderActivity();
     $("billingAccount").textContent = "Connect your account to load billing status.";
     apiKeyCreationAllowed = false;
-    $("billingEvents").replaceChildren(); setStatus("billingStatus", "Account connection required.");
+    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("connect").addEventListener("click", async () => {
@@ -602,6 +613,10 @@
       window.location.assign(data.portal_url);
     } catch (error) { setStatus("billingStatus", error.message, "error"); }
     finally { button.disabled = false; }
+  });
+  $("loadMoreBillingHistory").addEventListener("click", async () => {
+    try { await loadBillingHistory(false); }
+    catch (error) { setStatus("billingStatus", error.message, "error"); }
   });
   $("refreshBillingHistory").addEventListener("click", async () => {
     try { await loadBillingHistory(); }
