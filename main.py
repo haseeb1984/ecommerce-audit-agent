@@ -1664,12 +1664,22 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     expected = hmac.new(secret.encode(), str(timestamp).encode() + b":" + raw_body, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
         raise HTTPException(status_code=400, detail="Invalid Paddle signature.")
-    try: event = json.loads(raw_body)
-    except (ValueError, UnicodeDecodeError): raise HTTPException(status_code=400, detail="Invalid Paddle event JSON.")
-    event_id = str(event.get("event_id") or event.get("id") or "")
-    event_type = str(event.get("event_type") or event.get("type") or "")
-    if not event_id: raise HTTPException(status_code=400, detail="Paddle event ID is missing.")
+    try:
+        event = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid Paddle event JSON.")
+    # Valid JSON can still have an unexpected shape; reject it as a client error.
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Paddle event must be a JSON object.")
+    event_id = str(event.get("event_id") or event.get("id") or "").strip()
+    event_type = str(event.get("event_type") or event.get("type") or "").strip()
+    if not event_id or len(event_id) > 255:
+        raise HTTPException(status_code=400, detail="Paddle event ID is missing or invalid.")
+    if not event_type or len(event_type) > 120:
+        raise HTTPException(status_code=400, detail="Paddle event type is missing or invalid.")
     transaction = event.get("data") or {}
+    if not isinstance(transaction, dict):
+        raise HTTPException(status_code=400, detail="Paddle event data must be a JSON object.")
 
 # Persist payment-failure lifecycle events for customer-visible billing history.
     # Paddle's retry/dunning policy remains authoritative: a single failed transaction
