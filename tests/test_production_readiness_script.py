@@ -50,3 +50,11 @@ def test_schema_gate_includes_application_runtime_columns() -> None:
         "monthly_audit_allowance", "max_concurrent_audits", "is_active",
     } <= required_columns["saas_plan_packages"]
 
+def test_core_schema_enforces_unique_paddle_price_mapping() -> None:
+    migration = ROOT / "migrations" / "2026-10-28-core-saas-schema.sql"
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "uq_saas_plan_packages_paddle_price_id" in sql
+    assert "ON saas_plan_packages (paddle_price_id)" in sql
+    assert "WHERE paddle_price_id IS NOT NULL" in sql
+
