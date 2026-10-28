@@ -470,3 +470,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added regression coverage for page ordering, pagination metadata, unauthenticated requests, invalid pagination values, and private no-store response headers.
 - Hardened legacy activity-log reads: malformed JSON and non-object payloads no longer break the entire page; stored detail values are re-sanitized before returning to the operator console.
 - Added regression coverage for malformed legacy details and secret-key redaction. Tests have not been executed; this is source-level implementation, not release acceptance.
+
+
+## Report evidence pagination hardening — implementation batch
+
+- Customer and administrator saved-evidence endpoints now cap `offset` at 10,000,000, matching the other paginated SaaS endpoints and rejecting unbounded integer offsets at request validation.
+- Added regression assertions for oversized offsets on both endpoint families. Tests have not been executed; implementation remains unverified until the suite/CI is run.
