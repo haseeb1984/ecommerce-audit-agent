@@ -1787,6 +1787,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         return {"status": "ignored", "event_id": event_id}
     if transaction.get("status") != "completed":
         return {"status": "payment_not_complete", "event_id": event_id}
+    customer = transaction.get("customer") or {}
+    if not isinstance(customer, dict):
+        raise HTTPException(status_code=400, detail="Paddle transaction customer must be a JSON object.")
     custom_data = transaction.get("custom_data") or {}
     if not isinstance(custom_data, dict):
         raise HTTPException(status_code=400, detail="Paddle transaction custom_data must be a JSON object.")
@@ -1865,9 +1868,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
                 linked_license.is_active = True
-                renewal_customer = transaction.get("customer") or {}
                 renewal_customer_id = str(
-                    transaction.get("customer_id") or renewal_customer.get("id") or ""
+                    transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
                 renewal_event = PaymentWebhookEvent(
                     event_id=event_id,
@@ -1901,14 +1903,17 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             event_id = prior_transaction_event.event_id
     webhook_event = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id))).scalar_one_or_none()
     if webhook_event is None:
-        customer = transaction.get("customer") or {}
         recipient = str(customer.get("email") or "").strip()
         customer_name = str(customer.get("name") or "").strip()
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         if not recipient and customer_id and os.getenv("PADDLE_API_KEY", "").strip():
             try:
                 customer_response = await asyncio.to_thread(_paddle_api_request, f"/customers/{customer_id}")
+                if not isinstance(customer_response, dict):
+                    raise ValueError("Paddle customer response is not a JSON object")
                 customer = customer_response.get("data") or {}
+                if not isinstance(customer, dict):
+                    raise ValueError("Paddle customer data is not a JSON object")
                 recipient = str(customer.get("email") or "").strip()
                 customer_name = str(customer.get("name") or "").strip()
             except Exception as exc:
