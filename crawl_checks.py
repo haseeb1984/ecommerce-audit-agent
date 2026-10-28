@@ -1841,11 +1841,39 @@ async def run_bounded_site_crawl(
             if len(crawl_queue) < MAX_CRAWL_PAGES:
                 discovered_links = _LinkParser()
                 discovered_links.feed(body)
+                # Apply each document's own <base href> during breadth-first
+                # discovery too, not only during homepage seed collection.
+                # Otherwise a relative link skipped above could be re-added here
+                # when the homepage is revisited from the crawl queue.
+                page_link_base: str | None = final_url
+                if discovered_links.base_href:
+                    try:
+                        proposed_page_base = urljoin(final_url, discovered_links.base_href)
+                        base_parts = urlsplit(proposed_page_base)
+                        _ = base_parts.port
+                        if (
+                            base_parts.scheme.lower() not in {"http", "https"}
+                            or not base_parts.hostname
+                            or base_parts.username is not None
+                            or base_parts.password is not None
+                            or not _same_origin(proposed_page_base, final_url)
+                        ):
+                            page_link_base = None
+                        else:
+                            page_link_base = proposed_page_base
+                    except (ValueError, UnicodeError):
+                        page_link_base = None
                 for href in discovered_links.links[:MAX_LINKS_FROM_HOME]:
                     if len(crawl_queue) >= MAX_CRAWL_PAGES:
                         break
                     try:
-                        absolute = urljoin(final_url, href)
+                        if (
+                            page_link_base is None
+                            and not urlsplit(href).scheme
+                            and not href.startswith("//")
+                        ):
+                            continue
+                        absolute = urljoin(page_link_base or final_url, href)
                         parts = urlsplit(absolute)
                         if (
                             parts.scheme.lower() not in {"http", "https"}
