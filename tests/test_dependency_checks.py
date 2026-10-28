@@ -1,3 +1,4 @@
+import json
 from urllib.parse import urlsplit
 
 import pytest
@@ -34,9 +35,10 @@ async def test_no_detectable_version_is_not_reported_as_vulnerability_free():
 
 
 class FakeResponse:
-    def __init__(self, status, payload):
+    def __init__(self, status, payload, raw_body=None):
         self.status = status
         self.payload = payload
+        self.raw_body = raw_body
 
     async def __aenter__(self):
         return self
@@ -44,14 +46,17 @@ class FakeResponse:
     async def __aexit__(self, *args):
         return False
 
-    async def json(self, content_type=None):
-        return self.payload
+    async def read(self):
+        if self.raw_body is not None:
+            return self.raw_body
+        return json.dumps(self.payload).encode("utf-8")
 
 
 class FakeSession:
-    def __init__(self, *, timeout=None, trust_env=None, status=200, payload=None):
+    def __init__(self, *, timeout=None, trust_env=None, status=200, payload=None, raw_body=None):
         self.status = status
-        self.payload = payload or {"results": []}
+        self.payload = payload if payload is not None else {"results": []}
+        self.raw_body = raw_body
         self.request = None
 
     async def __aenter__(self):
@@ -62,7 +67,7 @@ class FakeSession:
 
     def post(self, url, **kwargs):
         self.request = (url, kwargs)
-        return FakeResponse(self.status, self.payload)
+        return FakeResponse(self.status, self.payload, self.raw_body)
 
 
 @pytest.mark.asyncio
@@ -120,3 +125,17 @@ async def test_malformed_osv_payload_never_looks_like_a_clean_scan(monkeypatch, 
     assert findings[0].title == "Frontend dependency vulnerability lookup incomplete"
     assert "unverified" in limitations[0]
     assert "No matching OSV advisories returned" not in findings[0].title
+
+
+@pytest.mark.asyncio
+async def test_oversized_osv_response_is_not_treated_as_a_clean_scan(monkeypatch):
+    fake = FakeSession(raw_body=b"{" + b" " * dependency_checks.MAX_OSV_RESPONSE_BYTES)
+    monkeypatch.setattr(dependency_checks.aiohttp, "ClientSession", lambda **kwargs: fake)
+    findings, limitations = await dependency_checks.inspect_client_dependency_versions(
+        '<script src="https://cdn.jsdelivr.net/npm/jquery@1.2.3/dist/jquery.min.js"></script>',
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "not_tested"
+    assert findings[0].title == "Frontend dependency vulnerability lookup incomplete"
+    assert "unverified" in limitations[0]
