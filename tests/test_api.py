@@ -1387,11 +1387,16 @@ async def test_payment_failure_after_cancellation_cannot_hide_canceled_state(cli
                 PaymentWebhookEvent.subscription_id == "sub_cancel_failure123"
             )
         )).scalars().all()
-    assert len(events) == 3
+    assert len(events) == 4
     statuses = {item.event_id: item.status for item in events}
     assert statuses["evt_cancel_failure_canceled"] == "subscription_canceled"
     assert statuses["evt_cancel_failure_payment_failed"] == "payment_failed"
-    assert "evt_cancel_failure_late_renewal" not in statuses
+    assert statuses["evt_cancel_failure_late_renewal"] == "subscription_canceled"
+    # Re-delivery of the same late transaction is idempotent and does not add a
+    # second history record or reactivate the canceled license.
+    repeated = await send(late_renewal)
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "already_processed"
 
 
 @pytest.mark.asyncio
