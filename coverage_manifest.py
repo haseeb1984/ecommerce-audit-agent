@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import hashlib
+import ipaddress
 import re
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -50,7 +51,15 @@ def _safe_evidence_url(value: object) -> str | None:
             return None
         if parts.username is not None or parts.password is not None:
             return None
-        host = parts.hostname.lower()
+        host = parts.hostname.rstrip(".").lower()
+        if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".test", ".invalid")):
+            return None
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return None
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         port = parts.port
