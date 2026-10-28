@@ -476,3 +476,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 
 - Customer and administrator saved-evidence endpoints now cap `offset` at 10,000,000, matching the other paginated SaaS endpoints and rejecting unbounded integer offsets at request validation.
 - Added regression assertions for oversized offsets on both endpoint families. Tests have not been executed; implementation remains unverified until the suite/CI is run.
+
+
+## Per-page audit outcome applicability — implementation batch (2026-10-28)
+
+- Added an explicit `technical_seo.meta_refresh` outcome for each successfully inspected HTML page, including a pass only when the static source check completed without a signal.
+- Corrected the generic outcome recorder so product structured-data, catalog navigation, and hreflang outcomes are only emitted when the URL/source makes those checks applicable; homepage-only checks no longer imply product/catalog checks passed.
+- Added a focused crawl regression test for outcome presence and non-applicable check suppression. Tests have not been executed; this remains source-level implementation pending CI and representative audit acceptance.
