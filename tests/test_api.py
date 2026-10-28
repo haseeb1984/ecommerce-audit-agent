@@ -321,6 +321,33 @@ async def test_audit_lead_rejects_unsafe_target_before_reserving_quota(client, d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/audit-lead", "/api/v1/comprehensive-audit"])
+async def test_parameterized_audit_targets_are_rejected_before_quota_reservation(client, path):
+    license_key = "query-rejected-" + path.rsplit("/", 1)[-1]
+    await create_license(key=license_key, quota=2)
+    response = await client.post(
+        path,
+        params={"domain": "https://shop.example/products?token=secret"},
+        headers={"X-License-Key": license_key},
+    )
+    assert response.status_code == 422, response.text
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
+        )).scalar_one()
+        reservations = (await db.execute(
+            select(func.count(AuditQuotaReservation.id)).where(
+                AuditQuotaReservation.license_id == license_obj.id
+            )
+        )).scalar_one()
+        leads = (await db.execute(
+            select(func.count(AuditLead.id)).where(AuditLead.license_id == license_obj.id)
+        )).scalar_one()
+    assert reservations == 0
+    assert leads == 0
+
+
+@pytest.mark.asyncio
 async def test_invalid_license_returns_403(client):
     response = await client.post(
         "/api/v1/audit-lead",
