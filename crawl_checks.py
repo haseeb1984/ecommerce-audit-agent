@@ -1862,58 +1862,10 @@ async def run_bounded_site_crawl(
                         # A malformed link must not stop inspection of other links.
                         continue
 
-            product_schema_findings = inspect_product_page_schema_presence(body, final_url)
-            findings.extend(product_schema_findings)
-            # This heuristic only applies to paths that resemble product detail pages;
-            # do not manufacture "pass" outcomes for unrelated routes.
-            try:
-                is_likely_product_page = bool(PRODUCT_DETAIL_PATH.search(urlsplit(final_url).path))
-            except (ValueError, UnicodeError):
-                is_likely_product_page = False
-            if is_likely_product_page:
-                _record_static_check_outcome(
-                    outcome_records, check_id="structured_data.product_presence",
-                    category="structured_data", page_url=final_url,
-                    findings=product_schema_findings,
-                    method="bounded static HTML Product JSON-LD presence heuristic",
-                )
-
-            catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
-            findings.extend(catalog_findings)
-            try:
-                catalog_path = urlsplit(final_url).path.lower()
-                catalog_segments = {segment for segment in catalog_path.split("/") if segment}
-                catalog_applicable = bool(
-                    PRODUCT_DETAIL_PATH.search(catalog_path)
-                    or catalog_segments.intersection({"collections", "collection", "category", "categories", "catalog", "shop"})
-                )
-            except (ValueError, UnicodeError):
-                catalog_applicable = False
-            if catalog_applicable:
-                _record_static_check_outcome(
-                    outcome_records, check_id="ecommerce.catalog_navigation",
-                    category="ecommerce", page_url=final_url,
-                    findings=catalog_findings,
-                    method="static HTML and URL-pattern catalog/variant/pagination inspection",
-                )
-
-            sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
-            findings.extend(sensitive_form_findings)
-            _record_static_check_outcome(
-                outcome_records, check_id="security.sensitive_get_forms",
-                category="security", page_url=final_url,
-                findings=sensitive_form_findings,
-                method="static HTML GET-form field-name and autocomplete heuristic",
-            )
-
-            canonical_findings = inspect_canonical_declaration(body, final_url)
-            findings.extend(canonical_findings)
-            _record_static_check_outcome(
-                outcome_records, check_id="indexability.canonical_declaration",
-                category="indexability", page_url=final_url,
-                findings=canonical_findings,
-                method="static HTML rel=canonical declaration inspection",
-            )
+            findings.extend(inspect_product_page_schema_presence(body, final_url))
+            findings.extend(inspect_ecommerce_catalog_navigation(body, final_url))
+            findings.extend(inspect_sensitive_get_forms(body, final_url))
+            findings.extend(inspect_canonical_declaration(body, final_url))
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
@@ -1944,14 +1896,9 @@ async def run_bounded_site_crawl(
 
             hreflang_findings = inspect_hreflang(body, final_url)
             findings.extend(hreflang_findings)
-            # hreflang is optional; record it only when the source actually declares it.
-            if hreflang_findings or re.search(r"(?is)<link\b[^>]*\bhreflang\s*=", body[:500_000]):
-                _record_static_check_outcome(
-                    outcome_records, check_id="international_seo.hreflang_consistency",
-                    category="international_seo", page_url=final_url,
-                    findings=hreflang_findings,
-                    method="static HTML hreflang target and language-tag consistency review",
-                )
+            hreflang_declared = bool(
+                re.search(r"(?is)<link\b[^>]*\bhreflang\s*=", body[:500_000])
+            )
 
             refresh_findings = inspect_meta_refresh(body, final_url)
             findings.extend(refresh_findings)
@@ -1996,12 +1943,6 @@ async def run_bounded_site_crawl(
             # Detect source-visible tags and consent signals; never infer event success or legal compliance.
             privacy_tracking_findings = inspect_privacy_tracking_signals(body, final_url)
             findings.extend(privacy_tracking_findings)
-            _record_static_check_outcome(
-                outcome_records, check_id="privacy.detected_tracking_signals",
-                category="privacy", page_url=final_url,
-                findings=privacy_tracking_findings,
-                method="static HTML tag and consent-interface signal detection; event firing is not verified",
-            )
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
@@ -2472,11 +2413,7 @@ async def run_bounded_site_crawl(
         # for that executed source check; manual-review findings remain warnings.
         if outcome_records is not None:
             page_check_families = (
-                ("structured_data.product", "structured_data", "Product/category structured-data source inspection"),
-                ("ecommerce_catalog.navigation", "ecommerce_catalog", "Product variant and listing navigation source inspection"),
                 ("security.headers_and_forms", "security", "HTTP security headers and sensitive GET-form source inspection"),
-                ("indexability.canonical", "indexability", "Canonical declaration source inspection"),
-                ("international_seo.hreflang", "international_seo", "Hreflang declaration source inspection"),
                 ("mobile_ux.viewport", "mobile_ux", "Mobile viewport source inspection"),
                 ("performance.static_signals", "performance", "Static HTML performance signal inspection"),
                 ("accessibility.static_signals", "accessibility", "Static HTML accessibility signal inspection"),
@@ -2488,6 +2425,25 @@ async def run_bounded_site_crawl(
             page_findings = findings[page_findings_start:]
             for check_id, category, method in page_check_families:
                 matching = [item for item in page_findings if item.category == category]
+                if check_id == "structured_data.product":
+                    try:
+                        if not PRODUCT_DETAIL_PATH.search(urlsplit(final_url).path):
+                            continue
+                    except (ValueError, UnicodeError):
+                        continue
+                if check_id == "ecommerce_catalog.navigation":
+                    try:
+                        catalog_path = urlsplit(final_url).path.lower()
+                        catalog_segments = {segment for segment in catalog_path.split("/") if segment}
+                        if not (
+                            PRODUCT_DETAIL_PATH.search(catalog_path)
+                            or catalog_segments.intersection({"collections", "collection", "category", "categories", "catalog", "shop"})
+                        ):
+                            continue
+                    except (ValueError, UnicodeError):
+                        continue
+                if check_id == "international_seo.hreflang" and not hreflang_declared:
+                    continue
                 if any(getattr(item, "status", "") == "not_tested" for item in matching):
                     outcome = "not_assessed"
                 else:
