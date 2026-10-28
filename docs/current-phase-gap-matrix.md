@@ -705,3 +705,37 @@ Issue checklist addressed:
 25. Document that this batch adds visibility, not automatic entitlement mutations.
 
 Verification boundary: source changes were committed and readback verification is pending. Automated tests, browser runtime checks, and database-backed acceptance have not been run. No production migration/deployment or live billing action was performed. PDF/report refinement remains reserved for the final phase.
+
+
+## Plan availability enforcement — cohesive feature completion
+
+Closed a consistency gap between the operator-managed plan catalogue, customer usage display, and audit-slot reservation. New audit reservations now read the plan's `is_active` flag from the same catalogue row as the monthly/concurrent limits. If an operator disables a plan, existing licenses on that tier can no longer reserve new audit work; the request is rejected with HTTP 403 and a safe customer-facing message. Unknown/unlisted legacy tiers retain the existing fallback allowance behavior.
+
+Feature issue checklist:
+1. Read plan availability in quota reservation.
+2. Use the plan catalogue as the source of truth when a tier row exists.
+3. Reject reservations for operator-disabled plans.
+4. Return a controlled HTTP 403 response for unavailable plans.
+5. Keep the message free of secrets and database details.
+6. Preserve legacy-tier fallback when no plan row exists.
+7. Preserve the license active-flag check.
+8. Preserve expiry enforcement before external audit work.
+9. Preserve monthly quota enforcement.
+10. Preserve concurrent audit enforcement.
+11. Preserve expired reservation cleanup.
+12. Preserve license-row locking around reservation.
+13. Commit reservations before slow external work.
+14. Keep reservation release after failed audits.
+15. Avoid schema creation on the request path.
+16. Keep operator-managed monthly allowance behavior.
+17. Keep operator-managed concurrency allowance behavior.
+18. Align backend plan availability with the customer usage status.
+19. Keep new audits blocked without changing existing subscription/payment state.
+20. Avoid automatic license revocation when a plan is hidden.
+21. Preserve bounded diagnostics and existing audit event behavior.
+22. Keep plan state read-only in the audit submission flow.
+23. Avoid leaking billing identifiers into customer error text.
+24. Document this as enforcement, not just UI visibility.
+25. Record that live database and end-to-end acceptance remain outstanding.
+
+Verification boundary: quota.py was updated and read back from the feature branch. Automated tests, database-backed acceptance, concurrent-request testing, and browser checks were not run. No migration, deployment, or live billing action was performed. PDF/report refinement remains deferred to the final phase.
