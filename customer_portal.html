@@ -42,6 +42,7 @@
 <h2 id="billingHistoryHeading">Billing history</h2>
 <p class="muted">View recent payment provisioning events associated with your connected account. This history does not expose payment details or allow refunds.</p>
 <div id="billingAccount" class="muted">Connect your account to load billing status.</div>
+<div id="billingAttention" class="reports" aria-live="polite" hidden></div>
 <div class="report-actions" style="margin:12px 0"><button id="openBillingPortal" type="button">Manage subscription & billing</button><button id="refreshBillingHistory" class="secondary" type="button">Refresh billing history</button><button id="loadMoreBillingHistory" class="secondary" type="button" disabled>Load more history</button></div>
 <div id="billingEvents" class="reports"><p class="muted">No billing history loaded.</p></div>
 <div id="billingStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
@@ -222,6 +223,44 @@
     $("billingAccount").textContent = (account.client_name || "Account") + " · Plan " + (account.tier || "unassigned") +
       " · " + (account.is_active ? "Active" : "Inactive") +
       " · Expires " + (account.expires_at ? new Date(account.expires_at).toLocaleDateString() : "no expiry recorded");
+    const attentionContainer = $("billingAttention");
+    attentionContainer.replaceChildren();
+    const attentionItems = Array.isArray(data.attention_items) ? data.attention_items : [];
+    if (attentionItems.length) {
+      attentionContainer.hidden = false;
+      const heading = document.createElement("h3");
+      heading.textContent = "Recent billing events to review";
+      attentionContainer.append(heading);
+      for (const item of attentionItems) {
+        const card = document.createElement("article"); card.className = "report";
+        const title = document.createElement("strong");
+        const attentionLabels = {
+          payment_failed: "Payment failed",
+          subscription_past_due: "Subscription reported past due",
+          subscription_canceled: "Subscription canceled",
+          email_pending: "License email needs delivery",
+          email_sending: "License email delivery may still be in progress"
+        };
+        title.textContent = attentionLabels[item.status] || "Billing event needs review";
+        const detail = document.createElement("p"); detail.className = "muted";
+        detail.textContent = "Event " + item.event_id + " · Subscription " +
+          (item.subscription_id || "not recorded") + " · Updated " +
+          (item.updated_at ? new Date(item.updated_at).toLocaleString() : "date unavailable");
+        card.append(title, detail);
+        if (["payment_failed", "subscription_past_due"].includes(item.status)) {
+          const guidance = document.createElement("p"); guidance.className = "muted";
+          guidance.textContent = "Review payment status and available recovery actions in the Paddle billing portal. This event alone does not establish whether account access is currently enabled.";
+          card.append(guidance);
+        } else if (["email_pending", "email_sending"].includes(item.status)) {
+          const guidance = document.createElement("p"); guidance.className = "muted";
+          guidance.textContent = "If your license email has not arrived, contact support with this event ID. Do not share your license key in a support message.";
+          card.append(guidance);
+        }
+        attentionContainer.append(card);
+      }
+    } else {
+      attentionContainer.hidden = true;
+    }
     const container = $("billingEvents"); if (reset) container.replaceChildren();
     const events = Array.isArray(data.items) ? data.items : [];
     const page = data.page || {}; billingOffset = requestedOffset + events.length; billingTotal = Number(page.total) || 0;
@@ -651,6 +690,7 @@
     $("usageReset").textContent = "Period reset: —";
     activityRows = []; activityTotal = 0; renderActivity();
     $("billingAccount").textContent = "Connect your account to load billing status.";
+    $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
     apiKeyCreationAllowed = false;
     $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
