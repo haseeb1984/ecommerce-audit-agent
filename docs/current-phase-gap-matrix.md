@@ -533,3 +533,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Authenticated customer-portal requests now capture an account-session generation before sending the request and reject late responses if the user starts another connection attempt or disconnects before the response returns.
 - This prevents an in-flight response for a prior credential from repopulating saved reports, activity, usage, billing, or API-key UI after account data was cleared or another identity was selected.
 - The source was committed and read back from the feature branch. Browser-level race reproduction and automated JavaScript tests have not been run; complete customer workflow acceptance remains pending. No database migration, production audit, PDF/report refinement, or deployment was performed.
+
+## Customer + administrator portal session-race hardening — multi-gap batch (2026-10-28)
+
+- Customer portal: authenticated API requests now validate the account-session generation after response arrival and after asynchronous JSON/PDF-body parsing. This blocks late account data from rendering after a connect/disconnect, and blocks an old audit PDF from being downloaded after the user switches accounts mid-response.
+- Customer portal: obsolete connection attempts no longer clear a newer session's credential/state or re-enable the Connect button while a newer attempt is still active. Empty credential submissions do not invalidate an in-progress session.
+- Administrator portal: the shared API helper checks the administrator-session generation after response parsing; connect attempts are generation-scoped, and disconnect/clear invalidates pending requests. Obsolete connect failures no longer clear a newer administrator session.
+- Code changes were committed and read back from the feature branch. Browser-based race reproduction and JavaScript syntax/runtime checks have not been executed. Some administrator action handlers use direct fetch calls outside the shared API helper and remain a separate review item; full admin workflow acceptance is still pending. No deployment, database migration, production audit, or PDF/report refinement was performed.
