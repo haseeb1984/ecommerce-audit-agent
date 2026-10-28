@@ -90,6 +90,11 @@ class ReportEmailRequest(BaseModel):
     recipient_confirmed: bool = False
 
 
+class AccountProfileUpdate(BaseModel):
+    """Customer-editable account display name; billing identity stays with the payment provider."""
+    client_name: str = Field(..., min_length=1, max_length=255)
+
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -896,6 +901,54 @@ h1{{margin-top:0}}p{{line-height:1.6;color:#46536a}}#status{{font-weight:600}}
 async def customer_portal():
     """Serve the lightweight, API-backed customer portal bundled with this repository."""
     return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
+
+
+@app.get("/api/v1/account/profile")
+async def get_account_profile(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+):
+    """Return safe account profile metadata without exposing credentials or payment secrets."""
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    now = datetime.now(timezone.utc)
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at is None:
+        account_status = "active" if license_obj.is_active else "inactive"
+    elif expires_at <= now:
+        account_status = "expired"
+    else:
+        account_status = "active" if license_obj.is_active else "inactive"
+    return {
+        "client_name": license_obj.client_name,
+        "tier": license_obj.tier,
+        "account_status": account_status,
+        "created_at": license_obj.created_at.isoformat() if license_obj.created_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+    }
+
+
+@app.patch("/api/v1/account/profile")
+async def update_account_profile(
+    payload: AccountProfileUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update only the account display name; this does not change billing-provider identity."""
+    client_name = payload.client_name.strip()
+    if not client_name:
+        raise HTTPException(status_code=422, detail="Account name cannot be blank.")
+    if len(client_name) > 255:
+        raise HTTPException(status_code=422, detail="Account name must be 255 characters or fewer.")
+    license_obj.client_name = client_name
+    await db.commit()
+    await db.refresh(license_obj)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"client_name": license_obj.client_name, "updated": True}
 
 
 @app.get("/api/v1/account/usage")
