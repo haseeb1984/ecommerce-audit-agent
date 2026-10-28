@@ -202,7 +202,9 @@ def normalize_target(value: str) -> str:
                      (parsed.scheme.lower() == "http" and port == 80)):
         netloc = f"{netloc}:{port}"
     path = parsed.path or "/"
-    return urlunsplit((parsed.scheme.lower(), netloc, path, parsed.query, ""))
+    # Query strings may contain session tokens, search terms, or personal data.
+    # Canonical audit targets intentionally retain only the public page path.
+    return urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
 
 
 class PublicOnlyResolver(aiohttp.abc.AbstractResolver):
