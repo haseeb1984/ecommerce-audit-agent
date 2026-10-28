@@ -1159,6 +1159,97 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
 
 
 @pytest.mark.asyncio
+async def test_payment_failure_after_cancellation_cannot_hide_canceled_state(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_cancel_failure123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_cancel_failure_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_cancel_failure_purchase",
+            "subscription_id": "sub_cancel_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_cancel_failure123",
+            "customer": {"email": "cancel-failure@example.com", "name": "Cancel Failure"},
+            "items": [{"price": {"id": "pri_cancel_failure123"}, "quantity": 1}],
+        },
+    }
+    assert (await send(purchase)).status_code == 200
+
+    cancellation = {
+        "event_id": "evt_cancel_failure_canceled",
+        "event_type": "subscription.canceled",
+        "data": {"id": "sub_cancel_failure123"},
+    }
+    assert (await send(cancellation)).json()["status"] == "cancellation_applied"
+
+    # A later failure event is still recorded for billing history, but must not
+    # erase the cancellation state used to guard subsequent completed transactions.
+    failure = {
+        "event_id": "evt_cancel_failure_payment_failed",
+        "event_type": "transaction.payment_failed",
+        "data": {
+            "id": "txn_cancel_failure_attempt",
+            "subscription_id": "sub_cancel_failure123",
+            "customer_id": "ctm_cancel_failure123",
+            "customer": {"email": "cancel-failure@example.com"},
+        },
+    }
+    failed = await send(failure)
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "payment_failed"
+
+    late_renewal = {
+        "event_id": "evt_cancel_failure_late_renewal",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_cancel_failure_late_renewal",
+            "subscription_id": "sub_cancel_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_cancel_failure123",
+            "customer": {"email": "cancel-failure@example.com", "name": "Cancel Failure"},
+            "items": [{"price": {"id": "pri_cancel_failure123"}, "quantity": 1}],
+        },
+    }
+    response = await send(late_renewal)
+    assert response.status_code == 200
+    assert response.json()["status"] == "subscription_canceled"
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Cancel Failure")
+        )).scalar_one()
+        assert license_obj.is_active is False
+        events = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == "sub_cancel_failure123"
+            )
+        )).scalars().all()
+    assert len(events) == 3
+    statuses = {item.event_id: item.status for item in events}
+    assert statuses["evt_cancel_failure_canceled"] == "subscription_canceled"
+    assert statuses["evt_cancel_failure_payment_failed"] == "payment_failed"
+    assert "evt_cancel_failure_late_renewal" not in statuses
+
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_rejects_invalid_signature_without_provisioning(client, monkeypatch):
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "paddle-test-webhook-secret")
     body = b'{"event_id":"evt_bad","event_type":"transaction.completed","data":{"status":"completed"}}'
