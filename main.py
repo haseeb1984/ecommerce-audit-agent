@@ -3107,6 +3107,8 @@ async def admin_overview(
             "expired": bool(item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "expires_in_days": max(0, int((((item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) - now).total_seconds()) // 86400)) if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) >= now else None,
+            "expiry_attention": "expired" if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now else ("expiring_7d" if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now + timedelta(days=7) else ("expiring_30d" if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now + timedelta(days=30) else ("no_expiry" if item.expires_at is None else "ok"))),
             "monthly_limit": int(item.max_monthly_audits or 0),
             "monthly_used": used_month,
             "monthly_remaining": max(0, int(item.max_monthly_audits or 0) - used_month),
