@@ -12,12 +12,12 @@
 ## Latest implementation batch
 
 - OSV dependency advisory response reading is now bounded while streaming, with a 1,000,000-byte budget and a regression test asserting that reading stops within one chunk beyond the budget.
-- The targeted test and full suite have not been executed in this batch.
+- The targeted test and full suite have not been executed in this batch. The next PR CI run is intended to execute the current branch test suite without the workflow's live-site PDF step.
 - PDF/report refinement remains deferred to the final phase as requested.
 
 ## Verification status
 
-- Latest source CI: pending fresh execution.
+- Latest source CI: pending fresh execution. A documentation-only commit is being used to synchronize the open pull request and request a new pull-request test run; this does not alter application code and the PR workflow skips live-site PDF generation.
 - Database/customer/admin/billing integrated acceptance: pending.
 - External provider workflows (Paddle, SMTP, PageSpeed) against deployment credentials: not verified.
 - Production migration and deployment: not performed.
