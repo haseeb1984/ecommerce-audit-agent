@@ -955,6 +955,33 @@ async def test_report_email_cannot_send_another_licenses_pdf(client, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_paddle_webhook_rejects_valid_json_with_invalid_object_shapes(client, monkeypatch):
+    secret = "paddle-test-webhook-shape-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+
+    async def send(payload):
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    top_level_list = await send(["not", "an", "event-object"])
+    assert top_level_list.status_code == 400
+    assert top_level_list.json()["detail"] == "Paddle event must be a JSON object."
+
+    invalid_data = await send({
+        "event_id": "evt_invalid_data_shape",
+        "event_type": "transaction.completed",
+        "data": ["not", "an", "object"],
+    })
+    assert invalid_data.status_code == 400
+    assert invalid_data.json()["detail"] == "Paddle event data must be a JSON object."
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_idempotent(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
