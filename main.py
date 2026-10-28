@@ -2432,12 +2432,15 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
 @app.get("/api/v1/admin/actions")
 async def admin_action_history(
     request: Request,
+    response: Response,
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return a bounded, newest-first page of sanitized administrator activity."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
     total = int((await db.execute(text(
         "SELECT COUNT(*) FROM saas_admin_action_logs"
