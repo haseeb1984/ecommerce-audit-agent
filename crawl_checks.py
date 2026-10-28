@@ -1136,6 +1136,10 @@ async def run_bounded_site_crawl(
                         evidence_ref="crawl.bounded_crawl",
                     ))
                 return findings, pages_checked, limitations
+            # Normalize redirect destinations before constructing robots/sitemap
+            # URLs. In particular, :443 and :80 must not make a safe same-origin
+            # crawl appear to be a different origin to the next bounded request.
+            final_home = _canonical_page_url(final_home or normalized)
             if "text/html" not in headers.get("content-type", "").lower():
                 findings.append(_finding(
                     "crawl", "Homepage response is not HTML",
