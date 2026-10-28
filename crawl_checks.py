@@ -1921,13 +1921,12 @@ async def run_bounded_site_crawl(
                 )
             catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
             findings.extend(catalog_findings)
-            if catalog_findings:
-                _record_static_check_outcome(
-                    outcome_records, check_id="ecommerce_catalog.navigation",
-                    category="ecommerce_catalog", page_url=final_url,
-                    findings=catalog_findings,
-                    method="static ecommerce product/category route and navigation review",
-                )
+            _record_static_check_outcome(
+                outcome_records, check_id="ecommerce_catalog.navigation",
+                category="ecommerce_catalog", page_url=final_url,
+                findings=catalog_findings,
+                method="static ecommerce product/category route and navigation review",
+            )
             sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
             findings.extend(sensitive_form_findings)
             canonical_findings = inspect_canonical_declaration(body, final_url)
