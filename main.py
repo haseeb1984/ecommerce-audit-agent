@@ -83,7 +83,8 @@ async def apply_response_security_headers(request: Request, call_next):
 
 
 class ReportEmailRequest(BaseModel):
-    recipient_email: str
+    # Bound untrusted request data before the route performs DB lookup or SMTP work.
+    recipient_email: str = Field(..., min_length=3, max_length=254)
     recipient_confirmed: bool = False
 
 
