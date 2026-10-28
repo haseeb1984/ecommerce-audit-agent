@@ -983,25 +983,51 @@ async def get_account_usage(
     # Show the same operator-managed allowance that quota enforcement uses.
     # Retain the license column as a migration fallback for older/unlisted tiers.
     package_result = await db.execute(text("""
-        SELECT monthly_audit_allowance FROM saas_plan_packages WHERE tier=:tier
+        SELECT label, monthly_audit_allowance, max_concurrent_audits, is_active
+        FROM saas_plan_packages WHERE tier=:tier
     """), {"tier": str(license_obj.tier or "starter").strip().lower()})
-    package_limit = package_result.scalar_one_or_none()
+    package_row = package_result.mappings().first()
+    package_limit = package_row["monthly_audit_allowance"] if package_row is not None else None
     limit = max(0, int(
         package_limit if package_limit is not None else (license_obj.max_monthly_audits or 0)
     ))
     consumed = used + pending
+    remaining = max(0, limit - consumed)
+    usage_percent = min(100, round(consumed * 100 / limit, 1)) if limit else 0
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if not license_obj.is_active:
+        entitlement_state = "inactive"
+    elif expires_at is not None and expires_at <= now:
+        entitlement_state = "expired"
+    elif package_row is not None and not bool(package_row["is_active"]):
+        entitlement_state = "plan_inactive"
+    elif limit <= 0:
+        entitlement_state = "quota_unavailable"
+    elif remaining <= 0:
+        entitlement_state = "quota_exhausted"
+    else:
+        entitlement_state = "active"
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
         "tier": str(license_obj.tier or "starter"),
+        "plan_label": str(package_row["label"]) if package_row is not None else str(license_obj.tier or "starter"),
+        "plan_available": bool(package_row["is_active"]) if package_row is not None else None,
         "monthly_limit": limit,
         "used": used,
         "in_progress": pending,
-        "remaining": max(0, limit - consumed),
-        "usage_percent": min(100, round(consumed * 100 / limit, 1)) if limit else 0,
+        "consumed": consumed,
+        "remaining": remaining,
+        "usage_percent": usage_percent,
+        "quota_state": "exhausted" if limit > 0 and remaining <= 0 else ("near_limit" if usage_percent >= 80 else "available"),
+        "entitlement_state": entitlement_state,
+        "max_concurrent_audits": int(package_row["max_concurrent_audits"]) if package_row is not None else None,
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
-        "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
     }
 
 
