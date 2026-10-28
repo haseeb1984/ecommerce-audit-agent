@@ -1007,7 +1007,10 @@ async def test_paddle_webhook_rejects_valid_json_with_invalid_object_shapes(clie
         "data": {"status": "completed", "custom_data": {}, "items": {"not": "an array"}},
     })
     assert invalid_items.status_code == 400
-    assert invalid_items.json()["detail"] == "Paddle transaction items must be a JSON array."@pytest.mark.asyncio
+    assert invalid_items.json()["detail"] == "Paddle transaction items must be a JSON array."
+
+
+@pytest.mark.asyncio
 async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_idempotent(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
