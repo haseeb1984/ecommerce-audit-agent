@@ -72,13 +72,13 @@ async def test_bounded_crawl_records_additional_page_check_outcomes_without_fals
         "https://shop.example/", outcome_records=outcomes
     )
     outcome_ids = {item.check_id for item in outcomes}
-    assert "indexability.canonical_declaration" in outcome_ids
-    assert "security.sensitive_get_forms" in outcome_ids
+    assert "indexability.canonical" in outcome_ids
+    assert "security.headers_and_forms" in outcome_ids
     assert "technical_seo.meta_refresh" in outcome_ids
-    assert "privacy.detected_tracking_signals" in outcome_ids
+    assert "pixel_analytics.consent_signals" in outcome_ids
     # Product-only checks must not be reported as passing on the homepage.
-    assert "structured_data.product_presence" not in outcome_ids
-    assert "ecommerce.catalog_navigation" not in outcome_ids
+    assert "structured_data.product" not in outcome_ids
+    assert "ecommerce_catalog.navigation" not in outcome_ids
 
 
 @pytest.mark.asyncio
