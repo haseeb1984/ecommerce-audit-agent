@@ -1259,7 +1259,8 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
             "items": [{"price": {"id": "pri_laterenewal123"}, "quantity": 1}],
         },
     }
-    assert (await send(purchase)).status_code == 200
+    purchase_response = await send(purchase)
+    assert purchase_response.status_code == 200, purchase_response.text
 
     cancellation = {
         "event_id": "evt_late_renewal_cancel",
