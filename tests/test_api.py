@@ -2598,3 +2598,29 @@ async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_min
         details = [json.loads(item.details_json) if isinstance(item.details_json, str) else item.details_json for item in actions]
         assert details[1]["reason"] == "rotation after integration test"
         assert all(secret not in json.dumps(item) for item in details)
+
+@pytest.mark.asyncio
+async def test_account_api_key_creation_enforces_ten_key_cap(client):
+    license_id = await create_license(key="api-key-cap-license", quota=5)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            APIKey(
+                license_id=license_id,
+                api_key_hash=hashlib.sha256(f"existing-api-key-{i}".encode()).hexdigest(),
+                key_prefix=f"eaa_{i:04d}",
+            )
+            for i in range(10)
+        ])
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/account/api-keys",
+        headers={"X-License-Key": "api-key-cap-license"},
+    )
+    assert response.status_code == 409
+    assert "10 API keys" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert len(rows) == 10
