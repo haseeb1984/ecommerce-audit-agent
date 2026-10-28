@@ -14,14 +14,26 @@ from sqlalchemy import text
 
 
 REQUIRED_COLUMNS = {
-    "software_licenses": {"id", "license_key", "tier", "max_monthly_audits", "is_active"},
-    "api_keys": {"id", "license_id", "api_key_hash", "key_prefix"},
-    "audit_leads": {"id", "license_id", "domain", "created_at"},
+    # Keep this list aligned with every mapped field used by application queries,
+    # not just the minimum fields needed for a successful health-check response.
+    "software_licenses": {
+        "id", "license_key", "client_name", "tier", "max_monthly_audits",
+        "is_active", "expires_at", "created_at",
+    },
+    "api_keys": {"id", "license_id", "api_key_hash", "key_prefix", "created_at"},
+    "audit_leads": {
+        "id", "license_id", "domain", "mobile_score", "speed_index_sec",
+        "contact_email", "revenue_leak_hypothesis", "email_subject", "email_body",
+        "source_channel", "created_at",
+    },
     "audit_quota_reservations": {"id", "license_id", "created_at", "expires_at"},
-    "audit_reports": {"id", "license_id", "domain", "pdf_bytes", "coverage_json", "finding_count", "created_at"},
+    "audit_reports": {
+        "id", "license_id", "domain", "pdf_bytes", "coverage_json",
+        "finding_count", "created_at",
+    },
     "payment_webhook_events": {
-        "event_id", "status", "license_id", "recipient_email", "transaction_id",
-        "subscription_id", "created_at", "updated_at",
+        "event_id", "status", "license_id", "transaction_id", "subscription_id",
+        "paddle_customer_id", "recipient_email", "created_at", "updated_at",
     },
     "saas_plan_packages": {
         "tier", "label", "monthly_audit_allowance", "max_concurrent_audits",
