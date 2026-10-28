@@ -606,5 +606,5 @@ No deployment, database migration, payment, or production-site audit was run as 
 ## Configured Paddle checkout destination validation — implementation batch (2026-10-28)
 
 - The backend now validates `PADDLE_CHECKOUT_URL` with the same strict HTTPS/Paddle-host allowlist used for URLs returned by Paddle, rejecting lookalike domains and embedded credentials before making the transaction API request.
-- Added parameterized API regression coverage for untrusted configured destinations and verifies the Paddle request is not called when configuration is invalid.
+- Added API regression coverage for trusted configured destinations and parameterized untrusted destinations; invalid configuration must return HTTP 503 before the Paddle request is called.
 - Code and tests are committed to `integration/saas-feature-batch`. Tests have **not** been executed in this environment; no fresh GitHub Actions run is available. Vercel remains unused due to the build-quota limitation. PDF/report refinement remains deferred to the final phase.
