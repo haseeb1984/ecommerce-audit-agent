@@ -136,6 +136,10 @@ class UniversalEcommerceAgent:
         self.pagespeed_key = os.getenv("PAGE_SPEED_API_KEY", "").strip() or os.getenv("GOOGLE_PAGESPEED_API_KEY", "").strip()
 
     @staticmethod
+    def _normalize_audit_target(value: object) -> str:
+        return _normalize_audit_target(value)
+
+    @staticmethod
     def _is_model_configuration_error(exc: Exception) -> bool:
         """Return True only for errors that plausibly mean this model cannot be used."""
         status = getattr(exc, "status_code", None)
