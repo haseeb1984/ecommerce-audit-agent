@@ -1785,10 +1785,25 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 
     if event_type != "transaction.completed":
         return {"status": "ignored", "event_id": event_id}
-    if transaction.get("status") != "completed": return {"status": "payment_not_complete", "event_id": event_id}
+    if transaction.get("status") != "completed":
+        return {"status": "payment_not_complete", "event_id": event_id}
     custom_data = transaction.get("custom_data") or {}
+    if not isinstance(custom_data, dict):
+        raise HTTPException(status_code=400, detail="Paddle transaction custom_data must be a JSON object.")
+    items = transaction.get("items") or []
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="Paddle transaction items must be a JSON array.")
     tier = str(custom_data.get("license_tier", "")).strip().lower()
-    price_ids = {item.get("price", {}).get("id") for item in (transaction.get("items") or []) if isinstance(item, dict)}
+    price_ids = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        price = item.get("price") or {}
+        if not isinstance(price, dict):
+            continue
+        price_id = price.get("id")
+        if isinstance(price_id, str) and price_id.strip():
+            price_ids.add(price_id.strip())
     configured_plans = await _db_payment_plans(db, active_only=False)
     plans_by_tier = {p["tier"]: p for p in configured_plans}
     plan = plans_by_tier.get(tier)
