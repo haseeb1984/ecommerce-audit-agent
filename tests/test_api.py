@@ -251,7 +251,7 @@ async def test_account_usage_requires_authentication(client):
 
 @pytest.mark.asyncio
 async def test_portal_pages_send_browser_security_headers_and_disable_caching(client):
-    for path in ("/app", "/admin"):
+    for path in ("/app", "/admin", "/checkout?_ptxn=txn_123ABC"):
         response = await client.get(path)
         assert response.status_code == 200, path
         assert response.headers["cache-control"] == "no-store, private"
@@ -262,6 +262,8 @@ async def test_portal_pages_send_browser_security_headers_and_disable_caching(cl
         assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
         if path == "/admin":
             assert "smtp_configuration_issues" in response.text
+        if path.startswith("/checkout"):
+            assert "Preparing your secure Paddle checkout" in response.text
 
 
 @pytest.mark.asyncio
