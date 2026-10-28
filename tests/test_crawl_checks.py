@@ -986,7 +986,7 @@ async def test_product_jsonld_malformed_block_is_reviewed_without_crashing(monke
         f for f in findings
         if f.category == "structured_data" and "Product structured data" in f.title
     )
-    assert schema_finding.title == "Product structured data not detected"
+    assert schema_finding.title == "Product structured data could not be parsed"
     assert schema_finding.status == "manual_review_required"
 
 
