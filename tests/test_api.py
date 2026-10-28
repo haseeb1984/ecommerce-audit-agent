@@ -2084,13 +2084,13 @@ async def test_customer_billing_history_is_paginated_scoped_and_validated(client
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         db.add_all([
-            PaymentWebhookEvent(event_id="evt_billing_owner_a", license_id=owner_id, status="delivered",
+            PaymentWebhookEvent(event_id="evt_billing_owner_a", license_id=owner_id, status="delivered", recipient_email="owner@example.com",
                                 transaction_id="txn-owner-a", created_at=now - timedelta(minutes=2)),
-            PaymentWebhookEvent(event_id="evt_billing_owner_b", license_id=owner_id, status="payment_failed",
+            PaymentWebhookEvent(event_id="evt_billing_owner_b", license_id=owner_id, status="payment_failed", recipient_email="owner@example.com",
                                 transaction_id="txn-owner-b", created_at=now - timedelta(minutes=1)),
-            PaymentWebhookEvent(event_id="evt_billing_owner_c", license_id=owner_id, status="delivered",
+            PaymentWebhookEvent(event_id="evt_billing_owner_c", license_id=owner_id, status="delivered", recipient_email="owner@example.com",
                                 transaction_id="txn-owner-c", created_at=now),
-            PaymentWebhookEvent(event_id="evt_billing_other_secret", license_id=other_id, status="delivered",
+            PaymentWebhookEvent(event_id="evt_billing_other_private", license_id=other_id, status="delivered", recipient_email="other@example.com",
                                 transaction_id="txn-other-secret", created_at=now),
         ])
         await db.commit()
