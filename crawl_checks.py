@@ -2485,6 +2485,9 @@ async def run_bounded_site_crawl(
         # for that executed source check; manual-review findings remain warnings.
         if outcome_records is not None:
             page_check_families = (
+                ("structured_data.product", "structured_data", "Static product-route JSON-LD presence and parseability review"),
+                ("ecommerce_catalog.navigation", "ecommerce_catalog", "Static ecommerce product/category route and navigation review"),
+                ("indexability.canonical", "indexability", "Static HTML canonical-link declaration review"),
                 ("security.headers_and_forms", "security", "HTTP security headers and sensitive GET-form source inspection"),
                 ("mobile_ux.viewport", "mobile_ux", "Mobile viewport source inspection"),
                 ("performance.static_signals", "performance", "Static HTML performance signal inspection"),
