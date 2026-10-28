@@ -24,6 +24,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.platypus.paragraph import Paragraph as ReportLabParagraph
 from reportlab.platypus.tableofcontents import TableOfContents
 
 from audit_checks import (
@@ -252,8 +253,8 @@ def _consolidate_findings(
                 "severity_rationale": finding.severity_rationale,
                 "explanation": _sanitize_report_text(finding.explanation, limit=3000),
                 "recommendation": _sanitize_report_text(finding.recommendation, limit=3000),
-                "potential_benefit": _sanitize_report_text(finding.potential_benefit, limit=1200),
-                "risk_if_unresolved": _sanitize_report_text(finding.risk_if_unresolved, limit=1200),
+                "potential_benefit": (_sanitize_report_text(finding.potential_benefit, limit=1200) or None),
+                "risk_if_unresolved": (_sanitize_report_text(finding.risk_if_unresolved, limit=1200) or None),
                 "evidence": [],
                 "affected_pages": [],
                 "verification_steps": [],
@@ -1151,8 +1152,15 @@ class AuditPDFDocTemplate(SimpleDocTemplate):
         super().__init__(*args, **kwargs)
         self._outline_counter = 0
 
+    def beforeDocument(self):
+        # multiBuild runs several layout passes. Keep bookmark IDs stable across
+        # passes so the table of contents converges instead of exhausting retries.
+        self._outline_counter = 0
+
     def afterFlowable(self, flowable):
-        if not isinstance(flowable, Paragraph):
+        # Tests and integrations may wrap Paragraph to capture rendered text;
+        # use the stable ReportLab class for type checks, not the replaceable alias.
+        if not isinstance(flowable, ReportLabParagraph):
             return
         style_name = getattr(flowable.style, "name", "")
         if style_name != "AuditSection":
