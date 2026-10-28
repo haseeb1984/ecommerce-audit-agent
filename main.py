@@ -10,7 +10,7 @@ import smtplib
 import json
 from email.message import EmailMessage
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 from urllib.parse import urlsplit
 
@@ -2909,7 +2909,7 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
     stale_email_sending_count = int((await db.execute(
         select(sql_func.count(PaymentWebhookEvent.event_id)).where(
             PaymentWebhookEvent.status == "email_sending",
-            PaymentWebhookEvent.updated_at <= now - __import__("datetime").timedelta(minutes=10),
+            PaymentWebhookEvent.updated_at <= now - timedelta(minutes=10),
         )
     )).scalar_one() or 0)
     expired_reservation_count = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
