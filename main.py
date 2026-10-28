@@ -1871,7 +1871,36 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         if cancellation_event is not None:
             # A payment event is not proof that a canceled subscription was resumed.
             # Require a separately verified lifecycle/reconciliation action.
-            return {"status": "subscription_canceled", "event_id": event_id}
+            # Still persist the late transaction as an ignored lifecycle event so
+            # billing history and webhook idempotency remain complete.
+            prior_event = (await db.execute(
+                select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+            )).scalar_one_or_none()
+            if prior_event is not None:
+                return {"status": "already_processed", "event_id": event_id}
+            if transaction_id:
+                prior_transaction = (await db.execute(
+                    select(PaymentWebhookEvent)
+                    .where(PaymentWebhookEvent.transaction_id == transaction_id)
+                    .limit(1)
+                )).scalar_one_or_none()
+                if prior_transaction is not None:
+                    return {"status": "already_processed", "event_id": prior_transaction.event_id}
+            customer_id = str(
+                transaction.get("customer_id") or customer.get("id") or ""
+            ).strip()
+            db.add(PaymentWebhookEvent(
+                event_id=event_id,
+                status="subscription_canceled",
+                license_id=cancellation_event.license_id,
+                recipient_email=cancellation_event.recipient_email,
+                transaction_id=transaction_id,
+                subscription_id=subscription_id,
+                paddle_customer_id=(customer_id[:100] or cancellation_event.paddle_customer_id),
+            ))
+            await db.commit()
+            return {"status": "subscription_canceled", "event_id": event_id,
+                    "license_id": cancellation_event.license_id}
         if linked_subscription_event is not None and linked_subscription_event.license_id is not None:
             linked_license = (await db.execute(
                 select(SoftwareLicense).where(SoftwareLicense.id == linked_subscription_event.license_id)
