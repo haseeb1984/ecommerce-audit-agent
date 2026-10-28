@@ -916,6 +916,37 @@ async def test_report_email_requires_explicit_recipient_confirmation(client, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recipient", ["", "x", "a" * 255])
+async def test_report_email_rejects_invalid_length_before_smtp(client, monkeypatch, recipient):
+    license_id = await create_license(key="email-report-invalid-length")
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="mail.example",
+            pdf_bytes=b"%PDF-email",
+            coverage_json="{}",
+            finding_count=0,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    sent = []
+    monkeypatch.setattr(
+        main, "_send_pdf_email",
+        lambda *args: sent.append(args),
+    )
+    response = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers={"X-License-Key": "email-report-invalid-length"},
+        json={"recipient_email": recipient, "recipient_confirmed": True},
+    )
+    assert response.status_code == 422
+    assert sent == []
+
+
+@pytest.mark.asyncio
 async def test_report_email_uses_configured_sender_only_for_owned_report(client, monkeypatch):
     license_id = await create_license(key="email-report-owner")
     async with AsyncSessionLocal() as db:
