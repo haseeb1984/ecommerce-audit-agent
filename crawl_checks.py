@@ -128,13 +128,14 @@ class _SensitiveGetFormParser(HTMLParser):
     """Find GET forms that appear to submit credentials or payment-related fields."""
     SENSITIVE_NAMES = re.compile(
         r"(?:pass(?:word)?|secret|token|credit.?card|card.?number|cc.?num|cvv|cvc|"
-        r"security.?code|payment|billing.?address|bank.?account|routing.?number)",
+        r"security.?code|one.?time.?password|one.?time.?code|verification.?code|auth.?code|otp|api.?key|payment|billing.?address|bank.?account|routing.?number)",
         re.I,
     )
     SENSITIVE_TYPES = {"password"}
     SENSITIVE_AUTOCOMPLETE = {
         "current-password", "new-password", "cc-number", "cc-csc",
-        "cc-exp", "cc-exp-month", "cc-exp-year", "transaction-amount",
+        "cc-exp", "cc-exp-month", "cc-exp-year", "cc-name", "cc-type",
+        "one-time-code", "transaction-amount",
     }
 
     def __init__(self) -> None:
