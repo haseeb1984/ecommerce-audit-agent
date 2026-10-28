@@ -2610,12 +2610,20 @@ async def admin_reconcile_payment(event_id: str, request: Request,
         raise HTTPException(status_code=503, detail="Paddle API is not configured.")
     try:
         response = await asyncio.to_thread(_paddle_api_request, f"/transactions/{event.transaction_id}")
-        data = response.get("data") or {}
+        if not isinstance(response, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned an invalid transaction response.")
+        data = response.get("data")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned an invalid transaction payload.")
         provider_transaction_id = str(data.get("id") or "").strip()
         if not provider_transaction_id or not hmac.compare_digest(provider_transaction_id, event.transaction_id):
             raise HTTPException(status_code=502, detail="Paddle returned a transaction that does not match the recorded payment.")
         details = data.get("details") or {}
+        if not isinstance(details, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned invalid transaction details.")
         totals = details.get("totals") or {}
+        if not isinstance(totals, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned invalid transaction totals.")
         subscription_id = str(data.get("subscription_id") or "").strip()
         customer_id = str(data.get("customer_id") or "").strip()
         # Backfill only missing IDs from the authenticated Paddle API response.
