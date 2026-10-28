@@ -24,3 +24,17 @@ CREATE TABLE IF NOT EXISTS payment_webhook_events (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_license_id ON payment_webhook_events (license_id);
+
+-- Keep existing installations aligned with the current PaymentWebhookEvent model.
+-- CREATE TABLE IF NOT EXISTS does not add columns to an already-created table.
+ALTER TABLE payment_webhook_events
+    ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100) NULL,
+    ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100) NULL,
+    ADD COLUMN IF NOT EXISTS paddle_customer_id VARCHAR(100) NULL;
+
+CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id
+    ON payment_webhook_events (transaction_id);
+CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id
+    ON payment_webhook_events (subscription_id);
+CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_paddle_customer_id
+    ON payment_webhook_events (paddle_customer_id);
