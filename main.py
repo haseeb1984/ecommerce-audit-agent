@@ -2871,11 +2871,10 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
     """Private operational diagnostics without exposing environment values or customer secrets."""
     _require_admin_key(request)
     await _ensure_admin_tables(db)
-    from sqlalchemy import select, func as sql_func
+    from sqlalchemy import select, func as sql_func, or_
     now = datetime.now(timezone.utc)
     expiry_horizon = now + timedelta(days=7)
     # Read-only account lifecycle and entitlement diagnostics; never mutate access here.
-    from sqlalchemy import select, func as sql_func, or_
     license_counts = {
         "total_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)))).scalar_one() or 0),
         "inactive_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(False)))).scalar_one() or 0),
@@ -2884,12 +2883,18 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         "licenses_without_expiry": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.expires_at.is_(None)))).scalar_one() or 0),
         "zero_or_negative_quota_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.max_monthly_audits <= 0))).scalar_one() or 0),
         "active_but_expired_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at.is_not(None), SoftwareLicense.expires_at <= now))).scalar_one() or 0),
+        "active_without_expiry": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at.is_(None)))).scalar_one() or 0),
+        "inactive_with_future_expiry": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_(False), SoftwareLicense.expires_at > now))).scalar_one() or 0),
+        "licenses_missing_tier": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(or_(SoftwareLicense.tier.is_(None), SoftwareLicense.tier == "")))).scalar_one() or 0),
     }
     lifecycle_rows = (await db.execute(
         select(SoftwareLicense).where(or_(
             SoftwareLicense.expires_at <= expiry_horizon,
+            SoftwareLicense.expires_at.is_(None),
             SoftwareLicense.is_active.is_(False),
             SoftwareLicense.max_monthly_audits <= 0,
+            SoftwareLicense.tier.is_(None),
+            SoftwareLicense.tier == "",
         )).order_by(SoftwareLicense.expires_at.asc().nulls_last(), SoftwareLicense.id.asc()).limit(100)
     )).scalars().all()
     license_attention = []
@@ -2908,6 +2913,12 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
             flags.append("no_expiry")
         if int(license_row.max_monthly_audits or 0) <= 0:
             flags.append("invalid_monthly_quota")
+        if not str(license_row.tier or "").strip():
+            flags.append("missing_tier")
+        if not license_row.is_active and expiry and expiry > now:
+            flags.append("inactive_with_future_expiry")
+        if license_row.is_active and expiry is None:
+            flags.append("active_without_expiry")
         if license_row.is_active and expiry and expiry <= now:
             flags.append("active_but_expired")
         license_attention.append({
