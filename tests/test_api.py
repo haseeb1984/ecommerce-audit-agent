@@ -1312,6 +1312,14 @@ async def test_payment_failure_after_cancellation_cannot_hide_canceled_state(cli
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_cancel_failure123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    # Keep this lifecycle test independent of package rows left by other billing tests.
+    async def configured_test_plan(db, active_only=True):
+        return [{
+            "tier": "starter", "label": "Starter",
+            "monthly_audit_allowance": 100, "max_concurrent_audits": 1,
+            "price_id": "pri_cancel_failure123", "is_active": True,
+        }]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_test_plan)
     monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
 
     async def send(event):
@@ -1337,7 +1345,8 @@ async def test_payment_failure_after_cancellation_cannot_hide_canceled_state(cli
             "items": [{"price": {"id": "pri_cancel_failure123"}, "quantity": 1}],
         },
     }
-    assert (await send(purchase)).status_code == 200
+    purchase_response = await send(purchase)
+    assert purchase_response.status_code == 200, purchase_response.text
 
     cancellation = {
         "event_id": "evt_cancel_failure_canceled",
