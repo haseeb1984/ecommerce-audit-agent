@@ -1559,6 +1559,11 @@ async def test_admin_report_evidence_is_authenticated_bounded_and_reads_saved_ou
     assert payload["items"][0]["check_id"] == "seo.title"
     assert "internal_secret" not in json.dumps(payload)
     assert response.headers["cache-control"] == "no-store, private"
+    oversized_offset = await client.get(
+        f"/api/v1/admin/reports/{report_id}/evidence?offset=10000001",
+        headers={"X-Admin-Key": "test-admin-evidence-key"},
+    )
+    assert oversized_offset.status_code == 422
 
     missing = await client.get(
         "/api/v1/admin/reports/999999/evidence",
@@ -1599,6 +1604,11 @@ async def test_malformed_saved_coverage_does_not_break_customer_or_admin_evidenc
     assert evidence.json()["total"] == 0
     assert evidence.json()["items"] == []
     assert evidence.json()["outcome_summary"]["denominator"] == 0
+    oversized_customer_offset = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?offset=10000001",
+        headers=headers,
+    )
+    assert oversized_customer_offset.status_code == 422
 
     admin = await client.get(
         f"/api/v1/admin/reports/{report_id}/evidence",
