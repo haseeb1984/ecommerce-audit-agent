@@ -18,7 +18,7 @@ def test_absent_cues_require_manual_review_and_are_not_failures():
 def test_review_widget_name_does_not_prove_review_authenticity():
     findings = inspect_trust_signals('<div class="trustpilot-widget" aria-label="Customer reviews"></div>', "https://shop.example/")
     review = next(f for f in findings if "Review/testimonial" in f.title)
-    assert review.status == "verified"
+    assert review.status == "manual_review_required"
     assert "does not prove" in review.explanation
 
 def test_script_and_style_text_are_not_treated_as_visible_trust_evidence():
