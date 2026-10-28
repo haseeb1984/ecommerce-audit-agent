@@ -1076,10 +1076,7 @@ async def create_account_billing_portal(
         urls = data.get("urls") or {}
         general = urls.get("general") or {}
         portal_url = general.get("overview") or data.get("url")
-        parsed = urlsplit(portal_url or "")
-        if parsed.scheme != "https" or not parsed.hostname or not (
-            parsed.hostname == "paddle.com" or parsed.hostname.endswith(".paddle.com")
-        ):
+        if not _is_valid_paddle_hosted_url(portal_url):
             raise RuntimeError("Paddle did not return a valid customer portal URL")
     except Exception as exc:
         logger.error("Paddle customer portal creation failed (error_type=%s)", type(exc).__name__)
@@ -1524,6 +1521,26 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
             server.send_message(message)
 
 
+def _is_valid_paddle_hosted_url(value: object) -> bool:
+    """Accept only credential-free HTTPS URLs on Paddle's actual hosted domain."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        # Accessing .port also validates malformed port syntax.
+        _ = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme.lower() == "https"
+        and hostname
+        and not parsed.username
+        and not parsed.password
+        and (hostname == "paddle.com" or hostname.endswith(".paddle.com"))
+    )
+
+
 def _paddle_api_base() -> str:
     environment = os.getenv("PADDLE_ENVIRONMENT", "sandbox").strip().lower()
     if environment == "production": return "https://api.paddle.com"
@@ -1604,17 +1621,7 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
     try:
         response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
         url = response.get("data", {}).get("checkout", {}).get("url")
-        parsed = urlsplit(url or "")
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or not (
-                parsed.hostname.lower() == "paddle.com"
-                or parsed.hostname.lower().endswith(".paddle.com")
-            )
-        ):
+        if not _is_valid_paddle_hosted_url(url):
             raise RuntimeError("Paddle did not return a valid checkout URL")
         transaction_id = response.get("data", {}).get("id")
         if not isinstance(transaction_id, str) or not re.fullmatch(r"txn_[A-Za-z0-9]+", transaction_id):
