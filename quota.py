@@ -80,10 +80,17 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
         # Never execute DDL on the audit request path: it adds latency, requires
         # elevated database privileges, and can contend with concurrent requests.
         package_result = await db.execute(text("""
-            SELECT monthly_audit_allowance, max_concurrent_audits
+            SELECT monthly_audit_allowance, max_concurrent_audits, is_active
             FROM saas_plan_packages WHERE tier=:tier
         """), {"tier": tier_key})
         package_row = package_result.mappings().first()
+        # A plan disabled by an operator must not continue granting new audit
+        # reservations, even when an existing license still carries that tier.
+        if package_row is not None and not bool(package_row["is_active"]):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This plan is currently unavailable. Contact the account administrator.",
+            )
         # The live plan catalogue is the billing source of truth. The legacy
         # license field remains a fallback for tiers not yet migrated to plans.
         monthly_allowance = (
