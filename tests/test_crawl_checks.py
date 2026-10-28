@@ -82,6 +82,52 @@ async def test_bounded_crawl_records_additional_page_check_outcomes_without_fals
 
 
 @pytest.mark.asyncio
+async def test_product_specific_outcomes_are_recorded_only_for_product_routes(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    pages = {
+        "https://shop.example/": (
+            200,
+            '<html><head><title>Store</title></head><body><a href="/products/widget">Widget</a></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/",
+        ),
+        "https://shop.example/products/widget": (
+            200,
+            '<html><head><title>Widget</title></head><body><h1>Widget</h1></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/products/widget",
+        ),
+    }
+
+    async def fake_safe_get(client, url):
+        if url in pages:
+            return pages[url]
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt",
+                   "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+    product_schema = [
+        item for item in outcomes
+        if item.check_id == "structured_data.product"
+    ]
+    catalog = [
+        item for item in outcomes
+        if item.check_id == "ecommerce_catalog.navigation"
+    ]
+    assert len(product_schema) == 1
+    assert product_schema[0].page_url == "https://shop.example/products/widget"
+    assert product_schema[0].outcome == "warning"
+    assert len(catalog) == 1
+    assert catalog[0].page_url == "https://shop.example/products/widget"
+
+
+@pytest.mark.asyncio
 async def test_crawl_resolves_relative_links_using_same_origin_base_href(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
     pages = {
