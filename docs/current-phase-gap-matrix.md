@@ -629,3 +629,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The customer portal surfaces those events above the full billing history with plain-language labels and safe next steps. It does not claim a failed payment automatically disables access, does not expose recipient email or credentials, and directs payment actions to the Paddle billing portal.
 - The attention list is cleared when the customer disconnects or switches identity. The full paginated event history remains unchanged.
 - Source-level implementation only; database-backed ownership, browser session-switching, and real Paddle lifecycle behavior still require the planned verification phase. No migration, deployment, payment action, or PDF/report refinement was performed.
+
+
+## Administrator billing operations visibility — implementation batch
+
+- Corrected operational diagnostics so the pending license-email metric and recovery list include only `email_pending` and `email_sending` states. Payment failures, past-due notices, and cancellations are not mislabeled as undelivered license emails.
+- Added bounded lifecycle attention records and counts for payment failures, past-due subscriptions, and cancellations, plus a count of email-send markers older than ten minutes.
+- Updated the administrator console to show separate license-email recovery and billing-lifecycle queues. Email retry controls are shown only for pending email delivery; ordinary lifecycle events are informational and do not expose recipient email addresses in the lifecycle queue.
+- Source-level implementation and GitHub readback only. No automated test, live Paddle reconciliation, production database migration, or deployment was run. PDF/report work remains deferred.
