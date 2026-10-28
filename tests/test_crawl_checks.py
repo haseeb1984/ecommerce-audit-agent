@@ -425,7 +425,7 @@ async def test_product_page_without_product_jsonld_requires_review(monkeypatch):
     findings, _, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
 
     schema_finding = next(f for f in findings if f.category == "structured_data")
-    assert schema_finding.title == "Product structured data could not be parsed"
+    assert schema_finding.title == "Product structured data not detected"
     assert schema_finding.status == "manual_review_required"
 
 
@@ -986,7 +986,7 @@ async def test_product_jsonld_malformed_block_is_reviewed_without_crashing(monke
         f for f in findings
         if f.category == "structured_data" and "Product structured data" in f.title
     )
-    assert schema_finding.title == "Product structured data not detected"
+    assert schema_finding.title == "Product structured data could not be parsed"
     assert schema_finding.status == "manual_review_required"
 
 
