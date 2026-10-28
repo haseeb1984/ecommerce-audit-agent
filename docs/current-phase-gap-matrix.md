@@ -579,3 +579,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 
 - The customer saved-report email request now constrains recipient email input to 3–254 characters at request-model validation, before report lookup and SMTP work. Existing route-level syntax validation and explicit recipient confirmation remain in place.
 - Added parameterized API regression cases for empty, too-short, and overlong recipient values; these assert HTTP 422 and no SMTP invocation. Source changes are committed, but a fresh GitHub Actions run/runtime verification is still pending. PDF generation/refinement remains deferred to the final phase.
+
+
+## Latest implementation batch — customer API-key cap regression coverage
+
+- Added an API-level regression test that seeds ten keys for one license, attempts an eleventh through the customer endpoint, expects HTTP 409, and confirms the database still contains exactly ten keys.
+- The existing creation path uses a per-license row lock on databases supporting row locks before counting and inserting, protecting the cap against simultaneous requests in production PostgreSQL.
+- Verification in this batch is source/test review and GitHub readback only. The test has been added but **has not been executed** because no fresh GitHub Actions run is available for the latest branch changes. Vercel is not used. PDF/report refinement remains deferred to the final phase.
+
