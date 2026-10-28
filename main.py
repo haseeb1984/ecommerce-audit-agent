@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import hashlib
 import hmac
 import secrets
@@ -2183,7 +2184,7 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
 
 
 def _safe_audit_metadata_url(value: str | None) -> str | None:
-    """Persist only public HTTP(S) URLs without userinfo, query strings or fragments."""
+    """Persist only public HTTP(S) URLs without credentials, private hosts, queries or fragments."""
     if not value:
         return None
     try:
@@ -2192,7 +2193,15 @@ def _safe_audit_metadata_url(value: str | None) -> str | None:
             return None
         if parts.username is not None or parts.password is not None:
             return None
-        host = parts.hostname.lower()
+        host = parts.hostname.rstrip(".").lower()
+        if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".test", ".invalid")):
+            return None
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return None
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         port = parts.port
