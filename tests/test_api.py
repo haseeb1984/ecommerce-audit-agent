@@ -1426,6 +1426,34 @@ def test_paddle_hosted_url_validator(url, expected):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_url",
+    [
+        "https://evil.example/checkout",
+        "https://paddle.com.evil.example/checkout",
+        "https://user:password@pay.paddle.com/checkout",
+        "http://pay.paddle.com/checkout",
+    ],
+)
+async def test_paddle_checkout_rejects_untrusted_configured_checkout_url(client, monkeypatch, configured_url):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+    monkeypatch.setenv("PADDLE_CHECKOUT_URL", configured_url)
+    called = False
+
+    def fake_request(path, method="GET", payload=None):
+        nonlocal called
+        called = True
+        return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Paddle checkout URL configuration is invalid."
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
