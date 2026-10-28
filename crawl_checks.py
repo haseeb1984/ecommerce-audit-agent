@@ -1359,8 +1359,12 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
         except Exception as exc:
-            robots_rules = [("disallow", "/")]
-            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}); additional page crawling was conservatively stopped.")
+            # A transient robots.txt fetch/parse failure must be disclosed, but
+            # should not silently turn a crawl into zero-page coverage. We still
+            # restrict every candidate to the public audited origin and hard page
+            # caps; an explicit successfully fetched Disallow rule remains honored.
+            robots_rules = []
+            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}); bounded same-origin discovery continued without inferred crawl directives.")
             if outcome_records is not None:
                 outcome_records.append(CheckOutcome(
                     check_id="robots_txt.discovery_rules",
