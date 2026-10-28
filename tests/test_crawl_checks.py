@@ -2467,3 +2467,43 @@ def test_sensitive_fields_in_post_form_are_not_reported_as_get_form_risk():
     assert crawl_checks.inspect_sensitive_get_forms(
         html, "https://shop.example/verify"
     ) == []
+
+@pytest.mark.asyncio
+async def test_recursive_crawl_rejects_relative_links_from_off_origin_base(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+    first_product = "https://shop.example/products/one"
+    second_product = "https://shop.example/products/two"
+    unsafe_relative = "https://shop.example/products/relative-from-unsafe-base"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, (
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">One</a></body></html>'
+            ), {"content-type": "text/html"}, homepage
+        if url == first_product:
+            return 200, (
+                '<html><head><base href="https://outside.example/catalog/">'
+                '<title>One</title></head><body>'
+                '<a href="relative-from-unsafe-base">Unsafe relative</a>'
+                '<a href="https://shop.example/products/two">Safe absolute same-origin</a>'
+                '</body></html>'
+            ), {"content-type": "text/html"}, first_product
+        if url == second_product:
+            return 200, '<html><head><title>Two</title></head><body><h1>Two</h1></body></html>', {"content-type": "text/html"}, second_product
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt", "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert first_product in checked
+    assert second_product in checked
+    assert unsafe_relative not in requested
+    assert not any("outside.example" in url for url in requested)
