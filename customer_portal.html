@@ -197,7 +197,14 @@
     }
     setStatus("billingStatus", "Loaded " + billingOffset + " of " + billingTotal + " billing event(s).", "success");
     button.disabled = !page.has_more;
-    } finally { billingLoading = false; button.disabled = !billingTotal || billingOffset >= billingTotal; }
+    } catch (error) {
+      // Keep previously rendered history intact and show a recoverable error when
+      // a refresh or next-page request fails (network, auth, or server error).
+      setStatus("billingStatus", "Unable to load billing history. " + error.message, "error");
+    } finally {
+      billingLoading = false;
+      button.disabled = !billingTotal || billingOffset >= billingTotal;
+    }
   }
   async function loadApiKeys() {
     const response = await api("/api/v1/account/api-keys");
