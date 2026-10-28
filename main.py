@@ -980,17 +980,24 @@ async def account_audit_activity(
 @app.get("/api/v1/account/billing-history")
 async def account_billing_history(
     response: Response,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000000),
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return a bounded billing-event history scoped to the authenticated license."""
-    from sqlalchemy import select
+    """Return a bounded, paginated billing-event history scoped to the authenticated license."""
+    from sqlalchemy import select, func as sql_func
 
+    ownership_filter = PaymentWebhookEvent.license_id == license_obj.id
+    total = int((await db.execute(
+        select(sql_func.count(PaymentWebhookEvent.event_id)).where(ownership_filter)
+    )).scalar_one() or 0)
     events = (await db.execute(
         select(PaymentWebhookEvent)
-        .where(PaymentWebhookEvent.license_id == license_obj.id)
+        .where(ownership_filter)
         .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
-        .limit(50)
+        .offset(offset)
+        .limit(limit)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -1012,7 +1019,7 @@ async def account_billing_history(
             }
             for item in events
         ],
-        "limit": 50,
+        "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(events) < total},
     }
 
 
