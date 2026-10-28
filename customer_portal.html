@@ -75,6 +75,9 @@
   const $ = id => document.getElementById(id);
   let credential = "";
   let headerName = "X-License-Key";
+  // Invalidate in-flight authenticated requests whenever the connected identity changes
+  // or the user disconnects, so late responses cannot repopulate another account's view.
+  let accountSessionVersion = 0;
   let loadedReports = [];
   let reportsTotal = 0;
   const reportPageSize = 50;
@@ -107,7 +110,11 @@
     document.querySelectorAll("#plans button").forEach(button => { button.disabled = false; });
   });
   async function api(path, options = {}) {
+    const requestSessionVersion = accountSessionVersion;
     const response = await fetch(path, {...options, headers: {...authHeaders(), ...(options.headers || {})}});
+    if (requestSessionVersion !== accountSessionVersion) {
+      throw new Error("Account connection changed while this request was in progress. Reload the current account view.");
+    }
     if (!response.ok) {
       let message = "Request failed (" + response.status + ")";
       try { const body = await response.json(); if (body.detail) message += ": " + body.detail; } catch {}
@@ -580,6 +587,9 @@
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("connect").addEventListener("click", async () => {
+    // A new connection attempt invalidates responses from any earlier identity,
+    // including when the new credential text happens to match a prior one.
+    accountSessionVersion += 1;
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
     if (!nextCredential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
@@ -610,6 +620,7 @@
     } finally { $("connect").disabled = false; }
   });
   $("disconnectAccount").addEventListener("click", () => {
+    accountSessionVersion += 1;
     credential = "";
     headerName = "X-License-Key";
     $("credential").value = "";
