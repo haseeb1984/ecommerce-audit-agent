@@ -24,6 +24,14 @@
 <div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
 <div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
 </section>
+<section class="panel" aria-labelledby="profileHeading">
+<h2 id="profileHeading">Account profile</h2>
+<p class="muted">Update the display name shown in your account. Subscription billing identity and payment details remain managed by Paddle.</p>
+<div class="row"><div><label for="profileName">Account name</label><input id="profileName" type="text" maxlength="255" autocomplete="organization" placeholder="Your business or account name"></div><div><label for="profileTier">Current plan</label><input id="profileTier" type="text" readonly aria-readonly="true" value="—"></div></div>
+<p id="profileMeta" class="muted">Connect your account to view profile details.</p>
+<button id="saveProfile" type="button" disabled>Save account name</button>
+<div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
@@ -100,7 +108,7 @@
   };
   const authHeaders = () => ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -329,6 +337,17 @@
       setStatus("apiKeyStatus", "API key created. Copy the secret now; it will not be shown again.", "success");
     } catch (error) { setStatus("apiKeyStatus", error.message, "error"); }
     finally { renderApiKeys(); }
+  }
+  async function loadProfile() {
+    const response = await api("/api/v1/account/profile");
+    const profile = await response.json();
+    $("profileName").value = profile.client_name || "";
+    $("profileTier").value = profile.tier || "—";
+    const created = profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "unknown";
+    const expires = profile.expires_at ? new Date(profile.expires_at).toLocaleDateString() : "no expiry set";
+    $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · Expiry: " + expires;
+    setStatus("profileStatus", "Account profile loaded.", "success");
+    return profile;
   }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
@@ -624,6 +643,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
+    $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
@@ -649,8 +669,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -683,6 +703,26 @@
     $("target").value = "";
     setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
     setStatus("auditStatus", "Connect your credential first.");
+  });
+  $("saveProfile").addEventListener("click", async () => {
+    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
+    const clientName = $("profileName").value.trim();
+    if (!clientName) { setStatus("profileStatus", "Account name cannot be blank.", "error"); return; }
+    const button = $("saveProfile"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/profile", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({client_name: clientName})
+      });
+      const data = await response.json();
+      $("profileName").value = data.client_name || clientName;
+      setStatus("profileStatus", "Account name saved.", "success");
+    } catch (error) {
+      setStatus("profileStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential;
+    }
   });
   $("openBillingPortal").addEventListener("click", async () => {
     if (!credential) { setStatus("billingStatus", "Connect your account first.", "error"); return; }
