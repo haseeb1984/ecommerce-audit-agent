@@ -367,6 +367,7 @@ class UniversalEcommerceAgent:
             except (ValueError, TypeError, AttributeError):
                 logger.info("PageSpeed screenshot was absent or invalid")
 
+            clean_domain = urlsplit(target_url).hostname or target_url
             return StoreAuditMetrics(
                 domain=clean_domain,
                 mobile_score=score,
