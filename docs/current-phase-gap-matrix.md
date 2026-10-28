@@ -57,6 +57,11 @@
 - The no-store middleware now covers customer account and report API paths as well as admin APIs, so report API error responses receive the same privacy headers. Added assertions to the unauthenticated report-history test; committed but not executed.
 - Baseline browser security headers (`nosniff`, frame denial, strict-origin referrer policy, and a restrictive camera/microphone/geolocation permissions policy) are now applied to responses. The customer `/app` and operator `/admin` pages also receive private no-store headers. Added focused portal-header assertions; tests are committed but not executed, and browser compatibility is not yet verified.
 
+## Repository-only work completed — bounded dependency advisory response
+
+- The frontend CDN dependency advisory checker now caps the OSV batch response at 1,000,000 bytes before JSON parsing. An oversized response is handled as an incomplete/not-tested lookup, never as a clean dependency scan. The regression test covers this path; neither the new test nor the broader suite has been executed in this batch.
+- This is a defensive reliability improvement, not full software composition analysis. Lockfiles, bundled/self-hosted assets, server dependencies, and live release acceptance remain open.
+
 ## Current evidence-backed matrix
 
 | Workstream | Evidence in current repository | Status | Acceptance gate / next action |
