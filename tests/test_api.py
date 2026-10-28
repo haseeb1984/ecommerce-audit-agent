@@ -2203,6 +2203,8 @@ async def test_customer_billing_history_is_paginated_scoped_and_validated(client
     data = first.json()
     assert data["page"] == {"limit": 2, "offset": 0, "total": 3, "has_more": True}
     assert [item["event_id"] for item in data["items"]] == ["evt_billing_owner_c", "evt_billing_owner_b"]
+    assert all("recipient_email" not in item and "paddle_customer_id" not in item for item in data["items"])
+    assert "owner@example.com" not in first.text
     assert "evt_billing_other_private" not in first.text
     assert "txn-other-secret" not in first.text
     assert "other@example.com" not in first.text
