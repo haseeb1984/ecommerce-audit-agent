@@ -1470,6 +1470,23 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_paddle_checkout_accepts_trusted_configured_checkout_url(client, monkeypatch):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+    monkeypatch.setenv("PADDLE_CHECKOUT_URL", "https://pay.paddle.com/checkout")
+    captured = {}
+
+    def fake_request(path, method="GET", payload=None):
+        captured.update({"path": path, "method": method, "payload": payload})
+        return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 200
+    assert captured["payload"]["checkout"] == {"url": "https://pay.paddle.com/checkout"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "checkout_url",
     [
