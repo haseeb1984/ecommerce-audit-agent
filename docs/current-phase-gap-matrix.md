@@ -520,3 +520,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - This closes an ordering gap where a payment-failure or `past_due` event delivered after cancellation could become the newest record and hide the cancellation guard from a later delayed `transaction.completed` event.
 - Added a regression journey for purchase → cancellation → payment failure → late completed transaction. It asserts that the failure remains visible in billing history, the late transaction is not recorded as a renewal, and the license remains inactive.
 - Source edits and regression coverage are committed. The test has not been executed in this environment; Paddle sandbox ordering, PostgreSQL concurrency behavior, full suite results, schema migration state, and customer/admin end-to-end acceptance remain pending. No production migration, deployment, or infrastructure change was performed.
+
+
+## Customer billing-history privacy regression coverage — 2026-10-28
+
+- Strengthened the billing-history pagination/ownership test so it checks the exact seeded foreign-account event ID, transaction identifier, and email are absent from the authenticated customer's response.
+- Added explicit allowlist assertions that customer billing-history items omit recipient email and Paddle customer ID; the API response remains scoped to the authenticated license and retains private no-store caching.
+- This batch tightens regression coverage around an existing backend security boundary; it does not change the customer API contract. The tests have not been executed, so assertions are source-reviewed only. Full suite, browser acceptance, and production readiness remain pending.
