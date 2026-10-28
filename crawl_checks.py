@@ -1758,7 +1758,15 @@ async def run_bounded_site_crawl(
         # unbounded queue or a second crawler implementation.
         crawl_queue = [_canonical_page_url(final_home), *candidates]
         queued_urls = set(crawl_queue)
+        processed_page_keys: set[str] = set()
         for url in crawl_queue:
+            # Sitemap and link discovery can converge on the same canonical page.
+            # Process each normalized request URL once so page outcomes and findings
+            # are not duplicated by overlapping discovery sources.
+            page_key = _canonical_page_url(url)
+            if page_key in processed_page_keys:
+                continue
+            processed_page_keys.add(page_key)
             try:
                 # Reuse the homepage response already fetched for link discovery.
                 # This avoids spending a second request on the same page and keeps
