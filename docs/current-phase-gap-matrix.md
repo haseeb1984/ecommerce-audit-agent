@@ -505,3 +505,10 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Public URL query strings and fragments continue to be removed; public IPv6 literals remain supported.
 - Added regression coverage for local/private hosts and safe public-page retention. Tests are committed but have not been executed.
 - This is evidence-output hygiene only. It does not replace crawler-side DNS resolution, redirect validation, or network egress controls.
+
+
+## Payment webhook schema alignment — implementation batch (2026-10-28)
+
+- Updated the existing report-history migration to add the current payment webhook transaction, subscription, and Paddle customer identifier columns with idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. This matters because `CREATE TABLE IF NOT EXISTS` alone does not update an already-created table.
+- Added idempotent indexes for those three identifiers to align with the SQLAlchemy model.
+- Source-to-model checks were performed by re-reading both files. SQL has **not** been applied to production, and database integration tests have not been run. Apply only through the approved migration process.
