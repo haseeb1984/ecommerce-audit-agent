@@ -2438,3 +2438,32 @@ def test_product_schema_presence_does_not_duplicate_commerce_completeness_findin
     assert crawl_checks.inspect_product_page_schema_presence(
         html, "https://shop.example/products/blue-shirt"
     ) == []
+
+
+def test_sensitive_get_form_detects_one_time_codes_and_api_keys_without_reporting_values():
+    html = """
+    <form method="GET" action="/verify">
+      <input name="one_time_code" autocomplete="one-time-code" value="123456">
+      <input name="api_key" value="do-not-leak-this">
+    </form>
+    """
+    findings = crawl_checks.inspect_sensitive_get_forms(html, "https://shop.example/verify")
+
+    assert len(findings) == 1
+    assert findings[0].severity == "high"
+    assert "one_time_code" in findings[0].evidence
+    assert "api_key" in findings[0].evidence
+    assert "123456" not in findings[0].evidence
+    assert "do-not-leak-this" not in findings[0].evidence
+
+
+def test_sensitive_fields_in_post_form_are_not_reported_as_get_form_risk():
+    html = """
+    <form method="POST" action="/verify">
+      <input name="password" type="password">
+      <input name="one_time_code" autocomplete="one-time-code">
+    </form>
+    """
+    assert crawl_checks.inspect_sensitive_get_forms(
+        html, "https://shop.example/verify"
+    ) == []
