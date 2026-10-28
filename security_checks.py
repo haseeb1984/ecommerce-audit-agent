@@ -64,7 +64,7 @@ def inspect_exposure_response(path: str, status: int, body: str,
             matched = "Git repository metadata appears publicly readable"
             safe_evidence = "The response body matches the expected format of a Git HEAD reference."
     elif normalized_path == "/.git/config":
-        if re.search(r"(?im)^\\s*\\[core\\]\\s*$", body) and re.search(r"(?im)^\\s*repositoryformatversion\\s*=\\s*\\d+", body):
+        if re.search(r"(?im)^\s*\[core\]\s*$", body) and re.search(r"(?im)^\s*repositoryformatversion\s*=\s*\d+", body):
             matched = "Git repository configuration appears publicly readable"
             safe_evidence = "The response matches common Git config structure; repository URLs and configuration values are intentionally omitted."
     elif normalized_path in {"/config.php.bak", "/wp-config.php.bak"}:
