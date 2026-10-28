@@ -1768,7 +1768,8 @@ def test_product_schema_heuristic_ignores_non_product_routes_and_malformed_jsonl
         "https://shop.example/products/blue-shirt",
     )
     assert category == []
-    assert malformed == []
+    assert len(malformed) == 1
+    assert malformed[0].title == "Product structured data could not be parsed"
 
 
 @pytest.mark.asyncio
