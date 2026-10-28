@@ -76,7 +76,9 @@ async def apply_response_security_headers(request: Request, call_next):
         "/admin",
         "/app",
     )
-    if request.url.path.startswith(private_paths):
+    # Checkout URLs may carry a short-lived Paddle transaction identifier in the
+    # query string. Do not let browsers or shared caches retain that launch URL.
+    if request.url.path == "/checkout" or request.url.path.startswith(private_paths):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
     return response
