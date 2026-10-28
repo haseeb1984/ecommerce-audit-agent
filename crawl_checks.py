@@ -1862,10 +1862,58 @@ async def run_bounded_site_crawl(
                         # A malformed link must not stop inspection of other links.
                         continue
 
-            findings.extend(inspect_product_page_schema_presence(body, final_url))
-            findings.extend(inspect_ecommerce_catalog_navigation(body, final_url))
-            findings.extend(inspect_sensitive_get_forms(body, final_url))
-            findings.extend(inspect_canonical_declaration(body, final_url))
+            product_schema_findings = inspect_product_page_schema_presence(body, final_url)
+            findings.extend(product_schema_findings)
+            # This heuristic only applies to paths that resemble product detail pages;
+            # do not manufacture "pass" outcomes for unrelated routes.
+            try:
+                is_likely_product_page = bool(PRODUCT_DETAIL_PATH.search(urlsplit(final_url).path))
+            except (ValueError, UnicodeError):
+                is_likely_product_page = False
+            if is_likely_product_page:
+                _record_static_check_outcome(
+                    outcome_records, check_id="structured_data.product_presence",
+                    category="structured_data", page_url=final_url,
+                    findings=product_schema_findings,
+                    method="bounded static HTML Product JSON-LD presence heuristic",
+                )
+
+            catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
+            findings.extend(catalog_findings)
+            try:
+                catalog_path = urlsplit(final_url).path.lower()
+                catalog_segments = {segment for segment in catalog_path.split("/") if segment}
+                catalog_applicable = bool(
+                    PRODUCT_DETAIL_PATH.search(catalog_path)
+                    or catalog_segments.intersection({"collections", "collection", "category", "categories", "catalog", "shop"})
+                )
+            except (ValueError, UnicodeError):
+                catalog_applicable = False
+            if catalog_applicable:
+                _record_static_check_outcome(
+                    outcome_records, check_id="ecommerce.catalog_navigation",
+                    category="ecommerce", page_url=final_url,
+                    findings=catalog_findings,
+                    method="static HTML and URL-pattern catalog/variant/pagination inspection",
+                )
+
+            sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
+            findings.extend(sensitive_form_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="security.sensitive_get_forms",
+                category="security", page_url=final_url,
+                findings=sensitive_form_findings,
+                method="static HTML GET-form field-name and autocomplete heuristic",
+            )
+
+            canonical_findings = inspect_canonical_declaration(body, final_url)
+            findings.extend(canonical_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="indexability.canonical_declaration",
+                category="indexability", page_url=final_url,
+                findings=canonical_findings,
+                method="static HTML rel=canonical declaration inspection",
+            )
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
@@ -1894,8 +1942,25 @@ async def run_bounded_site_crawl(
                 findings=document_findings, method="static HTML document metadata and landmark inspection",
             )
 
-            findings.extend(inspect_hreflang(body, final_url))
-            findings.extend(inspect_meta_refresh(body, final_url))
+            hreflang_findings = inspect_hreflang(body, final_url)
+            findings.extend(hreflang_findings)
+            # hreflang is optional; record it only when the source actually declares it.
+            if hreflang_findings or re.search(r"(?is)<link\\b[^>]*\\b hreflang\\s*=", body[:500_000]):
+                _record_static_check_outcome(
+                    outcome_records, check_id="international_seo.hreflang_consistency",
+                    category="international_seo", page_url=final_url,
+                    findings=hreflang_findings,
+                    method="static HTML hreflang target and language-tag consistency review",
+                )
+
+            refresh_findings = inspect_meta_refresh(body, final_url)
+            findings.extend(refresh_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="technical_seo.meta_refresh",
+                category="technical_seo", page_url=final_url,
+                findings=refresh_findings,
+                method="static HTML meta-refresh redirect inspection",
+            )
             viewport_findings = inspect_mobile_viewport(body, final_url)
             findings.extend(viewport_findings)
             _record_static_check_outcome(
@@ -1929,7 +1994,14 @@ async def run_bounded_site_crawl(
                 findings=trust_findings, method="static visible trust-signal inventory",
             )
             # Detect source-visible tags and consent signals; never infer event success or legal compliance.
-            findings.extend(inspect_privacy_tracking_signals(body, final_url))
+            privacy_tracking_findings = inspect_privacy_tracking_signals(body, final_url)
+            findings.extend(privacy_tracking_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="privacy.detected_tracking_signals",
+                category="privacy", page_url=final_url,
+                findings=privacy_tracking_findings,
+                method="static HTML tag and consent-interface signal detection; event firing is not verified",
+            )
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
