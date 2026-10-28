@@ -234,6 +234,19 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         raise HTTPException(status_code=500, detail="Database connection error")
 
 
+def _normalize_request_audit_target(domain: str) -> str:
+    """Reject parameterized targets at API boundaries before reserving quota."""
+    raw_target = domain.strip()
+    candidate_target = raw_target if "://" in raw_target else "https://" + raw_target
+    # Query parameters can contain tokens or customer data. API callers must submit
+    # a clean public page URL instead of having the service silently change intent.
+    if urlsplit(candidate_target).query:
+        raise ValueError(
+            "Query strings are not accepted for audit targets; submit the public page URL without parameters."
+        )
+    return agent._normalize_audit_target(domain)
+
+
 @app.post("/api/v1/audit-lead", response_model=LeadDossier)
 @app.post("/api/v1/audit-lead/", response_model=LeadDossier, include_in_schema=False)
 async def audit_lead(
@@ -246,14 +259,7 @@ async def audit_lead(
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
-        raw_target = domain.strip()
-        candidate_target = raw_target if "://" in raw_target else "https://" + raw_target
-        # The API rejects query strings rather than silently auditing a different URL.
-        # Query parameters may contain tokens or customer data; the lower-level
-        # normalizer still strips them for safe provider-facing canonicalization.
-        if urlsplit(candidate_target).query:
-            raise ValueError("Query strings are not accepted for audit targets; submit the public page URL without parameters.")
-        target_url = agent._normalize_audit_target(domain)
+        target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -318,7 +324,7 @@ async def comprehensive_audit_pdf(
 ):
     """Create a phase-one evidence report as a PDF, using the existing license quota."""
     try:
-        target_url = agent._normalize_audit_target(domain)
+        target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
