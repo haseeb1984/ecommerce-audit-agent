@@ -21,6 +21,7 @@ from audit_checks import AuditFinding, _finding, _safe_get
 EXPOSURE_PATHS = (
     "/.env",
     "/.git/HEAD",
+    "/.git/config",
     "/config.php.bak",
     "/wp-config.php.bak",
     "/phpinfo.php",
