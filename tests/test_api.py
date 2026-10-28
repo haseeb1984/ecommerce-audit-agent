@@ -981,6 +981,17 @@ async def test_paddle_webhook_rejects_valid_json_with_invalid_object_shapes(clie
     assert invalid_data.status_code == 400
     assert invalid_data.json()["detail"] == "Paddle event data must be a JSON object."
 
+    missing_type = await send({"event_id": "evt_missing_type", "data": {}})
+    assert missing_type.status_code == 400
+    assert missing_type.json()["detail"] == "Paddle event type is missing or invalid."
+
+    oversized_id = await send({
+        "event_id": "evt_" + ("x" * 252),
+        "event_type": "transaction.completed",
+        "data": {},
+    })
+    assert oversized_id.status_code == 400
+    assert oversized_id.json()["detail"] == "Paddle event ID is missing or invalid."
 @pytest.mark.asyncio
 async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_idempotent(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
