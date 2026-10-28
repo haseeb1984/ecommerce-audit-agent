@@ -594,3 +594,11 @@ No deployment, database migration, payment, or production-site audit was run as 
 - This covers the second entry point to the same account key limit; the backend already serializes admin key creation on the customer license row and records creation/revocation in the admin action log.
 - GitHub source and test changes are reviewed/read back, but this new test is not claimed as executed: no fresh Actions run is available for the latest branch. Vercel is not used. PDF/report refinement remains deferred.
 
+
+
+## Checkout launch URL cache protection — implementation batch (2026-10-28)
+
+- The shared response-security middleware now applies `Cache-Control: no-store, private` and `Pragma: no-cache` to the Paddle `/checkout` launch page as well as the authenticated customer/admin/report surfaces.
+- This matters because checkout launch URLs can contain a short-lived Paddle transaction identifier in the query string; the browser should not retain the launch response in a reusable cache.
+- Extended the existing browser-security-header API regression test to cover `/checkout?_ptxn=...` alongside customer and administrator portal pages.
+- Source and regression test are committed and read back from the feature branch. Tests have **not** been executed and no fresh GitHub Actions run is available. No Paddle transaction, migration, deployment, or PDF/report work was performed.
