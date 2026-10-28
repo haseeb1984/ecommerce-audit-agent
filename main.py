@@ -1383,7 +1383,7 @@ async def get_audit_report_evidence(
     response: Response,
     kind: str = Query("findings", pattern="^(findings|check_outcomes)$"),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000000),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -2905,7 +2905,7 @@ async def admin_report_evidence(
     response: Response,
     kind: str = Query("check_outcomes", pattern="^(findings|check_outcomes)$"),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000000),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return bounded persisted report evidence for operators, without exposing PDF bytes."""
