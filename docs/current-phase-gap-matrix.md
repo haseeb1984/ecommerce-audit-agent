@@ -573,3 +573,9 @@ No deployment, database migration, payment, or production-site audit was run as 
 - Added parametrized regression coverage for valid Paddle URLs, mixed-case hostnames, lookalike domains, embedded credentials, HTTP, JavaScript URLs, malformed ports, whitespace, and non-string values.
 - Source commits on `integration/saas-feature-batch`: backend `dd6d4db`; tests `35f6516`.
 - Verification status: changes are committed and the files were read back from GitHub. No fresh Actions run has been returned for this branch update, so the new tests are not claimed as executed. PDF/report refinements remain deferred until the final phase.
+
+
+## Latest implementation batch — bounded report-email input
+
+- The customer saved-report email request now constrains recipient email input to 3–254 characters at request-model validation, before report lookup and SMTP work. Existing route-level syntax validation and explicit recipient confirmation remain in place.
+- Added parameterized API regression cases for empty, too-short, and overlong recipient values; these assert HTTP 422 and no SMTP invocation. Source changes are committed, but a fresh GitHub Actions run/runtime verification is still pending. PDF generation/refinement remains deferred to the final phase.
