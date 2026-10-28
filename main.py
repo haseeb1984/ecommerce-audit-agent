@@ -1538,8 +1538,8 @@ def _is_valid_paddle_hosted_url(value: object) -> bool:
     return bool(
         parsed.scheme.lower() == "https"
         and hostname
-        and not parsed.username
-        and not parsed.password
+        and parsed.username is None
+        and parsed.password is None
         and (hostname == "paddle.com" or hostname.endswith(".paddle.com"))
     )
 
