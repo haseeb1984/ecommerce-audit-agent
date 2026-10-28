@@ -2100,6 +2100,39 @@ async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_payload", [
+    [],
+    {"data": []},
+    {"data": {"id": "txn_reconcile_shape", "details": []}},
+    {"data": {"id": "txn_reconcile_shape", "details": {"totals": []}}},
+])
+async def test_admin_payment_reconciliation_rejects_malformed_provider_shapes(client, monkeypatch, provider_payload):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-reconcile-shape-key")
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_test_key")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_reconcile_shape",
+            status="payment_failed",
+            transaction_id="txn_reconcile_shape",
+        ))
+        await db.commit()
+
+    monkeypatch.setattr(main, "_paddle_api_request", lambda *args, **kwargs: provider_payload)
+    response = await client.post(
+        "/api/v1/admin/payment-events/evt_reconcile_shape/reconcile",
+        headers={"X-Admin-Key": "test-reconcile-shape-key"},
+    )
+    assert response.status_code == 502, response.text
+    assert "Paddle returned" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        event = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_reconcile_shape")
+        )).scalar_one()
+        assert event.subscription_id is None
+        assert event.paddle_customer_id is None
+
+
+@pytest.mark.asyncio
 async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimized(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-payment-event-queue-key")
     async with AsyncSessionLocal() as db:
