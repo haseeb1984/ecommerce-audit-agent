@@ -318,7 +318,7 @@ def inspect_ecommerce_catalog_navigation(html: str, page_url: str) -> list[Audit
 
     if likely_listing:
         navigation_signals = []
-        if re.search(r"<link\b[^>]*\brel\s*=\s*['"][^'"]*\bnext\b", lower, re.I):
+        if re.search(r"""<link\b[^>]*\brel\s*=\s*['"][^'"]*\bnext\b""", lower, re.I):
             navigation_signals.append("rel=next link")
         if re.search(r"(?:aria-label|class|id|rel)\s*=\s*['"][^'"]*(?:pagination|page-next|next-page|load-more|loadmore)", lower, re.I):
             navigation_signals.append("pagination/load-more label or attribute")
