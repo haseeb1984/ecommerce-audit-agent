@@ -86,7 +86,7 @@ def inspect_trust_signals(html: str, source_url: str) -> list[AuditFinding]:
             findings.append(_finding(
                 "trust_inspector", f"{label} not detected in initial HTML", "manual_review_required", "info",
                 f"No recognizable {label.lower()} text or source attribute was detected in the inspected HTML for {source_url}.",
-                "The cue may be unnecessary, appear on another page, or be injected by JavaScript/third-party widgets. This result does not establish that the store lacks the signal or is untrustworthy.",
+                "The cue may be unnecessary, appear on another page, or be injected by JavaScript/third-party widgets. This result does not establish that the store lacks the signal or is untrustworthy, and does not prove the signal is genuine or available in the live purchase journey.",
                 "Review the rendered storefront and relevant purchase journey. Add or change trust information only when accurate, applicable, and useful to customers.",
                 ["Inspect rendered homepage and relevant product/cart/checkout pages.", "Check JavaScript-rendered widgets and mobile layout.", "Confirm claims and policy links are accurate before changing them."],
                 source_url,
