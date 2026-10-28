@@ -2148,3 +2148,32 @@ async def test_admin_action_history_is_paginated_and_validated(client, monkeypat
     assert (await client.get("/api/v1/admin/actions")).status_code == 401
     assert (await client.get("/api/v1/admin/actions?limit=201", headers=headers)).status_code == 422
     assert (await client.get("/api/v1/admin/actions?offset=-1", headers=headers)).status_code == 422
+
+
+def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_secrets(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-legacy")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            SaaSAdminActionLog(
+                action="legacy_malformed", entity_type="system", entity_id="legacy-malformed",
+                details_json="{not valid json",
+            ),
+            SaaSAdminActionLog(
+                action="legacy_sensitive", entity_type="system", entity_id="legacy-sensitive",
+                details_json='{"api_key":"super-secret-value","note":"password=hunter2","nested":{"access_token":"abc123"}}',
+            ),
+        ])
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/admin/actions?limit=200&offset=0",
+        headers={"X-Admin-Key": "test-admin-actions-legacy"},
+    )
+    assert response.status_code == 200, response.text
+    by_entity = {item["entity_id"]: item for item in response.json()["actions"]}
+    malformed = by_entity["legacy-malformed"]["details"]
+    assert "invalid" in malformed["_warning"].lower()
+    sensitive = by_entity["legacy-sensitive"]["details"]
+    assert sensitive["api_key"] == "[REDACTED]"
+    assert sensitive["nested"]["access_token"] == "[REDACTED]"
+    assert "hunter2" not in sensitive["note"]
