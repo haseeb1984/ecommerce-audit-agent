@@ -2639,6 +2639,20 @@ async def admin_retry_license_email(event_id: str, request: Request,
         raise HTTPException(status_code=404, detail="Payment event not found.")
     if event.status == "delivered":
         return {"status": "already_delivered", "event_id": event.event_id}
+    # Only provisioning events that explicitly require license-email delivery are
+    # retryable. Payment failures, cancellations, and renewal records can reference
+    # the same license but must never trigger a fresh credential email.
+    if event.status not in {"email_pending", "email_sending"}:
+        raise HTTPException(
+            status_code=409,
+            detail="This payment event is not awaiting license email delivery.",
+        )
+    recipient = str(event.recipient_email or "").strip()
+    if len(recipient) > 254 or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", recipient):
+        raise HTTPException(
+            status_code=409,
+            detail="This payment event has no valid recipient email for delivery.",
+        )
     if event.status == "email_sending":
         updated_at = event.updated_at
         if updated_at is not None:
