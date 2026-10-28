@@ -1369,6 +1369,29 @@ async def test_public_plans_only_show_configured_paddle_price_ids(client, monkey
     assert "price_id" not in payload["plans"][0]
 
 
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://pay.paddle.com/checkout/test", True),
+        ("https://paddle.com/portal", True),
+        ("https://CUSTOMER.PADDLE.COM/portal", True),
+        ("https://evil.example/portal", False),
+        ("https://paddle.com.evil.example/portal", False),
+        ("https://user:password@pay.paddle.com/portal", False),
+        ("https://@pay.paddle.com/portal", False),
+        ("http://pay.paddle.com/portal", False),
+        ("javascript:alert(1)", False),
+        ("https://pay.paddle.com:bad/portal", False),
+        (" https://pay.paddle.com/portal", False),
+        (None, False),
+        ({"url": "https://pay.paddle.com"}, False),
+    ],
+)
+def test_paddle_hosted_url_validator(url, expected):
+    assert main._is_valid_paddle_hosted_url(url) is expected
+
+
 @pytest.mark.asyncio
 async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
