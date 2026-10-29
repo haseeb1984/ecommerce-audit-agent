@@ -56,5 +56,5 @@
 
 ## Latest known verification snapshot
 
-- CI run [40790960269](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40790960269) passed on commit `8351ba6d9f6ed57596229cce80192cb91812f1b4`, reporting **660 passed** and 55 warnings.
-- That run predates the most recent production-readiness index-gate changes; those changes need their own CI result before they are marked verified.
+- CI run [40791577713](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40791577713) passed on commit `d9430c2949d7ec80eadada868a65f847a3ea708a`, reporting **661 passed** and 55 warnings. This run includes the expanded required-column/index readiness checks and their tests.
+- Documentation-only checklist/gap-matrix commits followed that code commit. Staging database/schema verification, provider sandbox journeys, browser QA, and production readiness remain unverified.
