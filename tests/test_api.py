@@ -2730,3 +2730,55 @@ async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypa
             select(APIKey).where(APIKey.license_id == license_id)
         )).scalars().all()
         assert len(rows) == 10
+
+
+@pytest.mark.asyncio
+async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names(client):
+    owner_id = await create_license(key="profile-owner")
+    other_id = await create_license(key="profile-other")
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
+        owner.client_name = "Original Customer"
+        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
+        other.client_name = "Other Customer"
+        await db.commit()
+
+    headers = {"X-License-Key": "profile-owner"}
+    updated = await client.patch(
+        "/api/v1/account/profile",
+        headers=headers,
+        json={"client_name": "  Updated Store  "},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json() == {"client_name": "Updated Store", "updated": True}
+    assert updated.headers["cache-control"] == "no-store, private"
+    assert updated.headers["pragma"] == "no-cache"
+
+    profile = await client.get("/api/v1/account/profile", headers=headers)
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["client_name"] == "Updated Store"
+    assert "license_key" not in profile.json()
+    assert "api_key" not in profile.json()
+    assert profile.headers["cache-control"] == "no-store, private"
+
+    blank = await client.patch(
+        "/api/v1/account/profile",
+        headers=headers,
+        json={"client_name": "   "},
+    )
+    assert blank.status_code == 422
+
+    too_long = await client.patch(
+        "/api/v1/account/profile",
+        headers=headers,
+        json={"client_name": "x" * 256},
+    )
+    assert too_long.status_code == 422
+
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
+        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
+        assert owner.client_name == "Updated Store"
+        assert other.client_name == "Other Customer"
+
+    assert (await client.get("/api/v1/account/profile")).status_code == 401
