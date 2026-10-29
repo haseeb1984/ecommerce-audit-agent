@@ -1714,6 +1714,14 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
         raise HTTPException(status_code=422, detail="The selected package is unavailable.")
     if not plan.get("price_id") or not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="This Paddle plan is not configured.")
+    # Do not accept money for a purchase that cannot be verified and provisioned.
+    # The public catalogue applies the same readiness gate; the checkout endpoint
+    # must enforce it independently because clients can call it directly.
+    if not os.getenv("PADDLE_WEBHOOK_SECRET", "").strip():
+        raise HTTPException(status_code=503, detail="Paddle webhook verification is not configured.")
+    smtp_status = _smtp_configuration_status()
+    if not smtp_status["configured"]:
+        raise HTTPException(status_code=503, detail="License delivery is not configured.")
     transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
                    "custom_data": {"license_tier": plan["tier"]}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
