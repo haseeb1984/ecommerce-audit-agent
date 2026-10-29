@@ -143,10 +143,14 @@ final class AI_Ecommerce_Audit_Bridge {
 
         $usage = self::api_request('GET', '/api/v1/account/usage');
         $notice = '';
+        $can_run_audit = false;
         $usage_markup = '<p>' . esc_html__('Usage information is temporarily unavailable.', 'ai-ecommerce-audit-bridge') . '</p>';
         if (!is_wp_error($usage)) {
             $data = json_decode(wp_remote_retrieve_body($usage), true);
             if (is_array($data)) {
+                $can_run_audit = ($data['entitlement_state'] ?? '') === 'active'
+                    && isset($data['remaining']) && is_numeric($data['remaining'])
+                    && (int) $data['remaining'] > 0;
                 $used = isset($data['consumed']) && is_numeric($data['consumed']) ? max(0, (int) $data['consumed']) : (isset($data['used']) && is_numeric($data['used']) ? max(0, (int) $data['used']) : null);
                 $limit = isset($data['monthly_limit']) && is_numeric($data['monthly_limit']) ? max(0, (int) $data['monthly_limit']) : null;
                 if ($used !== null && $limit !== null) {
@@ -154,7 +158,10 @@ final class AI_Ecommerce_Audit_Bridge {
                     $usage_markup = '<p><strong>' . esc_html(sprintf(__('%1$d of %2$d monthly audits used', 'ai-ecommerce-audit-bridge'), $used, $limit)) . '</strong></p>'
                         . '<progress max="100" value="' . esc_attr((string) $percent) . '" aria-label="' . esc_attr__('Monthly audit usage', 'ai-ecommerce-audit-bridge') . '">' . esc_html((string) $percent) . '%</progress>';
                 } else {
-                    $usage_markup = '<pre>' . esc_html(wp_json_encode($data, JSON_PRETTY_PRINT)) . '</pre>';
+                    $usage_markup = '<p>' . esc_html__('Usage details are unavailable. Audit submission is disabled until account status can be verified.', 'ai-ecommerce-audit-bridge') . '</p>';
+                }
+                if (!$can_run_audit) {
+                    $usage_markup .= '<p role="status">' . esc_html__('Audits are unavailable because the account is inactive, the plan is unavailable, the quota is exhausted, or entitlement status could not be verified.', 'ai-ecommerce-audit-bridge') . '</p>';
                 }
             }
         } else {
@@ -167,13 +174,15 @@ final class AI_Ecommerce_Audit_Bridge {
             <h2><?php echo esc_html__('Ecommerce audit dashboard', 'ai-ecommerce-audit-bridge'); ?></h2>
             <?php echo wp_kses_post($notice); ?>
             <div class="aieab-usage"><?php echo wp_kses_post($usage_markup); ?></div>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION_AUDIT); ?>" />
-                <?php wp_nonce_field(self::ACTION_AUDIT, 'aieab_nonce'); ?>
-                <label for="aieab-domain"><?php echo esc_html__('Public store URL', 'ai-ecommerce-audit-bridge'); ?></label>
-                <input id="aieab-domain" name="domain" type="url" inputmode="url" maxlength="2048" placeholder="https://example.com" required />
-                <button type="submit"><?php echo esc_html__('Run audit and download PDF', 'ai-ecommerce-audit-bridge'); ?></button>
-            </form>
+            <?php if ($can_run_audit) : ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION_AUDIT); ?>" />
+                    <?php wp_nonce_field(self::ACTION_AUDIT, 'aieab_nonce'); ?>
+                    <label for="aieab-domain"><?php echo esc_html__('Public store URL', 'ai-ecommerce-audit-bridge'); ?></label>
+                    <input id="aieab-domain" name="domain" type="url" inputmode="url" maxlength="2048" placeholder="https://example.com" required />
+                    <button type="submit"><?php echo esc_html__('Run audit and download PDF', 'ai-ecommerce-audit-bridge'); ?></button>
+                </form>
+            <?php endif; ?>
         </section>
         <?php
         return (string) ob_get_clean();
@@ -196,6 +205,18 @@ final class AI_Ecommerce_Audit_Bridge {
         if (!$parts || empty($parts['host']) || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)
             || filter_var($domain, FILTER_VALIDATE_URL) === false) {
             wp_die(esc_html__('Enter a valid public HTTP or HTTPS store URL.', 'ai-ecommerce-audit-bridge'), '', ['response' => 422]);
+        }
+
+        // Re-check entitlements on submission; hiding the form is not an authorization boundary.
+        $usage = self::api_request('GET', '/api/v1/account/usage');
+        if (is_wp_error($usage)) {
+            wp_die(esc_html($usage->get_error_message()), '', ['response' => 502]);
+        }
+        $usage_data = json_decode(wp_remote_retrieve_body($usage), true);
+        if (!is_array($usage_data) || ($usage_data['entitlement_state'] ?? '') !== 'active'
+            || !isset($usage_data['remaining']) || !is_numeric($usage_data['remaining'])
+            || (int) $usage_data['remaining'] <= 0) {
+            wp_die(esc_html__('The account is not currently entitled to run an audit or its quota is exhausted. Refresh the dashboard or contact support.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
         }
 
         $response = self::api_request('POST', '/api/v1/comprehensive-audit?domain=' . rawurlencode($domain), [
