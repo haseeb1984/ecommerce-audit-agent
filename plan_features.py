@@ -8,7 +8,12 @@ from typing import Any
 
 def plan_features(tier: Any) -> dict[str, bool]:
     """Return feature availability for known SaaS tiers; unknown tiers fail closed."""
-    normalized = str(tier or "starter").strip().lower().replace("-", "_").replace(" ", "_")
+    # Preserve the legacy Starter default only for a missing database value;
+    # an explicitly blank or unknown tier must not inherit plan entitlements.
+    normalized = (
+        "starter" if tier is None
+        else str(tier).strip().lower().replace("-", "_").replace(" ", "_")
+    )
     is_agency = normalized in {"agency", "pro", "agency_pro"}
     is_whitelabel = normalized in {"whitelabel", "white_label", "enterprise"}
 
