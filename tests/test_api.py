@@ -1502,6 +1502,8 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
     response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
     assert response.status_code == 200 and response.json()["checkout_url"] == "https://pay.paddle.com/checkout/test"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
     assert captured["payload"]["items"] == [{"price_id": "pri_01abc123", "quantity": 1}]
     assert captured["payload"]["custom_data"]["license_tier"] == "starter"
     assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up"})).status_code == 422
