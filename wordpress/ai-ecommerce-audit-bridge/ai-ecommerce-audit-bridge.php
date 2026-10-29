@@ -147,7 +147,7 @@ final class AI_Ecommerce_Audit_Bridge {
         if (!is_wp_error($usage)) {
             $data = json_decode(wp_remote_retrieve_body($usage), true);
             if (is_array($data)) {
-                $used = isset($data['used']) && is_numeric($data['used']) ? max(0, (int) $data['used']) : null;
+                $used = isset($data['consumed']) && is_numeric($data['consumed']) ? max(0, (int) $data['consumed']) : (isset($data['used']) && is_numeric($data['used']) ? max(0, (int) $data['used']) : null);
                 $limit = isset($data['monthly_limit']) && is_numeric($data['monthly_limit']) ? max(0, (int) $data['monthly_limit']) : null;
                 if ($used !== null && $limit !== null) {
                     $percent = $limit > 0 ? min(100, (int) floor(($used / $limit) * 100)) : 0;
