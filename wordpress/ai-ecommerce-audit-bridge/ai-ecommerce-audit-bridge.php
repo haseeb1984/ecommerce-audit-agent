@@ -15,12 +15,14 @@ if (!defined('ABSPATH')) {
 final class AI_Ecommerce_Audit_Bridge {
     private const OPTION = 'aieab_settings';
     private const ACTION_AUDIT = 'aieab_run_audit';
+    private const ACTION_SAVE_BRANDING = 'aieab_save_branding';
 
     public static function boot(): void {
         add_action('admin_menu', [self::class, 'add_settings_page']);
         add_action('admin_init', [self::class, 'register_settings']);
         add_shortcode('ai_ecommerce_audit_dashboard', [self::class, 'render_dashboard']);
         add_action('admin_post_' . self::ACTION_AUDIT, [self::class, 'handle_audit']);
+        add_action('admin_post_' . self::ACTION_SAVE_BRANDING, [self::class, 'handle_save_branding']);
     }
 
     /**
@@ -155,13 +157,24 @@ final class AI_Ecommerce_Audit_Bridge {
         }
 
         $usage = self::api_request('GET', '/api/v1/account/usage');
+        $branding_response = self::api_request('GET', '/api/v1/account/branding');
+        $branding = [];
+        if (!is_wp_error($branding_response)) {
+            $branding_data = json_decode(wp_remote_retrieve_body($branding_response), true);
+            if (is_array($branding_data)) {
+                $branding = $branding_data;
+            }
+        }
         $notice = '';
         $can_run_audit = false;
+        $can_manage_branding = false;
         $usage_markup = '<p>' . esc_html__('Usage information is temporarily unavailable.', 'ai-ecommerce-audit-bridge') . '</p>';
         if (!is_wp_error($usage)) {
             $data = json_decode(wp_remote_retrieve_body($usage), true);
             if (is_array($data)) {
                 $features = isset($data['features']) && is_array($data['features']) ? $data['features'] : [];
+                $can_manage_branding = ($data['entitlement_state'] ?? '') === 'active'
+                    && ($features['white_label_branding'] ?? false) === true;
                 // Missing feature metadata must fail closed in the customer interface.
                 $can_run_audit = ($data['entitlement_state'] ?? '') === 'active'
                     && ($features['standard_audits'] ?? false) === true
@@ -204,6 +217,23 @@ final class AI_Ecommerce_Audit_Bridge {
             <h2><?php echo esc_html__('Ecommerce audit dashboard', 'ai-ecommerce-audit-bridge'); ?></h2>
             <?php echo wp_kses_post($notice); ?>
             <div class="aieab-usage"><?php echo wp_kses_post($usage_markup); ?></div>
+            <?php if ($can_manage_branding) : ?>
+                <section class="aieab-branding">
+                    <h3><?php echo esc_html__('White-label branding settings', 'ai-ecommerce-audit-bridge'); ?></h3>
+                    <p><?php echo esc_html__('These settings are saved to your SaaS account. They do not yet change existing PDF reports.', 'ai-ecommerce-audit-bridge'); ?></p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION_SAVE_BRANDING); ?>" />
+                        <?php wp_nonce_field(self::ACTION_SAVE_BRANDING, 'aieab_branding_nonce'); ?>
+                        <label for="aieab-brand-name"><?php echo esc_html__('Brand name', 'ai-ecommerce-audit-bridge'); ?></label>
+                        <input id="aieab-brand-name" name="brand_name" type="text" maxlength="100" value="<?php echo esc_attr((string) ($branding['brand_name'] ?? '')); ?>" required />
+                        <label for="aieab-brand-logo"><?php echo esc_html__('Logo URL (HTTPS)', 'ai-ecommerce-audit-bridge'); ?></label>
+                        <input id="aieab-brand-logo" name="logo_url" type="url" maxlength="2048" value="<?php echo esc_attr((string) ($branding['logo_url'] ?? '')); ?>" placeholder="https://example.com/logo.png" />
+                        <label for="aieab-brand-color"><?php echo esc_html__('Primary color', 'ai-ecommerce-audit-bridge'); ?></label>
+                        <input id="aieab-brand-color" name="primary_color" type="text" pattern="#[0-9A-Fa-f]{6}" maxlength="7" value="<?php echo esc_attr((string) ($branding['primary_color'] ?? '#155a8a')); ?>" required />
+                        <button type="submit"><?php echo esc_html__('Save branding settings', 'ai-ecommerce-audit-bridge'); ?></button>
+                    </form>
+                </section>
+            <?php endif; ?>
             <?php if ($can_run_audit) : ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION_AUDIT); ?>" />
@@ -216,6 +246,62 @@ final class AI_Ecommerce_Audit_Bridge {
         </section>
         <?php
         return (string) ob_get_clean();
+    }
+
+    public static function handle_save_branding(): void {
+        if (!is_user_logged_in()) {
+            auth_redirect();
+            exit;
+        }
+        if (!current_user_can(self::dashboard_capability())) {
+            wp_die(esc_html__('You are not allowed to manage this site audit account.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+        if (!isset($_POST['aieab_branding_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['aieab_branding_nonce'])), self::ACTION_SAVE_BRANDING)) {
+            wp_die(esc_html__('The form expired. Refresh the page and try again.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+        if (!self::configured()) {
+            wp_die(esc_html__('The audit service is not configured.', 'ai-ecommerce-audit-bridge'), '', ['response' => 503]);
+        }
+
+        // Enforce entitlement on the server; hiding the form is not authorization.
+        $usage = self::api_request('GET', '/api/v1/account/usage');
+        if (is_wp_error($usage)) {
+            wp_die(esc_html($usage->get_error_message()), '', ['response' => 502]);
+        }
+        $usage_data = json_decode(wp_remote_retrieve_body($usage), true);
+        $features = is_array($usage_data) && isset($usage_data['features']) && is_array($usage_data['features']) ? $usage_data['features'] : [];
+        if (!is_array($usage_data) || ($usage_data['entitlement_state'] ?? '') !== 'active'
+            || ($features['white_label_branding'] ?? false) !== true) {
+            wp_die(esc_html__('White-label branding is not included in this account plan.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+
+        $brand_name = isset($_POST['brand_name']) ? sanitize_text_field(wp_unslash($_POST['brand_name'])) : '';
+        $logo_url = isset($_POST['logo_url']) ? trim((string) wp_unslash($_POST['logo_url'])) : '';
+        $primary_color = isset($_POST['primary_color']) ? strtoupper(sanitize_text_field(wp_unslash($_POST['primary_color']))) : '';
+        if ($brand_name === '' || strlen($brand_name) > 100
+            || ($logo_url !== '' && (strlen($logo_url) > 2048 || wp_parse_url($logo_url, PHP_URL_SCHEME) !== 'https'
+                || !wp_parse_url($logo_url, PHP_URL_HOST) || filter_var($logo_url, FILTER_VALIDATE_URL) === false))
+            || !preg_match('/^#[0-9A-F]{6}$/', $primary_color)) {
+            wp_die(esc_html__('Enter a brand name, a valid HTTPS logo URL (optional), and a six-digit hex color.', 'ai-ecommerce-audit-bridge'), '', ['response' => 422]);
+        }
+
+        $saved = self::api_request('PUT', '/api/v1/account/branding', [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => wp_json_encode([
+                'brand_name' => $brand_name,
+                'logo_url' => $logo_url !== '' ? esc_url_raw($logo_url, ['https']) : null,
+                'primary_color' => $primary_color,
+            ]),
+        ]);
+        if (is_wp_error($saved)) {
+            wp_die(esc_html($saved->get_error_message()), '', ['response' => 502]);
+        }
+        $redirect = wp_get_referer();
+        if (!$redirect) {
+            $redirect = home_url('/');
+        }
+        wp_safe_redirect(add_query_arg('aieab_branding_saved', '1', $redirect));
+        exit;
     }
 
     public static function handle_audit(): void {
