@@ -354,6 +354,30 @@ async def test_audit_lead_rejects_unsafe_target_before_reserving_quota(client, d
 
 
 @pytest.mark.asyncio
+async def test_unknown_plan_cannot_run_standard_audit_or_consume_quota(client, monkeypatch):
+    license_id = await create_license(key="unknown-plan-blocked", quota=5, tier="")
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("audit providers must not run for an unknown tier")
+
+    monkeypatch.setattr(main, "run_phase_one_checks", should_not_run)
+    response = await client.post(
+        "/api/v1/comprehensive-audit", params={"domain": "shop.example"},
+        headers={"X-License-Key": "unknown-plan-blocked"},
+    )
+    assert response.status_code == 403
+    async with AsyncSessionLocal() as db:
+        reservations = (await db.execute(select(func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == license_id
+        ))).scalar_one()
+        reports = (await db.execute(select(func.count(AuditReport.id)).where(
+            AuditReport.license_id == license_id
+        ))).scalar_one()
+    assert reservations == 0
+    assert reports == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/api/v1/audit-lead", "/api/v1/comprehensive-audit"])
 async def test_parameterized_audit_targets_are_rejected_before_quota_reservation(client, path):
     license_key = "query-rejected-" + path.rsplit("/", 1)[-1]
