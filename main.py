@@ -1822,6 +1822,23 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         )).scalar_one_or_none()
         if duplicate is not None:
             return {"status": "already_processed", "event_id": event_id}
+        # A provider can redeliver the same failed transaction under a different
+        # event ID. Transaction-level idempotency prevents duplicate customer
+        # history/operation events while preserving separate retry attempts,
+        # which have their own transaction IDs.
+        failed_transaction_id = str(transaction.get("id") or "").strip()[:100]
+        if event_type == "transaction.payment_failed" and failed_transaction_id:
+            prior_failure = (await db.execute(
+                select(PaymentWebhookEvent)
+                .where(
+                    PaymentWebhookEvent.transaction_id == failed_transaction_id,
+                    PaymentWebhookEvent.status == "payment_failed",
+                )
+                .order_by(PaymentWebhookEvent.updated_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if prior_failure is not None:
+                return {"status": "already_processed", "event_id": prior_failure.event_id}
         linked_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(
