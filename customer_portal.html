@@ -37,6 +37,7 @@
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
+<div style="margin-top:16px"><h3 style="margin:0 0 8px;font-size:1rem">Included plan features</h3><div id="planFeatures" class="reports" aria-live="polite"><p class="muted">Connect your account to view included features.</p></div></div>
 </section>
 <section class="panel" aria-labelledby="billingHistoryHeading">
 <h2 id="billingHistoryHeading">Billing history</h2>
@@ -453,6 +454,17 @@
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
     const reset = usage.period_resets_at ? new Date(usage.period_resets_at) : null;
     $("usageReset").textContent = "Period resets: " + (reset && !Number.isNaN(reset.getTime()) ? reset.toLocaleDateString() : "not available");
+    const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",direct_api_access:"Direct API access"};
+    const featureContainer = $("planFeatures");
+    featureContainer.replaceChildren();
+    const features = usage.features && typeof usage.features === "object" ? usage.features : {};
+    for (const [key, label] of Object.entries(featureLabels)) {
+      const row = document.createElement("div"); row.className = "report";
+      const name = document.createElement("strong"); name.textContent = label;
+      const state = document.createElement("span"); state.className = "muted";
+      state.textContent = features[key] === true ? "Included" : "Not included";
+      row.append(name, state); featureContainer.append(row);
+    }
     if (!usage.is_active) $("usageSummary").textContent += " · Account inactive";
     if (usage.expires_at) {
       const expiry = new Date(usage.expires_at);
@@ -736,6 +748,7 @@
     $("loadMoreReports").hidden = true;
     $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
+    const featureContainer = $("planFeatures"); if (featureContainer) { featureContainer.replaceChildren(); const note = document.createElement("p"); note.className = "muted"; note.textContent = "Connect your account to view included features."; featureContainer.append(note); }
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
