@@ -127,7 +127,14 @@ final class AI_Ecommerce_Audit_Bridge {
                 'X-License-Key' => $settings['license_key'],
             ],
         ];
-        $response = wp_remote_request($url, array_merge($defaults, $args));
+        $request_args = array_merge($defaults, $args);
+        // Preserve the license credential when a caller adds Content-Type or
+        // other request-specific headers; array_merge alone replaces this map.
+        $request_args['headers'] = array_merge(
+            $defaults['headers'],
+            isset($args['headers']) && is_array($args['headers']) ? $args['headers'] : []
+        );
+        $response = wp_remote_request($url, $request_args);
         if (is_wp_error($response)) {
             return new WP_Error('aieab_api_unavailable', __('The audit service could not be reached. Please try again later.', 'ai-ecommerce-audit-bridge'));
         }
@@ -165,7 +172,9 @@ final class AI_Ecommerce_Audit_Bridge {
                 $branding = $branding_data;
             }
         }
-        $notice = '';
+        $notice = isset($_GET['aieab_branding_saved']) && sanitize_text_field(wp_unslash($_GET['aieab_branding_saved'])) === '1'
+            ? '<p role="status">' . esc_html__('White-label branding settings saved.', 'ai-ecommerce-audit-bridge') . '</p>'
+            : '';
         $can_run_audit = false;
         $can_manage_branding = false;
         $usage_markup = '<p>' . esc_html__('Usage information is temporarily unavailable.', 'ai-ecommerce-audit-bridge') . '</p>';
