@@ -2848,6 +2848,7 @@ async def admin_dashboard_page():
 @app.get("/api/v1/admin/payment-events")
 async def admin_payment_events(
     request: Request,
+    response: Response,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=100000),
     status: str | None = Query(None, min_length=1, max_length=40),
@@ -2855,6 +2856,8 @@ async def admin_payment_events(
 ):
     """Return a bounded, filterable payment-event queue for operator triage."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
     from sqlalchemy import select, func as sql_func
 
