@@ -19,8 +19,8 @@ def test_agency_and_pro_unlock_dossier_only():
         assert features["direct_api_access"] is False
 
 
-def test_whitelabel_aliases_unlock_enterprise_features():
-    for tier in ("whitelabel", "white_label", "enterprise"):
+def test_whitelabel_aliases_and_legacy_business_tier_unlock_enterprise_features():
+    for tier in ("whitelabel", "white_label", "enterprise", "business"):
         features = plan_features(tier)
         assert all(features.values())
 
