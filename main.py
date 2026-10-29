@@ -1211,11 +1211,16 @@ async def list_account_api_keys(
     expires_at = license_obj.expires_at
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    can_create = (
-        bool(license_obj.is_active)
-        and not (expires_at is not None and expires_at <= now)
-        and len(rows) < 10
-    )
+    is_expired = expires_at is not None and expires_at <= now
+    if len(rows) >= 10:
+        can_create_reason = "key_limit_reached"
+    elif is_expired:
+        can_create_reason = "account_expired"
+    elif not license_obj.is_active:
+        can_create_reason = "account_inactive"
+    else:
+        can_create_reason = "available"
+    can_create = can_create_reason == "available"
     return {
         "items": [
             {
@@ -1230,6 +1235,7 @@ async def list_account_api_keys(
         "key_count": len(rows),
         "keys_remaining": max(0, 10 - len(rows)),
         "can_create": can_create,
+        "can_create_reason": can_create_reason,
         "note": "Full API keys are shown only once when created.",
     }
 
