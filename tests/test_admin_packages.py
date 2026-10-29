@@ -362,3 +362,70 @@ async def test_plan_bootstrap_uses_product_concurrency_defaults_without_override
         """))).all()
 
     assert dict(rows) == {"business": 10, "pro": 3, "starter": 1}
+
+
+@pytest.mark.asyncio
+async def test_package_allowance_update_only_changes_inherited_customer_quotas(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import SoftwareLicense
+    from sqlalchemy import select
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-quota-propagation")
+    headers = {"X-Admin-Key": "test-admin-quota-propagation"}
+
+    created = await client.post(
+        "/api/v1/admin/packages",
+        headers=headers,
+        json={
+            "tier": "qa-quota-propagation",
+            "label": "Quota Propagation",
+            "monthly_audit_allowance": 250,
+            "max_concurrent_audits": 2,
+            "paddle_price_id": None,
+            "is_active": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    async with AsyncSessionLocal() as db:
+        inherited = SoftwareLicense(
+            license_key="quota-inherited-license",
+            client_name="Inherited quota",
+            tier="qa-quota-propagation",
+            max_monthly_audits=250,
+            is_active=True,
+        )
+        overridden = SoftwareLicense(
+            license_key="quota-overridden-license",
+            client_name="Overridden quota",
+            tier="qa-quota-propagation",
+            max_monthly_audits=999,
+            is_active=True,
+        )
+        db.add_all([inherited, overridden])
+        await db.commit()
+        inherited_id, overridden_id = inherited.id, overridden.id
+
+    updated = await client.patch(
+        "/api/v1/admin/packages/qa-quota-propagation",
+        headers=headers,
+        json={
+            "tier": "qa-quota-propagation",
+            "label": "Quota Propagation Plus",
+            "monthly_audit_allowance": 400,
+            "max_concurrent_audits": 3,
+            "paddle_price_id": None,
+            "is_active": True,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+
+    async with AsyncSessionLocal() as db:
+        inherited = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == inherited_id)
+        )).scalar_one()
+        overridden = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == overridden_id)
+        )).scalar_one()
+        assert inherited.max_monthly_audits == 400
+        assert overridden.max_monthly_audits == 999
