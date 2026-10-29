@@ -1893,6 +1893,80 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         await _record_operation_event(db, status, linked_event.license_id, None, None)
         return {"status": status, "event_id": event_id, "license_id": linked_event.license_id}
 
+    # Keep non-cancellation subscription state transitions attached to the existing
+    # license instead of silently acknowledging pause/resume/activation events.
+    # Payment failure alone does not revoke access; explicit pause does. Resume and
+    # activation only restore access when the license has not expired.
+    if event_type in {"subscription.paused", "subscription.resumed", "subscription.activated"}:
+        subscription_id = str(transaction.get("id") or "").strip()[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle subscription lifecycle event has no subscription ID.")
+        from sqlalchemy import select
+        await _lock_paddle_webhook_resource(db, subscription_id)
+        duplicate = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            return {"status": "already_processed", "event_id": event_id}
+        # A previously confirmed cancellation is sticky. A delayed activation/resume
+        # notification must not restore access; only a separately verified renewal
+        # flow may resolve the account's billing state.
+        canceled = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.status == "subscription_canceled",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if canceled is not None:
+            return {"status": "ignored_after_cancellation", "event_id": event_id}
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            )
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None or linked_event.license_id is None:
+            raise HTTPException(status_code=503, detail="Subscription lifecycle event is awaiting license reconciliation.")
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == linked_event.license_id)
+        )).scalar_one_or_none()
+        if license_obj is None:
+            raise HTTPException(status_code=503, detail="Subscription lifecycle event is awaiting license reconciliation.")
+        lifecycle_status = {
+            "subscription.paused": "subscription_paused",
+            "subscription.resumed": "subscription_resumed",
+            "subscription.activated": "subscription_activated",
+        }[event_type]
+        now = datetime.now(timezone.utc)
+        was_active = bool(license_obj.is_active)
+        if event_type == "subscription.paused":
+            license_obj.is_active = False
+        elif license_obj.expires_at is None:
+            license_obj.is_active = True
+        else:
+            expiry = license_obj.expires_at
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            license_obj.is_active = expiry > now
+        db.add(PaymentWebhookEvent(
+            event_id=event_id,
+            status=lifecycle_status,
+            license_id=license_obj.id,
+            recipient_email=linked_event.recipient_email,
+            subscription_id=subscription_id,
+            paddle_customer_id=linked_event.paddle_customer_id,
+            created_at=now,
+            updated_at=now,
+        ))
+        await db.commit()
+        if was_active != bool(license_obj.is_active):
+            await _record_operation_event(db, lifecycle_status, license_obj.id, None, None)
+        return {"status": lifecycle_status, "event_id": event_id, "license_id": license_obj.id}
+
     # Subscription lifecycle events must not be silently discarded: a confirmed
     # cancellation revokes future access for the license provisioned by its purchase.
     if event_type == "subscription.canceled":
