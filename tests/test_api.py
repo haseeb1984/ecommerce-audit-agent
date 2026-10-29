@@ -2920,6 +2920,47 @@ async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names
 
 
 @pytest.mark.asyncio
+async def test_billing_portal_finds_valid_customer_link_beyond_recent_history_window(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import PaymentWebhookEvent
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_portal_test")
+    license_id = await create_license(key="billing-portal-deep-history")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_portal_deep_valid",
+            status="delivered",
+            license_id=license_id,
+            paddle_customer_id="ctm_validdeep",
+            recipient_email="portal-deep@example.com",
+        ))
+        for index in range(25):
+            db.add(PaymentWebhookEvent(
+                event_id=f"evt_portal_deep_invalid_{index:02d}",
+                status="delivered",
+                license_id=license_id,
+                paddle_customer_id=f"invalid_customer_{index:02d}",
+                recipient_email="portal-deep@example.com",
+            ))
+        await db.commit()
+
+    calls = []
+    def fake_paddle_request(path, method="GET", payload=None):
+        calls.append(path)
+        return {"data": {"urls": {"general": {
+            "overview": "https://customer-portal.paddle.com/overview/deep-history"
+        }}}}
+    monkeypatch.setattr(main, "_paddle_api_request", fake_paddle_request)
+
+    response = await client.post(
+        "/api/v1/account/billing-portal",
+        headers={"X-License-Key": "billing-portal-deep-history"},
+    )
+    assert response.status_code == 200, response.text
+    assert calls == ["/customers/ctm_validdeep/portal-sessions"]
+
+
+@pytest.mark.asyncio
 async def test_billing_portal_skips_malformed_newer_customer_link(client, monkeypatch):
     from database import AsyncSessionLocal
     from models import PaymentWebhookEvent
