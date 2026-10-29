@@ -3009,3 +3009,29 @@ def test_paddle_api_request_rejects_non_object_json(monkeypatch, payload):
 
     with pytest.raises(RuntimeError, match="invalid JSON object"):
         main._paddle_api_request("/transactions")
+
+@pytest.mark.asyncio
+async def test_api_key_list_disables_creation_at_account_key_cap(client):
+    license_id = await create_license(key="api-key-cap-readiness-license", quota=10)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            APIKey(
+                license_id=license_id,
+                api_key_hash=APIKey.hash_key(f"existing-cap-key-{index}"),
+                key_prefix=f"eaa_cap{index}",
+            )
+            for index in range(10)
+        ])
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/account/api-keys",
+        headers={"X-License-Key": "api-key-cap-readiness-license"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["key_count"] == 10
+    assert payload["keys_remaining"] == 0
+    assert payload["can_create"] is False
+    assert "api_key_hash" not in response.text
