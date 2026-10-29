@@ -3034,6 +3034,7 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
     await _ensure_admin_tables(db)
     from sqlalchemy import select, func as sql_func, or_
     now = datetime.now(timezone.utc)
+    expiry_horizon = now + timedelta(days=7)
     # Read-only account lifecycle and entitlement diagnostics; never mutate access here.
     license_counts = {
         "total_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)))).scalar_one() or 0),
