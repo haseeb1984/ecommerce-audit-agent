@@ -51,6 +51,139 @@ async def test_sitemap_discovered_url_status_is_recorded_without_claiming_indexi
     assert "https://shop.example/products/missing" in checked
 
 @pytest.mark.asyncio
+async def test_bounded_crawl_records_additional_page_check_outcomes_without_false_applicability(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return 200, (
+                '<html><head><title>Store</title><link rel="canonical" href="/">'
+                '</head><body><form method="GET" action="/search">'
+                '<input name="q"></form></body></html>'
+            ), {"content-type": "text/html"}, url
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt",
+                   "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+    outcome_ids = {item.check_id for item in outcomes}
+    assert "indexability.canonical" in outcome_ids
+    assert "security.headers_and_forms" in outcome_ids
+    assert "technical_seo.meta_refresh" in outcome_ids
+    assert "pixel_analytics.consent_signals" in outcome_ids
+    # Product-only checks must not be reported as passing on the homepage.
+    assert "structured_data.product" not in outcome_ids
+    assert "ecommerce_catalog.navigation" not in outcome_ids
+
+
+@pytest.mark.asyncio
+async def test_product_specific_outcomes_are_recorded_only_for_product_routes(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    pages = {
+        "https://shop.example/": (
+            200,
+            '<html><head><title>Store</title></head><body><a href="/products/widget">Widget</a></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/",
+        ),
+        "https://shop.example/products/widget": (
+            200,
+            '<html><head><title>Widget</title></head><body><h1>Widget</h1></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/products/widget",
+        ),
+    }
+
+    async def fake_safe_get(client, url):
+        if url in pages:
+            return pages[url]
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt",
+                   "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+    product_schema = [
+        item for item in outcomes
+        if item.check_id == "structured_data.product"
+    ]
+    catalog = [
+        item for item in outcomes
+        if item.check_id == "ecommerce_catalog.navigation"
+    ]
+    assert len(product_schema) == 1
+    assert product_schema[0].page_url == "https://shop.example/products/widget"
+    assert product_schema[0].outcome == "warning"
+    assert len(catalog) == 1
+    assert catalog[0].page_url == "https://shop.example/products/widget"
+
+
+@pytest.mark.asyncio
+async def test_crawl_resolves_relative_links_using_same_origin_base_href(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    pages = {
+        "https://shop.example/": (
+            200,
+            '<html><head><base href="/store/"><title>Store</title></head>'
+            '<body><a href="products/one">Product</a></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/",
+        ),
+        "https://shop.example/store/products/one": (
+            200,
+            '<html><head><title>Product</title></head><body><h1>One</h1></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/store/products/one",
+        ),
+    }
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        return pages.get(url, (404, "", {"content-type": "text/plain"}, url))
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert "https://shop.example/store/products/one" in requested
+    assert "https://shop.example/store/products/one" in checked
+
+
+@pytest.mark.asyncio
+async def test_off_origin_base_href_cannot_expand_crawl_scope(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url):
+        if url == "https://shop.example/":
+            return (
+                200,
+                '<html><head><base href="https://other.example/"></head>'
+                '<body><a href="products/one">Product</a></body></html>',
+                {"content-type": "text/html"},
+                url,
+            )
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        if url.startswith("https://shop.example/"):
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected off-origin URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    assert checked == ["https://shop.example/"]
+
+
+@pytest.mark.asyncio
 async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
     pages = {
@@ -75,7 +208,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
 
     async def fake_safe_get(client, url):
         requested.append(url)
-        return pages[url]
+        return pages.get(url, (404, "", {"content-type": "text/plain"}, url))
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
     findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(
@@ -853,7 +986,7 @@ async def test_product_jsonld_malformed_block_is_reviewed_without_crashing(monke
         f for f in findings
         if f.category == "structured_data" and "Product structured data" in f.title
     )
-    assert schema_finding.title == "Product structured data not detected"
+    assert schema_finding.title == "Product structured data could not be parsed"
     assert schema_finding.status == "manual_review_required"
 
 
@@ -1635,7 +1768,8 @@ def test_product_schema_heuristic_ignores_non_product_routes_and_malformed_jsonl
         "https://shop.example/products/blue-shirt",
     )
     assert category == []
-    assert malformed == []
+    assert len(malformed) == 1
+    assert malformed[0].title == "Product structured data could not be parsed"
 
 
 @pytest.mark.asyncio
@@ -1764,6 +1898,8 @@ def test_product_schema_presence_accepts_absolute_schema_org_type_iri():
         '</script>',
         "https://shop.example/products/blue-shirt",
     )
+    # A Product entity with only a name is still detected; completeness review is
+    # intentionally handled by the dedicated structured-data audit module.
     assert findings == []
 
 
@@ -1901,7 +2037,7 @@ async def test_bounded_crawl_uses_multiple_robots_declared_sitemaps(monkeypatch)
         if url == "https://shop.example/robots.txt":
             return (
                 200,
-                f"User-agent: *\nAllow: /\nSitemap: {first_sitemap}\nSitemap: {second_sitemap}\n",
+                f"User-agent: *\nAllow: /\nSitemap: {first_sitemap}\nSitemap: {first_sitemap}?utm_source=duplicate\nSitemap: {second_sitemap}\n",
                 {"content-type": "text/plain"},
                 url,
             )
@@ -2262,3 +2398,163 @@ async def test_sitemap_discovered_url_status_records_fetch_exception_as_error(mo
     outcome = next(item for item in outcomes if item.check_id == "sitemap.discovered_url_status")
     assert outcome.outcome == "error"
     assert "TimeoutError" in outcome.evidence
+
+@pytest.mark.parametrize(
+    ("robots", "url", "expected"),
+    [
+        ("User-agent: *\\nDisallow: /private", "https://shop.example/private", False),
+        ("User-agent: *\\nDisallow: /private", "https://shop.example/products/1", True),
+        ("User-agent: *\\nDisallow: /products\\nAllow: /products/public", "https://shop.example/products/public/1", True),
+        ("User-agent: *\\nDisallow: /products\\nAllow: /products/public", "https://shop.example/products/secret", False),
+        ("User-agent: *\\nDisallow: /*?preview=*", "https://shop.example/item?preview=yes", False),
+        ("User-agent: OtherBot\\nDisallow: /\\nUser-agent: *\\nDisallow: /private", "https://shop.example/products/1", True),
+        ("User-agent: EcommerceAuditBot\\nDisallow: /special", "https://shop.example/special", False),
+    ],
+)
+def test_robots_rules_are_respected_with_longest_match_and_agent_groups(robots, url, expected):
+    rules = crawl_checks._parse_robots_rules(robots, crawl_checks.USER_AGENT)
+    assert crawl_checks._robots_path_allowed(url, rules) is expected
+
+
+
+
+def test_product_group_without_inline_variants_is_not_misreported_as_missing_offer_data():
+    html = '''
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"https://schema.org/ProductGroup",
+     "name":"Blue shirt family","productGroupID":"shirts-1"}
+    </script>
+    '''
+    assert crawl_checks.inspect_product_page_schema_presence(
+        html, "https://shop.example/products/blue-shirt"
+    ) == []
+
+
+def test_product_schema_presence_does_not_duplicate_commerce_completeness_findings():
+    html = '''
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"https://schema.org/Product","name":"Blue shirt"}
+    </script>
+    '''
+    assert crawl_checks.inspect_product_page_schema_presence(
+        html, "https://shop.example/products/blue-shirt"
+    ) == []
+
+
+def test_sensitive_get_form_detects_one_time_codes_and_api_keys_without_reporting_values():
+    html = """
+    <form method="GET" action="/verify">
+      <input name="one_time_code" autocomplete="one-time-code" value="123456">
+      <input name="api_key" value="do-not-leak-this">
+    </form>
+    """
+    findings = crawl_checks.inspect_sensitive_get_forms(html, "https://shop.example/verify")
+
+    assert len(findings) == 1
+    assert findings[0].severity == "high"
+    assert "one_time_code" in findings[0].evidence
+    assert "api_key" in findings[0].evidence
+    assert "123456" not in findings[0].evidence
+    assert "do-not-leak-this" not in findings[0].evidence
+
+
+def test_sensitive_fields_in_post_form_are_not_reported_as_get_form_risk():
+    html = """
+    <form method="POST" action="/verify">
+      <input name="password" type="password">
+      <input name="one_time_code" autocomplete="one-time-code">
+    </form>
+    """
+    assert crawl_checks.inspect_sensitive_get_forms(
+        html, "https://shop.example/verify"
+    ) == []
+
+@pytest.mark.asyncio
+async def test_recursive_crawl_rejects_relative_links_from_off_origin_base(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    homepage = "https://shop.example/"
+    first_product = "https://shop.example/products/one"
+    second_product = "https://shop.example/products/two"
+    unsafe_relative = "https://shop.example/products/relative-from-unsafe-base"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, (
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/products/one">One</a></body></html>'
+            ), {"content-type": "text/html"}, homepage
+        if url == first_product:
+            return 200, (
+                '<html><head><base href="https://outside.example/catalog/">'
+                '<title>One</title></head><body>'
+                '<a href="relative-from-unsafe-base">Unsafe relative</a>'
+                '<a href="https://shop.example/products/two">Safe absolute same-origin</a>'
+                '</body></html>'
+            ), {"content-type": "text/html"}, first_product
+        if url == second_product:
+            return 200, '<html><head><title>Two</title></head><body><h1>Two</h1></body></html>', {"content-type": "text/html"}, second_product
+        if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt", "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, _ = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert first_product in checked
+    assert second_product in checked
+    assert unsafe_relative not in requested
+    assert not any("outside.example" in url for url in requested)
+
+
+
+@pytest.mark.asyncio
+async def test_crawl_expands_bounded_children_of_secondary_sitemap_indexes(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    primary = "https://shop.example/catalog-main.xml"
+    secondary_index = "https://shop.example/catalog-extra-index.xml"
+    child_sitemap = "https://shop.example/catalog-extra-products.xml"
+    primary_product = "https://shop.example/products/main"
+    nested_product = "https://shop.example/products/nested"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, (
+                f"User-agent: *\\nSitemap: {primary}\\nSitemap: {secondary_index}\\n"
+            ), {"content-type": "text/plain"}, url
+        if url == primary:
+            return 200, (
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{primary_product}</loc></url></urlset>'
+            ), {"content-type": "application/xml"}, url
+        if url == secondary_index:
+            return 200, (
+                '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<sitemap><loc>{child_sitemap}</loc></sitemap></sitemapindex>'
+            ), {"content-type": "application/xml"}, url
+        if url == child_sitemap:
+            return 200, (
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{nested_product}</loc></url></urlset>'
+            ), {"content-type": "application/xml"}, url
+        if url in {primary_product, nested_product}:
+            return 200, '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>', {"content-type": "text/html"}, url
+        if url in {"https://shop.example/llms.txt", "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert primary_product in checked
+    assert nested_product in checked
+    assert requested.count(child_sitemap) == 1
+    assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES

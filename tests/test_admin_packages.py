@@ -7,7 +7,7 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
     headers = {"X-Admin-Key": "test-admin-key-only"}
 
     unauthorized = await client.get("/api/v1/admin/packages")
-    assert unauthorized.status_code == 403
+    assert unauthorized.status_code == 401
 
     created = await client.post(
         "/api/v1/admin/packages",
@@ -66,6 +66,33 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
     assert operations.status_code == 200, operations.text
     assert "audit_and_operation_failures_24h" in operations.json()["counts"]
     assert "test-admin-key-only" not in operations.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_malformed_paddle_price_id_fails_closed_and_uses_valid_env_fallback(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from main import _db_payment_plans
+    from sqlalchemy import text
+
+    monkeypatch.setenv("PADDLE_PRICE_ID_LEGACY_BAD", "not-a-price-id")
+    monkeypatch.setenv("PADDLE_PRICE_ID_LEGACY_GOOD", "pri_ValidFallback123")
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES
+                ('legacy_bad', 'Legacy Bad', 10, 1, 'not-a-price-id', TRUE),
+                ('legacy_good', 'Legacy Good', 20, 1, NULL, TRUE)
+            ON CONFLICT (tier) DO UPDATE SET
+                paddle_price_id=excluded.paddle_price_id,
+                is_active=excluded.is_active
+        """))
+        await db.commit()
+        plans = await _db_payment_plans(db, active_only=True)
+
+    by_tier = {plan["tier"]: plan for plan in plans}
+    assert by_tier["legacy_bad"]["price_id"] is None
+    assert by_tier["legacy_good"]["price_id"] == "pri_ValidFallback123"
 
 
 @pytest.mark.asyncio
@@ -335,3 +362,70 @@ async def test_plan_bootstrap_uses_product_concurrency_defaults_without_override
         """))).all()
 
     assert dict(rows) == {"business": 10, "pro": 3, "starter": 1}
+
+
+@pytest.mark.asyncio
+async def test_package_allowance_update_only_changes_inherited_customer_quotas(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import SoftwareLicense
+    from sqlalchemy import select
+
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-quota-propagation")
+    headers = {"X-Admin-Key": "test-admin-quota-propagation"}
+
+    created = await client.post(
+        "/api/v1/admin/packages",
+        headers=headers,
+        json={
+            "tier": "qa-quota-propagation",
+            "label": "Quota Propagation",
+            "monthly_audit_allowance": 250,
+            "max_concurrent_audits": 2,
+            "paddle_price_id": None,
+            "is_active": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    async with AsyncSessionLocal() as db:
+        inherited = SoftwareLicense(
+            license_key="quota-inherited-license",
+            client_name="Inherited quota",
+            tier="qa-quota-propagation",
+            max_monthly_audits=250,
+            is_active=True,
+        )
+        overridden = SoftwareLicense(
+            license_key="quota-overridden-license",
+            client_name="Overridden quota",
+            tier="qa-quota-propagation",
+            max_monthly_audits=999,
+            is_active=True,
+        )
+        db.add_all([inherited, overridden])
+        await db.commit()
+        inherited_id, overridden_id = inherited.id, overridden.id
+
+    updated = await client.patch(
+        "/api/v1/admin/packages/qa-quota-propagation",
+        headers=headers,
+        json={
+            "tier": "qa-quota-propagation",
+            "label": "Quota Propagation Plus",
+            "monthly_audit_allowance": 400,
+            "max_concurrent_audits": 3,
+            "paddle_price_id": None,
+            "is_active": True,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+
+    async with AsyncSessionLocal() as db:
+        inherited = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == inherited_id)
+        )).scalar_one()
+        overridden = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == overridden_id)
+        )).scalar_one()
+        assert inherited.max_monthly_audits == 400
+        assert overridden.max_monthly_audits == 999

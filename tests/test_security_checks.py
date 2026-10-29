@@ -188,7 +188,7 @@ async def test_probe_records_request_failures_as_unverified(monkeypatch):
         object(), "https://shop.example/"
     )
     assert findings == []
-    assert any("2 of 15 exposure probes could not be verified" in item for item in limitations)
+    assert any(f"{2} of {len(security_checks.EXPOSURE_PATHS)} exposure probes could not be verified" in item for item in limitations)
 
 
 @pytest.mark.parametrize("path,body", [
@@ -245,7 +245,7 @@ async def test_generic_success_responses_are_unverified_not_assumed_safe(monkeyp
     )
     assert findings == []
     assert any(
-        "15 of 15 exposure probes returned successful responses" in item
+        f"{len(security_checks.EXPOSURE_PATHS)} of {len(security_checks.EXPOSURE_PATHS)} exposure probes returned successful responses" in item
         and "treated as unverified" in item
         for item in limitations
     )
@@ -267,7 +267,7 @@ async def test_probe_records_server_errors_as_unverified(monkeypatch):
     )
 
     assert findings == []
-    assert any("1 of 15 exposure probes returned HTTP 5xx" in item for item in limitations)
+    assert any(f"1 of {len(security_checks.EXPOSURE_PATHS)} exposure probes returned HTTP 5xx" in item for item in limitations)
     assert any("treated as unverified, not safe" in item for item in limitations)
 
 @pytest.mark.asyncio
@@ -555,3 +555,69 @@ def test_standard_security_headers_accept_x_frame_options_as_framing_fallback():
         "https://shop.example/",
     )
     assert findings == []
+
+@pytest.mark.asyncio
+async def test_exposure_probes_skip_paths_disallowed_by_crawl_policy(monkeypatch):
+    import security_checks
+
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(security_checks, "_safe_get", fake_safe_get)
+    monkeypatch.setattr(security_checks, "EXPOSURE_PATHS", ["/private/.env", "/public/.env"])
+    findings, limitations = await security_checks.probe_common_exposure_paths(
+        object(),
+        "https://shop.example/",
+        allowed_url=lambda url: "/private/" not in url,
+    )
+
+    assert requested == ["https://shop.example/public/.env"]
+    assert findings == []
+    assert any("1 of 2 exposure probes were skipped" in item for item in limitations)
+
+
+
+def test_git_config_exposure_requires_git_config_signatures_and_omits_values():
+    from security_checks import inspect_exposure_response
+
+    findings = inspect_exposure_response(
+        "/.git/config",
+        200,
+        "[core]\nrepositoryformatversion = 0\n[remote \"origin\"]\nurl = https://user:secret@example.invalid/repo.git",
+        {"content-type": "text/plain"},
+        "https://shop.example/.git/config",
+    )
+    assert len(findings) == 1
+    assert findings[0].severity == "high"
+    assert "Git repository configuration" in findings[0].title
+    assert "user:secret" not in findings[0].evidence
+    assert "example.invalid" not in findings[0].evidence
+
+
+def test_git_config_exposure_does_not_flag_generic_html_200_response():
+    from security_checks import inspect_exposure_response
+
+    assert inspect_exposure_response(
+        "/.git/config",
+        200,
+        "<html><body>Storefront fallback</body></html>",
+        {"content-type": "text/html"},
+        "https://shop.example/.git/config",
+    ) == []
+
+
+def test_git_config_exposure_ignores_generic_text_without_required_structure():
+    from security_checks import inspect_exposure_response
+
+    for body in (
+        "[core]\nrepositoryformatversion = nope",
+        "[remote \"origin\"]\nurl = https://example.invalid/repo.git",
+        "<html><body>[core] repositoryformatversion = 0</body></html>",
+    ):
+        assert inspect_exposure_response(
+            "/.git/config", 200, body, {"content-type": "text/plain"},
+            "https://shop.example/.git/config",
+        ) == []

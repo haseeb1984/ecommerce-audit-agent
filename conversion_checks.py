@@ -318,9 +318,10 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
             if action_parts.scheme.lower() == "http" and action_parts.netloc:
                 # Keep the report evidence free of query strings, which may contain tokens.
                 action_host = (action_parts.hostname or "").lower()
-                if not action_host or action_parts.username is not None or action_parts.password is not None:
-                    # Do not echo URL userinfo into audit evidence.
+                if not action_host:
                     continue
+                # URL userinfo must never appear in evidence, but its presence must
+                # not suppress the transport-security finding itself.
                 display_host = f"[{action_host}]" if ":" in action_host else action_host
                 if action_parts.port and action_parts.port != 80:
                     display_host = f"{display_host}:{action_parts.port}"
@@ -332,29 +333,32 @@ def inspect_conversion_html(html: str, final_url: str) -> list[AuditFinding]:
     # providers), but deserve explicit ownership and transport review. Never include
     # query strings because they may carry tokens or personal data.
     external_form_actions: list[str] = []
-    final_parts = urlsplit(final_url)
-    final_scheme = final_parts.scheme.lower()
-    final_host = (final_parts.hostname or "").lower()
-    final_port = final_parts.port or (443 if final_scheme == "https" else 80 if final_scheme == "http" else None)
-    final_origin = (final_scheme, final_host, final_port)
+    # Normalize both origins through the same validator used by link discovery.
+    # A malformed homepage authority must not crash an otherwise useful conversion scan.
+    final_origin = _normalized_http_origin(final_url)
     for action in parser.form_actions:
         try:
             resolved_action = urljoin(final_url, action.strip() or final_url)
             action_parts = urlsplit(resolved_action)
-            _ = action_parts.port
+            action_port = action_parts.port  # Force validation of malformed explicit ports.
+            action_scheme = action_parts.scheme.lower()
+            action_host = (action_parts.hostname or "").rstrip(".").lower()
+            if action_scheme not in {"http", "https"} or not action_host:
+                continue
+            # Userinfo makes a destination unsafe to use as evidence, but it must
+            # not hide an external endpoint from the manual-review inventory.
+            default_port = 443 if action_scheme == "https" else 80
+            action_origin = (action_scheme, action_host, action_port or default_port)
         except (ValueError, UnicodeError):
             continue
-        if action_parts.scheme.lower() not in {"http", "https"} or not action_parts.hostname:
-            continue
-        action_scheme = action_parts.scheme.lower()
-        action_host = action_parts.hostname.lower()
-        action_port = action_parts.port or (443 if action_scheme == "https" else 80)
-        action_origin = (action_scheme, action_host, action_port)
-        if action_origin != final_origin:
-            # Rebuild the authority from validated host/port only; never echo userinfo.
+        action_scheme, action_host, normalized_port = action_origin
+        if final_origin is None or action_origin != final_origin:
+            # Rebuild the authority from validated host/port only; never echo userinfo,
+            # query strings, fragments, or untrusted netloc text into report evidence.
             display_host = f"[{action_host}]" if ":" in action_host else action_host
-            if action_parts.port and action_parts.port != (443 if action_scheme == "https" else 80):
-                display_host = f"{display_host}:{action_parts.port}"
+            default_port = 443 if action_scheme == "https" else 80
+            if action_port is not None and action_port != default_port:
+                display_host = f"{display_host}:{action_port}"
             safe_destination = f"{action_scheme}://{display_host}{action_parts.path or '/'}"
             if safe_destination not in external_form_actions:
                 external_form_actions.append(safe_destination)

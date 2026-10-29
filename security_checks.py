@@ -6,6 +6,8 @@ for every path). These low-impact GET checks do not exploit or modify the target
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import asyncio
 import datetime as dt
 import ipaddress
@@ -19,6 +21,7 @@ from audit_checks import AuditFinding, _finding, _safe_get
 EXPOSURE_PATHS = (
     "/.env",
     "/.git/HEAD",
+    "/.git/config",
     "/config.php.bak",
     "/wp-config.php.bak",
     "/phpinfo.php",
@@ -60,6 +63,10 @@ def inspect_exposure_response(path: str, status: int, body: str,
         if re.match(r"^\s*ref:\s+refs/(?:heads|tags)/[A-Za-z0-9._/-]+\s*$", body.strip()):
             matched = "Git repository metadata appears publicly readable"
             safe_evidence = "The response body matches the expected format of a Git HEAD reference."
+    elif normalized_path == "/.git/config":
+        if re.search(r"(?im)^\s*\[core\]\s*$", body) and re.search(r"(?im)^\s*repositoryformatversion\s*=\s*\d+", body):
+            matched = "Git repository configuration appears publicly readable"
+            safe_evidence = "The response matches common Git config structure; repository URLs and configuration values are intentionally omitted."
     elif normalized_path in {"/config.php.bak", "/wp-config.php.bak"}:
         if "<?php" in body.lower() and re.search(r"(?i)(?:password|secret|database|api[_-]?key)\s*[=\s]", body):
             matched = "A PHP configuration backup may be publicly readable"
@@ -156,18 +163,27 @@ def inspect_exposure_response(path: str, status: int, body: str,
     )]
 
 
-async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[AuditFinding], list[str]]:
-    """Probe a tiny fixed list of common exposure paths using the safe public fetcher."""
+async def probe_common_exposure_paths(
+    client,
+    base_url: str,
+    *,
+    allowed_url: Callable[[str], bool] | None = None,
+) -> tuple[list[AuditFinding], list[str]]:
+    """Probe common exposure paths, optionally respecting the caller's crawl policy."""
     findings: list[AuditFinding] = []
     unverified_probes = 0
     inconclusive_success_probes = 0
     server_error_probes = 0
+    skipped_by_policy = 0
     limitations: list[str] = [
         f"Passive exposure probes checked only {len(EXPOSURE_PATHS)} common paths; this is not a penetration test or proof that other files are safe."
     ]
     origin = f"{urlsplit(base_url).scheme}://{urlsplit(base_url).netloc}"
     for path in EXPOSURE_PATHS:
         url = urljoin(origin + "/", path.lstrip("/"))
+        if allowed_url is not None and not allowed_url(url):
+            skipped_by_policy += 1
+            continue
         try:
             status, body, headers, final_url = await _safe_get(client, url)
         except Exception:
@@ -205,6 +221,10 @@ async def probe_common_exposure_paths(client, base_url: str) -> tuple[list[Audit
     if server_error_probes:
         limitations.append(
             f"{server_error_probes} of {len(EXPOSURE_PATHS)} exposure probes returned HTTP 5xx server errors; treated as unverified, not safe."
+        )
+    if skipped_by_policy:
+        limitations.append(
+            f"{skipped_by_policy} of {len(EXPOSURE_PATHS)} exposure probes were skipped because the active crawl policy disallowed those paths."
         )
     return findings, limitations
 

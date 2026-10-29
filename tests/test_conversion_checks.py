@@ -376,3 +376,98 @@ def test_http_form_action_evidence_never_exposes_url_userinfo():
         assert "merchant-user" not in finding.evidence
         assert "private-pass" not in finding.evidence
         assert "token=secret" not in finding.evidence
+
+
+def test_form_action_origin_normalizes_default_ports_and_host_case():
+    findings = inspect_conversion_html(
+        '<form action="https://SHOP.EXAMPLE:443/submit"><button>Send</button></form>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "External form destination needs trust review" for f in findings)
+    assert not any(f.title == "Form submission may downgrade to unencrypted HTTP" for f in findings)
+
+
+def test_protocol_relative_form_action_inherits_https_without_query_evidence():
+    findings = inspect_conversion_html(
+        '<form action="//forms.vendor.example/submit?token=private"><input name="email" type="email"><button>Send</button></form>',
+        "https://shop.example/",
+    )
+    external = next(f for f in findings if f.title == "External form destination needs trust review")
+    assert "https://forms.vendor.example/submit" in external.evidence
+    assert "token=private" not in external.evidence
+    assert not any(f.title == "Form submission may downgrade to unencrypted HTTP" for f in findings)
+
+
+def test_external_form_actions_deduplicate_query_variants():
+    findings = inspect_conversion_html(
+        '<form action="https://forms.vendor.example/send?a=1"></form>'
+        '<form action="https://forms.vendor.example/send?a=2"></form>',
+        "https://shop.example/",
+    )
+    external = next(f for f in findings if f.title == "External form destination needs trust review")
+    assert "Found 1 form action destination(s)" in external.evidence
+    assert "a=1" not in external.evidence and "a=2" not in external.evidence
+
+
+def test_same_origin_http_form_action_is_not_misclassified_as_external():
+    findings = inspect_conversion_html(
+        '<form action="http://shop.example:80/submit"><button>Send</button></form>',
+        "http://shop.example/",
+    )
+    assert not any(f.title == "External form destination needs trust review" for f in findings)
+
+
+def test_malformed_form_action_port_is_ignored_without_aborting_scan():
+    findings = inspect_conversion_html(
+        '<form action="https://forms.vendor.example:bad/send"></form>'
+        '<a href="/checkout">Checkout</a>',
+        "https://shop.example/",
+    )
+    assert any(f.title == "Primary conversion path signals" for f in findings)
+    assert not any(f.title == "External form destination needs trust review" for f in findings)
+
+
+def test_form_action_credentials_never_appear_in_any_finding():
+    findings = inspect_conversion_html(
+        '<form action="https://private-user:private-pass@forms.vendor.example/send?token=secret"><button>Send</button></form>',
+        "https://shop.example/",
+    )
+    for finding in findings:
+        assert "private-user" not in finding.evidence
+        assert "private-pass" not in finding.evidence
+        assert "token=secret" not in finding.evidence
+
+
+def test_ipv6_external_form_action_is_rendered_with_brackets():
+    findings = inspect_conversion_html(
+        '<form action="https://[2001:db8::1]:8443/submit"></form>',
+        "https://shop.example/",
+    )
+    external = next(f for f in findings if f.title == "External form destination needs trust review")
+    assert "https://[2001:db8::1]:8443/submit" in external.evidence
+
+
+def test_empty_form_action_resolves_to_homepage_origin():
+    findings = inspect_conversion_html(
+        '<form action=""><button>Send</button></form>',
+        "https://shop.example/",
+    )
+    assert not any(f.title == "External form destination needs trust review" for f in findings)
+
+
+def test_external_form_action_fragment_and_query_are_not_reported():
+    findings = inspect_conversion_html(
+        '<form action="https://forms.vendor.example/submit?email=private#session"></form>',
+        "https://shop.example/",
+    )
+    external = next(f for f in findings if f.title == "External form destination needs trust review")
+    assert "forms.vendor.example/submit" in external.evidence
+    assert "email=private" not in external.evidence and "#session" not in external.evidence
+
+
+def test_malformed_homepage_url_does_not_crash_form_action_scan():
+    findings = inspect_conversion_html(
+        '<form action="https://forms.vendor.example/submit"></form>',
+        "not a valid URL",
+    )
+    assert any(f.title == "External form destination needs trust review" for f in findings)

@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import hashlib
 import hmac
 import secrets
@@ -9,7 +10,7 @@ import smtplib
 import json
 from email.message import EmailMessage
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 from urllib.parse import urlsplit
 
@@ -41,7 +42,7 @@ from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
 from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
 from quota import reserve_audit_slot, release_audit_reservation
-from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, normalize_target, run_phase_one_checks
+from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -75,15 +76,23 @@ async def apply_response_security_headers(request: Request, call_next):
         "/admin",
         "/app",
     )
-    if request.url.path.startswith(private_paths):
+    # Checkout URLs may carry a short-lived Paddle transaction identifier in the
+    # query string. Do not let browsers or shared caches retain that launch URL.
+    if request.url.path == "/checkout" or request.url.path.startswith(private_paths):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
     return response
 
 
 class ReportEmailRequest(BaseModel):
-    recipient_email: str
+    # Bound untrusted request data before the route performs DB lookup or SMTP work.
+    recipient_email: str = Field(..., min_length=3, max_length=254)
     recipient_confirmed: bool = False
+
+
+class AccountProfileUpdate(BaseModel):
+    """Customer-editable account display name; billing identity stays with the payment provider."""
+    client_name: str = Field(..., min_length=1, max_length=255)
 
 
 def custom_openapi():
@@ -189,6 +198,35 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
                     "schema_ready": False,
                     "missing_tables": [],
                     "missing_columns": missing_columns,
+                    "missing_indexes": [],
+                },
+            )
+
+        index_result = await db.execute(text(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+        ))
+        existing_indexes = set(index_result.scalars().all())
+        required_indexes = {
+            index.name
+            for table_name in required_tables
+            for index in Base.metadata.tables[table_name].indexes
+            if index.name
+        }
+        missing_indexes = sorted(required_indexes - existing_indexes)
+        if missing_indexes:
+            logger.error(
+                "Database schema readiness failed (missing_index_count=%s)",
+                len(missing_indexes),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "not_ready",
+                    "db_connected": True,
+                    "schema_ready": False,
+                    "missing_tables": [],
+                    "missing_columns": {},
+                    "missing_indexes": missing_indexes,
                 },
             )
         return {
@@ -204,6 +242,19 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         raise HTTPException(status_code=500, detail="Database connection error")
 
 
+def _normalize_request_audit_target(domain: str) -> str:
+    """Reject parameterized targets at API boundaries before reserving quota."""
+    raw_target = domain.strip()
+    candidate_target = raw_target if "://" in raw_target else "https://" + raw_target
+    # Query parameters can contain tokens or customer data. API callers must submit
+    # a clean public page URL instead of having the service silently change intent.
+    if urlsplit(candidate_target).query:
+        raise ValueError(
+            "Query strings are not accepted for audit targets; submit the public page URL without parameters."
+        )
+    return agent._normalize_audit_target(domain)
+
+
 @app.post("/api/v1/audit-lead", response_model=LeadDossier)
 @app.post("/api/v1/audit-lead/", response_model=LeadDossier, include_in_schema=False)
 async def audit_lead(
@@ -216,7 +267,7 @@ async def audit_lead(
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
-        target_url = normalize_target(domain)
+        target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -281,7 +332,7 @@ async def comprehensive_audit_pdf(
 ):
     """Create a phase-one evidence report as a PDF, using the existing license quota."""
     try:
-        target_url = normalize_target(domain)
+        target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -852,6 +903,54 @@ async def customer_portal():
     return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
 
 
+@app.get("/api/v1/account/profile")
+async def get_account_profile(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+):
+    """Return safe account profile metadata without exposing credentials or payment secrets."""
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    now = datetime.now(timezone.utc)
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at is None:
+        account_status = "active" if license_obj.is_active else "inactive"
+    elif expires_at <= now:
+        account_status = "expired"
+    else:
+        account_status = "active" if license_obj.is_active else "inactive"
+    return {
+        "client_name": license_obj.client_name,
+        "tier": license_obj.tier,
+        "account_status": account_status,
+        "created_at": license_obj.created_at.isoformat() if license_obj.created_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+    }
+
+
+@app.patch("/api/v1/account/profile")
+async def update_account_profile(
+    payload: AccountProfileUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Update only the account display name; this does not change billing-provider identity."""
+    client_name = payload.client_name.strip()
+    if not client_name:
+        raise HTTPException(status_code=422, detail="Account name cannot be blank.")
+    if len(client_name) > 255:
+        raise HTTPException(status_code=422, detail="Account name must be 255 characters or fewer.")
+    license_obj.client_name = client_name
+    await db.commit()
+    await db.refresh(license_obj)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"client_name": license_obj.client_name, "updated": True}
+
+
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
@@ -884,42 +983,130 @@ async def get_account_usage(
     # Show the same operator-managed allowance that quota enforcement uses.
     # Retain the license column as a migration fallback for older/unlisted tiers.
     package_result = await db.execute(text("""
-        SELECT monthly_audit_allowance FROM saas_plan_packages WHERE tier=:tier
+        SELECT label, monthly_audit_allowance, max_concurrent_audits, is_active
+        FROM saas_plan_packages WHERE tier=:tier
     """), {"tier": str(license_obj.tier or "starter").strip().lower()})
-    package_limit = package_result.scalar_one_or_none()
+    package_row = package_result.mappings().first()
+    package_limit = package_row["monthly_audit_allowance"] if package_row is not None else None
     limit = max(0, int(
         package_limit if package_limit is not None else (license_obj.max_monthly_audits or 0)
     ))
     consumed = used + pending
+    remaining = max(0, limit - consumed)
+    usage_percent = min(100, round(consumed * 100 / limit, 1)) if limit else 0
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if not license_obj.is_active:
+        entitlement_state = "inactive"
+    elif expires_at is not None and expires_at <= now:
+        entitlement_state = "expired"
+    elif package_row is not None and not bool(package_row["is_active"]):
+        entitlement_state = "plan_inactive"
+    elif limit <= 0:
+        entitlement_state = "quota_unavailable"
+    elif remaining <= 0:
+        entitlement_state = "quota_exhausted"
+    else:
+        entitlement_state = "active"
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
         "tier": str(license_obj.tier or "starter"),
+        "plan_label": str(package_row["label"]) if package_row is not None else str(license_obj.tier or "starter"),
+        "plan_available": bool(package_row["is_active"]) if package_row is not None else None,
         "monthly_limit": limit,
         "used": used,
         "in_progress": pending,
-        "remaining": max(0, limit - consumed),
-        "usage_percent": min(100, round(consumed * 100 / limit, 1)) if limit else 0,
+        "consumed": consumed,
+        "remaining": remaining,
+        "usage_percent": usage_percent,
+        "quota_state": "exhausted" if limit > 0 and remaining <= 0 else ("near_limit" if usage_percent >= 80 else "available"),
+        "entitlement_state": entitlement_state,
+        "max_concurrent_audits": int(package_row["max_concurrent_audits"]) if package_row is not None else None,
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
-        "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+    }
+
+
+@app.get("/api/v1/account/activity")
+async def account_audit_activity(
+    response: Response,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10000000),
+    domain: str = Query(default="", max_length=253),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return bounded, optionally domain-filtered audit activity without lead-contact data."""
+    from sqlalchemy import select, func as sql_func
+
+    filters = [AuditLead.license_id == license_obj.id]
+    normalized_domain = domain.strip().lower().replace("%", "").replace("_", "")
+    if normalized_domain:
+        filters.append(AuditLead.domain.ilike(f"%{normalized_domain}%"))
+    total = int((await db.execute(
+        select(sql_func.count(AuditLead.id)).where(*filters)
+    )).scalar_one() or 0)
+    rows = (await db.execute(
+        select(AuditLead).where(*filters)
+        .order_by(AuditLead.created_at.desc(), AuditLead.id.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "items": [{
+            "id": row.id,
+            "domain": row.domain,
+            "mobile_score": row.mobile_score,
+            "speed_index_sec": row.speed_index_sec,
+            "source": row.source_channel,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        } for row in rows],
+        "page": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": offset + len(rows) < total, "domain": normalized_domain,
+        },
     }
 
 
 @app.get("/api/v1/account/billing-history")
 async def account_billing_history(
     response: Response,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000000),
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return a bounded billing-event history scoped to the authenticated license."""
-    from sqlalchemy import select
+    """Return a bounded, paginated billing-event history scoped to the authenticated license."""
+    from sqlalchemy import select, func as sql_func
 
+    ownership_filter = PaymentWebhookEvent.license_id == license_obj.id
+    total = int((await db.execute(
+        select(sql_func.count(PaymentWebhookEvent.event_id)).where(ownership_filter)
+    )).scalar_one() or 0)
     events = (await db.execute(
         select(PaymentWebhookEvent)
-        .where(PaymentWebhookEvent.license_id == license_obj.id)
+        .where(ownership_filter)
         .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
-        .limit(50)
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    # Keep a compact, separately surfaced queue of recent events that may need
+    # customer attention. This is deliberately not presented as authoritative
+    # subscription state: Paddle's portal remains the source for payment actions.
+    attention_statuses = (
+        "payment_failed", "subscription_past_due", "subscription_canceled",
+        "email_pending", "email_sending",
+    )
+    attention_events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(ownership_filter, PaymentWebhookEvent.status.in_(attention_statuses))
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(10)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -941,7 +1128,16 @@ async def account_billing_history(
             }
             for item in events
         ],
-        "limit": 50,
+        "attention_items": [
+            {
+                "event_id": item.event_id,
+                "status": item.status,
+                "subscription_id": item.subscription_id,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            }
+            for item in attention_events
+        ],
+        "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(events) < total},
     }
 
 
@@ -984,10 +1180,7 @@ async def create_account_billing_portal(
         urls = data.get("urls") or {}
         general = urls.get("general") or {}
         portal_url = general.get("overview") or data.get("url")
-        parsed = urlsplit(portal_url or "")
-        if parsed.scheme != "https" or not parsed.hostname or not (
-            parsed.hostname == "paddle.com" or parsed.hostname.endswith(".paddle.com")
-        ):
+        if not _is_valid_paddle_hosted_url(portal_url):
             raise RuntimeError("Paddle did not return a valid customer portal URL")
     except Exception as exc:
         logger.error("Paddle customer portal creation failed (error_type=%s)", type(exc).__name__)
@@ -1000,7 +1193,7 @@ async def create_account_billing_portal(
 @app.get("/api/v1/account/api-keys")
 async def list_account_api_keys(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List metadata for this account's API keys; never return stored key material."""
@@ -1014,6 +1207,13 @@ async def list_account_api_keys(
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
+    now = datetime.now(timezone.utc)
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    can_create = bool(license_obj.is_active) and not (
+        expires_at is not None and expires_at <= now
+    )
     return {
         "items": [
             {
@@ -1024,6 +1224,10 @@ async def list_account_api_keys(
             for item in rows
         ],
         "limit": 100,
+        "max_keys": 10,
+        "key_count": len(rows),
+        "keys_remaining": max(0, 10 - len(rows)),
+        "can_create": can_create,
         "note": "Full API keys are shown only once when created.",
     }
 
@@ -1031,11 +1235,24 @@ async def list_account_api_keys(
 @app.post("/api/v1/account/api-keys", status_code=201)
 async def create_account_api_key(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Create a customer-owned API key and reveal its secret exactly once."""
+    """Create a customer-owned API key and reveal its secret exactly once.
+
+    Account ownership is resolved even after expiry so the API can return a clear
+    payment-required response for expired subscriptions, while revoked accounts
+    remain forbidden. This dependency does not grant audit or report access.
+    """
     from sqlalchemy import select, func as sql_func
+
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=402, detail="License expired. Renewal required.")
+    if not license_obj.is_active:
+        raise HTTPException(status_code=403, detail="License is inactive or revoked.")
 
     # Serialize key creation per license on databases that support row locks. Without
     # this lock, simultaneous requests can both observe nine keys and create an
@@ -1179,17 +1396,22 @@ def _saved_report_outcome_summary(coverage_json: str | None) -> dict:
 async def list_audit_reports(
     response: Response,
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000000),
+    domain: str = Query(default="", max_length=253),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List only reports owned by the authenticated license; never expose PDF bytes here."""
     from sqlalchemy import select, func as sql_func
+    filters = [AuditReport.license_id == license_obj.id]
+    normalized_domain = domain.strip().lower().replace("%", "").replace("_", "")
+    if normalized_domain:
+        filters.append(AuditReport.domain.ilike(f"%{normalized_domain}%"))
     total = (await db.execute(
-        select(sql_func.count(AuditReport.id)).where(AuditReport.license_id == license_obj.id)
+        select(sql_func.count(AuditReport.id)).where(*filters)
     )).scalar_one()
     rows = (await db.execute(
-        select(AuditReport).where(AuditReport.license_id == license_obj.id)
+        select(AuditReport).where(*filters)
         .order_by(AuditReport.created_at.desc(), AuditReport.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
@@ -1199,6 +1421,7 @@ async def list_audit_reports(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "domain": normalized_domain,
         "reports": [
             {
                 "id": row.id,
@@ -1275,7 +1498,7 @@ async def get_audit_report_evidence(
     response: Response,
     kind: str = Query("findings", pattern="^(findings|check_outcomes)$"),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000000),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -1402,6 +1625,26 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
             server.send_message(message)
 
 
+def _is_valid_paddle_hosted_url(value: object) -> bool:
+    """Accept only credential-free HTTPS URLs on Paddle's actual hosted domain."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        # Accessing .port also validates malformed port syntax.
+        _ = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme.lower() == "https"
+        and hostname
+        and parsed.username is None
+        and parsed.password is None
+        and (hostname == "paddle.com" or hostname.endswith(".paddle.com"))
+    )
+
+
 def _paddle_api_base() -> str:
     environment = os.getenv("PADDLE_ENVIRONMENT", "sandbox").strip().lower()
     if environment == "production": return "https://api.paddle.com"
@@ -1420,7 +1663,15 @@ def _paddle_api_request(path: str, method: str = "GET", payload: dict | None = N
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
+            # Provider responses should be small metadata objects. Bound reads so an
+            # unexpected/compromised upstream response cannot consume unbounded memory.
+            raw_body = response.read(2 * 1024 * 1024 + 1)
+            if len(raw_body) > 2 * 1024 * 1024:
+                raise RuntimeError("Paddle API response exceeded the allowed size")
+            result = json.loads(raw_body.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise RuntimeError("Paddle API returned an invalid JSON object")
+            return result
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"Paddle API request failed (HTTP {exc.code})") from exc
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
@@ -1431,7 +1682,7 @@ def _configured_payment_plans() -> list[dict]:
     plans = []
     for tier, label, default_quota in (("STARTER", "Starter", 100), ("PRO", "Pro", 500), ("BUSINESS", "Business", 2000)):
         price_id = os.getenv(f"PADDLE_PRICE_ID_{tier}", "").strip()
-        if not re.fullmatch(r"pri_[a-z0-9]+", price_id): continue
+        if not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id): continue
         try: quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
         except ValueError: continue
         if quota < 1: continue
@@ -1446,8 +1697,11 @@ class PaddleCheckoutRequest(BaseModel):
 @app.get("/api/v1/billing/plans")
 async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
     """Expose active operator-managed plans only when payment delivery is configured."""
-    ready = bool(os.getenv("PADDLE_API_KEY", "").strip() and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
-                 and os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip())
+    ready = bool(
+        os.getenv("PADDLE_API_KEY", "").strip()
+        and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
+        and _smtp_configuration_status()["configured"]
+    )
     plans = await _db_payment_plans(db, active_only=True) if ready else []
     plans = [p for p in plans if p.get("price_id")]
     return {"checkout_provider": "Paddle", "configured": bool(plans),
@@ -1459,7 +1713,11 @@ async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
 
 
 @app.post("/api/v1/billing/checkout")
-async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSession = Depends(get_async_db)):
+async def create_paddle_checkout(
+    payload: PaddleCheckoutRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
     """Create a transaction using an active server-managed package price; the client cannot set amounts."""
     tier = payload.tier.strip().lower()
     plans = await _db_payment_plans(db, active_only=True)
@@ -1468,36 +1726,49 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
         raise HTTPException(status_code=422, detail="The selected package is unavailable.")
     if not plan.get("price_id") or not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="This Paddle plan is not configured.")
+    # Do not accept money for a purchase that cannot be verified and provisioned.
+    # The public catalogue applies the same readiness gate; the checkout endpoint
+    # must enforce it independently because clients can call it directly.
+    if not os.getenv("PADDLE_WEBHOOK_SECRET", "").strip():
+        raise HTTPException(status_code=503, detail="Paddle webhook verification is not configured.")
+    smtp_status = _smtp_configuration_status()
+    if not smtp_status["configured"]:
+        raise HTTPException(status_code=503, detail="License delivery is not configured.")
     transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
                    "custom_data": {"license_tier": plan["tier"]}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
     if checkout_url:
-        parsed = urlsplit(checkout_url)
-        if parsed.scheme != "https" or not parsed.hostname:
+        # Only forward configured hosted-checkout destinations on Paddle domains.
+        if not _is_valid_paddle_hosted_url(checkout_url):
             raise HTTPException(status_code=503, detail="Paddle checkout URL configuration is invalid.")
         transaction["checkout"] = {"url": checkout_url}
     try:
-        response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
-        url = response.get("data", {}).get("checkout", {}).get("url")
-        parsed = urlsplit(url or "")
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or not (
-                parsed.hostname.lower() == "paddle.com"
-                or parsed.hostname.lower().endswith(".paddle.com")
-            )
-        ):
+        provider_response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
+        url = provider_response.get("data", {}).get("checkout", {}).get("url")
+        if not _is_valid_paddle_hosted_url(url):
             raise RuntimeError("Paddle did not return a valid checkout URL")
-        transaction_id = response.get("data", {}).get("id")
+        transaction_id = provider_response.get("data", {}).get("id")
         if not isinstance(transaction_id, str) or not re.fullmatch(r"txn_[A-Za-z0-9]+", transaction_id):
             raise RuntimeError("Paddle did not return a valid transaction ID")
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
         return {"checkout_url": url, "transaction_id": transaction_id}
     except Exception as exc:
         logger.error("Paddle checkout creation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Unable to start Paddle checkout; verify billing configuration.") from exc
+
+
+async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
+    """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        # SQLite has no advisory-lock function. Production uses PostgreSQL, where
+        # the transaction-scoped lock protects against concurrent webhook races.
+        return
+    await db.execute(
+        text(f"SELECT pg_advisory_xact_lock(hashtext(:{parameter_name}))"),
+        {parameter_name: resource_id},
+    )
 
 
 @app.post("/api/v1/billing/paddle-webhook")
@@ -1539,12 +1810,162 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     expected = hmac.new(secret.encode(), str(timestamp).encode() + b":" + raw_body, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
         raise HTTPException(status_code=400, detail="Invalid Paddle signature.")
-    try: event = json.loads(raw_body)
-    except (ValueError, UnicodeDecodeError): raise HTTPException(status_code=400, detail="Invalid Paddle event JSON.")
-    event_id = str(event.get("event_id") or event.get("id") or "")
-    event_type = str(event.get("event_type") or event.get("type") or "")
-    if not event_id: raise HTTPException(status_code=400, detail="Paddle event ID is missing.")
+    try:
+        event = json.loads(raw_body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid Paddle event JSON.")
+    # Valid JSON can still have an unexpected shape; reject it as a client error.
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Paddle event must be a JSON object.")
+    event_id = str(event.get("event_id") or event.get("id") or "").strip()
+    event_type = str(event.get("event_type") or event.get("type") or "").strip()
+    if not event_id or len(event_id) > 255:
+        raise HTTPException(status_code=400, detail="Paddle event ID is missing or invalid.")
+    if not event_type or len(event_type) > 120:
+        raise HTTPException(status_code=400, detail="Paddle event type is missing or invalid.")
     transaction = event.get("data") or {}
+    if not isinstance(transaction, dict):
+        raise HTTPException(status_code=400, detail="Paddle event data must be a JSON object.")
+
+# Persist payment-failure lifecycle events for customer-visible billing history.
+    # Paddle's retry/dunning policy remains authoritative: a single failed transaction
+    # does not by itself revoke access, but the event must not disappear silently.
+    if event_type in {"transaction.payment_failed", "subscription.past_due"}:
+        subscription_id = str(
+            transaction.get("subscription_id") or
+            (transaction.get("id") if event_type == "subscription.past_due" else "") or ""
+        )[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle payment-failure event has no subscription ID.")
+        from sqlalchemy import select
+        await _lock_paddle_webhook_resource(db, subscription_id)
+        duplicate = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            return {"status": "already_processed", "event_id": event_id}
+        # A provider can redeliver the same failed transaction under a different
+        # event ID. Transaction-level idempotency prevents duplicate customer
+        # history/operation events while preserving separate retry attempts,
+        # which have their own transaction IDs.
+        failed_transaction_id = str(transaction.get("id") or "").strip()[:100]
+        if event_type == "transaction.payment_failed" and failed_transaction_id:
+            prior_failure = (await db.execute(
+                select(PaymentWebhookEvent)
+                .where(
+                    PaymentWebhookEvent.transaction_id == failed_transaction_id,
+                    PaymentWebhookEvent.status == "payment_failed",
+                )
+                .order_by(PaymentWebhookEvent.updated_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if prior_failure is not None:
+                return {"status": "already_processed", "event_id": prior_failure.event_id}
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            )
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None:
+            # Do not acknowledge an unlinked event permanently; Paddle may retry after
+            # the original purchase event is reconciled and the subscription is linked.
+            raise HTTPException(status_code=503, detail="Payment-failure event is awaiting subscription reconciliation.")
+        customer = transaction.get("customer") or {}
+        if not isinstance(customer, dict):
+            raise HTTPException(status_code=400, detail="Paddle lifecycle event customer must be a JSON object.")
+        customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
+        status = "payment_failed" if event_type == "transaction.payment_failed" else "subscription_past_due"
+        db.add(PaymentWebhookEvent(
+            event_id=event_id,
+            status=status,
+            license_id=linked_event.license_id,
+            recipient_email=linked_event.recipient_email,
+            transaction_id=(str(transaction.get("id") or "")[:100] or None)
+                if event_type == "transaction.payment_failed" else None,
+            subscription_id=subscription_id,
+            paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
+        ))
+        await db.commit()
+        await _record_operation_event(db, status, linked_event.license_id, None, None)
+        return {"status": status, "event_id": event_id, "license_id": linked_event.license_id}
+
+    # Keep non-cancellation subscription state transitions attached to the existing
+    # license instead of silently acknowledging pause/resume/activation events.
+    # Payment failure alone does not revoke access; explicit pause does. Resume and
+    # activation only restore access when the license has not expired.
+    if event_type in {"subscription.paused", "subscription.resumed", "subscription.activated"}:
+        subscription_id = str(transaction.get("id") or "").strip()[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle subscription lifecycle event has no subscription ID.")
+        from sqlalchemy import select
+        await _lock_paddle_webhook_resource(db, subscription_id)
+        duplicate = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            return {"status": "already_processed", "event_id": event_id}
+        # A previously confirmed cancellation is sticky. A delayed activation/resume
+        # notification must not restore access; only a separately verified renewal
+        # flow may resolve the account's billing state.
+        canceled = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.status == "subscription_canceled",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if canceled is not None:
+            return {"status": "ignored_after_cancellation", "event_id": event_id}
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            )
+            .order_by(PaymentWebhookEvent.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None or linked_event.license_id is None:
+            raise HTTPException(status_code=503, detail="Subscription lifecycle event is awaiting license reconciliation.")
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == linked_event.license_id)
+        )).scalar_one_or_none()
+        if license_obj is None:
+            raise HTTPException(status_code=503, detail="Subscription lifecycle event is awaiting license reconciliation.")
+        lifecycle_status = {
+            "subscription.paused": "subscription_paused",
+            "subscription.resumed": "subscription_resumed",
+            "subscription.activated": "subscription_activated",
+        }[event_type]
+        now = datetime.now(timezone.utc)
+        was_active = bool(license_obj.is_active)
+        if event_type == "subscription.paused":
+            license_obj.is_active = False
+        elif license_obj.expires_at is None:
+            license_obj.is_active = True
+        else:
+            expiry = license_obj.expires_at
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            license_obj.is_active = expiry > now
+        db.add(PaymentWebhookEvent(
+            event_id=event_id,
+            status=lifecycle_status,
+            license_id=license_obj.id,
+            recipient_email=linked_event.recipient_email,
+            subscription_id=subscription_id,
+            paddle_customer_id=linked_event.paddle_customer_id,
+            created_at=now,
+            updated_at=now,
+        ))
+        await db.commit()
+        if was_active != bool(license_obj.is_active):
+            await _record_operation_event(db, lifecycle_status, license_obj.id, None, None)
+        return {"status": lifecycle_status, "event_id": event_id, "license_id": license_obj.id}
 
     # Subscription lifecycle events must not be silently discarded: a confirmed
     # cancellation revokes future access for the license provisioned by its purchase.
@@ -1555,10 +1976,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         from sqlalchemy import select, update
         # Serialize lifecycle transitions for this subscription. The advisory lock
         # is transaction-scoped and avoids a late renewal racing a cancellation.
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
-            {"subscription_id": subscription_id},
-        )
+        await _lock_paddle_webhook_resource(db, subscription_id)
         duplicate_cancellation = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -1606,10 +2024,28 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 
     if event_type != "transaction.completed":
         return {"status": "ignored", "event_id": event_id}
-    if transaction.get("status") != "completed": return {"status": "payment_not_complete", "event_id": event_id}
+    if transaction.get("status") != "completed":
+        return {"status": "payment_not_complete", "event_id": event_id}
+    customer = transaction.get("customer") or {}
+    if not isinstance(customer, dict):
+        raise HTTPException(status_code=400, detail="Paddle transaction customer must be a JSON object.")
     custom_data = transaction.get("custom_data") or {}
+    if not isinstance(custom_data, dict):
+        raise HTTPException(status_code=400, detail="Paddle transaction custom_data must be a JSON object.")
+    items = transaction.get("items") or []
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="Paddle transaction items must be a JSON array.")
     tier = str(custom_data.get("license_tier", "")).strip().lower()
-    price_ids = {item.get("price", {}).get("id") for item in (transaction.get("items") or []) if isinstance(item, dict)}
+    price_ids = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        price = item.get("price") or {}
+        if not isinstance(price, dict):
+            continue
+        price_id = price.get("id")
+        if isinstance(price_id, str) and price_id.strip():
+            price_ids.add(price_id.strip())
     configured_plans = await _db_payment_plans(db, active_only=False)
     plans_by_tier = {p["tier"]: p for p in configured_plans}
     plan = plans_by_tier.get(tier)
@@ -1628,21 +2064,57 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if subscription_id:
         # Use the same subscription-scoped lock as cancellation so lifecycle state
         # transitions are serialized in PostgreSQL.
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:subscription_id))"),
-            {"subscription_id": subscription_id},
-        )
+        await _lock_paddle_webhook_resource(db, subscription_id)
         linked_subscription_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.subscription_id == subscription_id)
             .order_by(PaymentWebhookEvent.updated_at.desc())
             .limit(1)
         )).scalar_one_or_none()
-        if linked_subscription_event is not None and linked_subscription_event.status == "subscription_canceled":
-            # A late/replayed payment event is not proof that a canceled subscription
-            # has been reinstated. Require a separately verified lifecycle/reconcile
-            # action instead of silently restoring account access.
-            return {"status": "subscription_canceled", "event_id": event_id}
+        # Cancellation is sticky across later payment-failure/past-due events.
+        # Checking only the newest event would let a later failure record hide the
+        # cancellation and make a delayed transaction.completed event reactivate access.
+        cancellation_event = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.status == "subscription_canceled",
+            )
+            .limit(1)
+        )).scalar_one_or_none()
+        if cancellation_event is not None:
+            # A payment event is not proof that a canceled subscription was resumed.
+            # Require a separately verified lifecycle/reconciliation action.
+            # Still persist the late transaction as an ignored lifecycle event so
+            # billing history and webhook idempotency remain complete.
+            prior_event = (await db.execute(
+                select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+            )).scalar_one_or_none()
+            if prior_event is not None:
+                return {"status": "already_processed", "event_id": event_id}
+            if transaction_id:
+                prior_transaction = (await db.execute(
+                    select(PaymentWebhookEvent)
+                    .where(PaymentWebhookEvent.transaction_id == transaction_id)
+                    .limit(1)
+                )).scalar_one_or_none()
+                if prior_transaction is not None:
+                    return {"status": "already_processed", "event_id": prior_transaction.event_id}
+            customer_id = str(
+                transaction.get("customer_id") or customer.get("id") or ""
+            ).strip()
+            db.add(PaymentWebhookEvent(
+                event_id=event_id,
+                status="subscription_canceled",
+                license_id=cancellation_event.license_id,
+                recipient_email=cancellation_event.recipient_email,
+                transaction_id=transaction_id,
+                subscription_id=subscription_id,
+                paddle_customer_id=(customer_id[:100] or cancellation_event.paddle_customer_id),
+            ))
+            await db.commit()
+            return {"status": "subscription_canceled", "event_id": event_id,
+                    "license_id": cancellation_event.license_id}
         if linked_subscription_event is not None and linked_subscription_event.license_id is not None:
             linked_license = (await db.execute(
                 select(SoftwareLicense).where(SoftwareLicense.id == linked_subscription_event.license_id)
@@ -1664,9 +2136,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
                 linked_license.is_active = True
-                renewal_customer = transaction.get("customer") or {}
                 renewal_customer_id = str(
-                    transaction.get("customer_id") or renewal_customer.get("id") or ""
+                    transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
                 renewal_event = PaymentWebhookEvent(
                     event_id=event_id,
@@ -1689,10 +2160,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # Serialize provisioning for this purchase before looking up its event.
         # This closes the race where distinct event IDs arrive simultaneously
         # before either request inserts a webhook record.
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:transaction_id))"),
-            {"transaction_id": transaction_id},
-        )
+        await _lock_paddle_webhook_resource(db, transaction_id, "transaction_id")
         prior_transaction_event = (await db.execute(
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.transaction_id == transaction_id)
@@ -1703,14 +2171,17 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             event_id = prior_transaction_event.event_id
     webhook_event = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id))).scalar_one_or_none()
     if webhook_event is None:
-        customer = transaction.get("customer") or {}
         recipient = str(customer.get("email") or "").strip()
         customer_name = str(customer.get("name") or "").strip()
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         if not recipient and customer_id and os.getenv("PADDLE_API_KEY", "").strip():
             try:
                 customer_response = await asyncio.to_thread(_paddle_api_request, f"/customers/{customer_id}")
+                if not isinstance(customer_response, dict):
+                    raise ValueError("Paddle customer response is not a JSON object")
                 customer = customer_response.get("data") or {}
+                if not isinstance(customer, dict):
+                    raise ValueError("Paddle customer data is not a JSON object")
                 recipient = str(customer.get("email") or "").strip()
                 customer_name = str(customer.get("name") or "").strip()
             except Exception as exc:
@@ -1881,10 +2352,15 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
     # Multiple cold-start requests can enter this lazy initializer simultaneously.
     # Serialize DDL + plan seeding within PostgreSQL; the transaction lock is released
     # by the caller's commit/rollback, preventing CREATE INDEX / INSERT deadlocks.
-    await db.execute(text(
-        "SELECT pg_advisory_xact_lock(hashtext('ecommerce_audit_admin_schema_v1'))"
-    ))
-    await db.execute(text("""
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        await db.execute(text(
+            "SELECT pg_advisory_xact_lock(hashtext('ecommerce_audit_admin_schema_v1'))"
+        ))
+    timestamp_type = "TIMESTAMPTZ" if dialect_name == "postgresql" else "DATETIME"
+    timestamp_default = "NOW()" if dialect_name == "postgresql" else "CURRENT_TIMESTAMP"
+    id_type = "BIGSERIAL PRIMARY KEY" if dialect_name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    await db.execute(text(f"""
         CREATE TABLE IF NOT EXISTS saas_plan_packages (
             tier VARCHAR(50) PRIMARY KEY,
             label VARCHAR(100) NOT NULL,
@@ -1892,22 +2368,22 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
             max_concurrent_audits INTEGER NOT NULL CHECK (max_concurrent_audits BETWEEN 1 AND 10000),
             paddle_price_id VARCHAR(100),
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default},
+            updated_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
         )
     """))
     await db.execute(text("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_saas_plan_packages_paddle_price_id
         ON saas_plan_packages (paddle_price_id) WHERE paddle_price_id IS NOT NULL
     """))
-    await db.execute(text("""
+    await db.execute(text(f"""
         CREATE TABLE IF NOT EXISTS saas_operation_events (
-            id BIGSERIAL PRIMARY KEY,
+            id {id_type},
             event_type VARCHAR(80) NOT NULL,
             license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
             domain VARCHAR(255),
             error_type VARCHAR(120),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
         )
     """))
     await db.execute(text("""
@@ -1918,14 +2394,14 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         CREATE INDEX IF NOT EXISTS ix_saas_operation_events_type_created
         ON saas_operation_events (event_type, created_at DESC)
     """))
-    await db.execute(text("""
+    await db.execute(text(f"""
         CREATE TABLE IF NOT EXISTS saas_admin_action_logs (
-            id BIGSERIAL PRIMARY KEY,
+            id {id_type},
             action VARCHAR(80) NOT NULL,
             entity_type VARCHAR(50) NOT NULL,
             entity_id VARCHAR(255),
-            details_json TEXT NOT NULL DEFAULT '{}',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            details_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
         )
     """))
     await db.execute(text("""
@@ -1933,8 +2409,16 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         ON saas_admin_action_logs (created_at DESC, id DESC)
     """))
     # Keep billing references available when this code is upgraded against an existing database.
-    await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100)"))
-    await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"))
+    if dialect_name == "postgresql":
+        await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100)"))
+        await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"))
+    elif dialect_name == "sqlite":
+        columns = (await db.execute(text("PRAGMA table_info(payment_webhook_events)"))).all()
+        column_names = {row[1] for row in columns}
+        if "transaction_id" not in column_names:
+            await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN transaction_id VARCHAR(100)"))
+        if "subscription_id" not in column_names:
+            await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN subscription_id VARCHAR(100)"))
     await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id ON payment_webhook_events (transaction_id)"))
     await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id ON payment_webhook_events (subscription_id)"))
     # Migrate configured legacy plans without overwriting operator-managed values.
@@ -1964,9 +2448,9 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         if concurrency > 1:
             await db.execute(text("""
                 UPDATE saas_plan_packages
-                SET max_concurrent_audits=:concurrency, updated_at=NOW()
+                SET max_concurrent_audits=:concurrency, updated_at=:updated_at
                 WHERE tier=:tier AND max_concurrent_audits=1
-            """), {"tier": tier, "concurrency": concurrency})
+            """), {"tier": tier, "concurrency": concurrency, "updated_at": datetime.now(timezone.utc)})
     await db.commit()
 
 
@@ -2008,7 +2492,7 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
 
 
 def _safe_audit_metadata_url(value: str | None) -> str | None:
-    """Persist only public HTTP(S) URLs without userinfo, query strings or fragments."""
+    """Persist only public HTTP(S) URLs without credentials, private hosts, queries or fragments."""
     if not value:
         return None
     try:
@@ -2017,7 +2501,15 @@ def _safe_audit_metadata_url(value: str | None) -> str | None:
             return None
         if parts.username is not None or parts.password is not None:
             return None
-        host = parts.hostname.lower()
+        host = parts.hostname.rstrip(".").lower()
+        if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".test", ".invalid")):
+            return None
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return None
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         port = parts.port
@@ -2063,14 +2555,18 @@ async def _record_operation_event(db: AsyncSession, event_type: str, license_id:
                                 domain: str | None, error_type: str | None) -> None:
     """Best-effort diagnostic write with only a hostname and exception class; never store traceback/secrets."""
     try:
-        await db.execute(text("""
+        dialect_name = db.get_bind().dialect.name
+        timestamp_type = "TIMESTAMPTZ" if dialect_name == "postgresql" else "DATETIME"
+        timestamp_default = "NOW()" if dialect_name == "postgresql" else "CURRENT_TIMESTAMP"
+        id_type = "BIGSERIAL PRIMARY KEY" if dialect_name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        await db.execute(text(f"""
             CREATE TABLE IF NOT EXISTS saas_operation_events (
-                id BIGSERIAL PRIMARY KEY,
+                id {id_type},
                 event_type VARCHAR(80) NOT NULL,
                 license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
                 domain VARCHAR(255),
                 error_type VARCHAR(120),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
             )
         """))
         await db.execute(text("""
@@ -2091,12 +2587,36 @@ async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[
         query += " WHERE is_active = TRUE"
     query += " ORDER BY monthly_audit_allowance ASC, tier ASC"
     rows = (await db.execute(text(query))).mappings().all()
-    return [{
-        "tier": row["tier"], "label": row["label"],
-        "monthly_audit_allowance": int(row["monthly_audit_allowance"]),
-        "max_concurrent_audits": int(row["max_concurrent_audits"]),
-        "price_id": row["paddle_price_id"], "is_active": bool(row["is_active"])
-    } for row in rows]
+    if not rows:
+        # Preserve environment-configured plans for installations that have not
+        # populated the operator catalogue yet. Once any catalogue rows exist,
+        # the database remains authoritative and disabled tiers are not revived.
+        return _configured_payment_plans()
+    plans = []
+    for row in rows:
+        tier = str(row["tier"] or "").strip().lower()
+        # Database package settings are authoritative when they contain a price ID.
+        # For existing installations whose package row has no price yet, retain the
+        # documented environment-based configuration path used by deployment setups.
+        price_id = str(row["paddle_price_id"] or "").strip()
+        # Never pass malformed persisted operator data through to Paddle. Treat
+        # invalid legacy values as unconfigured so checkout fails closed; a valid
+        # environment fallback remains available only when the DB value is absent
+        # or malformed, and never changes the stored package record.
+        if price_id and not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id):
+            logger.warning("Ignoring malformed Paddle price ID for package tier=%s", tier)
+            price_id = ""
+        if not price_id and tier:
+            candidate = os.getenv(f"PADDLE_PRICE_ID_{tier.upper()}", "").strip()
+            if re.fullmatch(r"pri_[A-Za-z0-9]+", candidate):
+                price_id = candidate
+        plans.append({
+            "tier": tier, "label": row["label"],
+            "monthly_audit_allowance": int(row["monthly_audit_allowance"]),
+            "max_concurrent_audits": int(row["max_concurrent_audits"]),
+            "price_id": price_id or None, "is_active": bool(row["is_active"])
+        })
+    return plans
 
 
 class AdminPackageInput(BaseModel):
@@ -2162,7 +2682,24 @@ async def admin_create_package(payload: AdminPackageInput, request: Request,
     except Exception as exc:
         await db.rollback()
         if "IntegrityError" in type(exc).__name__:
-            raise HTTPException(status_code=409, detail="A package with this tier already exists.") from exc
+            # A concurrent admin request can pass the preflight lookup and still
+            # collide with the database unique index. Return the actionable conflict
+            # rather than misreporting every uniqueness violation as a duplicate tier.
+            if values["paddle_price_id"]:
+                duplicate_price = (await db.execute(text("""
+                    SELECT tier FROM saas_plan_packages WHERE paddle_price_id=:price_id
+                """), {"price_id": values["paddle_price_id"]})).scalar_one_or_none()
+                if duplicate_price:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="That Paddle price is already assigned to another package.",
+                    ) from exc
+            duplicate_tier = (await db.execute(text("""
+                SELECT tier FROM saas_plan_packages WHERE tier=:tier
+            """), {"tier": values["tier"]})).scalar_one_or_none()
+            if duplicate_tier:
+                raise HTTPException(status_code=409, detail="A package with this tier already exists.") from exc
+            raise HTTPException(status_code=409, detail="Package conflicts with an existing unique value.") from exc
         logger.error("Admin package creation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Unable to create package.") from exc
     return {"status": "created", "tier": values["tier"]}
@@ -2190,7 +2727,7 @@ async def admin_update_package(tier: str, payload: AdminPackageInput, request: R
         UPDATE saas_plan_packages SET label=:label,
           monthly_audit_allowance=:monthly_audit_allowance,
           max_concurrent_audits=:max_concurrent_audits,
-          paddle_price_id=:paddle_price_id, is_active=:is_active, updated_at=NOW()
+          paddle_price_id=:paddle_price_id, is_active=:is_active, updated_at=CURRENT_TIMESTAMP
         WHERE tier=:tier
     """), values)
     if result.rowcount == 0:
@@ -2221,7 +2758,7 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
     tier = tier.strip().lower()
     await _ensure_admin_tables(db)
     result = await db.execute(text("""
-        UPDATE saas_plan_packages SET is_active=FALSE, updated_at=NOW() WHERE tier=:tier
+        UPDATE saas_plan_packages SET is_active=FALSE, updated_at=CURRENT_TIMESTAMP WHERE tier=:tier
     """), {"tier": tier})
     if result.rowcount == 0:
         await db.rollback()
@@ -2232,19 +2769,47 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
 
 
 @app.get("/api/v1/admin/actions")
-async def admin_action_history(request: Request, limit: int = Query(100, ge=1, le=500),
-                              db: AsyncSession = Depends(get_async_db)):
+async def admin_action_history(
+    request: Request,
+    response: Response,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1000000),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded, newest-first page of sanitized administrator activity."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
+    total = int((await db.execute(text(
+        "SELECT COUNT(*) FROM saas_admin_action_logs"
+    ))).scalar_one() or 0)
     rows = (await db.execute(text("""
         SELECT id, action, entity_type, entity_id, details_json, created_at
-        FROM saas_admin_action_logs ORDER BY created_at DESC, id DESC LIMIT :limit
-    """), {"limit": limit})).mappings().all()
-    return {"actions": [{
-        "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
-        "entity_id": row["entity_id"], "details": json.loads(row["details_json"] or "{}"),
-        "created_at": row["created_at"].isoformat() if row["created_at"] else None
-    } for row in rows]}
+        FROM saas_admin_action_logs
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+    """), {"limit": limit, "offset": offset})).mappings().all()
+    actions = []
+    for row in rows:
+        # Older rows may predate write-time sanitization or may have been manually
+        # edited. Never let one malformed payload break the whole activity page.
+        try:
+            parsed_details = json.loads(row["details_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_details = {"_warning": "Stored activity details were invalid and have been omitted."}
+        if not isinstance(parsed_details, dict):
+            parsed_details = {"_warning": "Stored activity details were not an object and have been omitted."}
+        safe_details = _sanitize_admin_log_value(parsed_details)
+        actions.append({
+            "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
+            "entity_id": row["entity_id"], "details": safe_details,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None
+        })
+    return {
+        "actions": actions,
+        "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(actions) < total},
+    }
 
 
 # ----------------------- Admin operations dashboard -----------------------
@@ -2254,7 +2819,9 @@ def _require_admin_key(request: Request) -> None:
     supplied = request.headers.get("x-admin-key", "")
     if not expected:
         raise HTTPException(status_code=503, detail="Admin access is not configured.")
-    if not supplied or not hmac.compare_digest(expected, supplied):
+    if not supplied:
+        raise HTTPException(status_code=401, detail="Admin authentication required.")
+    if not hmac.compare_digest(expected, supplied):
         raise HTTPException(status_code=403, detail="Admin authentication failed.")
 
 
@@ -2263,6 +2830,54 @@ async def admin_dashboard_page():
     """Serve the operator-only dashboard shell; every data endpoint independently authenticates."""
     return FileResponse(Path(__file__).resolve().parent / "admin_portal.html")
 
+
+
+@app.get("/api/v1/admin/payment-events")
+async def admin_payment_events(
+    request: Request,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=100000),
+    status: str | None = Query(None, min_length=1, max_length=40),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return a bounded, filterable payment-event queue for operator triage."""
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    from sqlalchemy import select, func as sql_func
+
+    statement = select(PaymentWebhookEvent)
+    count_statement = select(sql_func.count(PaymentWebhookEvent.event_id))
+    if status:
+        statement = statement.where(PaymentWebhookEvent.status == status)
+        count_statement = count_statement.where(PaymentWebhookEvent.status == status)
+    total = int((await db.execute(count_statement)).scalar_one() or 0)
+    events = (await db.execute(
+        statement
+        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "items": [
+            {
+                "event_id": event.event_id,
+                "status": event.status,
+                "license_id": event.license_id,
+                "transaction_id": event.transaction_id,
+                "subscription_id": event.subscription_id,
+                "paddle_customer_id": event.paddle_customer_id,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+                "updated_at": event.updated_at.isoformat() if event.updated_at else None,
+            }
+            for event in events
+        ],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(events) < total,
+        },
+    }
 
 
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
@@ -2283,12 +2898,24 @@ async def admin_reconcile_payment(event_id: str, request: Request,
         raise HTTPException(status_code=503, detail="Paddle API is not configured.")
     try:
         response = await asyncio.to_thread(_paddle_api_request, f"/transactions/{event.transaction_id}")
-        data = response.get("data") or {}
+        if not isinstance(response, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned an invalid transaction response.")
+        data = response.get("data")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned an invalid transaction payload.")
         provider_transaction_id = str(data.get("id") or "").strip()
         if not provider_transaction_id or not hmac.compare_digest(provider_transaction_id, event.transaction_id):
             raise HTTPException(status_code=502, detail="Paddle returned a transaction that does not match the recorded payment.")
-        details = data.get("details") or {}
-        totals = details.get("totals") or {}
+        details = data.get("details", {})
+        if details is None:
+            details = {}
+        if not isinstance(details, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned invalid transaction details.")
+        totals = details.get("totals", {})
+        if totals is None:
+            totals = {}
+        if not isinstance(totals, dict):
+            raise HTTPException(status_code=502, detail="Paddle returned invalid transaction totals.")
         subscription_id = str(data.get("subscription_id") or "").strip()
         customer_id = str(data.get("customer_id") or "").strip()
         # Backfill only missing IDs from the authenticated Paddle API response.
@@ -2344,6 +2971,20 @@ async def admin_retry_license_email(event_id: str, request: Request,
         raise HTTPException(status_code=404, detail="Payment event not found.")
     if event.status == "delivered":
         return {"status": "already_delivered", "event_id": event.event_id}
+    # Only provisioning events that explicitly require license-email delivery are
+    # retryable. Payment failures, cancellations, and renewal records can reference
+    # the same license but must never trigger a fresh credential email.
+    if event.status not in {"email_pending", "email_sending"}:
+        raise HTTPException(
+            status_code=409,
+            detail="This payment event is not awaiting license email delivery.",
+        )
+    recipient = str(event.recipient_email or "").strip()
+    if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
+        raise HTTPException(
+            status_code=409,
+            detail="This payment event has no valid recipient email for delivery.",
+        )
     if event.status == "email_sending":
         updated_at = event.updated_at
         if updated_at is not None:
@@ -2360,12 +3001,13 @@ async def admin_retry_license_email(event_id: str, request: Request,
     if license_obj is None:
         raise HTTPException(status_code=409, detail="The license linked to this payment event is unavailable.")
 
+    event.recipient_email = recipient
     event.status = "email_sending"
     event.updated_at = now
     await db.commit()
     try:
         await asyncio.to_thread(
-            _send_license_email, event.recipient_email, license_obj.license_key,
+            _send_license_email, recipient, license_obj.license_key,
             license_obj.tier, license_obj.max_monthly_audits,
         )
     except Exception as exc:
@@ -2400,13 +3042,37 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         logger.error("Admin database diagnostic failed (error_type=%s)", type(exc).__name__)
         database_status = "unavailable"
 
+    # Keep delivery recovery metrics separate from ordinary subscription lifecycle
+    # events; a payment failure or cancellation is not a pending license email.
+    email_recovery_statuses = ("email_pending", "email_sending")
     pending_email = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)).where(
-        PaymentWebhookEvent.status != "delivered"
+        PaymentWebhookEvent.status.in_(email_recovery_statuses)
     ))).scalar_one()
     payment_events = (await db.execute(
-        select(PaymentWebhookEvent).where(PaymentWebhookEvent.status != "delivered")
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.status.in_(email_recovery_statuses))
         .order_by(PaymentWebhookEvent.updated_at.asc()).limit(50)
     )).scalars().all()
+    billing_attention_statuses = ("payment_failed", "subscription_past_due", "subscription_canceled")
+    billing_attention_counts = {}
+    for lifecycle_status in billing_attention_statuses:
+        billing_attention_counts[lifecycle_status] = int((await db.execute(
+            select(sql_func.count(PaymentWebhookEvent.event_id)).where(
+                PaymentWebhookEvent.status == lifecycle_status
+            )
+        )).scalar_one() or 0)
+    billing_attention_events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.status.in_(billing_attention_statuses))
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(50)
+    )).scalars().all()
+    stale_email_sending_count = int((await db.execute(
+        select(sql_func.count(PaymentWebhookEvent.event_id)).where(
+            PaymentWebhookEvent.status == "email_sending",
+            PaymentWebhookEvent.updated_at <= now - timedelta(minutes=10),
+        )
+    )).scalar_one() or 0)
     expired_reservation_count = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at <= now
     ))).scalar_one()
@@ -2440,6 +3106,11 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         },
         "counts": {
             "pending_payment_email_events": int(pending_email or 0),
+            "stale_payment_email_attempts": stale_email_sending_count,
+            "billing_attention_events": sum(billing_attention_counts.values()),
+            "payment_failed_events": billing_attention_counts["payment_failed"],
+            "subscription_past_due_events": billing_attention_counts["subscription_past_due"],
+            "subscription_canceled_events": billing_attention_counts["subscription_canceled"],
             "expired_quota_reservations": int(expired_reservation_count or 0),
             "active_quota_reservations": int(active_reservations or 0),
             "audit_and_operation_failures_24h": int(failures_24h or 0),
@@ -2459,6 +3130,15 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in payment_events],
+        "billing_attention_events": [{
+            "event_id": item.event_id,
+            "transaction_id": item.transaction_id,
+            "subscription_id": item.subscription_id,
+            "status": item.status,
+            "license_id": item.license_id,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in billing_attention_events],
         "expired_reservations": [{
             "id": item.id,
             "license_id": item.license_id,
@@ -2474,9 +3154,11 @@ async def admin_overview(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10000000),
     search: str = Query(default="", max_length=100),
+    client_status: str = Query(default="all", pattern="^(all|active|inactive|expired|expiring_7d|expiring_30d|no_expiry)$"),
+    tier_filter: str = Query(default="", max_length=50),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return global platform metrics plus a bounded, searchable client page."""
+    """Return global platform metrics plus a bounded, searchable and filterable client page."""
     _require_admin_key(request)
     from sqlalchemy import select, func as sql_func, or_, cast, String
     now = datetime.now(timezone.utc)
@@ -2494,9 +3176,34 @@ async def admin_overview(
         )
     count_query = select(sql_func.count(SoftwareLicense.id))
     filtered_query = select(SoftwareLicense)
+    filters = []
     if client_filter is not None:
-        count_query = count_query.where(client_filter)
-        filtered_query = filtered_query.where(client_filter)
+        filters.append(client_filter)
+    normalized_tier = tier_filter.strip().lower()
+    if normalized_tier:
+        # The operator UI describes this as an exact tier filter; do not let
+        # percent/underscore input broaden the query through SQL wildcard rules.
+        filters.append(sql_func.lower(SoftwareLicense.tier) == normalized_tier)
+    # Expiry takes precedence over the active flag: an expired but still-enabled
+    # record must not be shown as active in the operator's recovery workflow.
+    if client_status == "active":
+        filters.append(SoftwareLicense.is_active.is_(True))
+        filters.append((SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now))
+    elif client_status == "inactive":
+        filters.append(SoftwareLicense.is_active.is_(False))
+        filters.append((SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now))
+    elif client_status == "expired":
+        filters.append(SoftwareLicense.expires_at.is_not(None))
+        filters.append(SoftwareLicense.expires_at < now)
+    elif client_status == "expiring_7d":
+        filters.extend([SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=7)])
+    elif client_status == "expiring_30d":
+        filters.extend([SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=30)])
+    elif client_status == "no_expiry":
+        filters.append(SoftwareLicense.expires_at.is_(None))
+    if filters:
+        count_query = count_query.where(*filters)
+        filtered_query = filtered_query.where(*filters)
     filtered_total = int((await db.execute(count_query)).scalar_one() or 0)
     licenses = (await db.execute(
         filtered_query.order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
@@ -2509,6 +3216,11 @@ async def admin_overview(
             (SoftwareLicense.expires_at.is_(None)) | (SoftwareLicense.expires_at >= now),
         )
     )).scalar_one() or 0)
+    expired_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.expires_at.is_not(None), SoftwareLicense.expires_at < now))).scalar_one() or 0)
+    expiring_7d_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=7)))).scalar_one() or 0)
+    expiring_30d_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at > now, SoftwareLicense.expires_at <= now + timedelta(days=30)))).scalar_one() or 0)
+    no_expiry_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.expires_at.is_(None)))).scalar_one() or 0)
+    inactive_flag_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(False)))).scalar_one() or 0)
     total_leads = (await db.execute(select(sql_func.count(AuditLead.id)))).scalar_one()
     total_reports = (await db.execute(select(sql_func.count(AuditReport.id)))).scalar_one()
     total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
@@ -2556,6 +3268,8 @@ async def admin_overview(
             "expired": bool(item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "expires_in_days": max(0, int((((item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) - now).total_seconds()) // 86400)) if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) >= now else None,
+            "expiry_attention": "expired" if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now else ("expiring_7d" if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now + timedelta(days=7) else ("expiring_30d" if item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now + timedelta(days=30) else ("no_expiry" if item.expires_at is None else "ok"))),
             "monthly_limit": int(item.max_monthly_audits or 0),
             "monthly_used": used_month,
             "monthly_remaining": max(0, int(item.max_monthly_audits or 0) - used_month),
@@ -2570,12 +3284,17 @@ async def admin_overview(
         "summary": {
             "clients_total": total_clients, "clients_active": active_clients,
             "clients_inactive_or_expired": total_clients - active_clients,
+            "clients_expired": expired_clients,
+            "clients_expiring_7_days": expiring_7d_clients,
+            "clients_expiring_30_days": expiring_30d_clients,
+            "clients_without_expiry": no_expiry_clients,
+            "clients_inactive_flag": inactive_flag_clients,
             "audits_this_month": int(monthly_leads or 0), "audits_all_time": int(total_leads or 0),
             "reports_saved": int(total_reports or 0), "active_audit_reservations": int(total_reservations or 0),
             "payment_webhook_events": int(total_webhooks or 0),
         },
         "clients": client_rows,
-        "client_page": {"limit": limit, "offset": offset, "total": filtered_total, "search": normalized_search, "has_more": offset + len(client_rows) < filtered_total},
+        "client_page": {"limit": limit, "offset": offset, "total": filtered_total, "search": normalized_search, "status": client_status, "tier": normalized_tier, "has_more": offset + len(client_rows) < filtered_total},
     }
 
 
@@ -2608,7 +3327,7 @@ async def admin_report_evidence(
     response: Response,
     kind: str = Query("check_outcomes", pattern="^(findings|check_outcomes)$"),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=10000000),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return bounded persisted report evidence for operators, without exposing PDF bytes."""

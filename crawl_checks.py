@@ -49,18 +49,93 @@ MAX_CHILD_SITEMAPS = 3
 
 PRODUCT_DETAIL_PATH = re.compile(r"(?:^|/)(?:products?|items?)(?:/|$)", re.I)
 
+def _parse_robots_rules(body: str, user_agent: str) -> list[tuple[str, str]]:
+    """Return the applicable Allow/Disallow rules for this crawler's product token."""
+    groups: list[tuple[list[str], list[tuple[str, str]]]] = []
+    agents: list[str] = []
+    rules: list[tuple[str, str]] = []
+    saw_rule = False
+
+    def finish_group() -> None:
+        nonlocal agents, rules, saw_rule
+        if agents:
+            groups.append((agents, rules))
+        agents, rules, saw_rule = [], [], False
+
+    product_token = (user_agent.split("/", 1)[0].split(" ", 1)[0] or "").lower()
+    # Accept escaped line separators from plain-text transports/test fixtures as well
+    # as the real CRLF/LF format used by robots.txt.
+    body = body.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+    for raw_line in body.splitlines()[:5000]:
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        key = key.lower()
+        if key == "user-agent":
+            if saw_rule:
+                finish_group()
+            agents.append(value.lower())
+        elif key in {"allow", "disallow"} and agents:
+            saw_rule = True
+            # Empty Disallow means no restriction; empty Allow is ignored.
+            if value or key == "disallow":
+                rules.append((key, value))
+
+    finish_group()
+    exact_groups = [
+        group_rules for group_agents, group_rules in groups
+        if any(agent != "*" and agent and agent in product_token for agent in group_agents)
+    ]
+    wildcard_groups = [
+        group_rules for group_agents, group_rules in groups
+        if "*" in group_agents
+    ]
+    selected = exact_groups if exact_groups else wildcard_groups
+    return [rule for group_rules in selected for rule in group_rules]
+
+
+def _robots_path_allowed(url: str, rules: list[tuple[str, str]]) -> bool:
+    """Apply the longest-match robots rule; Allow wins equal-length ties."""
+    if not rules:
+        return True
+    parts = urlsplit(url)
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+    matched: list[tuple[int, bool]] = []
+    for directive, pattern in rules:
+        if not pattern:
+            continue
+        anchored = pattern.endswith("$")
+        pattern_body = pattern[:-1] if anchored else pattern
+        expression = re.escape(pattern_body).replace(r"\*", ".*")
+        expression = "^" + expression + ("$" if anchored else "")
+        try:
+            if re.search(expression, path):
+                specificity = len(pattern_body.replace("*", ""))
+                matched.append((specificity, directive == "allow"))
+        except re.error:
+            continue
+    if not matched:
+        return True
+    longest = max(length for length, _allowed in matched)
+    return any(allowed for length, allowed in matched if length == longest)
+
+
 
 class _SensitiveGetFormParser(HTMLParser):
     """Find GET forms that appear to submit credentials or payment-related fields."""
     SENSITIVE_NAMES = re.compile(
         r"(?:pass(?:word)?|secret|token|credit.?card|card.?number|cc.?num|cvv|cvc|"
-        r"security.?code|payment|billing.?address|bank.?account|routing.?number)",
+        r"security.?code|one.?time.?password|one.?time.?code|verification.?code|auth.?code|otp|api.?key|payment|billing.?address|bank.?account|routing.?number)",
         re.I,
     )
     SENSITIVE_TYPES = {"password"}
     SENSITIVE_AUTOCOMPLETE = {
         "current-password", "new-password", "cc-number", "cc-csc",
-        "cc-exp", "cc-exp-month", "cc-exp-year", "transaction-amount",
+        "cc-exp", "cc-exp-month", "cc-exp-year", "cc-name", "cc-type",
+        "one-time-code", "transaction-amount",
     }
 
     def __init__(self) -> None:
@@ -247,9 +322,9 @@ def inspect_ecommerce_catalog_navigation(html: str, page_url: str) -> list[Audit
 
     if likely_listing:
         navigation_signals = []
-        if re.search(r"<link\b[^>]*\brel\s*=\s*['"][^'"]*\bnext\b", lower, re.I):
+        if re.search(r"""<link\b[^>]*\brel\s*=\s*['"][^'"]*\bnext\b""", lower, re.I):
             navigation_signals.append("rel=next link")
-        if re.search(r"(?:aria-label|class|id|rel)\s*=\s*['"][^'"]*(?:pagination|page-next|next-page|load-more|loadmore)", lower, re.I):
+        if re.search(r"""(?:aria-label|class|id|rel)\s*=\s*['"][^'"]*(?:pagination|page-next|next-page|load-more|loadmore)""", lower, re.I):
             navigation_signals.append("pagination/load-more label or attribute")
         if re.search(r"[?&](?:page|p|offset|cursor|sort_by|filter|filter\.|facet|vendor|type|availability)=", html[:500_000], re.I):
             navigation_signals.append("pagination/filter/sort query parameters")
@@ -343,64 +418,10 @@ def inspect_product_page_schema_presence(html: str, page_url: str) -> list[Audit
             break
 
     if found_product:
-        # Audit core commerce fields conservatively. This is a source-level completeness
-        # signal only: it does not compare the JSON-LD against the visible/selected variant.
-        product_nodes: list[dict] = []
-
-        def collect_product_nodes(value):
-            if isinstance(value, list):
-                for item in value:
-                    collect_product_nodes(item)
-                return
-            if not isinstance(value, dict):
-                return
-            raw_type = value.get("@type", [])
-            types = raw_type if isinstance(raw_type, list) else [raw_type]
-            normalized_types = {
-                item.rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].casefold()
-                for item in types if isinstance(item, str)
-            }
-            if normalized_types.intersection({"product", "productgroup"}):
-                product_nodes.append(value)
-            for key, child in value.items():
-                if key in {"@graph", "mainEntity", "itemListElement", "hasVariant"}:
-                    collect_product_nodes(child)
-
-        for script in parser.jsonld_scripts:
-            try:
-                collect_product_nodes(json.loads(script))
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-        gaps: set[str] = set()
-        for node in product_nodes:
-            if not node.get("name"):
-                gaps.add("name")
-            if not node.get("image"):
-                gaps.add("image")
-            offers = node.get("offers")
-            offer_items = offers if isinstance(offers, list) else [offers]
-            valid_offers = [offer for offer in offer_items if isinstance(offer, dict)]
-            if not valid_offers:
-                gaps.add("offers")
-            else:
-                if not any(offer.get("price") or offer.get("lowPrice") for offer in valid_offers):
-                    gaps.add("offer price")
-                if not any(offer.get("priceCurrency") for offer in valid_offers):
-                    gaps.add("offer currency")
-                if not any(offer.get("availability") for offer in valid_offers):
-                    gaps.add("offer availability")
-
-        if gaps:
-            return [_finding(
-                "structured_data", "Product structured data has core commerce fields to review",
-                "manual_review_required", "medium" if {"offers", "offer price", "offer currency", "offer availability"} & gaps else "low",
-                f"Core field(s) not detected in the inspected Product/ProductGroup JSON-LD on {page_url}: {', '.join(sorted(gaps))}. Raw structured-data values are not copied into the report.",
-                "Product markup can be syntactically present while omitting information important to product understanding and eligible search experiences. Some fields may be intentionally supplied elsewhere or through variant-specific markup; this source-only check does not validate rich-result eligibility or compare data with the visible selected variant.",
-                "Review the rendered product and selected variant. Where applicable, provide accurate product name, image, offer price, ISO currency, and availability that match what customers can actually select and buy. Do not invent prices or stock states.",
-                ["Inspect the rendered page and all Product/Offer entities.", "Compare the selected variant's visible price, currency, image, and stock state with its structured data.", "Validate the final markup using an authoritative structured-data validator."],
-                page_url,
-            )]
+        # This crawler check is deliberately a presence heuristic. Detailed Product,
+        # Offer, price, currency and availability completeness is recorded by the
+        # dedicated structured-data module; duplicating it here creates contradictory
+        # crawl findings for valid ProductGroup/variant markup.
         return []
     if malformed:
         return [_finding(
@@ -777,14 +798,23 @@ class _AnchorNameParser(HTMLParser):
 
 
 class _LinkParser(HTMLParser):
+    """Collect anchor hrefs and the first HTML base URL from source markup."""
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.links: list[str] = []
+        self.base_href: str | None = None
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() != "a":
-            return
+        tag = tag.lower()
         values = {key.lower(): value or "" for key, value in attrs}
+        if tag == "base" and self.base_href is None:
+            href = values.get("href", "").strip()
+            if href:
+                self.base_href = href
+            return
+        if tag != "a":
+            return
         href = values.get("href", "").strip()
         if href:
             self.links.append(href)
@@ -1072,7 +1102,7 @@ async def run_bounded_site_crawl(
     limitations = [
         f"Same-origin crawl is capped at {MAX_CRAWL_PAGES} URLs and follows discovered HTML links only while page budget remains; it does not crawl the whole site.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        f"Sitemap discovery uses the first usable same-origin Sitemap directive in robots.txt, falling back to /sitemap.xml; indexes expand one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps and at most {MAX_URLS_FROM_SITEMAP} page URLs. Additional declared sitemap locations and deeper sitemap-index nesting are not fully explored.",
+        f"Sitemap discovery considers at most {MAX_CHILD_SITEMAPS} same-origin Sitemap directives from robots.txt (falling back to /sitemap.xml when none are usable) and at most {MAX_URLS_FROM_SITEMAP} page URLs. The primary sitemap index expands one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps; additional declared sitemap files are inspected within the same bounded discovery budget, but child indexes referenced by those additional files and deeper sitemap-index nesting are not fully expanded.",
     ]
 
     async with aiohttp.ClientSession(
@@ -1106,6 +1136,10 @@ async def run_bounded_site_crawl(
                         evidence_ref="crawl.bounded_crawl",
                     ))
                 return findings, pages_checked, limitations
+            # Normalize redirect destinations before constructing robots/sitemap
+            # URLs. In particular, :443 and :80 must not make a safe same-origin
+            # crawl appear to be a different origin to the next bounded request.
+            final_home = _canonical_page_url(final_home or normalized)
             if "text/html" not in headers.get("content-type", "").lower():
                 findings.append(_finding(
                     "crawl", "Homepage response is not HTML",
@@ -1200,11 +1234,13 @@ async def run_bounded_site_crawl(
         # the same public-only resolver and redirect/response-size safeguards.
         robots_sitemap_urls: list[str] = []
         robots_declared_sitemap_urls: list[str] = []
+        robots_rules: list[tuple[str, str]] = []
         robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
         try:
             robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
             if 200 <= robots_status < 300 and _same_origin(robots_final_url, final_home):
                 robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
+                robots_rules = _parse_robots_rules(robots_body, USER_AGENT)
                 findings.extend(robots_findings)
                 limitations.extend(robots_limitations)
                 _record_static_check_outcome(
@@ -1219,7 +1255,15 @@ async def run_bounded_site_crawl(
                 # bounded, credential-free HTTP(S) URLs on the audited origin; the
                 # same-origin requirement keeps this discovery step from becoming
                 # an arbitrary URL fetch mechanism.
-                for raw_line in robots_body.splitlines()[:5000]:
+                # Some proxy/test transports preserve escaped line separators in
+                # text bodies. Normalize them here too so Sitemap directives are
+                # discovered consistently with the robots rule parser.
+                normalized_robots_body = (
+                    robots_body.replace("\\r\\n", "\n")
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\n")
+                )
+                for raw_line in normalized_robots_body.splitlines()[:5000]:
                     line = raw_line.split("#", 1)[0].strip()
                     if ":" not in line:
                         continue
@@ -1245,6 +1289,21 @@ async def run_bounded_site_crawl(
                     # reporting instead of silently discarding them.
                     if len(robots_declared_sitemap_urls) >= MAX_CHILD_SITEMAPS:
                         break
+            elif robots_status == 404:
+                # A missing robots.txt is an unavailable file, not a server failure.
+                # With no published rules, bounded same-origin discovery can proceed.
+                robots_rules = []
+                if outcome_records is not None:
+                    outcome_records.append(CheckOutcome(
+                        check_id="robots_txt.discovery_rules",
+                        category="indexing",
+                        page_url=robots_final_url or robots_url,
+                        outcome="not_assessed",
+                        observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                        method="same-origin robots.txt response and bounded directive parsing",
+                        evidence="No robots.txt file was published (HTTP 404); no crawl directives were available to inspect.",
+                        evidence_ref="robots_txt.discovery_rules",
+                    ))
             elif robots_status in {401, 403}:
                 limitations.append("robots.txt could not be inspected because the server returned an access-denied response.")
                 if outcome_records is not None:
@@ -1259,6 +1318,7 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
             elif robots_status >= 500:
+                robots_rules = [("disallow", "/")]
                 limitations.append(f"robots.txt could not be inspected because the server returned HTTP {robots_status}.")
                 if outcome_records is not None:
                     outcome_records.append(CheckOutcome(
@@ -1272,6 +1332,7 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
             elif 200 <= robots_status < 300:
+                robots_rules = [("disallow", "/")]
                 limitations.append("robots.txt inspection was skipped because the response redirected outside the audited origin.")
                 if outcome_records is not None:
                     outcome_records.append(CheckOutcome(
@@ -1298,7 +1359,12 @@ async def run_bounded_site_crawl(
                         evidence_ref="robots_txt.discovery_rules",
                     ))
         except Exception as exc:
-            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}).")
+            # A transient robots.txt fetch/parse failure must be disclosed, but
+            # should not silently turn a crawl into zero-page coverage. We still
+            # restrict every candidate to the public audited origin and hard page
+            # caps; an explicit successfully fetched Disallow rule remains honored.
+            robots_rules = []
+            limitations.append(f"robots.txt inspection was inconclusive ({type(exc).__name__}); bounded same-origin discovery continued without inferred crawl directives.")
             if outcome_records is not None:
                 outcome_records.append(CheckOutcome(
                     check_id="robots_txt.discovery_rules",
@@ -1339,10 +1405,21 @@ async def run_bounded_site_crawl(
 
         # robots.txt is untrusted input. Do not request an off-origin Sitemap URL
         # just to discover later that it is outside this crawl's scope.
-        same_origin_sitemaps = [
-            value for value in robots_sitemap_urls
-            if _same_origin_http_url(value, final_home)
-        ]
+        same_origin_sitemaps: list[str] = []
+        seen_declared_sitemaps: set[str] = set()
+        for value in robots_sitemap_urls:
+            if not _same_origin_http_url(value, final_home):
+                continue
+            try:
+                normalized_sitemap = _canonical_page_url(value)
+            except (ValueError, UnicodeError):
+                continue
+            if normalized_sitemap in seen_declared_sitemaps:
+                continue
+            seen_declared_sitemaps.add(normalized_sitemap)
+            same_origin_sitemaps.append(value)
+            if len(same_origin_sitemaps) >= MAX_CHILD_SITEMAPS:
+                break
         for declared_sitemap in robots_declared_sitemap_urls:
             if not _same_origin_http_url(declared_sitemap, final_home):
                 findings.append(_finding(
@@ -1582,9 +1659,63 @@ async def run_bounded_site_crawl(
                     remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
                     sitemap_urls.extend(_loc_values(extra_root)[:remaining])
                 elif extra_type == "sitemapindex":
-                    limitations.append(
-                        f"Additional sitemap index {extra_sitemap_url} was validated but its child sitemaps were not expanded."
-                    )
+                    # Expand a bounded number of children from secondary sitemap
+                    # indexes too; every candidate is validated before any request.
+                    nested_children: list[str] = []
+                    seen_nested: set[str] = set()
+                    for nested_node in extra_root:
+                        if nested_node.tag.rsplit("}", 1)[-1].lower() != "sitemap":
+                            continue
+                        nested_loc = next((
+                            (loc.text or "").strip()
+                            for loc in nested_node
+                            if loc.tag.rsplit("}", 1)[-1].lower() == "loc"
+                        ), "")
+                        if not nested_loc:
+                            continue
+                        try:
+                            resolved_nested = urljoin(extra_sitemap_url, nested_loc)
+                            if not _same_origin_http_url(resolved_nested, extra_sitemap_url):
+                                continue
+                            normalized_nested = _canonical_page_url(resolved_nested)
+                        except (ValueError, UnicodeError):
+                            continue
+                        if normalized_nested in seen_nested:
+                            continue
+                        seen_nested.add(normalized_nested)
+                        nested_children.append(resolved_nested)
+                        if len(nested_children) >= MAX_CHILD_SITEMAPS:
+                            break
+
+                    for nested_url in nested_children:
+                        if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
+                            break
+                        try:
+                            nested_status, nested_body, nested_headers, nested_final = await _safe_get(
+                                client, nested_url
+                            )
+                            if not _same_origin(nested_final, final_home):
+                                continue
+                            if nested_status < 200 or nested_status >= 300:
+                                continue
+                            if not (
+                                "xml" in nested_headers.get("content-type", "").lower()
+                                or nested_body.lstrip().startswith("<")
+                            ):
+                                continue
+                            findings.extend(inspect_crawl_sitemap(nested_body, nested_url))
+                            nested_root = ET.fromstring(nested_body)
+                            if nested_root.tag.rsplit("}", 1)[-1].lower() == "urlset":
+                                remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
+                                sitemap_urls.extend(_loc_values(nested_root)[:remaining])
+                            elif nested_root.tag.rsplit("}", 1)[-1].lower() == "sitemapindex":
+                                limitations.append(
+                                    f"Nested sitemap index {nested_url} was not expanded beyond the configured depth."
+                                )
+                        except Exception:
+                            # A child sitemap is optional discovery input; do not
+                            # fail the whole audit when one nested file is unusable.
+                            continue
             except Exception as extra_exc:
                 findings.append(_finding(
                     "indexing", "Additional robots-declared sitemap could not be inspected",
@@ -1595,6 +1726,31 @@ async def run_bounded_site_crawl(
                     ["Open the sitemap directly.", "Retry the audit after resolving transient failures."],
                     extra_sitemap_url,
                 ))
+
+        # HTML's first <base href> changes how relative anchor links resolve.
+        # Treat it as untrusted input: all resolved candidates still pass the
+        # existing HTTP(S), credential, same-origin, robots and file-type gates.
+        link_resolution_base: str | None = final_home
+        if link_parser.base_href:
+            try:
+                proposed_base = urljoin(final_home, link_parser.base_href)
+                base_parts = urlsplit(proposed_base)
+                _ = base_parts.port
+                if (
+                    base_parts.scheme.lower() not in {"http", "https"}
+                    or not base_parts.hostname
+                    or base_parts.username is not None
+                    or base_parts.password is not None
+                    or not _same_origin(proposed_base, final_home)
+                ):
+                    # HTML base changes the meaning of every relative link. If it
+                    # points off-origin or is malformed, skip relative anchors
+                    # rather than silently reinterpreting them against the homepage.
+                    link_resolution_base = None
+                else:
+                    link_resolution_base = proposed_base
+            except (ValueError, UnicodeError):
+                link_resolution_base = None
 
         discovery_hrefs = [
             *link_parser.links[:MAX_LINKS_FROM_HOME],
@@ -1609,7 +1765,13 @@ async def run_bounded_site_crawl(
             # authority (for example, an unmatched IPv6 bracket) must not abort
             # discovery for the remaining valid URLs.
             try:
-                absolute = urljoin(final_home, href)
+                is_page_link = href in link_parser.links
+                # Relative anchors cannot be safely resolved when a malformed or
+                # off-origin base element was present. Absolute same-origin links
+                # still pass the normal origin and robots checks below.
+                if is_page_link and link_resolution_base is None and not urlsplit(href).scheme and not href.startswith("//"):
+                    continue
+                absolute = urljoin((link_resolution_base or final_home) if is_page_link else final_home, href)
                 parts = urlsplit(absolute)
                 if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
                     continue
@@ -1623,6 +1785,8 @@ async def run_bounded_site_crawl(
                     continue
                 candidate = _canonical_page_url(absolute)
                 if candidate in seen or candidate == _canonical_page_url(final_home):
+                    continue
+                if not _robots_path_allowed(candidate, robots_rules):
                     continue
                 suffix = urlsplit(candidate).path.lower()
             except (ValueError, UnicodeError):
@@ -1639,7 +1803,9 @@ async def run_bounded_site_crawl(
 
         # A small fixed set of safe GET probes looks for recognizable exposed artifacts.
         # The public-only resolver, redirect validation, timeout and response cap still apply.
-        exposure_findings, exposure_limitations = await probe_common_exposure_paths(client, final_home)
+        exposure_findings, exposure_limitations = await probe_common_exposure_paths(
+            client, final_home, allowed_url=lambda candidate_url: _robots_path_allowed(candidate_url, robots_rules)
+        )
         findings.extend(exposure_findings)
         limitations.extend(exposure_limitations)
 
@@ -1657,7 +1823,15 @@ async def run_bounded_site_crawl(
         # unbounded queue or a second crawler implementation.
         crawl_queue = [_canonical_page_url(final_home), *candidates]
         queued_urls = set(crawl_queue)
+        processed_page_keys: set[str] = set()
         for url in crawl_queue:
+            # Sitemap and link discovery can converge on the same canonical page.
+            # Process each normalized request URL once so page outcomes and findings
+            # are not duplicated by overlapping discovery sources.
+            page_key = _canonical_page_url(url)
+            if page_key in processed_page_keys:
+                continue
+            processed_page_keys.add(page_key)
             try:
                 # Reuse the homepage response already fetched for link discovery.
                 # This avoids spending a second request on the same page and keeps
@@ -1692,10 +1866,10 @@ async def run_bounded_site_crawl(
             if url in sitemap_discovered_urls and outcome_records is not None:
                 if not _same_origin(final_url, final_home):
                     sitemap_outcome = "not_assessed"
-                    sitemap_evidence = "The sitemap-listed URL redirected outside the audited origin; its destination was not treated as an in-scope page."
+                    sitemap_evidence = "The sitemap-listed URL redirected off-origin; its destination was not treated as an in-scope page."
                 elif 200 <= page_status < 300:
                     sitemap_outcome = "pass"
-                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status} on the audited origin. This does not establish search-engine indexing."
+                    sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status} on the audited origin. This does not establish indexing."
                 elif page_status >= 500:
                     sitemap_outcome = "error"
                     sitemap_evidence = f"The sampled sitemap-listed URL returned HTTP {page_status}; availability is inconclusive."
@@ -1748,11 +1922,39 @@ async def run_bounded_site_crawl(
             if len(crawl_queue) < MAX_CRAWL_PAGES:
                 discovered_links = _LinkParser()
                 discovered_links.feed(body)
+                # Apply each document's own <base href> during breadth-first
+                # discovery too, not only during homepage seed collection.
+                # Otherwise a relative link skipped above could be re-added here
+                # when the homepage is revisited from the crawl queue.
+                page_link_base: str | None = final_url
+                if discovered_links.base_href:
+                    try:
+                        proposed_page_base = urljoin(final_url, discovered_links.base_href)
+                        base_parts = urlsplit(proposed_page_base)
+                        _ = base_parts.port
+                        if (
+                            base_parts.scheme.lower() not in {"http", "https"}
+                            or not base_parts.hostname
+                            or base_parts.username is not None
+                            or base_parts.password is not None
+                            or not _same_origin(proposed_page_base, final_url)
+                        ):
+                            page_link_base = None
+                        else:
+                            page_link_base = proposed_page_base
+                    except (ValueError, UnicodeError):
+                        page_link_base = None
                 for href in discovered_links.links[:MAX_LINKS_FROM_HOME]:
                     if len(crawl_queue) >= MAX_CRAWL_PAGES:
                         break
                     try:
-                        absolute = urljoin(final_url, href)
+                        if (
+                            page_link_base is None
+                            and not urlsplit(href).scheme
+                            and not href.startswith("//")
+                        ):
+                            continue
+                        absolute = urljoin(page_link_base or final_url, href)
                         parts = urlsplit(absolute)
                         if (
                             parts.scheme.lower() not in {"http", "https"}
@@ -1767,6 +1969,8 @@ async def run_bounded_site_crawl(
                         candidate_url = _canonical_page_url(absolute)
                         if candidate_url in queued_urls:
                             continue
+                        if not _robots_path_allowed(candidate_url, robots_rules):
+                            continue
                         path = urlsplit(candidate_url).path.lower()
                         if path.endswith((
                             ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
@@ -1779,10 +1983,27 @@ async def run_bounded_site_crawl(
                         # A malformed link must not stop inspection of other links.
                         continue
 
-            findings.extend(inspect_product_page_schema_presence(body, final_url))
-            findings.extend(inspect_ecommerce_catalog_navigation(body, final_url))
-            findings.extend(inspect_sensitive_get_forms(body, final_url))
-            findings.extend(inspect_canonical_declaration(body, final_url))
+            product_schema_findings = inspect_product_page_schema_presence(body, final_url)
+            findings.extend(product_schema_findings)
+            if product_schema_findings:
+                _record_static_check_outcome(
+                    outcome_records, check_id="structured_data.product",
+                    category="structured_data", page_url=final_url,
+                    findings=product_schema_findings,
+                    method="static product-route JSON-LD presence and parseability review",
+                )
+            catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
+            findings.extend(catalog_findings)
+            sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
+            findings.extend(sensitive_form_findings)
+            canonical_findings = inspect_canonical_declaration(body, final_url)
+            findings.extend(canonical_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="indexability.canonical",
+                category="indexability", page_url=final_url,
+                findings=canonical_findings,
+                method="static HTML canonical-link declaration review",
+            )
 
             # Run the existing header/cookie review on every sampled HTML page.
             # These are configuration review signals, not automatic vulnerability claims.
@@ -1811,8 +2032,20 @@ async def run_bounded_site_crawl(
                 findings=document_findings, method="static HTML document metadata and landmark inspection",
             )
 
-            findings.extend(inspect_hreflang(body, final_url))
-            findings.extend(inspect_meta_refresh(body, final_url))
+            hreflang_findings = inspect_hreflang(body, final_url)
+            findings.extend(hreflang_findings)
+            hreflang_declared = bool(
+                re.search(r"(?is)<link\b[^>]*\bhreflang\s*=", body[:500_000])
+            )
+
+            refresh_findings = inspect_meta_refresh(body, final_url)
+            findings.extend(refresh_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="technical_seo.meta_refresh",
+                category="technical_seo", page_url=final_url,
+                findings=refresh_findings,
+                method="static HTML meta-refresh redirect inspection",
+            )
             viewport_findings = inspect_mobile_viewport(body, final_url)
             findings.extend(viewport_findings)
             _record_static_check_outcome(
@@ -1846,7 +2079,8 @@ async def run_bounded_site_crawl(
                 findings=trust_findings, method="static visible trust-signal inventory",
             )
             # Detect source-visible tags and consent signals; never infer event success or legal compliance.
-            findings.extend(inspect_privacy_tracking_signals(body, final_url))
+            privacy_tracking_findings = inspect_privacy_tracking_signals(body, final_url)
+            findings.extend(privacy_tracking_findings)
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
@@ -2317,11 +2551,7 @@ async def run_bounded_site_crawl(
         # for that executed source check; manual-review findings remain warnings.
         if outcome_records is not None:
             page_check_families = (
-                ("structured_data.product", "structured_data", "Product/category structured-data source inspection"),
-                ("ecommerce_catalog.navigation", "ecommerce_catalog", "Product variant and listing navigation source inspection"),
                 ("security.headers_and_forms", "security", "HTTP security headers and sensitive GET-form source inspection"),
-                ("indexability.canonical", "indexability", "Canonical declaration source inspection"),
-                ("international_seo.hreflang", "international_seo", "Hreflang declaration source inspection"),
                 ("mobile_ux.viewport", "mobile_ux", "Mobile viewport source inspection"),
                 ("performance.static_signals", "performance", "Static HTML performance signal inspection"),
                 ("accessibility.static_signals", "accessibility", "Static HTML accessibility signal inspection"),
@@ -2329,10 +2559,31 @@ async def run_bounded_site_crawl(
                 ("trust.signals", "trust", "Trust signal source inspection"),
                 ("pixel_analytics.consent_signals", "pixel_analytics", "Tracking and consent source signal inspection"),
                 ("on_page_seo.metadata", "on_page_seo", "Page title and meta description source inspection"),
+                ("structured_data.product", "structured_data", "Product structured-data source inspection"),
+                ("ecommerce_catalog.navigation", "ecommerce_catalog", "Product and catalog navigation source inspection"),
             )
             page_findings = findings[page_findings_start:]
             for check_id, category, method in page_check_families:
                 matching = [item for item in page_findings if item.category == category]
+                if check_id == "structured_data.product":
+                    try:
+                        if not PRODUCT_DETAIL_PATH.search(urlsplit(final_url).path):
+                            continue
+                    except (ValueError, UnicodeError):
+                        continue
+                if check_id == "ecommerce_catalog.navigation":
+                    try:
+                        catalog_path = urlsplit(final_url).path.lower()
+                        catalog_segments = {segment for segment in catalog_path.split("/") if segment}
+                        if not (
+                            PRODUCT_DETAIL_PATH.search(catalog_path)
+                            or catalog_segments.intersection({"collections", "collection", "category", "categories", "catalog", "shop"})
+                        ):
+                            continue
+                    except (ValueError, UnicodeError):
+                        continue
+                if check_id == "international_seo.hreflang" and not hreflang_declared:
+                    continue
                 if any(getattr(item, "status", "") == "not_tested" for item in matching):
                     outcome = "not_assessed"
                 else:
@@ -2357,6 +2608,15 @@ async def run_bounded_site_crawl(
                         outcome = "warning"
                     else:
                         outcome = "pass"
+                # Some specialized checks (for example Product JSON-LD) record
+                # richer outcomes earlier in the page pass. Do not append a second
+                # generic family outcome for the same check and canonical page.
+                if any(
+                    item.check_id == check_id
+                    and _canonical_page_url(item.page_url) == _canonical_page_url(final_url)
+                    for item in outcome_records
+                ):
+                    continue
                 outcome_records.append(CheckOutcome(
                     check_id=check_id,
                     category=category,

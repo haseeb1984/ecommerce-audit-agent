@@ -24,6 +24,14 @@
 <div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
 <div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
 </section>
+<section class="panel" aria-labelledby="profileHeading">
+<h2 id="profileHeading">Account profile</h2>
+<p class="muted">Update the display name shown in your account. Subscription billing identity and payment details remain managed by Paddle.</p>
+<div class="row"><div><label for="profileName">Account name</label><input id="profileName" type="text" maxlength="255" autocomplete="organization" placeholder="Your business or account name"></div><div><label for="profileTier">Current plan</label><input id="profileTier" type="text" readonly aria-readonly="true" value="—"></div></div>
+<p id="profileMeta" class="muted">Connect your account to view profile details.</p>
+<button id="saveProfile" type="button" disabled>Save account name</button>
+<div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
@@ -34,7 +42,8 @@
 <h2 id="billingHistoryHeading">Billing history</h2>
 <p class="muted">View recent payment provisioning events associated with your connected account. This history does not expose payment details or allow refunds.</p>
 <div id="billingAccount" class="muted">Connect your account to load billing status.</div>
-<div class="report-actions" style="margin:12px 0"><button id="openBillingPortal" type="button">Manage subscription & billing</button><button id="refreshBillingHistory" class="secondary" type="button">Refresh billing history</button></div>
+<div id="billingAttention" class="reports" aria-live="polite" hidden></div>
+<div class="report-actions" style="margin:12px 0"><button id="openBillingPortal" type="button">Manage subscription & billing</button><button id="refreshBillingHistory" class="secondary" type="button">Refresh billing history</button><button id="loadMoreBillingHistory" class="secondary" type="button" disabled>Load more history</button></div>
 <div id="billingEvents" class="reports"><p class="muted">No billing history loaded.</p></div>
 <div id="billingStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
@@ -46,6 +55,15 @@
 <div id="apiKeys" class="reports" aria-live="polite"><p class="muted">Connect your account to manage API keys.</p></div>
 <div id="apiKeyStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
+<section class="panel" aria-labelledby="activityHeading">
+<h2 id="activityHeading">Recent audit activity</h2>
+<p class="muted">See recent audit runs associated with this account. Contact details and generated outreach content are never shown in this activity list.</p>
+<label for="activityDomainFilter">Filter by website</label>
+<div class="report-actions"><input id="activityDomainFilter" type="search" maxlength="253" placeholder="example.com" autocomplete="off"><button id="applyActivityFilter" class="secondary" type="button">Apply filter</button></div>
+<div id="auditActivity" class="reports"><p class="muted">Connect your account to load audit activity.</p></div>
+<p id="activityPageStatus" class="muted" aria-live="polite">No activity loaded.</p>
+<div class="report-actions"><button id="refreshActivity" class="secondary" type="button">Refresh activity</button><button id="loadMoreActivity" class="secondary" type="button" hidden>Load more activity</button></div>
+</section>
 <section class="panel">
 <h2>2. Run a website audit</h2>
 <form id="auditForm"><label for="target">Public website URL</label><input id="target" type="url" required maxlength="2048" placeholder="https://example.com"><p class="muted">Only public HTTP/HTTPS websites are accepted. This performs an audit only; it does not change the target website. A run consumes your license quota.</p><button id="runAudit" type="submit">Run audit and generate PDF</button></form><div id="auditStatus" class="status" role="status" aria-live="polite">Connect your credential first.</div>
@@ -53,7 +71,7 @@
 <section class="panel">
 <h2>3. Saved reports</h2>
 <div class="row" aria-label="Report summary"><div class="status"><strong id="reportCount">0 / 0</strong><br><span class="muted">Reports loaded / total</span></div><div class="status"><strong id="findingCount">0</strong><br><span class="muted">Findings across loaded reports</span></div></div>
-<label for="reportFilter">Filter reports by website</label><input id="reportFilter" type="text" maxlength="253" placeholder="Search a domain, e.g. example.com" autocomplete="off" aria-describedby="reportFilterHelp"><p id="reportFilterHelp" class="muted">Filtering happens in this page; it does not send your search text to the server.</p>
+<label for="reportFilter">Filter reports by website</label><div class="row"><input id="reportFilter" type="text" maxlength="253" placeholder="Search a domain, e.g. example.com" autocomplete="off" aria-describedby="reportFilterHelp"><button id="applyReportFilter" class="secondary" type="button">Apply filter</button></div><p id="reportFilterHelp" class="muted">Search is applied on the server and remains scoped to this account.</p>
 <div id="reports" class="reports" aria-live="polite"><p class="muted">Connect to load reports for your license.</p></div>
 <p id="reportPaginationStatus" class="muted" aria-live="polite"></p>
 <button id="loadMoreReports" class="secondary" type="button" hidden>Load more reports</button>
@@ -66,6 +84,9 @@
   const $ = id => document.getElementById(id);
   let credential = "";
   let headerName = "X-License-Key";
+  // Invalidate in-flight authenticated requests whenever the connected identity changes
+  // or the user disconnects, so late responses cannot repopulate another account's view.
+  let accountSessionVersion = 0;
   let loadedReports = [];
   let reportsTotal = 0;
   const reportPageSize = 50;
@@ -77,13 +98,18 @@
   const evidencePageSize = 20;
   let evidenceLoading = false;
   let apiKeyRows = [];
+  let apiKeyLimit = 10;
+  let apiKeyCreationAllowed = false;
   let newlyCreatedApiKey = "";
+  let billingOffset = 0;
+  let billingTotal = 0;
+  let billingLoading = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
   const authHeaders = () => ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -93,7 +119,29 @@
     document.querySelectorAll("#plans button").forEach(button => { button.disabled = false; });
   });
   async function api(path, options = {}) {
+    const requestSessionVersion = accountSessionVersion;
     const response = await fetch(path, {...options, headers: {...authHeaders(), ...(options.headers || {})}});
+    const assertCurrentSession = () => {
+      if (requestSessionVersion !== accountSessionVersion) {
+        throw new Error("Account connection changed while this request was in progress. Reload the current account view.");
+      }
+    };
+    assertCurrentSession();
+    // Protect both response arrival and asynchronous body parsing. Without the latter,
+    // a disconnect during JSON/PDF streaming could still update the new account's UI
+    // or download a report from the previous account.
+    const parseJson = response.json.bind(response);
+    response.json = async (...args) => {
+      const body = await parseJson(...args);
+      assertCurrentSession();
+      return body;
+    };
+    const readBlob = response.blob.bind(response);
+    response.blob = async (...args) => {
+      const body = await readBlob(...args);
+      assertCurrentSession();
+      return body;
+    };
     if (!response.ok) {
       let message = "Request failed (" + response.status + ")";
       try { const body = await response.json(); if (body.detail) message += ": " + body.detail; } catch {}
@@ -104,44 +152,126 @@
   async function loadPlans() {
     const container = $("plans");
     try {
-      const response = await fetch("/api/v1/billing/plans");
+      const response = await fetch("/api/v1/billing/plans", {cache: "no-store"});
       if (!response.ok) throw new Error("Plan list is unavailable.");
       const data = await response.json();
-      container.replaceChildren();
-      if (!data.plans || !data.plans.length) {
-        container.textContent = "Paddle checkout is not configured yet. Paddle API key, price IDs, webhook secret, and SMTP delivery must be set by the operator.";
+      if (!data || !Array.isArray(data.plans)) throw new Error("Plan list returned an invalid response.");
+      const cards = document.createDocumentFragment();
+      if (!data.plans.length) {
+        const message = document.createElement("p");
+        message.textContent = "Paddle checkout is not configured yet. Paddle API key, price IDs, webhook secret, and SMTP delivery must be set by the operator.";
+        cards.append(message);
+        container.replaceChildren(cards);
         return;
       }
       for (const plan of data.plans) {
+        if (!plan || typeof plan.tier !== "string" || typeof plan.label !== "string") continue;
         const card = document.createElement("article"); card.className = "report";
         const meta = document.createElement("div");
         const title = document.createElement("strong"); title.textContent = plan.label;
-        const quota = document.createElement("small"); quota.textContent = plan.monthly_audit_allowance + " audits per month";
+        const quota = document.createElement("small"); quota.textContent = Number(plan.monthly_audit_allowance) + " audits per month";
         meta.append(title, quota);
         const link = document.createElement("button"); link.type = "button"; link.textContent = "Continue to Paddle checkout";
         link.addEventListener("click", async () => {
           link.disabled = true;
           try {
-            const checkoutResponse = await fetch("/api/v1/billing/checkout", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tier: plan.tier})});
-            const checkoutData = await checkoutResponse.json();
-            if (!checkoutResponse.ok || !checkoutData.checkout_url) throw new Error(checkoutData.detail || "Unable to start Paddle checkout.");
-            window.location.assign(checkoutData.checkout_url);
-          } catch (error) { setStatus("connectStatus", error.message, "error"); link.disabled = false; }
+            const checkoutResponse = await fetch("/api/v1/billing/checkout", {
+              method: "POST", cache: "no-store",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({tier: plan.tier})
+            });
+            let checkoutData = {};
+            try { checkoutData = await checkoutResponse.json(); } catch (_) {}
+            if (!checkoutResponse.ok) throw new Error(checkoutData.detail || "Unable to start Paddle checkout.");
+            if (typeof checkoutData.checkout_url !== "string") throw new Error("Paddle did not return a checkout URL.");
+            let checkoutUrl;
+            try { checkoutUrl = new URL(checkoutData.checkout_url); } catch (_) { throw new Error("Paddle returned an invalid checkout URL."); }
+            const checkoutHost = checkoutUrl.hostname.toLowerCase();
+            if (checkoutUrl.protocol !== "https:" || checkoutUrl.username || checkoutUrl.password ||
+                !(checkoutHost === "paddle.com" || checkoutHost.endsWith(".paddle.com"))) {
+              throw new Error("Checkout destination failed the Paddle security check.");
+            }
+            window.location.assign(checkoutUrl.href);
+          } catch (error) {
+            setStatus("connectStatus", error && error.message ? error.message : "Unable to start Paddle checkout.", "error");
+            link.disabled = false;
+          }
         });
-        card.append(meta, link); container.append(card);
+        card.append(meta, link); cards.append(card);
       }
-    } catch (e) { container.textContent = e.message; }
+      if (!cards.childNodes.length) {
+        const message = document.createElement("p");
+        message.textContent = "No valid checkout plans are currently available.";
+        cards.append(message);
+      }
+      container.replaceChildren(cards);
+    } catch (e) {
+      const message = document.createElement("p");
+      message.textContent = e && e.message ? e.message : "Plan list is unavailable.";
+      container.replaceChildren(message);
+    }
   }
-  async function loadBillingHistory() {
-    const response = await api("/api/v1/account/billing-history");
+  async function loadBillingHistory(reset = true) {
+    if (billingLoading) return;
+    billingLoading = true;
+    const button = $("loadMoreBillingHistory"); button.disabled = true;
+    try {
+    const requestedOffset = reset ? 0 : billingOffset;
+    const response = await api("/api/v1/account/billing-history?limit=50&offset=" + requestedOffset);
     const data = await response.json();
     const account = data.account || {};
     $("billingAccount").textContent = (account.client_name || "Account") + " · Plan " + (account.tier || "unassigned") +
       " · " + (account.is_active ? "Active" : "Inactive") +
       " · Expires " + (account.expires_at ? new Date(account.expires_at).toLocaleDateString() : "no expiry recorded");
-    const container = $("billingEvents"); container.replaceChildren();
+    const attentionContainer = $("billingAttention");
+    attentionContainer.replaceChildren();
+    const attentionItems = Array.isArray(data.attention_items) ? data.attention_items : [];
+    if (attentionItems.length) {
+      attentionContainer.hidden = false;
+      const heading = document.createElement("h3");
+      heading.textContent = "Recent billing events to review";
+      attentionContainer.append(heading);
+      for (const item of attentionItems) {
+        const card = document.createElement("article"); card.className = "report";
+        const title = document.createElement("strong");
+        const attentionLabels = {
+          payment_failed: "Payment failed",
+          subscription_past_due: "Subscription reported past due",
+          subscription_canceled: "Subscription canceled",
+          email_pending: "License email needs delivery",
+          email_sending: "License email delivery may still be in progress",
+          subscription_paused: "Subscription paused",
+          subscription_resumed: "Subscription resumed",
+          subscription_activated: "Subscription activated",
+          subscription_updated_active: "Subscription status: active",
+          subscription_updated_paused: "Subscription status: paused",
+          subscription_updated_past_due: "Subscription status: past due",
+          subscription_updated_canceled: "Subscription status: canceled"
+        };
+        title.textContent = attentionLabels[item.status] || "Billing event needs review";
+        const detail = document.createElement("p"); detail.className = "muted";
+        detail.textContent = "Event " + item.event_id + " · Subscription " +
+          (item.subscription_id || "not recorded") + " · Updated " +
+          (item.updated_at ? new Date(item.updated_at).toLocaleString() : "date unavailable");
+        card.append(title, detail);
+        if (["payment_failed", "subscription_past_due"].includes(item.status)) {
+          const guidance = document.createElement("p"); guidance.className = "muted";
+          guidance.textContent = "Review payment status and available recovery actions in the Paddle billing portal. This event alone does not establish whether account access is currently enabled.";
+          card.append(guidance);
+        } else if (["email_pending", "email_sending"].includes(item.status)) {
+          const guidance = document.createElement("p"); guidance.className = "muted";
+          guidance.textContent = "If your license email has not arrived, contact support with this event ID. Do not share your license key in a support message.";
+          card.append(guidance);
+        }
+        attentionContainer.append(card);
+      }
+    } else {
+      attentionContainer.hidden = true;
+    }
+    const container = $("billingEvents"); if (reset) container.replaceChildren();
     const events = Array.isArray(data.items) ? data.items : [];
-    if (!events.length) {
+    const page = data.page || {}; billingOffset = requestedOffset + events.length; billingTotal = Number(page.total) || 0;
+    if (!events.length && reset) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No payment provisioning events are associated with this account yet.";
       container.append(empty);
@@ -149,24 +279,67 @@
     for (const item of events) {
       const card = document.createElement("article"); card.className = "report";
       const meta = document.createElement("div");
-      const title = document.createElement("strong"); title.textContent = "Payment event · " + String(item.status || "unknown").replaceAll("_", " ");
+      const title = document.createElement("strong");
+      const billingLabels = {
+        payment_failed: "Payment failed — review billing",
+        subscription_past_due: "Subscription past due — review billing",
+        subscription_canceled: "Subscription canceled",
+        email_pending: "License email pending",
+        email_sending: "License email sending",
+        delivered: "Payment processed and license delivered"
+      };
+      title.textContent = billingLabels[item.status] || ("Billing event · " + String(item.status || "unknown").replaceAll("_", " "));
       const detail = document.createElement("small");
       detail.textContent = "Event " + item.event_id + " · Transaction " + (item.transaction_id || "not recorded") +
         " · Subscription " + (item.subscription_id || "not recorded") +
         " · Created " + (item.created_at ? new Date(item.created_at).toLocaleString() : "date unavailable") +
         " · Updated " + (item.updated_at ? new Date(item.updated_at).toLocaleString() : "date unavailable");
-      meta.append(title, detail); card.append(meta); container.append(card);
+      meta.append(title, detail);
+      if (["payment_failed", "subscription_past_due"].includes(item.status)) {
+        const guidance = document.createElement("p");
+        guidance.className = "muted";
+        guidance.textContent = "Paddle reported a payment issue. Use “Manage subscription & billing” above to review available billing actions. A single failed payment does not by itself confirm that access has been revoked.";
+        card.append(meta, guidance);
+      } else {
+        card.append(meta);
+      }
+      container.append(card);
     }
-    setStatus("billingStatus", "Loaded " + events.length + " recent billing event(s).", "success");
+    setStatus("billingStatus", "Loaded " + billingOffset + " of " + billingTotal + " billing event(s).", "success");
+    button.disabled = !page.has_more;
+    } catch (error) {
+      // Keep previously rendered history intact and show a recoverable error when
+      // a refresh or next-page request fails (network, auth, or server error).
+      setStatus("billingStatus", "Unable to load billing history. " + error.message, "error");
+    } finally {
+      billingLoading = false;
+      button.disabled = !billingTotal || billingOffset >= billingTotal;
+    }
   }
   async function loadApiKeys() {
-    const response = await api("/api/v1/account/api-keys");
-    const data = await response.json();
-    apiKeyRows = Array.isArray(data.items) ? data.items : [];
-    renderApiKeys();
+    try {
+      const response = await api("/api/v1/account/api-keys");
+      const data = await response.json();
+      apiKeyRows = Array.isArray(data.items) ? data.items : [];
+      apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
+      apiKeyCreationAllowed = data.can_create === true;
+      renderApiKeys();
+    } catch (error) {
+      setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
+      throw error;
+    }
   }
   function renderApiKeys() {
     const container = $("apiKeys"); container.replaceChildren();
+    const atLimit = apiKeyRows.length >= apiKeyLimit;
+    $("createApiKey").disabled = !credential || !apiKeyCreationAllowed || atLimit;
+    $("createApiKey").title = atLimit
+      ? "Revoke an existing key before creating another."
+      : (!apiKeyCreationAllowed ? "API key creation requires an active, unexpired account." : "");
+    const count = document.createElement("p"); count.className = "muted";
+    count.textContent = apiKeyRows.length + " of " + apiKeyLimit + " API keys used" +
+      (atLimit ? " · Limit reached; revoke a key to create another." : " · " + (apiKeyLimit - apiKeyRows.length) + " slot(s) available.");
+    container.append(count);
     if (!apiKeyRows.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No API keys have been created for this account.";
@@ -196,18 +369,37 @@
   }
   async function createApiKey() {
     if (!credential) { setStatus("apiKeyStatus", "Connect your account first.", "error"); return; }
+    const operationSessionVersion = accountSessionVersion;
+    if (!apiKeyCreationAllowed) { setStatus("apiKeyStatus", "API key creation requires an active, unexpired account.", "error"); renderApiKeys(); return; }
+    if (apiKeyRows.length >= apiKeyLimit) { setStatus("apiKeyStatus", "API key limit reached. Revoke an existing key first.", "error"); renderApiKeys(); return; }
     const button = $("createApiKey"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/api-keys", {method:"POST"});
       const data = await response.json();
+      if (operationSessionVersion !== accountSessionVersion) return;
       newlyCreatedApiKey = String(data.key || "");
       if (!newlyCreatedApiKey) throw new Error("The server did not return the new key. Refresh the key list and retry if needed.");
       $("newApiKeyValue").textContent = newlyCreatedApiKey;
       $("newApiKeyPanel").hidden = false;
       await loadApiKeys();
+      if (operationSessionVersion !== accountSessionVersion) return;
       setStatus("apiKeyStatus", "API key created. Copy the secret now; it will not be shown again.", "success");
-    } catch (error) { setStatus("apiKeyStatus", error.message, "error"); }
-    finally { button.disabled = false; }
+    } catch (error) {
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", error.message, "error");
+    } finally {
+      if (operationSessionVersion === accountSessionVersion) renderApiKeys();
+    }
+  }
+  async function loadProfile() {
+    const response = await api("/api/v1/account/profile");
+    const profile = await response.json();
+    $("profileName").value = profile.client_name || "";
+    $("profileTier").value = profile.tier || "—";
+    const created = profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "unknown";
+    const expires = profile.expires_at ? new Date(profile.expires_at).toLocaleDateString() : "no expiry set";
+    $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · Expiry: " + expires;
+    setStatus("profileStatus", "Account profile loaded.", "success");
+    return profile;
   }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
@@ -216,7 +408,17 @@
     const pending = Math.max(0, Number(usage.in_progress) || 0);
     const limit = Math.max(0, Number(usage.monthly_limit) || 0);
     const percent = Math.max(0, Math.min(100, Number(usage.usage_percent) || 0));
-    $("usageSummary").textContent = (usage.tier || "Plan") + " plan · " + used + " completed" + (pending ? " · " + pending + " in progress" : "") + " of " + limit + " monthly audits used";
+    const planLabel = usage.plan_label || usage.tier || "Plan";
+    $("usageSummary").textContent = planLabel + " plan · " + used + " completed" + (pending ? " · " + pending + " in progress" : "") + " of " + limit + " monthly audits used";
+    if (usage.quota_state === "exhausted") $("usageSummary").textContent += " · Monthly quota exhausted";
+    else if (usage.quota_state === "near_limit") $("usageSummary").textContent += " · Near monthly limit";
+    if (usage.entitlement_state && usage.entitlement_state !== "active") {
+      const states = {inactive:"Account inactive", expired:"License expired", plan_inactive:"Plan unavailable", quota_unavailable:"Quota is not configured", quota_exhausted:"No monthly audits remaining"};
+      $("usageSummary").textContent += " · " + (states[usage.entitlement_state] || "Entitlement requires attention");
+    }
+    if (usage.max_concurrent_audits !== null && usage.max_concurrent_audits !== undefined) {
+      $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0) + " · Concurrent audit limit: " + Number(usage.max_concurrent_audits);
+    }
     $("usageFill").style.width = percent + "%";
     $("usageBar").setAttribute("aria-valuenow", String(Math.round(percent)));
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
@@ -228,6 +430,49 @@
       if (!Number.isNaN(expiry.getTime())) $("usageSummary").textContent += " · Expires " + expiry.toLocaleDateString();
     }
   }
+  let activityRows = [], activityTotal = 0, activityLoading = false;
+  function renderActivity() {
+    const container = $("auditActivity"); container.replaceChildren();
+    if (!activityRows.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No audit activity recorded for this account yet.";
+      container.append(empty);
+    }
+    for (const item of activityRows) {
+      const card = document.createElement("article"); card.className = "report";
+      const title = document.createElement("strong"); title.textContent = String(item.domain || "Unknown website");
+      const details = document.createElement("small");
+      const when = item.created_at ? new Date(item.created_at) : null;
+      details.textContent = "Audit #" + item.id + " · " +
+        (when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : "Time not recorded") +
+        " · Mobile score: " + (item.mobile_score == null ? "not available" : item.mobile_score) +
+        " · Speed index: " + (item.speed_index_sec == null ? "not available" : Number(item.speed_index_sec).toFixed(2) + " s") +
+        " · Source: " + (item.source || "not recorded");
+      card.append(title, details); container.append(card);
+    }
+    $("activityPageStatus").textContent = "Showing " + activityRows.length + " of " + activityTotal + " audit records.";
+    $("loadMoreActivity").hidden = activityRows.length >= activityTotal;
+  }
+  async function loadActivity({reset = true} = {}) {
+    if (activityLoading) return;
+    activityLoading = true;
+    const more = $("loadMoreActivity"), refresh = $("refreshActivity");
+    more.disabled = true; refresh.disabled = true;
+    try {
+      const offset = reset ? 0 : activityRows.length;
+      const query = new URLSearchParams({limit:"20", offset:String(offset), domain:$("activityDomainFilter").value.trim()});
+      const response = await api("/api/v1/account/activity?" + query.toString());
+      const data = await response.json();
+      const page = Array.isArray(data.items) ? data.items : [];
+      activityRows = reset ? page : [...activityRows, ...page];
+      activityTotal = Math.max(0, Number(data.page && data.page.total) || 0);
+      renderActivity();
+    } catch (error) {
+      $("activityPageStatus").textContent = "Unable to load audit activity. " + error.message;
+    } finally {
+      activityLoading = false; more.disabled = false; refresh.disabled = false;
+    }
+  }
   async function loadReports({reset = true} = {}) {
     if (reportsLoading) return;
     reportsLoading = true;
@@ -235,16 +480,21 @@
     moreButton.disabled = true;
     try {
       const offset = reset ? 0 : loadedReports.length;
-      const response = await api("/api/v1/reports?limit=" + reportPageSize + "&offset=" + offset);
+      const domain = $("reportFilter").value.trim();
+      const params = new URLSearchParams({limit: String(reportPageSize), offset: String(offset), domain});
+      const response = await api("/api/v1/reports?" + params.toString());
       const data = await response.json();
       const page = Array.isArray(data.reports) ? data.reports : [];
       loadedReports = reset ? page : [...loadedReports, ...page];
       reportsTotal = Math.max(0, Number(data.total) || 0);
       $("reportCount").textContent = String(loadedReports.length) + " / " + String(reportsTotal);
       $("findingCount").textContent = String(loadedReports.reduce((sum, item) => sum + Math.max(0, Number(item.finding_count) || 0), 0));
-      $("reportPaginationStatus").textContent = "Loaded " + loadedReports.length + " of " + reportsTotal + " saved reports.";
+      $("reportPaginationStatus").textContent = "Loaded " + loadedReports.length + " of " + reportsTotal + " matching saved reports.";
       moreButton.hidden = loadedReports.length >= reportsTotal;
       renderReports();
+    } catch (error) {
+      $("reportPaginationStatus").textContent = "Unable to load saved reports. " + error.message;
+      moreButton.hidden = loadedReports.length >= reportsTotal;
     } finally {
       reportsLoading = false;
       moreButton.disabled = false;
@@ -252,8 +502,7 @@
   }
   function renderReports() {
     const container = $("reports"); container.replaceChildren();
-    const filter = $("reportFilter").value.trim().toLowerCase();
-    const visibleReports = loadedReports.filter(item => String(item.domain || "").toLowerCase().includes(filter));
+    const visibleReports = loadedReports;
     if (!visibleReports.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = loadedReports.length ? "No saved reports match this website filter." : "No saved reports yet.";
@@ -418,7 +667,25 @@
     activeEvidenceReportId = null;
     $("savedEvidenceItems").replaceChildren();
   });
-  $("reportFilter").addEventListener("input", renderReports);
+  $("applyReportFilter").addEventListener("click", () => loadReports().catch(e => setStatus("connectStatus", e.message, "error")));
+  $("reportFilter").addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); loadReports().catch(e => setStatus("connectStatus", e.message, "error")); }
+  });
+  $("applyActivityFilter").addEventListener("click", async () => {
+    try { await loadActivity(); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
+  $("activityDomainFilter").addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); loadActivity().catch(e => setStatus("connectStatus", e.message, "error")); }
+  });
+  $("refreshActivity").addEventListener("click", async () => {
+    try { await loadActivity(); setStatus("connectStatus", "Audit activity refreshed.", "success"); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
+  $("loadMoreActivity").addEventListener("click", async () => {
+    try { await loadActivity({reset:false}); }
+    catch (e) { setStatus("connectStatus", e.message, "error"); }
+  });
   $("loadMoreReports").addEventListener("click", async () => {
     try { await loadReports({reset:false}); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
@@ -438,19 +705,26 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
+    $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
     $("usageReset").textContent = "Period reset: —";
+    activityRows = []; activityTotal = 0; renderActivity();
     $("billingAccount").textContent = "Connect your account to load billing status.";
-    $("billingEvents").replaceChildren(); setStatus("billingStatus", "Account connection required.");
+    $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
+    apiKeyCreationAllowed = false;
+    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
     if (!nextCredential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
+    // A new connection attempt invalidates responses from any earlier identity,
+    // including when the new credential text happens to match a prior one.
+    const attemptSessionVersion = ++accountSessionVersion;
     // Clear previously displayed account data before attempting a new identity, including
     // failed reconnects, so a shared browser does not leave another account's history visible.
     if (nextCredential !== credential || nextHeaderName !== headerName) clearAccountView();
@@ -458,26 +732,31 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()]);
-      const names = ["saved reports", "usage and audit access", "API keys"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
       setAccountControls(true);
       $("runAudit").disabled = !auditAccess;
-      $("createApiKey").disabled = !auditAccess;
-      $("refreshApiKeys").disabled = !auditAccess;
+      renderApiKeys();
+      $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
       setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
       setStatus("connectStatus", unavailable.length ? "Connected for billing. Unavailable features: " + unavailable.join(", ") + ". Credential input cleared." : "Connected. Report history, quota, API keys, and billing history are loaded. Credential input cleared.", unavailable.length ? "error" : "success");
     } catch (e) {
+      // An obsolete connection attempt must not clear or overwrite a newer session.
+      if (attemptSessionVersion !== accountSessionVersion) return;
       clearAccountView();
       credential = "";
       $("credential").value = "";
       setAccountControls(false);
       setStatus("connectStatus", e.message + " Credentials were cleared; reconnect to continue.", "error");
-    } finally { $("connect").disabled = false; }
+    } finally {
+      if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
+    }
   });
   $("disconnectAccount").addEventListener("click", () => {
+    accountSessionVersion += 1;
     credential = "";
     headerName = "X-License-Key";
     $("credential").value = "";
@@ -487,6 +766,26 @@
     $("target").value = "";
     setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
     setStatus("auditStatus", "Connect your credential first.");
+  });
+  $("saveProfile").addEventListener("click", async () => {
+    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
+    const clientName = $("profileName").value.trim();
+    if (!clientName) { setStatus("profileStatus", "Account name cannot be blank.", "error"); return; }
+    const button = $("saveProfile"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/profile", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({client_name: clientName})
+      });
+      const data = await response.json();
+      $("profileName").value = data.client_name || clientName;
+      setStatus("profileStatus", "Account name saved.", "success");
+    } catch (error) {
+      setStatus("profileStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential;
+    }
   });
   $("openBillingPortal").addEventListener("click", async () => {
     if (!credential) { setStatus("billingStatus", "Connect your account first.", "error"); return; }
@@ -498,6 +797,10 @@
       window.location.assign(data.portal_url);
     } catch (error) { setStatus("billingStatus", error.message, "error"); }
     finally { button.disabled = false; }
+  });
+  $("loadMoreBillingHistory").addEventListener("click", async () => {
+    try { await loadBillingHistory(false); }
+    catch (error) { setStatus("billingStatus", error.message, "error"); }
   });
   $("refreshBillingHistory").addEventListener("click", async () => {
     try { await loadBillingHistory(); }
@@ -525,6 +828,7 @@
   $("auditForm").addEventListener("submit", async event => {
     event.preventDefault();
     if (!credential) { setStatus("auditStatus", "Connect your license or API key first.", "error"); return; }
+    const auditSessionVersion = accountSessionVersion;
     const button = $("runAudit"); button.disabled = true; setStatus("auditStatus", "Audit running. Please wait for the report response.");
     try {
       const target = $("target").value.trim();
@@ -536,8 +840,11 @@
       setStatus("auditStatus", "PDF generated and saved to your account." + (reportId ? " Report ID: " + reportId + "." : "") + " Refreshing report history.", "success");
       await loadReports();
       await loadUsage();
-    } catch (e) { setStatus("auditStatus", e.message, "error"); }
-    finally { button.disabled = false; }
+    } catch (e) {
+      if (auditSessionVersion === accountSessionVersion) setStatus("auditStatus", e.message, "error");
+    } finally {
+      if (auditSessionVersion === accountSessionVersion) button.disabled = false;
+    }
   });
 })();
 </script>

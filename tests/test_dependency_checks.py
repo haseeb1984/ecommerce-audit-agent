@@ -1,3 +1,4 @@
+import json
 from urllib.parse import urlsplit
 
 import pytest
@@ -33,10 +34,23 @@ async def test_no_detectable_version_is_not_reported_as_vulnerability_free():
     assert any("bundled and self-hosted dependencies are not inventoried" in item for item in limitations)
 
 
+class FakeContent:
+    def __init__(self, body):
+        self.body = body
+        self.bytes_yielded = 0
+
+    async def iter_chunked(self, size):
+        for offset in range(0, len(self.body), size):
+            chunk = self.body[offset:offset + size]
+            self.bytes_yielded += len(chunk)
+            yield chunk
+
+
 class FakeResponse:
-    def __init__(self, status, payload):
+    def __init__(self, status, payload, raw_body=None):
         self.status = status
-        self.payload = payload
+        body = raw_body if raw_body is not None else json.dumps(payload).encode("utf-8")
+        self.content = FakeContent(body)
 
     async def __aenter__(self):
         return self
@@ -44,15 +58,14 @@ class FakeResponse:
     async def __aexit__(self, *args):
         return False
 
-    async def json(self, content_type=None):
-        return self.payload
-
 
 class FakeSession:
-    def __init__(self, *, timeout=None, trust_env=None, status=200, payload=None):
+    def __init__(self, *, timeout=None, trust_env=None, status=200, payload=None, raw_body=None):
         self.status = status
-        self.payload = payload or {"results": []}
+        self.payload = payload if payload is not None else {"results": []}
+        self.raw_body = raw_body
         self.request = None
+        self.response = None
 
     async def __aenter__(self):
         return self
@@ -62,7 +75,8 @@ class FakeSession:
 
     def post(self, url, **kwargs):
         self.request = (url, kwargs)
-        return FakeResponse(self.status, self.payload)
+        self.response = FakeResponse(self.status, self.payload, self.raw_body)
+        return self.response
 
 
 @pytest.mark.asyncio
@@ -120,3 +134,18 @@ async def test_malformed_osv_payload_never_looks_like_a_clean_scan(monkeypatch, 
     assert findings[0].title == "Frontend dependency vulnerability lookup incomplete"
     assert "unverified" in limitations[0]
     assert "No matching OSV advisories returned" not in findings[0].title
+
+
+@pytest.mark.asyncio
+async def test_oversized_osv_response_is_not_treated_as_a_clean_scan(monkeypatch):
+    fake = FakeSession(raw_body=b"{" + b" " * dependency_checks.MAX_OSV_RESPONSE_BYTES)
+    monkeypatch.setattr(dependency_checks.aiohttp, "ClientSession", lambda **kwargs: fake)
+    findings, limitations = await dependency_checks.inspect_client_dependency_versions(
+        '<script src="https://cdn.jsdelivr.net/npm/jquery@1.2.3/dist/jquery.min.js"></script>',
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert findings[0].status == "not_tested"
+    assert findings[0].title == "Frontend dependency vulnerability lookup incomplete"
+    assert "unverified" in limitations[0]
+    assert fake.response.content.bytes_yielded <= dependency_checks.MAX_OSV_RESPONSE_BYTES + 65536

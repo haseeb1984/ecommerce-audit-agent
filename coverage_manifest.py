@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import hashlib
+import ipaddress
 import re
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -50,7 +51,15 @@ def _safe_evidence_url(value: object) -> str | None:
             return None
         if parts.username is not None or parts.password is not None:
             return None
-        host = parts.hostname.lower()
+        host = parts.hostname.rstrip(".").lower()
+        if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".test", ".invalid")):
+            return None
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return None
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         port = parts.port
@@ -247,7 +256,7 @@ def build_coverage_manifest(
     module_statuses = {
         str(key)[:80]: value
         for key, value in raw_module_statuses.items()
-        if isinstance(key, str) and value in allowed_module_states
+        if isinstance(key, str) and isinstance(value, str) and value in allowed_module_states
     }
     safe_run_context = {
         "started_at_utc": str(context.get("started_at_utc") or "")[:40] or None,

@@ -4,6 +4,7 @@ import hmac
 import json
 import time
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
@@ -13,7 +14,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
 from coverage_manifest import build_coverage_manifest
@@ -118,7 +119,6 @@ def test_smtp_configuration_status_accepts_valid_unauthenticated_starttls(monkey
     "service.internal",
     "https://user:password@shop.example",
     "https://shop.example:8443",
-    "https://shop.example/?token=secret",
     "javascript:alert(1)",
     "not a valid hostname",
 ])
@@ -135,6 +135,14 @@ def test_audit_target_normalization_rejects_unsafe_or_ambiguous_targets(target):
 ])
 def test_audit_target_normalization_canonicalizes_public_targets(target, expected):
     assert main.agent._normalize_audit_target(target) == expected
+
+
+
+
+def test_audit_target_normalization_strips_query_and_fragment_for_provider_privacy():
+    assert main.agent._normalize_audit_target(
+        "https://shop.example/products?token=secret#checkout"
+    ) == "https://shop.example/products"
 
 
 def test_coverage_manifest_does_not_infer_aria_or_alt_text_from_general_accessibility():
@@ -243,7 +251,7 @@ async def test_account_usage_requires_authentication(client):
 
 @pytest.mark.asyncio
 async def test_portal_pages_send_browser_security_headers_and_disable_caching(client):
-    for path in ("/app", "/admin"):
+    for path in ("/app", "/admin", "/checkout?_ptxn=txn_123ABC"):
         response = await client.get(path)
         assert response.status_code == 200, path
         assert response.headers["cache-control"] == "no-store, private"
@@ -254,6 +262,8 @@ async def test_portal_pages_send_browser_security_headers_and_disable_caching(cl
         assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
         if path == "/admin":
             assert "smtp_configuration_issues" in response.text
+        if path.startswith("/checkout"):
+            assert "Preparing your secure Paddle checkout" in response.text
 
 
 @pytest.mark.asyncio
@@ -296,6 +306,33 @@ async def test_audit_lead_rejects_unsafe_target_before_reserving_quota(client, d
         headers={"X-License-Key": license_key},
     )
     assert response.status_code == 422
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
+        )).scalar_one()
+        reservations = (await db.execute(
+            select(func.count(AuditQuotaReservation.id)).where(
+                AuditQuotaReservation.license_id == license_obj.id
+            )
+        )).scalar_one()
+        leads = (await db.execute(
+            select(func.count(AuditLead.id)).where(AuditLead.license_id == license_obj.id)
+        )).scalar_one()
+    assert reservations == 0
+    assert leads == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/audit-lead", "/api/v1/comprehensive-audit"])
+async def test_parameterized_audit_targets_are_rejected_before_quota_reservation(client, path):
+    license_key = "query-rejected-" + path.rsplit("/", 1)[-1]
+    await create_license(key=license_key, quota=2)
+    response = await client.post(
+        path,
+        params={"domain": "https://shop.example/products?token=secret"},
+        headers={"X-License-Key": license_key},
+    )
+    assert response.status_code == 422, response.text
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(
             select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
@@ -359,7 +396,7 @@ async def test_successful_audit_saves_exactly_one_record_and_releases_reservatio
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["audit"]["domain"] == "shop.example"
+    assert response.json()["audit"]["domain"] == "https://shop.example/"
     assert await table_count(AuditLead) == 1
     assert await table_count(AuditQuotaReservation) == 0
 
@@ -524,7 +561,7 @@ async def test_missing_domain_is_rejected(client):
 
 
 @pytest.mark.asyncio
-async def test_report_history_is_scoped_to_authenticated_license(client):
+async def test_report_history_is_scoped_to_authenticated_license(client, monkeypatch):
     owner_id = await create_license(key="report-owner")
     other_id = await create_license(key="report-other")
     async with AsyncSessionLocal() as db:
@@ -570,8 +607,24 @@ async def test_report_history_is_scoped_to_authenticated_license(client):
 
     forbidden_pdf = await client.get(f"/api/v1/reports/{private_id}/pdf", headers=headers)
     forbidden_coverage = await client.get(f"/api/v1/reports/{private_id}/coverage", headers=headers)
+    forbidden_evidence = await client.get(f"/api/v1/reports/{private_id}/evidence", headers=headers)
+    email_called = False
+
+    def fake_send_pdf_email(recipient, domain, report_id, pdf_bytes):
+        nonlocal email_called
+        email_called = True
+
+    monkeypatch.setattr(main, "_send_pdf_email", fake_send_pdf_email)
+    forbidden_email = await client.post(
+        f"/api/v1/reports/{private_id}/email",
+        headers=headers,
+        json={"recipient_email": "recipient@example.com", "recipient_confirmed": True},
+    )
     assert forbidden_pdf.status_code == 404
     assert forbidden_coverage.status_code == 404
+    assert forbidden_evidence.status_code == 404
+    assert forbidden_email.status_code == 404
+    assert email_called is False
 
 
 @pytest.mark.asyncio
@@ -728,6 +781,7 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
 @pytest.mark.asyncio
 async def test_report_history_supports_stable_offset_pagination(client):
     license_id = await create_license(key="report-pagination-owner")
+    other_license_id = await create_license(key="report-pagination-other")
     async with AsyncSessionLocal() as db:
         db.add_all([
             AuditReport(
@@ -740,12 +794,22 @@ async def test_report_history_supports_stable_offset_pagination(client):
             )
             for index in range(3)
         ])
+        db.add(AuditReport(
+            license_id=other_license_id,
+            domain="shop-1.example",
+            pdf_bytes=b"%PDF-other",
+            coverage_json="{}",
+            finding_count=99,
+            created_at=datetime.now(timezone.utc) + timedelta(days=1),
+        ))
         await db.commit()
 
     headers = {"X-License-Key": "report-pagination-owner"}
     first = await client.get("/api/v1/reports?limit=2&offset=0", headers=headers)
     second = await client.get("/api/v1/reports?limit=2&offset=2", headers=headers)
-    assert first.status_code == second.status_code == 200
+    filtered = await client.get("/api/v1/reports?limit=10&offset=0&domain=SHOP-1.EXAMPLE", headers=headers)
+    wildcard = await client.get("/api/v1/reports?domain=%25", headers=headers)
+    assert first.status_code == second.status_code == filtered.status_code == wildcard.status_code == 200
     first_data, second_data = first.json(), second.json()
     assert first_data["total"] == second_data["total"] == 3
     assert len(first_data["reports"]) == 2
@@ -753,6 +817,13 @@ async def test_report_history_supports_stable_offset_pagination(client):
     first_ids = {row["id"] for row in first_data["reports"]}
     second_ids = {row["id"] for row in second_data["reports"]}
     assert first_ids.isdisjoint(second_ids)
+    assert filtered.json()["total"] == 1
+    assert filtered.json()["domain"] == "shop-1.example"
+    assert filtered.json()["reports"][0]["domain"] == "shop-1.example"
+    assert wildcard.json()["total"] == 3
+    assert wildcard.json()["domain"] == ""
+    assert all(row["finding_count"] != 99 for row in filtered.json()["reports"])
+    assert (await client.get("/api/v1/reports?offset=10000001", headers=headers)).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -863,6 +934,37 @@ async def test_report_email_requires_explicit_recipient_confirmation(client, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recipient", ["", "x", "a" * 255])
+async def test_report_email_rejects_invalid_length_before_smtp(client, monkeypatch, recipient):
+    license_id = await create_license(key="email-report-invalid-length")
+    async with AsyncSessionLocal() as db:
+        report = AuditReport(
+            license_id=license_id,
+            domain="mail.example",
+            pdf_bytes=b"%PDF-email",
+            coverage_json="{}",
+            finding_count=0,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        report_id = report.id
+
+    sent = []
+    monkeypatch.setattr(
+        main, "_send_pdf_email",
+        lambda *args: sent.append(args),
+    )
+    response = await client.post(
+        f"/api/v1/reports/{report_id}/email",
+        headers={"X-License-Key": "email-report-invalid-length"},
+        json={"recipient_email": recipient, "recipient_confirmed": True},
+    )
+    assert response.status_code == 422
+    assert sent == []
+
+
+@pytest.mark.asyncio
 async def test_report_email_uses_configured_sender_only_for_owned_report(client, monkeypatch):
     license_id = await create_license(key="email-report-owner")
     async with AsyncSessionLocal() as db:
@@ -926,6 +1028,75 @@ async def test_report_email_cannot_send_another_licenses_pdf(client, monkeypatch
     )
     assert response.status_code == 404
     assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_paddle_webhook_rejects_valid_json_with_invalid_object_shapes(client, monkeypatch):
+    secret = "paddle-test-webhook-shape-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+
+    async def send(payload):
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    top_level_list = await send(["not", "an", "event-object"])
+    assert top_level_list.status_code == 400
+    assert top_level_list.json()["detail"] == "Paddle event must be a JSON object."
+
+    invalid_data = await send({
+        "event_id": "evt_invalid_data_shape",
+        "event_type": "transaction.completed",
+        "data": ["not", "an", "object"],
+    })
+    assert invalid_data.status_code == 400
+    assert invalid_data.json()["detail"] == "Paddle event data must be a JSON object."
+
+    missing_type = await send({"event_id": "evt_missing_type", "data": {}})
+    assert missing_type.status_code == 400
+    assert missing_type.json()["detail"] == "Paddle event type is missing or invalid."
+
+    oversized_id = await send({
+        "event_id": "evt_" + ("x" * 252),
+        "event_type": "transaction.completed",
+        "data": {},
+    })
+    assert oversized_id.status_code == 400
+    assert oversized_id.json()["detail"] == "Paddle event ID is missing or invalid."
+
+    invalid_custom_data = await send({
+        "event_id": "evt_invalid_custom_data_shape",
+        "event_type": "transaction.completed",
+        "data": {"status": "completed", "custom_data": ["not", "an", "object"]},
+    })
+    assert invalid_custom_data.status_code == 400
+    assert invalid_custom_data.json()["detail"] == "Paddle transaction custom_data must be a JSON object."
+
+    invalid_items = await send({
+        "event_id": "evt_invalid_items_shape",
+        "event_type": "transaction.completed",
+        "data": {"status": "completed", "custom_data": {}, "items": {"not": "an array"}},
+    })
+    assert invalid_items.status_code == 400
+    assert invalid_items.json()["detail"] == "Paddle transaction items must be a JSON array."
+
+    invalid_customer = await send({
+        "event_id": "evt_invalid_customer_shape",
+        "event_type": "transaction.completed",
+        "data": {
+            "status": "completed",
+            "custom_data": {},
+            "customer": ["not", "an", "object"],
+            "items": [],
+        },
+    })
+    assert invalid_customer.status_code == 400
+    assert invalid_customer.json()["detail"] == "Paddle transaction customer must be a JSON object."
 
 
 @pytest.mark.asyncio
@@ -1057,7 +1228,7 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_late_renewal123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_laterenewal123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_FROM", "reports@example.com")
@@ -1085,10 +1256,11 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
             "custom_data": {"license_tier": "starter"},
             "customer_id": "ctm_late_renewal123",
             "customer": {"email": "late-renewal@example.com", "name": "Late Renewal"},
-            "items": [{"price": {"id": "pri_late_renewal123"}, "quantity": 1}],
+            "items": [{"price": {"id": "pri_laterenewal123"}, "quantity": 1}],
         },
     }
-    assert (await send(purchase)).status_code == 200
+    purchase_response = await send(purchase)
+    assert purchase_response.status_code == 200, purchase_response.text
 
     cancellation = {
         "event_id": "evt_late_renewal_cancel",
@@ -1109,7 +1281,7 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
             "custom_data": {"license_tier": "starter"},
             "customer_id": "ctm_late_renewal123",
             "customer": {"email": "late-renewal@example.com", "name": "Late Renewal"},
-            "items": [{"price": {"id": "pri_late_renewal123"}, "quantity": 1}],
+            "items": [{"price": {"id": "pri_laterenewal123"}, "quantity": 1}],
         },
     }
     response = await send(late_renewal)
@@ -1126,10 +1298,116 @@ async def test_paddle_late_renewal_does_not_reactivate_canceled_subscription(cli
                 PaymentWebhookEvent.subscription_id == "sub_late_renewal123"
             )
         )).scalars().all()
-    assert len(events) == 2
+    assert len(events) == 3
     statuses = {item.event_id: item.status for item in events}
     assert statuses["evt_late_renewal_purchase"] == "delivered"
     assert statuses["evt_late_renewal_cancel"] == "subscription_canceled"
+    assert statuses["evt_late_renewal_paid_late"] == "subscription_canceled"
+
+
+@pytest.mark.asyncio
+async def test_payment_failure_after_cancellation_cannot_hide_canceled_state(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_cancel_failure123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    # Keep this lifecycle test independent of package rows left by other billing tests.
+    async def configured_test_plan(db, active_only=True):
+        return [{
+            "tier": "starter", "label": "Starter",
+            "monthly_audit_allowance": 100, "max_concurrent_audits": 1,
+            "price_id": "pri_cancel_failure123", "is_active": True,
+        }]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_test_plan)
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_cancel_failure_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_cancel_failure_purchase",
+            "subscription_id": "sub_cancel_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_cancel_failure123",
+            "customer": {"email": "cancel-failure@example.com", "name": "Cancel Failure"},
+            "items": [{"price": {"id": "pri_cancel_failure123"}, "quantity": 1}],
+        },
+    }
+    purchase_response = await send(purchase)
+    assert purchase_response.status_code == 200, purchase_response.text
+
+    cancellation = {
+        "event_id": "evt_cancel_failure_canceled",
+        "event_type": "subscription.canceled",
+        "data": {"id": "sub_cancel_failure123"},
+    }
+    assert (await send(cancellation)).json()["status"] == "cancellation_applied"
+
+    # A later failure event is still recorded for billing history, but must not
+    # erase the cancellation state used to guard subsequent completed transactions.
+    failure = {
+        "event_id": "evt_cancel_failure_payment_failed",
+        "event_type": "transaction.payment_failed",
+        "data": {
+            "id": "txn_cancel_failure_attempt",
+            "subscription_id": "sub_cancel_failure123",
+            "customer_id": "ctm_cancel_failure123",
+            "customer": {"email": "cancel-failure@example.com"},
+        },
+    }
+    failed = await send(failure)
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["status"] == "payment_failed"
+
+    late_renewal = {
+        "event_id": "evt_cancel_failure_late_renewal",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_cancel_failure_late_renewal",
+            "subscription_id": "sub_cancel_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_cancel_failure123",
+            "customer": {"email": "cancel-failure@example.com", "name": "Cancel Failure"},
+            "items": [{"price": {"id": "pri_cancel_failure123"}, "quantity": 1}],
+        },
+    }
+    response = await send(late_renewal)
+    assert response.status_code == 200
+    assert response.json()["status"] == "subscription_canceled"
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Cancel Failure")
+        )).scalar_one()
+        assert license_obj.is_active is False
+        events = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == "sub_cancel_failure123"
+            )
+        )).scalars().all()
+    assert len(events) == 4
+    statuses = {item.event_id: item.status for item in events}
+    assert statuses["evt_cancel_failure_canceled"] == "subscription_canceled"
+    assert statuses["evt_cancel_failure_payment_failed"] == "payment_failed"
+    assert statuses["evt_cancel_failure_late_renewal"] == "subscription_canceled"
+    # Re-delivery of the same late transaction is idempotent and does not add a
+    # second history record or reactivate the canceled license.
+    repeated = await send(late_renewal)
+    assert repeated.status_code == 200
+    assert repeated.json()["status"] == "already_processed"
 
 
 @pytest.mark.asyncio
@@ -1156,9 +1434,66 @@ async def test_public_plans_only_show_configured_paddle_price_ids(client, monkey
     assert "price_id" not in payload["plans"][0]
 
 
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://pay.paddle.com/checkout/test", True),
+        ("https://paddle.com/portal", True),
+        ("https://CUSTOMER.PADDLE.COM/portal", True),
+        ("https://evil.example/portal", False),
+        ("https://paddle.com.evil.example/portal", False),
+        ("https://user:password@pay.paddle.com/portal", False),
+        ("https://@pay.paddle.com/portal", False),
+        ("http://pay.paddle.com/portal", False),
+        ("javascript:alert(1)", False),
+        ("https://pay.paddle.com:bad/portal", False),
+        (" https://pay.paddle.com/portal", False),
+        (None, False),
+        ({"url": "https://pay.paddle.com"}, False),
+    ],
+)
+def test_paddle_hosted_url_validator(url, expected):
+    assert main._is_valid_paddle_hosted_url(url) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_url",
+    [
+        "https://evil.example/checkout",
+        "https://paddle.com.evil.example/checkout",
+        "https://user:password@pay.paddle.com/checkout",
+        "http://pay.paddle.com/checkout",
+    ],
+)
+async def test_paddle_checkout_rejects_untrusted_configured_checkout_url(client, monkeypatch, configured_url):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+    monkeypatch.setenv("PADDLE_CHECKOUT_URL", configured_url)
+    called = False
+
+    def fake_request(path, method="GET", payload=None):
+        nonlocal called
+        called = True
+        return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Paddle checkout URL configuration is invalid."
+    assert called is False
+
+
 @pytest.mark.asyncio
 async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
     captured = {}
     def fake_request(path, method="GET", payload=None):
@@ -1167,9 +1502,94 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
     response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
     assert response.status_code == 200 and response.json()["checkout_url"] == "https://pay.paddle.com/checkout/test"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
     assert captured["payload"]["items"] == [{"price_id": "pri_01abc123", "quantity": 1}]
     assert captured["payload"]["custom_data"]["license_tier"] == "starter"
     assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up"})).status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing_setting",
+    ["PADDLE_WEBHOOK_SECRET", "SMTP_HOST", "SMTP_FROM"],
+)
+async def test_paddle_checkout_fails_closed_when_purchase_fulfillment_is_not_ready(
+    client, monkeypatch, missing_setting
+):
+    async def configured_test_plan(db, active_only=True):
+        return [{
+            "tier": "starter", "label": "Starter",
+            "monthly_audit_allowance": 100, "max_concurrent_audits": 1,
+            "price_id": "pri_checkout_readiness123", "is_active": True,
+        }]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_test_plan)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_checkout_readiness123")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.delenv(missing_setting, raising=False)
+    called = False
+
+    def fake_request(path, method="GET", payload=None):
+        nonlocal called
+        called = True
+        return {"data": {"id": "txn_checkout_readiness123", "checkout": {
+            "url": "https://pay.paddle.com/checkout/test"
+        }}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 503
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_paddle_checkout_accepts_trusted_configured_checkout_url(client, monkeypatch):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+    monkeypatch.setenv("PADDLE_CHECKOUT_URL", "https://pay.paddle.com/checkout")
+    captured = {}
+
+    def fake_request(path, method="GET", payload=None):
+        captured.update({"path": path, "method": method, "payload": payload})
+        return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 200
+    assert captured["payload"]["checkout"] == {"url": "https://pay.paddle.com/checkout"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "checkout_url",
+    [
+        "https://evil.example/checkout",
+        "https://paddle.com.evil.example/checkout",
+        "https://user:password@pay.paddle.com/checkout",
+        "http://pay.paddle.com/checkout",
+        "javascript:alert(1)",
+    ],
+)
+async def test_paddle_checkout_rejects_untrusted_checkout_destinations(client, monkeypatch, checkout_url):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+
+    def fake_request(path, method="GET", payload=None):
+        return {"data": {"id": "txn_01abc123", "checkout": {"url": checkout_url}}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Unable to start Paddle checkout; verify billing configuration."
 
 
 @pytest.mark.asyncio
@@ -1534,6 +1954,11 @@ async def test_admin_report_evidence_is_authenticated_bounded_and_reads_saved_ou
     assert payload["items"][0]["check_id"] == "seo.title"
     assert "internal_secret" not in json.dumps(payload)
     assert response.headers["cache-control"] == "no-store, private"
+    oversized_offset = await client.get(
+        f"/api/v1/admin/reports/{report_id}/evidence?offset=10000001",
+        headers={"X-Admin-Key": "test-admin-evidence-key"},
+    )
+    assert oversized_offset.status_code == 422
 
     missing = await client.get(
         "/api/v1/admin/reports/999999/evidence",
@@ -1574,6 +1999,11 @@ async def test_malformed_saved_coverage_does_not_break_customer_or_admin_evidenc
     assert evidence.json()["total"] == 0
     assert evidence.json()["items"] == []
     assert evidence.json()["outcome_summary"]["denominator"] == 0
+    oversized_customer_offset = await client.get(
+        f"/api/v1/reports/{report_id}/evidence?offset=10000001",
+        headers=headers,
+    )
+    assert oversized_customer_offset.status_code == 422
 
     admin = await client.get(
         f"/api/v1/admin/reports/{report_id}/evidence",
@@ -1702,7 +2132,7 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()])" in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
@@ -1756,3 +2186,826 @@ async def test_health_check_returns_not_ready_when_required_schema_columns_are_m
     assert raised.value.detail["missing_tables"] == []
     assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
 
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_database_indexes_are_missing():
+    required_tables = set(main.Base.metadata.tables)
+    existing_columns = [
+        (table_name, column.name)
+        for table_name, table in main.Base.metadata.tables.items()
+        for column in table.columns
+    ]
+    required_indexes = sorted({
+        index.name
+        for table_name in required_tables
+        for index in main.Base.metadata.tables[table_name].indexes
+        if index.name
+    })
+    assert required_indexes, "test fixture requires at least one mapped index"
+    existing_indexes = [name for name in required_indexes if name != required_indexes[0]]
+
+    class IncompleteIndexSchemaSession:
+        async def execute(self, statement):
+            sql = str(statement)
+            if "SELECT 1" in sql:
+                return SimpleNamespace(scalar=lambda: 1)
+            if "information_schema.tables" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
+            if "information_schema.columns" in sql:
+                return SimpleNamespace(all=lambda: existing_columns)
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: existing_indexes))
+
+    with pytest.raises(HTTPException) as raised:
+        await main.health_check(IncompleteIndexSchemaSession())
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail["status"] == "not_ready"
+    assert raised.value.detail["schema_ready"] is False
+    assert raised.value.detail["missing_indexes"] == [required_indexes[0]]
+
+
+
+@pytest.mark.asyncio
+async def test_paddle_past_due_retries_until_subscription_is_linked_and_deduplicates(client, monkeypatch):
+    secret = "paddle-test-past-due-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_pastdue123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    # A lifecycle event that arrives before purchase reconciliation must remain
+    # retryable rather than being acknowledged and lost.
+    early_past_due = {
+        "event_id": "evt_past_due_before_purchase",
+        "event_type": "subscription.past_due",
+        "data": {"id": "sub_past_due_retry", "customer_id": "ctm_past_due"},
+    }
+    early = await send(early_past_due)
+    assert early.status_code == 503
+    assert early.json()["detail"] == "Payment-failure event is awaiting subscription reconciliation."
+
+    purchase = {
+        "event_id": "evt_past_due_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_past_due_purchase",
+            "subscription_id": "sub_past_due_retry",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_past_due",
+            "customer": {"email": "past-due@example.com", "name": "Past Due Customer"},
+            "items": [{"price": {"id": "pri_pastdue123"}, "quantity": 1}],
+        },
+    }
+    provision = await send(purchase)
+    assert provision.status_code == 200
+
+    first = await send(early_past_due)
+    assert first.status_code == 200
+    assert first.json()["status"] == "subscription_past_due"
+
+    # Replaying the same provider event ID is idempotent. Distinct event IDs
+    # are retained because a subscription can legitimately enter past-due state
+    # more than once across separate billing cycles.
+    duplicate = await send(early_past_due)
+    assert duplicate.status_code == 200
+    assert duplicate.json() == {
+        "status": "already_processed",
+        "event_id": "evt_past_due_before_purchase",
+    }
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Past Due Customer")
+        )).scalar_one()
+        assert license_obj.is_active is True
+        past_due_events = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == "sub_past_due_retry",
+                PaymentWebhookEvent.status == "subscription_past_due",
+            )
+        )).scalars().all()
+        assert len(past_due_events) == 1
+
+@pytest.mark.asyncio
+async def test_paddle_payment_failure_is_recorded_without_immediately_deactivating_license(client, monkeypatch):
+    secret = "paddle-test-webhook-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_paymentfailure123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_payment_failure_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_payment_failure_purchase",
+            "subscription_id": "sub_payment_failure123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_payment_failure123",
+            "customer": {"email": "payment-failure@example.com", "name": "Payment Failure"},
+            "items": [{"price": {"id": "pri_paymentfailure123"}, "quantity": 1}],
+        },
+    }
+    provision = await send(purchase)
+    assert provision.status_code == 200
+
+    failed_payment = {
+        "event_id": "evt_payment_failure_attempt",
+        "event_type": "transaction.payment_failed",
+        "data": {
+            "id": "txn_payment_failure_attempt",
+            "subscription_id": "sub_payment_failure123",
+            "customer_id": "ctm_payment_failure123",
+            "customer": {"email": "payment-failure@example.com"},
+        },
+    }
+    first = await send(failed_payment)
+    assert first.status_code == 200
+    assert first.json()["status"] == "payment_failed"
+    duplicate = await send(failed_payment)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
+
+    # Distinct Paddle event IDs for the same failed transaction must not create
+    # duplicate lifecycle records or operation events.
+    duplicate_delivery = {**failed_payment, "event_id": "evt_payment_failure_attempt_redelivered"}
+    redelivered = await send(duplicate_delivery)
+    assert redelivered.status_code == 200
+    assert redelivered.json() == {
+        "status": "already_processed",
+        "event_id": "evt_payment_failure_attempt",
+    }
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Payment Failure")
+        )).scalar_one()
+        assert license_obj.is_active is True
+        failure_event = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_payment_failure_attempt")
+        )).scalar_one()
+        assert failure_event.status == "payment_failed"
+        assert failure_event.license_id == license_obj.id
+
+
+@pytest.mark.asyncio
+async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access(client):
+    raw_key = "expired-account-key-secret"
+    license_id = await create_license(
+        key="expired-key-owner",
+        quota=5,
+        active=False,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(APIKey(
+            license_id=license_id,
+            api_key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix=raw_key[:10],
+        ))
+        await db.commit()
+
+    headers = {"X-License-Key": "expired-key-owner"}
+    listing = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing.status_code == 200
+    assert len(listing.json()["items"]) == 1
+    assert listing.json()["max_keys"] == 10
+    assert listing.json()["key_count"] == 1
+    assert listing.json()["keys_remaining"] == 9
+    assert listing.json()["can_create"] is False
+    key_id = listing.json()["items"][0]["id"]
+    assert "key" not in listing.json()["items"][0]
+
+    # The UI is not the security boundary: direct API requests must also be denied.
+    creation = await client.post("/api/v1/account/api-keys", headers=headers)
+    assert creation.status_code == 402
+    async with AsyncSessionLocal() as db:
+        remaining_keys = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert len(remaining_keys) == 1
+
+    revoke = await client.delete(f"/api/v1/account/api-keys/{key_id}", headers=headers)
+    assert revoke.status_code == 200
+    assert revoke.json()["status"] == "revoked"
+
+    listing_after_revoke = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing_after_revoke.status_code == 200
+    assert listing_after_revoke.json()["items"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_payload", [
+    [],
+    {"data": []},
+    {"data": {"id": "txn_reconcile_shape", "details": []}},
+    {"data": {"id": "txn_reconcile_shape", "details": {"totals": []}}},
+])
+async def test_admin_payment_reconciliation_rejects_malformed_provider_shapes(client, monkeypatch, provider_payload):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-reconcile-shape-key")
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_test_key")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_reconcile_shape",
+            status="payment_failed",
+            recipient_email="reconcile-shape@example.com",
+            transaction_id="txn_reconcile_shape",
+        ))
+        await db.commit()
+
+    monkeypatch.setattr(main, "_paddle_api_request", lambda *args, **kwargs: provider_payload)
+    response = await client.post(
+        "/api/v1/admin/payment-events/evt_reconcile_shape/reconcile",
+        headers={"X-Admin-Key": "test-reconcile-shape-key"},
+    )
+    assert response.status_code == 502, response.text
+    assert "Paddle returned" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        event = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == "evt_reconcile_shape")
+        )).scalar_one()
+        assert event.subscription_id is None
+        assert event.paddle_customer_id is None
+
+
+@pytest.mark.asyncio
+async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimized(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-payment-event-queue-key")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_pending",
+                status="email_pending",
+                recipient_email="pending@example.com",
+                transaction_id="txn_admin_queue_pending",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_failed",
+                status="payment_failed",
+                recipient_email="failed@example.com",
+                transaction_id="txn_admin_queue_failed",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_admin_queue_delivered",
+                status="delivered",
+                recipient_email="delivered@example.com",
+                transaction_id="txn_admin_queue_delivered",
+            ),
+        ])
+        await db.commit()
+
+    headers = {"X-Admin-Key": "test-payment-event-queue-key"}
+    page = await client.get("/api/v1/admin/payment-events?limit=1&offset=0", headers=headers)
+    assert page.status_code == 200
+    assert page.json()["page"]["limit"] == 1
+    assert page.json()["page"]["total"] >= 3
+    assert len(page.json()["items"]) == 1
+    assert page.json()["page"]["has_more"] is True
+    assert "recipient_email" not in page.json()["items"][0]
+    assert "license_key" not in page.json()["items"][0]
+
+    failed = await client.get(
+        "/api/v1/admin/payment-events?status=payment_failed",
+        headers=headers,
+    )
+    assert failed.status_code == 200
+    assert all(item["status"] == "payment_failed" for item in failed.json()["items"])
+    assert any(item["event_id"] == "evt_admin_queue_failed" for item in failed.json()["items"])
+
+    invalid_limit = await client.get("/api/v1/admin/payment-events?limit=101", headers=headers)
+    assert invalid_limit.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_overview_filters_clients_by_status_and_package(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-filter-key")
+    headers = {"X-Admin-Key": "test-admin-filter-key"}
+    await create_license(key="filter-active", quota=5)
+    await create_license(key="filter-expired", quota=5, expires_at=datetime.now(timezone.utc) - timedelta(days=1))
+    await create_license(key="filter-inactive", quota=20, active=False)
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        active = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.license_key == "filter-active"))).scalar_one()
+        active.client_name = "Filter Active"
+        active.tier = "starter"
+        expired = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.license_key == "filter-expired"))).scalar_one()
+        expired.client_name = "Filter Expired"
+        expired.tier = "starter"
+        inactive = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.license_key == "filter-inactive"))).scalar_one()
+        inactive.client_name = "Filter Inactive"
+        inactive.tier = "growth"
+        await db.commit()
+
+    active_page = await client.get("/api/v1/admin/overview?client_status=active&tier_filter=starter", headers=headers)
+    assert active_page.status_code == 200, active_page.text
+    assert {row["client_name"] for row in active_page.json()["clients"]} == {"Filter Active"}
+    assert active_page.json()["client_page"]["status"] == "active"
+    expired_page = await client.get("/api/v1/admin/overview?client_status=expired", headers=headers)
+    assert expired_page.status_code == 200, expired_page.text
+    assert {row["client_name"] for row in expired_page.json()["clients"]} == {"Filter Expired"}
+    inactive_page = await client.get("/api/v1/admin/overview?client_status=inactive", headers=headers)
+    assert inactive_page.status_code == 200, inactive_page.text
+    assert {row["client_name"] for row in inactive_page.json()["clients"]} == {"Filter Inactive"}
+    exact_tier = await client.get("/api/v1/admin/overview?tier_filter=STARTER", headers=headers)
+    wildcard_tier = await client.get("/api/v1/admin/overview?tier_filter=%25", headers=headers)
+    assert exact_tier.status_code == wildcard_tier.status_code == 200
+    assert {row["client_name"] for row in exact_tier.json()["clients"]} == {"Filter Active", "Filter Expired"}
+    assert wildcard_tier.json()["clients"] == []
+
+
+@pytest.mark.asyncio
+async def test_customer_audit_activity_is_paginated_scoped_and_minimizes_sensitive_fields(client):
+    owner_id = await create_license(key="activity-owner")
+    other_id = await create_license(key="activity-other")
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            AuditLead(license_id=owner_id, domain="first.example", mobile_score=80, speed_index_sec=2.2,
+                      contact_email="private@example.com", revenue_leak_hypothesis="private pitch", email_body="secret body",
+                      source_channel="customer_portal", created_at=now - timedelta(minutes=1)),
+            AuditLead(license_id=owner_id, domain="second.example", mobile_score=60, speed_index_sec=4.5,
+                      contact_email="other-private@example.com", revenue_leak_hypothesis="other pitch",
+                      source_channel="api", created_at=now),
+            AuditLead(license_id=other_id, domain="must-not-leak.example", mobile_score=99, speed_index_sec=1.0,
+                      created_at=now),
+        ])
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/account/activity?limit=1&offset=0",
+        headers={"X-License-Key": "activity-owner"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["page"] == {"limit": 1, "offset": 0, "total": 2, "has_more": True, "domain": ""}
+    assert len(data["items"]) == 1
+    assert data["items"][0]["domain"] == "second.example"
+    assert "contact_email" not in data["items"][0]
+    assert "revenue_leak_hypothesis" not in data["items"][0]
+    assert "email_body" not in data["items"][0]
+    assert "must-not-leak.example" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
+
+    second_page = await client.get(
+        "/api/v1/account/activity?limit=1&offset=1",
+        headers={"X-License-Key": "activity-owner"},
+    )
+    assert second_page.status_code == 200
+    assert second_page.json()["items"][0]["domain"] == "first.example"
+    assert second_page.json()["page"]["has_more"] is False
+
+    filtered = await client.get(
+        "/api/v1/account/activity?domain=SECOND&limit=20&offset=0",
+        headers={"X-License-Key": "activity-owner"},
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["page"]["total"] == 1
+    assert filtered.json()["page"]["domain"] == "second"
+    assert [item["domain"] for item in filtered.json()["items"]] == ["second.example"]
+
+
+@pytest.mark.asyncio
+async def test_customer_audit_activity_requires_auth_and_bounds_pagination(client):
+    unauthenticated = await client.get("/api/v1/account/activity")
+    assert unauthenticated.status_code == 401
+    license_id = await create_license(key="activity-bounds")
+    del license_id
+    headers = {"X-License-Key": "activity-bounds"}
+    invalid_limit = await client.get("/api/v1/account/activity?limit=101", headers=headers)
+    invalid_offset = await client.get("/api/v1/account/activity?offset=-1", headers=headers)
+    assert invalid_limit.status_code == 422
+    assert invalid_offset.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_customer_billing_history_is_paginated_scoped_and_validated(client):
+    owner_id = await create_license(key="billing-history-owner")
+    other_id = await create_license(key="billing-history-other")
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(event_id="evt_billing_owner_a", license_id=owner_id, status="delivered", recipient_email="owner@example.com",
+                                transaction_id="txn-owner-a", created_at=now - timedelta(minutes=2)),
+            PaymentWebhookEvent(event_id="evt_billing_owner_b", license_id=owner_id, status="payment_failed", recipient_email="owner@example.com",
+                                transaction_id="txn-owner-b", created_at=now - timedelta(minutes=1)),
+            PaymentWebhookEvent(event_id="evt_billing_owner_c", license_id=owner_id, status="delivered", recipient_email="owner@example.com",
+                                transaction_id="txn-owner-c", created_at=now),
+            PaymentWebhookEvent(event_id="evt_billing_other_private", license_id=other_id, status="delivered", recipient_email="other@example.com",
+                                transaction_id="txn-other-secret", created_at=now),
+        ])
+        await db.commit()
+
+    headers = {"X-License-Key": "billing-history-owner"}
+    first = await client.get("/api/v1/account/billing-history?limit=2&offset=0", headers=headers)
+    assert first.status_code == 200, first.text
+    data = first.json()
+    assert data["page"] == {"limit": 2, "offset": 0, "total": 3, "has_more": True}
+    assert [item["event_id"] for item in data["items"]] == ["evt_billing_owner_c", "evt_billing_owner_b"]
+    assert all("recipient_email" not in item and "paddle_customer_id" not in item for item in data["items"])
+    assert "owner@example.com" not in first.text
+    assert "evt_billing_other_private" not in first.text
+    assert "txn-other-secret" not in first.text
+    assert "other@example.com" not in first.text
+    assert first.headers["cache-control"] == "no-store, private"
+
+    second = await client.get("/api/v1/account/billing-history?limit=2&offset=2", headers=headers)
+    assert second.status_code == 200
+    assert [item["event_id"] for item in second.json()["items"]] == ["evt_billing_owner_a"]
+    assert second.json()["page"]["has_more"] is False
+
+    assert (await client.get("/api/v1/account/billing-history")).status_code == 401
+    assert (await client.get("/api/v1/account/billing-history?limit=101", headers=headers)).status_code == 422
+    assert (await client.get("/api/v1/account/billing-history?offset=-1", headers=headers)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_action_history_is_paginated_and_validated(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-pagination")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            SaaSAdminActionLog(action="package_created", entity_type="package", entity_id="starter",
+                               details_json='{"tier":"starter"}'),
+            SaaSAdminActionLog(action="client_updated", entity_type="client", entity_id="12",
+                               details_json='{"field":"is_active"}'),
+            SaaSAdminActionLog(action="key_revoked", entity_type="api_key", entity_id="31",
+                               details_json='{"reason":"rotation"}'),
+        ])
+        await db.commit()
+
+    headers = {"X-Admin-Key": "test-admin-actions-pagination"}
+    first = await client.get("/api/v1/admin/actions?limit=2&offset=0", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.headers["cache-control"] == "no-store, private"
+    assert first.headers["pragma"] == "no-cache"
+    payload = first.json()
+    assert payload["page"]["limit"] == 2
+    assert payload["page"]["offset"] == 0
+    assert payload["page"]["total"] >= 3
+    assert payload["page"]["has_more"] is True
+    assert len(payload["actions"]) == 2
+    assert payload["actions"][0]["id"] > payload["actions"][1]["id"]
+
+    second = await client.get("/api/v1/admin/actions?limit=2&offset=2", headers=headers)
+    assert second.status_code == 200
+    second_data = second.json()
+    assert len(second_data["actions"]) >= 1
+    assert second_data["page"]["has_more"] == (second_data["page"]["offset"] + len(second_data["actions"]) < second_data["page"]["total"])
+
+    assert (await client.get("/api/v1/admin/actions")).status_code == 401
+    assert (await client.get("/api/v1/admin/actions?limit=201", headers=headers)).status_code == 422
+    assert (await client.get("/api/v1/admin/actions?offset=-1", headers=headers)).status_code == 422
+
+
+async def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_secrets(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-legacy")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            SaaSAdminActionLog(
+                action="legacy_malformed", entity_type="system", entity_id="legacy-malformed",
+                details_json="{not valid json",
+            ),
+            SaaSAdminActionLog(
+                action="legacy_sensitive", entity_type="system", entity_id="legacy-sensitive",
+                details_json='{"api_key":"super-secret-value","note":"password=hunter2","nested":{"access_token":"abc123"}}',
+            ),
+        ])
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/admin/actions?limit=200&offset=0",
+        headers={"X-Admin-Key": "test-admin-actions-legacy"},
+    )
+    assert response.status_code == 200, response.text
+    by_entity = {item["entity_id"]: item for item in response.json()["actions"]}
+    malformed = by_entity["legacy-malformed"]["details"]
+    assert "invalid" in malformed["_warning"].lower()
+    sensitive = by_entity["legacy-sensitive"]["details"]
+    assert sensitive["api_key"] == "[REDACTED]"
+    assert sensitive["nested"]["access_token"] == "[REDACTED]"
+    assert "hunter2" not in sensitive["note"]
+
+
+
+@pytest.mark.parametrize("value", [
+    "http://127.0.0.1/private",
+    "http://10.0.0.4/internal",
+    "http://[::1]/admin",
+    "http://169.254.169.254/latest/meta-data",
+    "https://localhost/private",
+    "https://service.internal/debug",
+    "https://store.local/account",
+    "https://shop.example.test/private",
+])
+def test_audit_metadata_url_excludes_private_or_nonpublic_hosts(value):
+    assert main._safe_audit_metadata_url(value) is None
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("HTTPS://Shop.Example/products?token=private#details", "https://shop.example/products"),
+    ("https://shop.example:8443/products?session=secret", "https://shop.example:8443/products"),
+    ("https://[2606:4700:4700::1111]/?token=secret", "https://[2606:4700:4700::1111]/"),
+])
+def test_audit_metadata_url_preserves_public_targets_and_redacts_secrets(value, expected):
+    assert main._safe_audit_metadata_url(value) == expected
+
+
+def test_payment_webhook_migration_matches_current_model_columns_and_indexes():
+    migration = Path(__file__).resolve().parents[1] / "migrations" / "2026-10-22-audit-reports.sql"
+    sql = migration.read_text(encoding="utf-8").lower()
+
+    for column in ("transaction_id", "subscription_id", "paddle_customer_id"):
+        assert f"add column if not exists {column} varchar(100) null" in sql
+        assert f"ix_payment_webhook_events_{column}" in sql
+
+
+
+
+@pytest.mark.asyncio
+async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_minimized(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-client-key-lifecycle")
+    first_client_id = await create_license(key="admin-key-owner-one")
+    second_client_id = await create_license(key="admin-key-owner-two")
+    headers = {"X-Admin-Key": "test-admin-client-key-lifecycle"}
+
+    created = await client.post(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys",
+        headers=headers,
+        json={"client_id": first_client_id, "label": "integration key"},
+    )
+    assert created.status_code == 201
+    secret = created.json()["key"]
+    key_id = created.json()["id"]
+    assert secret.startswith("eaa_")
+    assert created.headers["cache-control"] == "no-store, private"
+
+    listed = await client.get(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    assert listed.headers["cache-control"] == "no-store, private"
+    assert len(listed.json()["items"]) == 1
+    assert listed.json()["items"][0]["id"] == key_id
+    assert listed.json()["items"][0]["key_prefix"] == secret[:10]
+    assert secret not in listed.text
+    assert "api_key_hash" not in listed.text
+
+    foreign_revoke = await client.request(
+        "DELETE", f"/api/v1/admin/clients/{second_client_id}/api-keys/{key_id}",
+        headers=headers, json={"reason": "must not cross client boundary"},
+    )
+    assert foreign_revoke.status_code == 404
+
+    revoked = await client.request(
+        "DELETE", f"/api/v1/admin/clients/{first_client_id}/api-keys/{key_id}",
+        headers=headers, json={"reason": "rotation after integration test"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+
+    after_revoke = await client.get(
+        f"/api/v1/admin/clients/{first_client_id}/api-keys",
+        headers=headers,
+    )
+    assert after_revoke.status_code == 200
+    assert after_revoke.json()["items"] == []
+
+    async with AsyncSessionLocal() as db:
+        actions = (await db.execute(
+            select(SaaSAdminActionLog).where(
+                SaaSAdminActionLog.entity_id == str(first_client_id),
+                SaaSAdminActionLog.action.in_([
+                    "client.api_key_created",
+                    "client.api_key_revoked",
+                ]),
+            ).order_by(SaaSAdminActionLog.id.asc())
+        )).scalars().all()
+        assert [item.action for item in actions] == [
+            "client.api_key_created",
+            "client.api_key_revoked",
+        ]
+        details = [json.loads(item.details_json) if isinstance(item.details_json, str) else item.details_json for item in actions]
+        assert details[1]["reason"] == "rotation after integration test"
+        assert all(secret not in json.dumps(item) for item in details)
+
+@pytest.mark.asyncio
+async def test_account_api_key_creation_enforces_ten_key_cap(client):
+    license_id = await create_license(key="api-key-cap-license", quota=5)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            APIKey(
+                license_id=license_id,
+                api_key_hash=hashlib.sha256(f"existing-api-key-{i}".encode()).hexdigest(),
+                key_prefix=f"eaa_{i:04d}",
+            )
+            for i in range(10)
+        ])
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/account/api-keys",
+        headers={"X-License-Key": "api-key-cap-license"},
+    )
+    assert response.status_code == 409
+    assert "10 API keys" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert len(rows) == 10
+
+@pytest.mark.asyncio
+async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-cap")
+    license_id = await create_license(key="admin-api-key-cap-license", quota=5)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            APIKey(
+                license_id=license_id,
+                api_key_hash=hashlib.sha256(f"admin-existing-key-{i}".encode()).hexdigest(),
+                key_prefix=f"eaa_a{i:03d}",
+            )
+            for i in range(10)
+        ])
+        await db.commit()
+
+    response = await client.post(
+        f"/api/v1/admin/clients/{license_id}/api-keys",
+        headers={"X-Admin-Key": "test-admin-key-cap"},
+        json={"client_id": license_id, "label": "cap regression"},
+    )
+    assert response.status_code == 409
+    assert "10 API keys" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert len(rows) == 10
+
+
+@pytest.mark.asyncio
+async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names(client):
+    owner_id = await create_license(key="profile-owner")
+    other_id = await create_license(key="profile-other")
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
+        owner.client_name = "Original Customer"
+        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
+        other.client_name = "Other Customer"
+        await db.commit()
+
+    headers = {"X-License-Key": "profile-owner"}
+    updated = await client.patch(
+        "/api/v1/account/profile",
+        headers=headers,
+        json={"client_name": "  Updated Store  "},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json() == {"client_name": "Updated Store", "updated": True}
+    assert updated.headers["cache-control"] == "no-store, private"
+    assert updated.headers["pragma"] == "no-cache"
+
+    profile = await client.get("/api/v1/account/profile", headers=headers)
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["client_name"] == "Updated Store"
+    assert "license_key" not in profile.json()
+    assert "api_key" not in profile.json()
+    assert profile.headers["cache-control"] == "no-store, private"
+
+    blank = await client.patch(
+        "/api/v1/account/profile",
+        headers=headers,
+        json={"client_name": "   "},
+    )
+    assert blank.status_code == 422
+
+    too_long = await client.patch(
+        "/api/v1/account/profile",
+        headers=headers,
+        json={"client_name": "x" * 256},
+    )
+    assert too_long.status_code == 422
+
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
+        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
+        assert owner.client_name == "Updated Store"
+        assert other.client_name == "Other Customer"
+
+    assert (await client.get("/api/v1/account/profile")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_expired_customer_can_open_only_a_valid_paddle_billing_portal(client, monkeypatch):
+    from datetime import timedelta
+    from database import AsyncSessionLocal
+    from models import PaymentWebhookEvent, SoftwareLicense
+    from sqlalchemy import select
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_portal_test")
+    license_id = await create_license(key="expired-billing-portal")
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        license_obj.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        license_obj.is_active = False
+        db.add(PaymentWebhookEvent(
+            event_id="evt_expired_portal_link",
+            status="delivered",
+            license_id=license_id,
+            transaction_id="txn_expired_portal",
+            subscription_id="sub_expired_portal",
+            paddle_customer_id="ctm_expiredportal",
+            recipient_email="expired-portal@example.com",
+        ))
+        await db.commit()
+
+    monkeypatch.setattr(
+        main, "_paddle_api_request",
+        lambda *args, **kwargs: {"data": {"urls": {"general": {
+            "overview": "https://customer-portal.paddle.com/overview/session-test"
+        }}}},
+    )
+    valid = await client.post(
+        "/api/v1/account/billing-portal",
+        headers={"X-License-Key": "expired-billing-portal"},
+    )
+    assert valid.status_code == 200, valid.text
+    assert valid.json()["portal_url"] == "https://customer-portal.paddle.com/overview/session-test"
+    assert valid.json()["expires_in_seconds"] == 900
+    assert valid.headers["cache-control"] == "no-store, private"
+    assert valid.headers["pragma"] == "no-cache"
+
+    monkeypatch.setattr(
+        main, "_paddle_api_request",
+        lambda *args, **kwargs: {"data": {"url": "https://attacker.example/collect"}},
+    )
+    invalid = await client.post(
+        "/api/v1/account/billing-portal",
+        headers={"X-License-Key": "expired-billing-portal"},
+    )
+    assert invalid.status_code == 502
+    assert invalid.json()["detail"] == "Unable to open self-service billing. Please retry later."
+
+
+def test_paddle_api_request_rejects_oversized_provider_response(monkeypatch):
+    import io
+    import urllib.request
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, limit=-1):
+            assert limit == 2 * 1024 * 1024 + 1
+            return b"x" * limit
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_test_key")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="response exceeded the allowed size"):
+        main._paddle_api_request("/transactions")
+
+
+@pytest.mark.parametrize("payload", [b"null", b"[]", b'"text"', b"123"])
+def test_paddle_api_request_rejects_non_object_json(monkeypatch, payload):
+    import urllib.request
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, limit=-1):
+            return payload
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_test_key")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="invalid JSON object"):
+        main._paddle_api_request("/transactions")

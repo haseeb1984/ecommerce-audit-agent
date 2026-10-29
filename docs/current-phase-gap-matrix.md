@@ -11,6 +11,13 @@
 - **Not established in repository:** current backend files/routes do not demonstrate the feature; inspect connected frontend/product work before assuming no work exists elsewhere.
 - **Blocked / hold:** do not proceed until the stated dependency or approval is resolved.
 
+## Latest implementation batch — audit target privacy and validation
+
+- The audit API rejects query-bearing targets with HTTP 422 before quota reservation, lead persistence, or external audit-provider work. This avoids silently changing a user-supplied parameterized URL into a different page while preventing query parameters from reaching downstream providers.
+- The lower-level canonical audit URL normalizer removes query strings and fragments from the provider-facing URL as defense in depth.
+- Existing regression coverage includes a query-bearing audit target in the pre-quota rejection cases and explicit normalizer assertions that query/fragment values are omitted. Source changes were read back from the branch; a fresh CI run and runtime tests are still pending.
+- This does not authorize auditing private/local hosts, expand crawl scope, or imply production verification. No deployment, production migration, live-site audit, or PDF generation was performed.
+
 ## Additional repository-only work completed (no deployment or workflow run)
 
 - Customer report history now uses the API's `limit`/`offset` pagination and `total` count, with a load-more control instead of silently stopping at the first 50 records.
@@ -56,6 +63,11 @@
 - Newly generated comprehensive-audit PDF downloads now also declare `Cache-Control: no-store, private`, `Pragma: no-cache`, and `X-Content-Type-Options: nosniff`, aligning their response policy with saved customer/admin PDF downloads. This is source-reviewed only; the API tests have not been executed.
 - The no-store middleware now covers customer account and report API paths as well as admin APIs, so report API error responses receive the same privacy headers. Added assertions to the unauthenticated report-history test; committed but not executed.
 - Baseline browser security headers (`nosniff`, frame denial, strict-origin referrer policy, and a restrictive camera/microphone/geolocation permissions policy) are now applied to responses. The customer `/app` and operator `/admin` pages also receive private no-store headers. Added focused portal-header assertions; tests are committed but not executed, and browser compatibility is not yet verified.
+
+## Repository-only work completed — bounded dependency advisory response
+
+- The frontend CDN dependency advisory checker now streams the OSV batch response and stops reading once it exceeds the 1,000,000-byte budget, before JSON parsing. An oversized response is handled as an incomplete/not-tested lookup, never as a clean dependency scan. The regression test covers this path; neither the new test nor the broader suite has been executed in this batch.
+- This is a defensive reliability improvement, not full software composition analysis. Lockfiles, bundled/self-hosted assets, server dependencies, and live release acceptance remain open.
 
 ## Current evidence-backed matrix
 
@@ -111,9 +123,9 @@
 
 ## Customer billing history — source-level implementation
 
-- Added an authenticated `/api/v1/account/billing-history` endpoint scoped to the verified license, returning at most 50 recent payment provisioning events and account tier/status/expiry metadata. It does not return recipient email or payment instrument details and sends private no-store headers.
-- Added the billing history section to the customer portal, showing event status, transaction/subscription identifiers, and created/updated timestamps. Billing data is cleared when account data is reset or credentials change.
-- A source inspection also found and corrected literal escaped-newline sequences in the customer portal script introduced during earlier API-key UI edits. No browser or automated tests have been run; syntax and runtime behavior still need the deferred verification phase.
+- The authenticated `/api/v1/account/billing-history` endpoint is scoped to the verified license and now supports bounded `limit`/`offset` pagination with total count and `has_more` metadata, plus account tier/status/expiry metadata. It does not return recipient email or payment instrument details and sends private no-store headers.
+- The customer portal shows event status, transaction/subscription identifiers, and created/updated timestamps, with a Load more control and refresh-from-first-page behavior. Billing data is cleared when account data is reset or credentials change.
+- Added API regression coverage for ordering, multiple pages, ownership isolation, authentication, invalid pagination, and no-store headers. Tests are committed but have not been run; browser/runtime behavior and production migration compatibility remain unverified.
 
 ## Operator API key lifecycle — source-level implementation
 
@@ -434,4 +446,313 @@ No deployment, database migration, payment, or production-site audit was run as 
 - The health-check endpoint now compares every mapped column required by the nine application tables against information_schema.columns, after checking connectivity and table presence. A connected database with missing mapped columns returns HTTP 503 and names missing table/column metadata without returning connection strings or raw database errors.
 - Added a focused regression test that supplies all required tables but omits software_licenses.license_key, and asserts the endpoint reports the exact missing column. The earlier missing-table test remains in place.
 - This check verifies table and mapped-column presence only; it does not validate SQL types, nullability, indexes, constraints, migration ordering, or data correctness. Tests have not been executed, so the change is source-level until the suite runs.
+
+### Audit-engine branch — robots.txt crawl-policy enforcement
+
+- Added a bounded robots.txt rule parser for the crawler's own product token and wildcard group, including Allow/Disallow precedence by longest matching path, wildcard patterns, query matching, and end-of-pattern anchors.
+- Both sitemap/homepage-discovered candidate pages and subsequently discovered internal links are filtered against applicable robots rules.
+- If robots.txt returns a server error, redirects off-origin, or cannot be fetched, additional page crawling is conservatively stopped rather than assuming permission.
+- Added focused unit cases for blocked/allowed paths, more-specific Allow rules, wildcard query patterns, and crawler-specific groups.
+- Regression tests have not been executed. The homepage is still fetched as the explicitly requested audit target; robots policy controls additional page crawling. Passive exposure probes now use the same robots path filter, with a focused test that disallowed probes are skipped. Full RFC edge-case conformance remains a review item.
+
+### Billing branch — payment-failure lifecycle visibility
+
+- The verified Paddle webhook now persists `transaction.payment_failed` and `subscription.past_due` events against the linked license, so customer billing history and operator event history can show failures instead of silently ignoring them.
+- Duplicate event IDs are idempotent. A failure event that cannot yet be linked to a provisioned subscription returns retryable HTTP 503 rather than acknowledging and losing the event.
+- A single failed transaction is recorded but does not automatically deactivate the license; Paddle's retry/dunning policy remains authoritative.
+- Added a regression test for payment-failure persistence, duplicate delivery and license access continuity. Tests have not been run.
+
+### Customer branch — expired-account API key recovery
+
+- The API-key list endpoint now uses the narrowly scoped account-ownership dependency already used for revocation. It allows an expired/inactive account to view key metadata and revoke compromised keys without granting audit/report access or returning stored key secrets.
+- The customer portal keeps key-list refresh available when audit usage/report access is expired, while key creation remains disabled unless normal audit access is available.
+- Added an API regression test covering list → revoke → empty list for an expired, inactive license. Tests have not been run.
+
+### Admin branch — bounded payment event queue
+
+- Added a protected `/api/v1/admin/payment-events` endpoint with bounded limit/offset pagination and exact status filtering. Response fields are allowlisted to event/lifecycle identifiers and timestamps; customer email and license secrets are not returned.
+- Added an operator-console queue with status filtering, paging, reconciliation and pending license-email retry actions.
+- Added API regression coverage for pagination, filtering, validation and response minimization. Tests have not been run.
+
+
+## Administrator activity history — implementation batch
+
+- `GET /api/v1/admin/actions` now supports bounded `limit`/`offset` pagination, total count, and `has_more`, retaining newest-first deterministic ordering by creation timestamp and ID.
+- The operator console now supports Load more activity and clears its pagination state when disconnecting, alongside the existing refresh behavior.
+- Added regression coverage for page ordering, pagination metadata, unauthenticated requests, invalid pagination values, and private no-store response headers.
+- Hardened legacy activity-log reads: malformed JSON and non-object payloads no longer break the entire page; stored detail values are re-sanitized before returning to the operator console.
+- Added regression coverage for malformed legacy details and secret-key redaction. Tests have not been executed; this is source-level implementation, not release acceptance.
+
+
+## Report evidence pagination hardening — implementation batch
+
+- Customer and administrator saved-evidence endpoints now cap `offset` at 10,000,000, matching the other paginated SaaS endpoints and rejecting unbounded integer offsets at request validation.
+- Added regression assertions for oversized offsets on both endpoint families. Tests have not been executed; implementation remains unverified until the suite/CI is run.
+
+
+## Per-page audit outcome applicability — implementation batch (2026-10-28)
+
+- Added an explicit `technical_seo.meta_refresh` outcome for each successfully inspected HTML page, including a pass only when the static source check completed without a signal.
+- Corrected the generic outcome recorder so product structured-data, catalog navigation, and hreflang outcomes are only emitted when the URL/source makes those checks applicable; homepage-only checks no longer imply product/catalog checks passed.
+- Added a focused crawl regression test for outcome presence and non-applicable check suppression. Tests have not been executed; this remains source-level implementation pending CI and representative audit acceptance.
+
+
+
+## Audit evidence URL privacy hardening — 2026-10-28
+
+- Persisted audit metadata URLs now reject loopback, private, link-local, reserved/non-global IP literals and local/test-only hostnames, in addition to rejecting credentials and non-HTTP(S) schemes.
+- Public HTTP(S) metadata URLs still have query strings and fragments removed before persistence, and default ports remain normalized.
+- Added regression cases for common private IPv4/IPv6 targets, cloud metadata IPs, local hostnames, and public URL normalization/redaction.
+- Source and tests are committed; the tests have not been executed. This is a metadata-safety boundary, not a substitute for the crawler's DNS-pinned fetch and redirect checks. No deployment, migration, live crawl, or PDF work was performed.
+
+
+## Coverage-manifest evidence URL privacy — 2026-10-28
+
+- The coverage manifest now applies the same private/non-public host exclusion used by persisted audit metadata: loopback, non-global IP literals, and local/internal/test-only hostnames are excluded from target URLs, sampled page URLs, and page-scoped outcome summaries.
+- Public URL query strings and fragments continue to be removed; public IPv6 literals remain supported.
+- Added regression coverage for local/private hosts and safe public-page retention. Tests are committed but have not been executed.
+- This is evidence-output hygiene only. It does not replace crawler-side DNS resolution, redirect validation, or network egress controls.
+
+
+## Payment webhook schema alignment — implementation batch (2026-10-28)
+
+- Updated the existing report-history migration to add the current payment webhook transaction, subscription, and Paddle customer identifier columns with idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. This matters because `CREATE TABLE IF NOT EXISTS` alone does not update an already-created table.
+- Added idempotent indexes for those three identifiers to align with the SQLAlchemy model.
+- Source-to-model checks were performed by re-reading both files. SQL has **not** been applied to production, and database integration tests have not been run. Apply only through the approved migration process.
+
+
+## Subscription cancellation ordering hardening — 2026-10-28
+
+- Hardened the completed-transaction handler to check for any recorded `subscription_canceled` event for the subscription, rather than relying only on whichever lifecycle event has the latest timestamp.
+- This closes an ordering gap where a payment-failure or `past_due` event delivered after cancellation could become the newest record and hide the cancellation guard from a later delayed `transaction.completed` event.
+- Added a regression journey for purchase → cancellation → payment failure → late completed transaction. It asserts that the failure remains visible in billing history, the late transaction is not recorded as a renewal, and the license remains inactive.
+- Source edits and regression coverage are committed. The test has not been executed in this environment; Paddle sandbox ordering, PostgreSQL concurrency behavior, full suite results, schema migration state, and customer/admin end-to-end acceptance remain pending. No production migration, deployment, or infrastructure change was performed.
+
+
+## Customer billing-history privacy regression coverage — 2026-10-28
+
+- Strengthened the billing-history pagination/ownership test so it checks the exact seeded foreign-account event ID, transaction identifier, and email are absent from the authenticated customer's response.
+- Added explicit allowlist assertions that customer billing-history items omit recipient email and Paddle customer ID; the API response remains scoped to the authenticated license and retains private no-store caching.
+- This batch tightens regression coverage around an existing backend security boundary; it does not change the customer API contract. The tests have not been executed, so assertions are source-reviewed only. Full suite, browser acceptance, and production readiness remain pending.
+
+## Customer portal identity-switch race guard — implementation batch (2026-10-28)
+
+- Authenticated customer-portal requests now capture an account-session generation before sending the request and reject late responses if the user starts another connection attempt or disconnects before the response returns.
+- This prevents an in-flight response for a prior credential from repopulating saved reports, activity, usage, billing, or API-key UI after account data was cleared or another identity was selected.
+- The source was committed and read back from the feature branch. Browser-level race reproduction and automated JavaScript tests have not been run; complete customer workflow acceptance remains pending. No database migration, production audit, PDF/report refinement, or deployment was performed.
+
+## Customer + administrator portal session-race hardening — multi-gap batch (2026-10-28)
+
+- Customer portal: authenticated API requests now validate the account-session generation after response arrival and after asynchronous JSON/PDF-body parsing. This blocks late account data from rendering after a connect/disconnect, and blocks an old audit PDF from being downloaded after the user switches accounts mid-response.
+- Customer portal: obsolete connection attempts no longer clear a newer session's credential/state or re-enable the Connect button while a newer attempt is still active. Empty credential submissions do not invalidate an in-progress session.
+- Administrator portal: the shared API helper checks the administrator-session generation after response parsing; connect attempts are generation-scoped, and disconnect/clear invalidates pending requests. Obsolete connect failures no longer clear a newer administrator session.
+- Code changes were committed and read back from the feature branch. Browser-based race reproduction and JavaScript syntax/runtime checks have not been executed. Some administrator action handlers use direct fetch calls outside the shared API helper and remain a separate review item; full admin workflow acceptance is still pending. No deployment, database migration, production audit, or PDF/report refinement was performed.
+
+
+
+## Full administrator action session isolation + API-key lifecycle acceptance coverage — 2026-10-28
+
+- The operator console now routes all direct request paths (client edits, package changes, payment reconciliation/email retry, report PDF/evidence downloads, and client API-key management) through a generation-guarded fetch wrapper, not only requests using the shared JSON API helper.
+- The wrapper rejects responses when the administrator disconnects or starts a different connection attempt, and re-checks session identity after JSON, text, or PDF blob parsing and before evaluating response success. This prevents a delayed response from an old admin session from being treated as current.
+- Added API regression coverage for the complete admin-issued API-key lifecycle: create once-only secret, no-store response, metadata-only listing, foreign-client revoke rejection, successful scoped revoke, empty post-revoke listing, audit-log entries, and secret absence from audit details.
+- Source files were committed and read back. The Python suite and browser-based session-race tests have **not** been executed in this environment; the new test remains unverified until CI runs. This batch does not imply full SaaS completion or production readiness.
+- Remaining broad gates: line-by-line requirement traceability, integrated customer audit-to-report/email journey, complete audit-module acceptance, current full-suite/static/browser verification, migration readiness, and deployment approval. PDF/report refinement remains intentionally reserved for the final phase; no deployment, migration, or live customer-site audit was run.
+
+## Latest implementation batch — checkout redirect hardening
+
+- Customer plan loading now uses no-store fetches, validates the plans payload before replacing the existing view, builds the updated plan list off-DOM, and shows a controlled fallback for malformed/empty responses rather than partially rendering data.
+- The customer checkout flow now handles non-JSON error responses, validates the returned checkout URL as HTTPS on the exact `paddle.com` domain or a true subdomain, and rejects credentials or non-Paddle destinations before browser navigation.
+- Regression tests cover malicious checkout destinations including lookalike domains, embedded credentials, HTTP, and JavaScript URLs; the existing positive test continues to assert that checkout uses the server-configured price rather than client-supplied amounts.
+- Source changes committed on `integration/saas-feature-batch`: customer portal `6e3c8a6`; checkout destination regression tests `ee6c6ec`.
+- Verification status: source readback and diff intent checked through GitHub. A fresh GitHub Actions run has not been produced for this branch update, so these new tests are **not yet reported as executed**. Vercel remains out of scope because its build quota is exhausted. PDF generation/report refinement remains deferred to the final phase.
+
+## Latest implementation batch — shared Paddle redirect validation
+
+- Extracted a shared backend URL validator for Paddle-hosted checkout and customer billing-portal links. It requires a trimmed HTTPS URL, validates malformed port syntax, rejects embedded username/password credentials, normalizes hostname case, and accepts only `paddle.com` or a true subdomain.
+- Checkout creation and self-service billing portal now use the same policy, closing the previous inconsistency where the portal URL accepted embedded credentials.
+- Added parametrized regression coverage for valid Paddle URLs, mixed-case hostnames, lookalike domains, embedded credentials, HTTP, JavaScript URLs, malformed ports, whitespace, and non-string values.
+- Source commits on `integration/saas-feature-batch`: backend `dd6d4db`; tests `35f6516`.
+- Verification status: changes are committed and the files were read back from GitHub. No fresh Actions run has been returned for this branch update, so the new tests are not claimed as executed. PDF/report refinements remain deferred until the final phase.
+
+
+## Latest implementation batch — bounded report-email input
+
+- The customer saved-report email request now constrains recipient email input to 3–254 characters at request-model validation, before report lookup and SMTP work. Existing route-level syntax validation and explicit recipient confirmation remain in place.
+- Added parameterized API regression cases for empty, too-short, and overlong recipient values; these assert HTTP 422 and no SMTP invocation. Source changes are committed, but a fresh GitHub Actions run/runtime verification is still pending. PDF generation/refinement remains deferred to the final phase.
+
+
+## Latest implementation batch — customer API-key cap regression coverage
+
+- Added an API-level regression test that seeds ten keys for one license, attempts an eleventh through the customer endpoint, expects HTTP 409, and confirms the database still contains exactly ten keys.
+- The existing creation path uses a per-license row lock on databases supporting row locks before counting and inserting, protecting the cap against simultaneous requests in production PostgreSQL.
+- Verification in this batch is source/test review and GitHub readback only. The test has been added but **has not been executed** because no fresh GitHub Actions run is available for the latest branch changes. Vercel is not used. PDF/report refinement remains deferred to the final phase.
+
+
+## Latest implementation batch — admin-issued API-key cap coverage
+
+- Added a matching regression test for the administrator API-key creation endpoint: with ten existing keys for a customer, a new admin-issued key must return HTTP 409 and the database must remain at ten keys.
+- This covers the second entry point to the same account key limit; the backend already serializes admin key creation on the customer license row and records creation/revocation in the admin action log.
+- GitHub source and test changes are reviewed/read back, but this new test is not claimed as executed: no fresh Actions run is available for the latest branch. Vercel is not used. PDF/report refinement remains deferred.
+
+
+
+## Checkout launch URL cache protection — implementation batch (2026-10-28)
+
+- The shared response-security middleware now applies `Cache-Control: no-store, private` and `Pragma: no-cache` to the Paddle `/checkout` launch page as well as the authenticated customer/admin/report surfaces.
+- This matters because checkout launch URLs can contain a short-lived Paddle transaction identifier in the query string; the browser should not retain the launch response in a reusable cache.
+- Extended the existing browser-security-header API regression test to cover `/checkout?_ptxn=...` alongside customer and administrator portal pages.
+- Source and regression test are committed and read back from the feature branch. Tests have **not** been executed and no fresh GitHub Actions run is available. No Paddle transaction, migration, deployment, or PDF/report work was performed.
+
+## Configured Paddle checkout destination validation — implementation batch (2026-10-28)
+
+- The backend now validates `PADDLE_CHECKOUT_URL` with the same strict HTTPS/Paddle-host allowlist used for URLs returned by Paddle, rejecting lookalike domains and embedded credentials before making the transaction API request.
+- Added API regression coverage for trusted configured destinations and parameterized untrusted destinations; invalid configuration must return HTTP 503 before the Paddle request is called.
+- Code and tests are committed to `integration/saas-feature-batch`. Tests have **not** been executed in this environment; no fresh GitHub Actions run is available. Vercel remains unused due to the build-quota limitation. PDF/report refinement remains deferred to the final phase.
+
+## Saved-report ownership isolation acceptance extension — implementation batch (2026-10-28)
+
+- Extended the existing two-license report isolation API test beyond listing, PDF download, and coverage metadata to also request the foreign license's detailed evidence and email endpoints.
+- The regression asserts both foreign-report endpoints return 404 and that the email sender is never invoked, protecting stored report contents and preventing cross-account email delivery.
+- Test source is committed and read back from the feature branch. The test has **not** been executed; fresh GitHub Actions runs remain unavailable and the Vercel build quota remains exhausted. This is source-level acceptance coverage, not a claim of runtime verification. PDF/report refinement remains deferred to the final phase.
+
+## Customer account profile — source-level implementation
+
+- Added authenticated `GET /api/v1/account/profile` and `PATCH /api/v1/account/profile` endpoints. Responses expose only the customer display name, plan tier, account status, creation date, and expiry; credentials and payment secrets are not returned.
+- The customer portal now loads profile metadata on connect, lets the customer update the account display name, and clears profile data when disconnecting or switching credentials. Profile responses use private no-store cache headers.
+- The editable field is the account display name only. Billing-provider identity, email address, subscription plan, and payment details are not changed by this feature.
+- Source-level implementation only; API validation, ownership isolation, browser session switching, and persistence require the planned verification phase.
+
+
+## Customer billing attention summary — implementation batch
+
+- The authenticated billing-history response now includes a separate, bounded list of the ten most recently updated payment-failure, past-due, cancellation, or license-email-delivery events for that same license. It uses the existing account ownership filter and private no-store response policy.
+- The customer portal surfaces those events above the full billing history with plain-language labels and safe next steps. It does not claim a failed payment automatically disables access, does not expose recipient email or credentials, and directs payment actions to the Paddle billing portal.
+- The attention list is cleared when the customer disconnects or switches identity. The full paginated event history remains unchanged.
+- Source-level implementation only; database-backed ownership, browser session-switching, and real Paddle lifecycle behavior still require the planned verification phase. No migration, deployment, payment action, or PDF/report refinement was performed.
+
+
+## Administrator billing operations visibility — implementation batch
+
+- Corrected operational diagnostics so the pending license-email metric and recovery list include only `email_pending` and `email_sending` states. Payment failures, past-due notices, and cancellations are not mislabeled as undelivered license emails.
+- Added bounded lifecycle attention records and counts for payment failures, past-due subscriptions, and cancellations, plus a count of email-send markers older than ten minutes.
+- Updated the administrator console to show separate license-email recovery and billing-lifecycle queues. Email retry controls are shown only for pending email delivery; ordinary lifecycle events are informational and do not expose recipient email addresses in the lifecycle queue.
+- Source-level implementation and GitHub readback only. No automated test, live Paddle reconciliation, production database migration, or deployment was run. PDF/report work remains deferred.
+
+
+## Admin license expiry operations — implementation batch
+
+This batch adds separate counts for expired licenses, active licenses expiring within seven days, active licenses expiring within thirty days, licenses without expiry dates, and licenses with the inactive flag. The operator account-status filter now includes seven-day expiry, thirty-day expiry, and no-expiry cohorts. No automatic suspension, renewal, payment mutation, or entitlement extension is performed.
+
+Issue checklist:
+1. Separate expired-license metric.
+2. Seven-day expiry metric.
+3. Thirty-day expiry metric.
+4. Missing-expiry metric.
+5. Explicit inactive-flag metric.
+6. Seven-day expiry filter.
+7. Thirty-day expiry filter.
+8. Missing-expiry filter.
+9. Preserve authenticated admin access.
+10. Keep expiry filters server-side.
+11. Preserve existing bounded pagination.
+12. Keep exact package-tier filtering.
+13. Preserve sanitized search matching.
+14. Keep existing active/inactive filters.
+15. Keep expired status precedence.
+16. Use UTC-aware comparison boundaries.
+17. Make renewal urgency visible in summary metrics.
+18. Distinguish expiry from inactive status.
+19. Avoid exposing customer credentials in metrics.
+20. Avoid automatic account suspension.
+21. Avoid automatic entitlement extension.
+22. Keep billing lifecycle actions separate.
+23. Preserve existing account-management controls.
+24. Keep changes confined to source and docs.
+25. Explicitly record unverified runtime and production boundaries.
+
+Verification boundary: GitHub source changes and readback only. No automated tests, live database acceptance, production migration, deployment, or live billing actions were run. PDF/report refinement remains deferred to the final phase.
+
+
+## Customer entitlement and quota visibility — implementation batch
+
+Expanded the authenticated account-usage response with plan label/availability, concurrent audit limit, consumed count, normalized quota state, and a customer-safe entitlement state. The customer portal now explains near-limit, exhausted quota, expired/inactive account, inactive plan, and unconfigured quota states instead of showing only a numeric usage bar. This is explanatory visibility; it does not change the audit reservation policy or automatically suspend existing subscriptions when a plan is hidden from new purchases.
+
+Issue checklist addressed:
+1. Expose human-readable plan label.
+2. Expose whether the current plan is available in the catalogue.
+3. Expose the configured monthly limit.
+4. Expose completed audits.
+5. Expose in-progress reservations.
+6. Expose total consumed slots.
+7. Expose remaining monthly slots.
+8. Expose normalized usage percentage.
+9. Expose near-limit state at 80% usage.
+10. Expose exhausted quota state.
+11. Expose account inactive state.
+12. Expose expired license state.
+13. Expose inactive plan state.
+14. Expose missing/zero quota configuration.
+15. Expose configured concurrent audit limit.
+16. Normalize naive expiry timestamps as UTC.
+17. Keep account usage response private/no-store.
+18. Avoid returning license/API key secrets.
+19. Retain fallback allowance for legacy/unlisted tiers.
+20. Retain month-boundary reset calculation.
+21. Keep account usage authentication requirement.
+22. Distinguish plan availability from license active flag.
+23. Distinguish quota exhaustion from account expiry.
+24. Render clear customer-facing status explanations.
+25. Document that this batch adds visibility, not automatic entitlement mutations.
+
+Verification boundary: source changes were committed and readback verification is pending. Automated tests, browser runtime checks, and database-backed acceptance have not been run. No production migration/deployment or live billing action was performed. PDF/report refinement remains reserved for the final phase.
+
+
+## Plan availability enforcement — cohesive feature completion
+
+Closed a consistency gap between the operator-managed plan catalogue, customer usage display, and audit-slot reservation. New audit reservations now read the plan's `is_active` flag from the same catalogue row as the monthly/concurrent limits. If an operator disables a plan, existing licenses on that tier can no longer reserve new audit work; the request is rejected with HTTP 403 and a safe customer-facing message. Unknown/unlisted legacy tiers retain the existing fallback allowance behavior.
+
+Feature issue checklist:
+1. Read plan availability in quota reservation.
+2. Use the plan catalogue as the source of truth when a tier row exists.
+3. Reject reservations for operator-disabled plans.
+4. Return a controlled HTTP 403 response for unavailable plans.
+5. Keep the message free of secrets and database details.
+6. Preserve legacy-tier fallback when no plan row exists.
+7. Preserve the license active-flag check.
+8. Preserve expiry enforcement before external audit work.
+9. Preserve monthly quota enforcement.
+10. Preserve concurrent audit enforcement.
+11. Preserve expired reservation cleanup.
+12. Preserve license-row locking around reservation.
+13. Commit reservations before slow external work.
+14. Keep reservation release after failed audits.
+15. Avoid schema creation on the request path.
+16. Keep operator-managed monthly allowance behavior.
+17. Keep operator-managed concurrency allowance behavior.
+18. Align backend plan availability with the customer usage status.
+19. Keep new audits blocked without changing existing subscription/payment state.
+20. Avoid automatic license revocation when a plan is hidden.
+21. Preserve bounded diagnostics and existing audit event behavior.
+22. Keep plan state read-only in the audit submission flow.
+23. Avoid leaking billing identifiers into customer error text.
+24. Document this as enforcement, not just UI visibility.
+25. Record that live database and end-to-end acceptance remain outstanding.
+
+Verification boundary: quota.py was updated and read back from the feature branch. Automated tests, database-backed acceptance, concurrent-request testing, and browser checks were not run. No migration, deployment, or live billing action was performed. PDF/report refinement remains deferred to the final phase.
+
+
+## Test-blocking fixes — current CI validation batch
+
+Current full GitHub Actions run 40740545876 exposed regressions on the current feature-chain head. Fixes in this batch address the common causes first: ReportLab multiBuild bookmark stability and monkeypatch-safe Paragraph type checks; optional business-context normalization; external form actions with URL userinfo are still identified while evidence omits credentials/query strings; missing trust cues explicitly distinguish absence from authenticity; and environment-configured Paddle plans remain available only when the plan catalogue is empty. Customer portal assertions now include the profile loader added by the account-profile feature.
+
+Validation result before fixes: dependency installation and dependency vulnerability audit passed; the backend test step failed. The failures include report rendering, crawl discovery/outcomes, payment lifecycle setup, conversion evidence, trust wording, and stale portal/admin expectations. This batch is not considered fully verified until a fresh CI run completes. No deployment, production migration, or real payment action was performed.
+
+## Latest bounded-crawl and schema-readiness batch
+
+- The crawler now deduplicates canonical URLs during page processing and avoids adding a generic outcome when a specialized outcome for the same check and page already exists. This addresses duplicate product structured-data outcomes while retaining route-specific applicability.
+- The production readiness CLI now checks the full set of runtime-used columns across licenses, API keys, audit leads, quota reservations, reports, billing webhook events, plan packages, operation events, and admin action logs.
+- The readiness CLI also checks critical operational indexes, including unique Paddle price mapping and account-scoped report/quota indexes, by reading PostgreSQL's `pg_indexes` view. It remains read-only and never applies schema changes.
+- Core schema migration now defines a partial unique index for non-NULL Paddle price IDs, preventing two plans from sharing one provider price. Existing duplicate mappings, if any, must be reconciled before that index can be applied.
+- CI run [40790960269](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40790960269) passed on commit `8351ba6d9f6ed57596229cce80192cb91812f1b4` with **660 passed** and 55 warnings. The expanded schema/index readiness checks were committed after that run and are **awaiting their own CI result**.
+- No production database was queried or modified, no migration was executed, and no deployment was performed.
 

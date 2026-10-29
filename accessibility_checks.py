@@ -425,8 +425,8 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             + " | ".join(MANUAL_WCAG_REVIEW_CHECKLIST)
         ),
         explanation=(
-            "Automated source inspection detects only a subset of accessibility barriers. Keyboard behavior, "
-            "rendered contrast, responsive reflow, assistive-technology behavior, media alternatives and task "
+            "Automated source inspection detects only a subset of accessibility barriers; it cannot establish WCAG conformance. "
+            "Keyboard behavior, rendered contrast, responsive reflow, assistive-technology behavior, media alternatives and task "
             "completion require browser or human review. This record is a checklist, not a claim that these "
             "criteria failed or passed."
         ),
