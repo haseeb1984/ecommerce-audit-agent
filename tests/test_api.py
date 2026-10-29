@@ -2224,10 +2224,10 @@ async def test_paddle_past_due_retries_until_subscription_is_linked_and_deduplic
     assert first.status_code == 200
     assert first.json()["status"] == "subscription_past_due"
 
-    # Distinct event IDs for the same past-due subscription lifecycle state should
-    # not create repeated customer-facing records.
-    redelivery = {**early_past_due, "event_id": "evt_past_due_redelivered"}
-    duplicate = await send(redelivery)
+    # Replaying the same provider event ID is idempotent. Distinct event IDs
+    # are retained because a subscription can legitimately enter past-due state
+    # more than once across separate billing cycles.
+    duplicate = await send(early_past_due)
     assert duplicate.status_code == 200
     assert duplicate.json() == {
         "status": "already_processed",
