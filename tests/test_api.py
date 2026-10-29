@@ -2920,6 +2920,50 @@ async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names
 
 
 @pytest.mark.asyncio
+async def test_billing_portal_skips_malformed_newer_customer_link(client, monkeypatch):
+    from database import AsyncSessionLocal
+    from models import PaymentWebhookEvent
+    from sqlalchemy import select
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_portal_test")
+    license_id = await create_license(key="billing-portal-valid-fallback")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_portal_valid_older",
+                status="delivered",
+                license_id=license_id,
+                paddle_customer_id="ctm_validolder",
+                recipient_email="portal-fallback@example.com",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_portal_invalid_newer",
+                status="delivered",
+                license_id=license_id,
+                paddle_customer_id="not-a-paddle-customer-id",
+                recipient_email="portal-fallback@example.com",
+            ),
+        ])
+        await db.commit()
+
+    calls = []
+    def fake_paddle_request(path, method="GET", payload=None):
+        calls.append((path, method, payload))
+        return {"data": {"urls": {"general": {
+            "overview": "https://customer-portal.paddle.com/overview/fallback-test"
+        }}}}
+    monkeypatch.setattr(main, "_paddle_api_request", fake_paddle_request)
+
+    response = await client.post(
+        "/api/v1/account/billing-portal",
+        headers={"X-License-Key": "billing-portal-valid-fallback"},
+    )
+    assert response.status_code == 200, response.text
+    assert calls and calls[0][0] == "/customers/ctm_validolder/portal-sessions"
+    assert response.json()["portal_url"] == "https://customer-portal.paddle.com/overview/fallback-test"
+
+
+@pytest.mark.asyncio
 async def test_expired_customer_can_open_only_a_valid_paddle_billing_portal(client, monkeypatch):
     from datetime import timedelta
     from database import AsyncSessionLocal
