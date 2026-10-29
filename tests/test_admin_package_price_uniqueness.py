@@ -32,12 +32,12 @@ def _payload(tier: str, price_id: str | None) -> dict:
 @pytest.mark.asyncio
 async def test_admin_package_create_rejects_paddle_price_already_assigned(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "package-unique-test-key")
-    await _seed_package("existing-price-plan", "priSharedPackagePrice")
+    await _seed_package("existing-price-plan", "pri_SharedPackagePrice")
 
     response = await client.post(
         "/api/v1/admin/packages",
         headers={"X-Admin-Key": "package-unique-test-key"},
-        json=_payload("new-price-plan", "priSharedPackagePrice"),
+        json=_payload("new-price-plan", "pri_SharedPackagePrice"),
     )
 
     assert response.status_code == 409
@@ -47,13 +47,13 @@ async def test_admin_package_create_rejects_paddle_price_already_assigned(client
 @pytest.mark.asyncio
 async def test_admin_package_update_rejects_another_plans_paddle_price(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "package-unique-update-key")
-    await _seed_package("first-price-plan", "priFirstUniquePrice")
-    await _seed_package("second-price-plan", "priSecondUniquePrice")
+    await _seed_package("first-price-plan", "pri_FirstUniquePrice")
+    await _seed_package("second-price-plan", "pri_SecondUniquePrice")
 
     response = await client.patch(
         "/api/v1/admin/packages/first-price-plan",
         headers={"X-Admin-Key": "package-unique-update-key"},
-        json=_payload("first-price-plan", "priSecondUniquePrice"),
+        json=_payload("first-price-plan", "pri_SecondUniquePrice"),
     )
 
     assert response.status_code == 409
@@ -63,4 +63,4 @@ async def test_admin_package_update_rejects_another_plans_paddle_price(client, m
         first = (await db.execute(
             select(SaaSPlanPackage).where(SaaSPlanPackage.tier == "first-price-plan")
         )).scalar_one()
-        assert first.paddle_price_id == "priFirstUniquePrice"
+        assert first.paddle_price_id == "pri_FirstUniquePrice"
