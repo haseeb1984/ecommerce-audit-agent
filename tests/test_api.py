@@ -534,7 +534,7 @@ async def test_parallel_requests_with_one_slot_return_one_200_and_one_429(
 @pytest.mark.asyncio
 async def test_configured_concurrency_limit_rejects_extra_active_audit(client, monkeypatch):
     license_id = await create_license(key="concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "1")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_PRO", "1")
     async with AsyncSessionLocal() as db:
         db.add(
             AuditQuotaReservation(
@@ -559,7 +559,7 @@ async def test_configured_concurrency_limit_rejects_extra_active_audit(client, m
 @pytest.mark.asyncio
 async def test_invalid_configured_concurrency_limit_fails_closed(client, monkeypatch):
     await create_license(key="invalid-concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "not-a-number")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_PRO", "not-a-number")
 
     response = await client.post(
         "/api/v1/audit-lead",
