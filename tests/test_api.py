@@ -3081,3 +3081,23 @@ async def test_api_key_list_disables_creation_at_account_key_cap(client):
     assert payload["can_create"] is False
     assert payload["can_create_reason"] == "key_limit_reached"
     assert "api_key_hash" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_diagnostics_and_client_history_are_not_cached(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-private-diagnostics")
+    license_id = await create_license(key="admin-private-history-client")
+    headers = {"X-Admin-Key": "test-admin-private-diagnostics"}
+
+    operations = await client.get("/api/v1/admin/operations", headers=headers)
+    assert operations.status_code == 200, operations.text
+    assert operations.headers["cache-control"] == "no-store, private"
+    assert operations.headers["pragma"] == "no-cache"
+
+    history = await client.get(
+        f"/api/v1/admin/clients/{license_id}/history",
+        headers=headers,
+    )
+    assert history.status_code == 200, history.text
+    assert history.headers["cache-control"] == "no-store, private"
+    assert history.headers["pragma"] == "no-cache"
