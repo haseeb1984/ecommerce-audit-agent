@@ -26,12 +26,13 @@ async def create_license(
     quota=10,
     active=True,
     expires_at=None,
+    tier="test",
 ):
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
             license_key=key,
             client_name="Automated Test",
-            tier="test",
+            tier=tier,
             max_monthly_audits=quota,
             is_active=active,
             expires_at=expires_at,
@@ -2814,9 +2815,31 @@ async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_min
         assert details[1]["reason"] == "rotation after integration test"
         assert all(secret not in json.dumps(item) for item in details)
 
+
+@pytest.mark.asyncio
+async def test_customer_api_key_creation_is_whitelabel_only(client):
+    await create_license(key="starter-api-key-denied", tier="starter")
+    headers = {"X-License-Key": "starter-api-key-denied"}
+
+    listing = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["can_create"] is False
+    assert listing.json()["can_create_reason"] == "plan_not_eligible"
+
+    response = await client.post("/api/v1/account/api-keys", headers=headers)
+    assert response.status_code == 403
+    assert "Whitelabel/Enterprise" in response.json()["detail"]
+
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key == "starter-api-key-denied")
+        )).scalar_one()
+        keys = (await db.execute(select(APIKey).where(APIKey.license_id == owner.id))).scalars().all()
+        assert keys == []
+
 @pytest.mark.asyncio
 async def test_account_api_key_creation_enforces_ten_key_cap(client):
-    license_id = await create_license(key="api-key-cap-license", quota=5)
+    license_id = await create_license(key="api-key-cap-license", quota=5, tier="whitelabel")
     async with AsyncSessionLocal() as db:
         db.add_all([
             APIKey(
@@ -3100,7 +3123,7 @@ def test_paddle_api_request_rejects_non_object_json(monkeypatch, payload):
 
 @pytest.mark.asyncio
 async def test_api_key_list_disables_creation_at_account_key_cap(client):
-    license_id = await create_license(key="api-key-cap-readiness-license", quota=10)
+    license_id = await create_license(key="api-key-cap-readiness-license", quota=10, tier="whitelabel")
     async with AsyncSessionLocal() as db:
         db.add_all([
             APIKey(
