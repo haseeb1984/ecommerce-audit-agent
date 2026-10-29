@@ -2037,6 +2037,72 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             logger.info("Paddle subscription cancellation applied (license_id=%s)", license_obj.id)
         return {"status": "cancellation_applied" if changed else "already_canceled", "event_id": event_id}
 
+    # Reconcile verified subscription price changes without changing lifecycle state.
+    if event_type == "subscription.updated":
+        subscription_id = str(transaction.get("id") or "").strip()[:100]
+        if not subscription_id:
+            raise HTTPException(status_code=400, detail="Paddle subscription update has no subscription ID.")
+        from sqlalchemy import select
+        await _lock_paddle_webhook_resource(db, subscription_id)
+        duplicate = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if duplicate is not None:
+            return {"status": "already_processed", "event_id": event_id}
+        canceled = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.status == "subscription_canceled",
+            ).limit(1)
+        )).scalar_one_or_none()
+        linked_event = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == subscription_id,
+                PaymentWebhookEvent.license_id.is_not(None),
+            ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if linked_event is None or linked_event.license_id is None:
+            raise HTTPException(status_code=503, detail="Subscription update is awaiting license reconciliation.")
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == linked_event.license_id)
+        )).scalar_one_or_none()
+        if license_obj is None:
+            raise HTTPException(status_code=503, detail="Subscription update is awaiting license reconciliation.")
+        items = transaction.get("items") or []
+        if not isinstance(items, list):
+            raise HTTPException(status_code=400, detail="Paddle subscription items must be a JSON array.")
+        price_ids = set()
+        for item in items:
+            if isinstance(item, dict) and isinstance(item.get("price"), dict):
+                price_id = item["price"].get("id")
+                if isinstance(price_id, str) and price_id.strip():
+                    price_ids.add(price_id.strip())
+        plans = await _db_payment_plans(db, active_only=False)
+        plan = next((p for p in plans if p.get("price_id") and p["price_id"] in price_ids), None)
+        customer = transaction.get("customer") or {}
+        if not isinstance(customer, dict):
+            raise HTTPException(status_code=400, detail="Paddle subscription customer must be a JSON object.")
+        customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
+        now = datetime.now(timezone.utc)
+        if canceled is None and plan is not None:
+            license_obj.tier = plan["tier"]
+            license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
+        status = "subscription_updated" if plan is not None else "subscription_update_unmapped_price"
+        db.add(PaymentWebhookEvent(
+            event_id=event_id, status=status, license_id=license_obj.id,
+            recipient_email=linked_event.recipient_email, subscription_id=subscription_id,
+            paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
+            created_at=now, updated_at=now,
+        ))
+        await db.commit()
+        if plan is not None and canceled is None:
+            await _record_operation_event(db, status, license_obj.id, None, None)
+        return {
+            "status": "ignored_after_cancellation" if canceled is not None
+                else ("plan_reconciled" if plan is not None else "unmapped_price_ignored"),
+            "event_id": event_id, "license_id": license_obj.id,
+        }
+
     if event_type != "transaction.completed":
         return {"status": "ignored", "event_id": event_id}
     if transaction.get("status") != "completed":
