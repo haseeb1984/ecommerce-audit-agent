@@ -52,6 +52,7 @@
 <p class="muted">Create API keys for integrations, review their prefixes, and revoke keys you no longer use. A new key's full secret is shown once only; copy it immediately and store it securely.</p>
 <div class="report-actions"><button id="createApiKey" type="button">Create API key</button><button id="refreshApiKeys" class="secondary" type="button">Refresh key list</button></div>
 <div id="newApiKeyPanel" class="status" hidden aria-live="polite"><strong>Copy your new API key now</strong><p id="newApiKeyValue" style="overflow-wrap:anywhere"></p><button id="copyApiKey" class="secondary" type="button">Copy API key</button><button id="hideApiKey" class="secondary" type="button">Hide secret</button></div>
+<p id="apiKeyReadiness" class="muted" role="status" aria-live="polite">Connect your account to check API-key eligibility.</p>
 <div id="apiKeys" class="reports" aria-live="polite"><p class="muted">Connect your account to manage API keys.</p></div>
 <div id="apiKeyStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
@@ -100,6 +101,7 @@
   let apiKeyRows = [];
   let apiKeyLimit = 10;
   let apiKeyCreationAllowed = false;
+  let apiKeyCreationReason = "account_inactive";
   let newlyCreatedApiKey = "";
   let billingOffset = 0;
   let billingTotal = 0;
@@ -323,6 +325,7 @@
       apiKeyRows = Array.isArray(data.items) ? data.items : [];
       apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
       apiKeyCreationAllowed = data.can_create === true;
+      apiKeyCreationReason = String(data.can_create_reason || (apiKeyCreationAllowed ? "available" : "account_inactive"));
       renderApiKeys();
     } catch (error) {
       setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
@@ -333,9 +336,21 @@
     const container = $("apiKeys"); container.replaceChildren();
     const atLimit = apiKeyRows.length >= apiKeyLimit;
     $("createApiKey").disabled = !credential || !apiKeyCreationAllowed || atLimit;
+    const creationMessages = {
+      key_limit_reached: "Revoke an existing key before creating another.",
+      account_expired: "Your license has expired. Renew your subscription to create API keys.",
+      account_inactive: "This account is inactive or revoked. Contact the account administrator.",
+      available: ""
+    };
     $("createApiKey").title = atLimit
-      ? "Revoke an existing key before creating another."
-      : (!apiKeyCreationAllowed ? "API key creation requires an active, unexpired account." : "");
+      ? creationMessages.key_limit_reached
+      : (creationMessages[apiKeyCreationReason] || "API key creation is currently unavailable.");
+    const readiness = $("apiKeyReadiness");
+    if (readiness) {
+      readiness.textContent = apiKeyCreationAllowed
+        ? "API key creation is available."
+        : (creationMessages[apiKeyCreationReason] || "API key creation is currently unavailable.");
+    }
     const count = document.createElement("p"); count.className = "muted";
     count.textContent = apiKeyRows.length + " of " + apiKeyLimit + " API keys used" +
       (atLimit ? " · Limit reached; revoke a key to create another." : " · " + (apiKeyLimit - apiKeyRows.length) + " slot(s) available.");
