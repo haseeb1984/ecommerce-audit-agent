@@ -51,17 +51,23 @@ async function loadClientApiKeys(id){
 }
 async function createClientApiKey(){
  if(currentHistoryId===null){status("Open a client's history first.","error");return}
+ const operationSessionVersion=adminSessionVersion;
+ const operationClientId=currentHistoryId;
  const label=window.prompt("Internal audit label (not used as the API key secret):","Admin-created key");if(label===null)return;
  if(!label.trim()||label.trim().length>100){status("Label must be 1–100 characters.","error");return}
  const button=$("createClientApiKey");button.disabled=true;
  try{
-  const response=await guardedFetch("/api/v1/admin/clients/"+encodeURIComponent(currentHistoryId)+"/api-keys",{method:"POST",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify({client_id:currentHistoryId,label:label.trim()})});
-  const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(data.detail||"API key creation failed ("+response.status+")");
+  const response=await guardedFetch("/api/v1/admin/clients/"+encodeURIComponent(operationClientId)+"/api-keys",{method:"POST",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify({client_id:operationClientId,label:label.trim()})});
+  const data=await response.json().catch(()=>({}));
+  if(operationSessionVersion!==adminSessionVersion||operationClientId!==currentHistoryId)return;
+  if(!response.ok)throw Error(data.detail||"API key creation failed ("+response.status+")");
   currentClientApiKey=String(data.key||"");$("clientApiKeyValue").textContent=currentClientApiKey;$("clientApiKeySecret").hidden=!currentClientApiKey;
-  await loadClientApiKeys(currentHistoryId);
+  await loadClientApiKeys(operationClientId);
+  if(operationSessionVersion!==adminSessionVersion||operationClientId!==currentHistoryId)return;
   if(currentClientApiKey){$("clientApiKeyValue").textContent=currentClientApiKey;$("clientApiKeySecret").hidden=false}
-  status("API key created for client #"+currentHistoryId+". Copy the secret now; it cannot be retrieved again.","success");
- }catch(e){status(e.message,"error")}finally{button.disabled=false}
+  status("API key created for client #"+operationClientId+". Copy the secret now; it cannot be retrieved again.","success");
+ }catch(e){if(operationSessionVersion===adminSessionVersion&&operationClientId===currentHistoryId)status(e.message,"error")}
+ finally{if(operationSessionVersion===adminSessionVersion)button.disabled=false}
 }
 function box(title,items,fmt){const b=el("div",undefined,"historybox");b.append(el("h3",title));if(!items.length){b.append(el("p","No records found.","muted"));return b}for(const item of items){const d=el("div",undefined,"historyitem"),v=fmt(item);d.append(el("strong",v[0]));if(v[1])d.append(el("span",v[1],"small"));b.append(d)}return b}
 function paymentBox(items){const b=el("div",undefined,"historybox");b.append(el("h3","Payment provisioning events"));if(!items.length){b.append(el("p","No records found.","muted"));return b}for(const p of items){const d=el("div",undefined,"historyitem");d.append(el("strong",p.status+" · Event "+p.event_id),el("span","Transaction "+(p.transaction_id||"not recorded")+" · Subscription "+(p.subscription_id||"not recorded")+" · "+(p.recipient_email||"No email recorded")+" · "+date(p.created_at)+" · Updated "+date(p.updated_at),"small"));const button=el("button","Reconcile with Paddle","secondary");button.disabled=!p.transaction_id;button.style.marginTop="6px";button.addEventListener("click",()=>reconcilePayment(p.event_id,d));d.append(button);if(p.status==="email_pending"&&p.license_id){const retry=el("button","Retry license email","secondary");retry.style.marginTop="6px";retry.style.marginLeft="6px";retry.addEventListener("click",()=>retryLicenseEmail(p.event_id,retry));d.append(retry)}b.append(d)}return b}
