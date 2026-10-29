@@ -1405,10 +1405,21 @@ async def run_bounded_site_crawl(
 
         # robots.txt is untrusted input. Do not request an off-origin Sitemap URL
         # just to discover later that it is outside this crawl's scope.
-        same_origin_sitemaps = [
-            value for value in robots_sitemap_urls
-            if _same_origin_http_url(value, final_home)
-        ]
+        same_origin_sitemaps: list[str] = []
+        seen_declared_sitemaps: set[str] = set()
+        for value in robots_sitemap_urls:
+            if not _same_origin_http_url(value, final_home):
+                continue
+            try:
+                normalized_sitemap = _canonical_page_url(value)
+            except (ValueError, UnicodeError):
+                continue
+            if normalized_sitemap in seen_declared_sitemaps:
+                continue
+            seen_declared_sitemaps.add(normalized_sitemap)
+            same_origin_sitemaps.append(value)
+            if len(same_origin_sitemaps) >= MAX_CHILD_SITEMAPS:
+                break
         for declared_sitemap in robots_declared_sitemap_urls:
             if not _same_origin_http_url(declared_sitemap, final_home):
                 findings.append(_finding(
