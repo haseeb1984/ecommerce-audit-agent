@@ -58,3 +58,12 @@ def test_core_schema_enforces_unique_paddle_price_mapping() -> None:
     assert "ON saas_plan_packages (paddle_price_id)" in sql
     assert "WHERE paddle_price_id IS NOT NULL" in sql
 
+def test_schema_gate_requires_critical_operational_indexes() -> None:
+    required_indexes = runpy.run_path(str(SCRIPT))["REQUIRED_INDEXES"]
+
+    assert "uq_saas_plan_packages_paddle_price_id" in required_indexes
+    assert "ix_audit_reports_license_created" in required_indexes
+    assert "ix_audit_quota_reservations_license_created" in required_indexes
+    assert "ix_payment_webhook_events_transaction_id" in required_indexes
+    assert "ix_payment_webhook_events_subscription_id" in required_indexes
+
