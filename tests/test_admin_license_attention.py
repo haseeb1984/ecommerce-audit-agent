@@ -16,6 +16,8 @@ async def test_admin_operations_requires_admin_key(client, monkeypatch):
 async def test_admin_operations_reports_license_lifecycle_exceptions_without_secrets(
     client, monkeypatch
 ):
+    from sqlalchemy import text
+
     from database import AsyncSessionLocal
     from models import SoftwareLicense
 
@@ -37,7 +39,7 @@ async def test_admin_operations_reports_license_lifecycle_exceptions_without_sec
                 SoftwareLicense(
                     license_key="diagnostic-inactive-license",
                     client_name="Inactive QA Customer",
-                    tier=None,
+                    tier="starter",
                     max_monthly_audits=0,
                     is_active=False,
                     expires_at=now + timedelta(days=30),
@@ -51,6 +53,13 @@ async def test_admin_operations_reports_license_lifecycle_exceptions_without_sec
                     expires_at=now + timedelta(days=3),
                 ),
             ]
+        )
+        await db.commit()
+        # The ORM supplies a default tier when the value is omitted/None; force
+        # a legacy malformed row so the missing-tier diagnostic is genuinely tested.
+        await db.execute(
+            text("UPDATE software_licenses SET tier = NULL WHERE license_key = :key"),
+            {"key": "diagnostic-inactive-license"},
         )
         await db.commit()
 
