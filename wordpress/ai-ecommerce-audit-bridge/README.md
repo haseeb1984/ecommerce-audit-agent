@@ -15,6 +15,7 @@ This plugin adds a server-side WordPress bridge to the Ecommerce Audit Agent Fas
 - Authenticated request for `GET /api/v1/account/usage`.
 - Monthly quota display including active reservations when returned by the API.
 - Hide audit submission unless the live account entitlement is active and quota remains; re-check entitlement server-side on form submission.
+- White-label settings form for eligible plans, with server-side entitlement re-check and HTTPS logo URL / hex-color validation.
 - Nonce-protected audit form restricted to trusted site operators by default (`manage_options`); a site administrator may deliberately grant a narrower or broader capability with the `aieab_dashboard_capability` filter.
 - Server-side request to `POST /api/v1/comprehensive-audit?domain=...` and validation of the returned PDF content type and PDF signature before download.
 - HTTPS-only API base URL, bounded HTTP timeout, no automatic redirects, generic error messages, private/no-cache download headers, and no credential in browser JavaScript.
@@ -34,7 +35,7 @@ add_filter('aieab_dashboard_capability', static function (): string {
 
 Only use a capability that is assigned exclusively to trusted operators. The filter changes the WordPress-side access boundary; it does not create separate SaaS identities or separate billing accounts.
 - The API credential is configured by a WordPress administrator and is shared by the WordPress site. Customer-specific WordPress account linking and automated WordPress/Paddle identity lifecycle are not implemented in this initial bridge.
-- Feature-gated Full Dossier and white-label branding controls are not implemented in this initial bridge.
+- Feature-gated conversion dossier UI is not implemented in this bridge. White-label settings are configurable, but they do not yet re-skin generated PDF reports.
 - PHP/WordPress integration tests and an end-to-end sandbox run are still required before production use.
 
 ## Security notes
