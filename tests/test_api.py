@@ -2481,6 +2481,8 @@ async def test_admin_payment_event_queue_is_bounded_filterable_and_secret_minimi
     headers = {"X-Admin-Key": "test-payment-event-queue-key"}
     page = await client.get("/api/v1/admin/payment-events?limit=1&offset=0", headers=headers)
     assert page.status_code == 200
+    assert page.headers["cache-control"] == "no-store, private"
+    assert page.headers["pragma"] == "no-cache"
     assert page.json()["page"]["limit"] == 1
     assert page.json()["page"]["total"] >= 3
     assert len(page.json()["items"]) == 1
