@@ -15,12 +15,14 @@ def plan_features(tier: Any) -> dict[str, bool]:
         else str(tier).strip().lower().replace("-", "_").replace(" ", "_")
     )
     is_agency = normalized in {"agency", "pro", "agency_pro"}
-    is_whitelabel = normalized in {"whitelabel", "white_label", "enterprise"}
+    # "business" is the existing highest paid tier in the live billing catalogue.
+    # Preserve its existing access while supporting the documented tier names.
+    is_whitelabel = normalized in {"whitelabel", "white_label", "enterprise", "business"}
 
     return {
         "standard_audits": normalized in {
             "starter", "agency", "pro", "agency_pro",
-            "whitelabel", "white_label", "enterprise",
+            "whitelabel", "white_label", "enterprise", "business",
         },
         "conversion_dossier": is_agency or is_whitelabel,
         "white_label_branding": is_whitelabel,
