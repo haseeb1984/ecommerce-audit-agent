@@ -3231,3 +3231,54 @@ async def test_admin_diagnostics_and_client_history_are_not_cached(client, monke
     assert history.status_code == 200, history.text
     assert history.headers["cache-control"] == "no-store, private"
     assert history.headers["pragma"] == "no-cache"
+
+
+
+@pytest.mark.asyncio
+async def test_white_label_branding_is_denied_for_starter_without_persisting(client):
+    await create_license(key="starter-branding-license", tier="starter")
+    response = await client.put(
+        "/api/v1/account/branding",
+        headers={"X-License-Key": "starter-branding-license"},
+        json={"brand_name": "Not Allowed", "logo_url": "https://example.com/logo.png", "primary_color": "#112233"},
+    )
+    assert response.status_code == 403, response.text
+    async with AsyncSessionLocal() as db:
+        from models import WhiteLabelBranding
+        assert (await db.execute(select(WhiteLabelBranding))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_white_label_branding_can_be_saved_and_read_by_eligible_license(client):
+    await create_license(key="white-label-branding-license", tier="whitelabel")
+    headers = {"X-License-Key": "white-label-branding-license"}
+    saved = await client.put(
+        "/api/v1/account/branding",
+        headers=headers,
+        json={"brand_name": "Northstar Commerce", "logo_url": "https://assets.example.com/brand.svg", "primary_color": "#AABBCC"},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["brand_name"] == "Northstar Commerce"
+    assert saved.json()["primary_color"] == "#aabbcc"
+    fetched = await client.get("/api/v1/account/branding", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["configured"] is True
+    assert fetched.json()["logo_url"] == "https://assets.example.com/brand.svg"
+
+
+@pytest.mark.asyncio
+async def test_white_label_branding_rejects_unsafe_logo_urls_and_invalid_colors(client):
+    await create_license(key="white-label-validation-license", tier="enterprise")
+    headers = {"X-License-Key": "white-label-validation-license"}
+    bad_url = await client.put(
+        "/api/v1/account/branding",
+        headers=headers,
+        json={"brand_name": "Northstar", "logo_url": "http://assets.example.com/logo.svg", "primary_color": "#112233"},
+    )
+    assert bad_url.status_code == 422, bad_url.text
+    bad_color = await client.put(
+        "/api/v1/account/branding",
+        headers=headers,
+        json={"brand_name": "Northstar", "logo_url": None, "primary_color": "red"},
+    )
+    assert bad_color.status_code == 422, bad_color.text
