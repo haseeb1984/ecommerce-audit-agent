@@ -1221,12 +1221,14 @@ async def list_account_api_keys(
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     is_expired = expires_at is not None and expires_at <= now
-    if len(rows) >= 10:
-        can_create_reason = "key_limit_reached"
-    elif is_expired:
+    if is_expired:
         can_create_reason = "account_expired"
     elif not license_obj.is_active:
         can_create_reason = "account_inactive"
+    elif not plan_features(license_obj.tier)["direct_api_access"]:
+        can_create_reason = "plan_not_eligible"
+    elif len(rows) >= 10:
+        can_create_reason = "key_limit_reached"
     else:
         can_create_reason = "available"
     can_create = can_create_reason == "available"
@@ -1270,6 +1272,11 @@ async def create_account_api_key(
         raise HTTPException(status_code=402, detail="License expired. Renewal required.")
     if not license_obj.is_active:
         raise HTTPException(status_code=403, detail="License is inactive or revoked.")
+    if not plan_features(license_obj.tier)["direct_api_access"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Direct API access is available on the Whitelabel/Enterprise plan.",
+        )
 
     # Serialize key creation per license on databases that support row locks. Without
     # this lock, simultaneous requests can both observe nine keys and create an
