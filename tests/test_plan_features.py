@@ -25,8 +25,14 @@ def test_whitelabel_aliases_unlock_enterprise_features():
         assert all(features.values())
 
 
-def test_unknown_or_missing_tiers_fail_closed():
-    for tier in ("", None, "premium-plus", "unknown"):
+def test_unknown_tiers_fail_closed_and_missing_tier_uses_legacy_starter_default():
+    assert plan_features(None) == {
+        "standard_audits": True,
+        "conversion_dossier": False,
+        "white_label_branding": False,
+        "direct_api_access": False,
+    }
+    for tier in ("", "premium-plus", "unknown"):
         assert plan_features(tier) == {
             "standard_audits": False,
             "conversion_dossier": False,
