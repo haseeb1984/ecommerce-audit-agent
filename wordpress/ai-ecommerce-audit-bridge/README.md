@@ -14,6 +14,7 @@ This plugin adds a server-side WordPress bridge to the Ecommerce Audit Agent Fas
 
 - Authenticated request for `GET /api/v1/account/usage`.
 - Monthly quota display including active reservations when returned by the API.
+- Hide audit submission unless the live account entitlement is active and quota remains; re-check entitlement server-side on form submission.
 - Nonce-protected audit form for signed-in WordPress users.
 - Server-side request to `POST /api/v1/comprehensive-audit?domain=...` and validation of the returned PDF content type and PDF signature before download.
 - HTTPS-only API base URL, bounded HTTP timeout, no automatic redirects, generic error messages, private/no-cache download headers, and no credential in browser JavaScript.
