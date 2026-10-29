@@ -1161,8 +1161,13 @@ async def create_account_billing_portal(
         .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
         .limit(20)
     )).scalars().all()
-    customer_id = next((item.paddle_customer_id for item in events if item.paddle_customer_id), None)
-    if not customer_id or not re.fullmatch(r"ctm_[A-Za-z0-9]+", customer_id):
+    # Skip malformed historical identifiers rather than letting a newer bad
+    # event hide an older, valid customer link for this same license.
+    customer_id = next((
+        item.paddle_customer_id for item in events
+        if item.paddle_customer_id and re.fullmatch(r"ctm_[A-Za-z0-9]+", item.paddle_customer_id)
+    ), None)
+    if not customer_id:
         raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     subscription_ids = list(dict.fromkeys(
         item.subscription_id for item in events
