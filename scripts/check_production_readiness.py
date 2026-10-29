@@ -43,6 +43,16 @@ REQUIRED_COLUMNS = {
     "saas_admin_action_logs": {"id", "action", "entity_type", "entity_id", "details_json", "created_at"},
 }
 
+# Indexes that protect uniqueness or keep high-volume account-scoped queries bounded.
+# Compare names against pg_indexes; the check is read-only and never creates indexes.
+REQUIRED_INDEXES = {
+    "uq_saas_plan_packages_paddle_price_id",
+    "ix_audit_reports_license_created",
+    "ix_audit_quota_reservations_license_created",
+    "ix_payment_webhook_events_transaction_id",
+    "ix_payment_webhook_events_subscription_id",
+}
+
 REQUIRED_ENV_GROUPS = {
     "admin_access": ("ADMIN_API_KEY",),
     "paddle_checkout_and_provisioning": ("PADDLE_API_KEY", "PADDLE_WEBHOOK_SECRET", "PADDLE_CLIENT_TOKEN"),
@@ -63,6 +73,7 @@ async def main() -> int:
     from database import AsyncSessionLocal
 
     missing: list[str] = []
+    missing_indexes: list[str] = []
     missing_configuration: list[str] = []
     async with AsyncSessionLocal() as db:
         await db.execute(text("SELECT 1"))
@@ -70,6 +81,11 @@ async def main() -> int:
             SELECT table_name, column_name
             FROM information_schema.columns
             WHERE table_schema = current_schema()
+        """))).all()
+        index_rows = (await db.execute(text("""
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = current_schema()
         """))).all()
 
     observed: dict[str, set[str]] = {}
@@ -83,10 +99,15 @@ async def main() -> int:
         for column in sorted(required_columns - observed[table]):
             missing.append(f"column:{table}.{column}")
 
+    observed_indexes = {row[0] for row in index_rows}
+    missing_indexes = sorted(REQUIRED_INDEXES - observed_indexes)
+
     print(f"database_connectivity: PASS ({len(observed)} tables visible in current schema)")
-    print("schema_readiness: " + ("PASS" if not missing else "FAIL"))
+    print("schema_readiness: " + ("PASS" if not missing and not missing_indexes else "FAIL"))
     for item in missing:
         print(f"missing_schema_item: {item}")
+    for index_name in missing_indexes:
+        print(f"missing_schema_index: {index_name}")
 
     for group, candidates in REQUIRED_ENV_GROUPS.items():
         configured = [name for name in candidates if os.getenv(name, "").strip()]
@@ -101,7 +122,7 @@ async def main() -> int:
 
     for group in missing_configuration:
         print(f"missing_configuration_group: {group}")
-    return 1 if missing or missing_configuration else 0
+    return 1 if missing or missing_indexes or missing_configuration else 0
 
 
 if __name__ == "__main__":
