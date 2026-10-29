@@ -2569,7 +2569,24 @@ async def admin_create_package(payload: AdminPackageInput, request: Request,
     except Exception as exc:
         await db.rollback()
         if "IntegrityError" in type(exc).__name__:
-            raise HTTPException(status_code=409, detail="A package with this tier already exists.") from exc
+            # A concurrent admin request can pass the preflight lookup and still
+            # collide with the database unique index. Return the actionable conflict
+            # rather than misreporting every uniqueness violation as a duplicate tier.
+            if values["paddle_price_id"]:
+                duplicate_price = (await db.execute(text("""
+                    SELECT tier FROM saas_plan_packages WHERE paddle_price_id=:price_id
+                """), {"price_id": values["paddle_price_id"]})).scalar_one_or_none()
+                if duplicate_price:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="That Paddle price is already assigned to another package.",
+                    ) from exc
+            duplicate_tier = (await db.execute(text("""
+                SELECT tier FROM saas_plan_packages WHERE tier=:tier
+            """), {"tier": values["tier"]})).scalar_one_or_none()
+            if duplicate_tier:
+                raise HTTPException(status_code=409, detail="A package with this tier already exists.") from exc
+            raise HTTPException(status_code=409, detail="Package conflicts with an existing unique value.") from exc
         logger.error("Admin package creation failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Unable to create package.") from exc
     return {"status": "created", "tier": values["tier"]}
