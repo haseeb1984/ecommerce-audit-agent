@@ -1648,9 +1648,63 @@ async def run_bounded_site_crawl(
                     remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
                     sitemap_urls.extend(_loc_values(extra_root)[:remaining])
                 elif extra_type == "sitemapindex":
-                    limitations.append(
-                        f"Additional sitemap index {extra_sitemap_url} was validated but its child sitemaps were not expanded."
-                    )
+                    # Expand a bounded number of children from secondary sitemap
+                    # indexes too; every candidate is validated before any request.
+                    nested_children: list[str] = []
+                    seen_nested: set[str] = set()
+                    for nested_node in extra_root:
+                        if nested_node.tag.rsplit("}", 1)[-1].lower() != "sitemap":
+                            continue
+                        nested_loc = next((
+                            (loc.text or "").strip()
+                            for loc in nested_node
+                            if loc.tag.rsplit("}", 1)[-1].lower() == "loc"
+                        ), "")
+                        if not nested_loc:
+                            continue
+                        try:
+                            resolved_nested = urljoin(extra_sitemap_url, nested_loc)
+                            if not _same_origin_http_url(resolved_nested, extra_sitemap_url):
+                                continue
+                            normalized_nested = _canonical_page_url(resolved_nested)
+                        except (ValueError, UnicodeError):
+                            continue
+                        if normalized_nested in seen_nested:
+                            continue
+                        seen_nested.add(normalized_nested)
+                        nested_children.append(resolved_nested)
+                        if len(nested_children) >= MAX_CHILD_SITEMAPS:
+                            break
+
+                    for nested_url in nested_children:
+                        if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
+                            break
+                        try:
+                            nested_status, nested_body, nested_headers, nested_final = await _safe_get(
+                                client, nested_url
+                            )
+                            if not _same_origin(nested_final, final_home):
+                                continue
+                            if nested_status < 200 or nested_status >= 300:
+                                continue
+                            if not (
+                                "xml" in nested_headers.get("content-type", "").lower()
+                                or nested_body.lstrip().startswith("<")
+                            ):
+                                continue
+                            findings.extend(inspect_crawl_sitemap(nested_body, nested_url))
+                            nested_root = ET.fromstring(nested_body)
+                            if nested_root.tag.rsplit("}", 1)[-1].lower() == "urlset":
+                                remaining = MAX_URLS_FROM_SITEMAP - len(sitemap_urls)
+                                sitemap_urls.extend(_loc_values(nested_root)[:remaining])
+                            elif nested_root.tag.rsplit("}", 1)[-1].lower() == "sitemapindex":
+                                limitations.append(
+                                    f"Nested sitemap index {nested_url} was not expanded beyond the configured depth."
+                                )
+                        except Exception:
+                            # A child sitemap is optional discovery input; do not
+                            # fail the whole audit when one nested file is unusable.
+                            continue
             except Exception as extra_exc:
                 findings.append(_finding(
                     "indexing", "Additional robots-declared sitemap could not be inspected",
