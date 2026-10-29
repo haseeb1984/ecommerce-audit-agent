@@ -746,3 +746,13 @@ Verification boundary: quota.py was updated and read back from the feature branc
 Current full GitHub Actions run 40740545876 exposed regressions on the current feature-chain head. Fixes in this batch address the common causes first: ReportLab multiBuild bookmark stability and monkeypatch-safe Paragraph type checks; optional business-context normalization; external form actions with URL userinfo are still identified while evidence omits credentials/query strings; missing trust cues explicitly distinguish absence from authenticity; and environment-configured Paddle plans remain available only when the plan catalogue is empty. Customer portal assertions now include the profile loader added by the account-profile feature.
 
 Validation result before fixes: dependency installation and dependency vulnerability audit passed; the backend test step failed. The failures include report rendering, crawl discovery/outcomes, payment lifecycle setup, conversion evidence, trust wording, and stale portal/admin expectations. This batch is not considered fully verified until a fresh CI run completes. No deployment, production migration, or real payment action was performed.
+
+## Latest bounded-crawl and schema-readiness batch
+
+- The crawler now deduplicates canonical URLs during page processing and avoids adding a generic outcome when a specialized outcome for the same check and page already exists. This addresses duplicate product structured-data outcomes while retaining route-specific applicability.
+- The production readiness CLI now checks the full set of runtime-used columns across licenses, API keys, audit leads, quota reservations, reports, billing webhook events, plan packages, operation events, and admin action logs.
+- The readiness CLI also checks critical operational indexes, including unique Paddle price mapping and account-scoped report/quota indexes, by reading PostgreSQL's `pg_indexes` view. It remains read-only and never applies schema changes.
+- Core schema migration now defines a partial unique index for non-NULL Paddle price IDs, preventing two plans from sharing one provider price. Existing duplicate mappings, if any, must be reconciled before that index can be applied.
+- CI run [40790960269](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40790960269) passed on commit `8351ba6d9f6ed57596229cce80192cb91812f1b4` with **660 passed** and 55 warnings. The expanded schema/index readiness checks were committed after that run and are **awaiting their own CI result**.
+- No production database was queried or modified, no migration was executed, and no deployment was performed.
+
