@@ -48,6 +48,7 @@ from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
+from plan_features import plan_features
 
 logger = logging.getLogger("audit_service")
 
@@ -1014,6 +1015,7 @@ async def get_account_usage(
     response.headers["Pragma"] = "no-cache"
     return {
         "tier": str(license_obj.tier or "starter"),
+        "features": plan_features(license_obj.tier),
         "plan_label": str(package_row["label"]) if package_row is not None else str(license_obj.tier or "starter"),
         "plan_available": bool(package_row["is_active"]) if package_row is not None else None,
         "monthly_limit": limit,
