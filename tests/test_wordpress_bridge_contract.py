@@ -12,3 +12,20 @@ def test_wordpress_shared_credential_dashboard_is_capability_gated():
 def test_wordpress_dashboard_capability_filter_fails_back_to_manage_options():
     source = Path("wordpress/ai-ecommerce-audit-bridge/ai-ecommerce-audit-bridge.php").read_text()
     assert "is_string($capability) && trim($capability) !== '' ? trim($capability) : 'manage_options'" in source
+
+
+def test_wordpress_white_label_form_is_plan_gated_and_rechecks_on_submit():
+    source = Path("wordpress/ai-ecommerce-audit-bridge/ai-ecommerce-audit-bridge.php").read_text()
+    assert "self::ACTION_SAVE_BRANDING" in source
+    assert "($features['white_label_branding'] ?? false) === true" in source
+    assert "wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['aieab_branding_nonce']))" in source
+    assert "self::api_request('PUT', '/api/v1/account/branding'" in source
+    assert "wp_parse_url($logo_url, PHP_URL_SCHEME) !== 'https'" in source
+    assert "!preg_match('/^#[0-9A-F]{6}$/'" in source
+
+
+def test_wordpress_api_request_preserves_license_header_with_json_content_type():
+    source = Path("wordpress/ai-ecommerce-audit-bridge/ai-ecommerce-audit-bridge.php").read_text()
+    assert "$request_args['headers'] = array_merge(" in source
+    assert "$defaults['headers']" in source
+    assert "isset($args['headers']) && is_array($args['headers']) ? $args['headers'] : []" in source
