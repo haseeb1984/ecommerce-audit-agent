@@ -1663,7 +1663,15 @@ def _paddle_api_request(path: str, method: str = "GET", payload: dict | None = N
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
+            # Provider responses should be small metadata objects. Bound reads so an
+            # unexpected/compromised upstream response cannot consume unbounded memory.
+            raw_body = response.read(2 * 1024 * 1024 + 1)
+            if len(raw_body) > 2 * 1024 * 1024:
+                raise RuntimeError("Paddle API response exceeded the allowed size")
+            result = json.loads(raw_body.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise RuntimeError("Paddle API returned an invalid JSON object")
+            return result
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"Paddle API request failed (HTTP {exc.code})") from exc
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
