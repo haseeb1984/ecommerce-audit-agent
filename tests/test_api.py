@@ -238,6 +238,13 @@ async def test_account_usage_reports_monthly_quota_without_exposing_license_key(
     assert data["remaining"] == 3
     assert data["usage_percent"] == 40
     assert data["tier"] == "test"
+    # Unknown tiers fail closed in the same payload consumed by customer dashboards.
+    assert data["features"] == {
+        "standard_audits": False,
+        "conversion_dossier": False,
+        "white_label_branding": False,
+        "direct_api_access": False,
+    }
     assert "license_key" not in data
     assert "usage-private-license" not in response.text
     assert data["period_resets_at"]
