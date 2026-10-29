@@ -1435,6 +1435,27 @@ async def test_public_plans_only_show_configured_paddle_price_ids(client, monkey
     assert "price_id" not in payload["plans"][0]
 
 
+@pytest.mark.asyncio
+async def test_public_plans_support_documented_agency_and_whitelabel_tiers(client, monkeypatch):
+    for key, value in {
+        "PADDLE_API_KEY": "pdl_sandbox_test_key",
+        "PADDLE_WEBHOOK_SECRET": "test-webhook-secret",
+        "SMTP_HOST": "smtp.example.com",
+        "SMTP_FROM": "reports@example.com",
+        "PADDLE_PRICE_ID_AGENCY": "pri_01agency123",
+        "PADDLE_PRICE_ID_WHITELABEL": "pri_01white123",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    response = await client.get("/api/v1/billing/plans")
+    assert response.status_code == 200
+    plans = {plan["tier"]: plan for plan in response.json()["plans"]}
+    assert plans["agency"]["label"] == "Agency"
+    assert plans["agency"]["monthly_audit_allowance"] == 500
+    assert plans["whitelabel"]["label"] == "Whitelabel"
+    assert plans["whitelabel"]["monthly_audit_allowance"] == 2000
+
+
 
 @pytest.mark.parametrize(
     "url,expected",
