@@ -2225,6 +2225,16 @@ async def test_paddle_payment_failure_is_recorded_without_immediately_deactivati
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "already_processed"
 
+    # Distinct Paddle event IDs for the same failed transaction must not create
+    # duplicate lifecycle records or operation events.
+    duplicate_delivery = {**failed_payment, "event_id": "evt_payment_failure_attempt_redelivered"}
+    redelivered = await send(duplicate_delivery)
+    assert redelivered.status_code == 200
+    assert redelivered.json() == {
+        "status": "already_processed",
+        "event_id": "evt_payment_failure_attempt",
+    }
+
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(
             select(SoftwareLicense).where(SoftwareLicense.client_name == "Payment Failure")
