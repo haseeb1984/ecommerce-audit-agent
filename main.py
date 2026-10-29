@@ -1159,7 +1159,6 @@ async def create_account_billing_portal(
             PaymentWebhookEvent.paddle_customer_id.is_not(None),
         )
         .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
-        .limit(20)
     )).scalars().all()
     # Skip malformed historical identifiers rather than letting a newer bad
     # event hide an older, valid customer link for this same license.
