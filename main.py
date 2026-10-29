@@ -1735,11 +1735,11 @@ async def create_paddle_checkout(
             raise HTTPException(status_code=503, detail="Paddle checkout URL configuration is invalid.")
         transaction["checkout"] = {"url": checkout_url}
     try:
-        response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
-        url = response.get("data", {}).get("checkout", {}).get("url")
+        provider_response = await asyncio.to_thread(_paddle_api_request, "/transactions", "POST", transaction)
+        url = provider_response.get("data", {}).get("checkout", {}).get("url")
         if not _is_valid_paddle_hosted_url(url):
             raise RuntimeError("Paddle did not return a valid checkout URL")
-        transaction_id = response.get("data", {}).get("id")
+        transaction_id = provider_response.get("data", {}).get("id")
         if not isinstance(transaction_id, str) or not re.fullmatch(r"txn_[A-Za-z0-9]+", transaction_id):
             raise RuntimeError("Paddle did not return a valid transaction ID")
         response.headers["Cache-Control"] = "no-store, private"
