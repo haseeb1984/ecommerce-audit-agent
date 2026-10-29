@@ -23,6 +23,16 @@ final class AI_Ecommerce_Audit_Bridge {
         add_action('admin_post_' . self::ACTION_AUDIT, [self::class, 'handle_audit']);
     }
 
+    /**
+     * The integration uses one site-level credential, so only trusted site operators
+     * may view account usage or spend audit quota by default. Site owners can
+     * deliberately grant another capability through the documented filter.
+     */
+    private static function dashboard_capability(): string {
+        $capability = apply_filters('aieab_dashboard_capability', 'manage_options');
+        return is_string($capability) && trim($capability) !== '' ? trim($capability) : 'manage_options';
+    }
+
     private static function settings(): array {
         $value = get_option(self::OPTION, []);
         return is_array($value) ? $value : [];
@@ -135,6 +145,9 @@ final class AI_Ecommerce_Audit_Bridge {
         if (!is_user_logged_in()) {
             return '<p>' . esc_html__('Please sign in to access your audit dashboard.', 'ai-ecommerce-audit-bridge') . '</p>';
         }
+        if (!current_user_can(self::dashboard_capability())) {
+            return '<p>' . esc_html__('You do not have permission to access this site audit account. Please contact your site administrator.', 'ai-ecommerce-audit-bridge') . '</p>';
+        }
         if (!self::configured()) {
             return current_user_can('manage_options')
                 ? '<p>' . esc_html__('Configure the Ecommerce Audit Bridge in Settings first.', 'ai-ecommerce-audit-bridge') . '</p>'
@@ -209,6 +222,9 @@ final class AI_Ecommerce_Audit_Bridge {
         if (!is_user_logged_in()) {
             auth_redirect();
             exit;
+        }
+        if (!current_user_can(self::dashboard_capability())) {
+            wp_die(esc_html__('You are not allowed to use this site audit account.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
         }
         if (!isset($_POST['aieab_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['aieab_nonce'])), self::ACTION_AUDIT)) {
             wp_die(esc_html__('The form expired. Refresh the page and try again.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
