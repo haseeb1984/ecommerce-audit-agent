@@ -1469,6 +1469,9 @@ def test_paddle_hosted_url_validator(url, expected):
 )
 async def test_paddle_checkout_rejects_untrusted_configured_checkout_url(client, monkeypatch, configured_url):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
     monkeypatch.setenv("PADDLE_CHECKOUT_URL", configured_url)
     called = False
@@ -1488,6 +1491,9 @@ async def test_paddle_checkout_rejects_untrusted_configured_checkout_url(client,
 @pytest.mark.asyncio
 async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
     captured = {}
     def fake_request(path, method="GET", payload=None):
@@ -1502,8 +1508,40 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing_setting",
+    ["PADDLE_WEBHOOK_SECRET", "SMTP_HOST", "SMTP_FROM"],
+)
+async def test_paddle_checkout_fails_closed_when_purchase_fulfillment_is_not_ready(
+    client, monkeypatch, missing_setting
+):
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_checkout_readiness123")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.delenv(missing_setting, raising=False)
+    called = False
+
+    def fake_request(path, method="GET", payload=None):
+        nonlocal called
+        called = True
+        return {"data": {"id": "txn_checkout_readiness123", "checkout": {
+            "url": "https://pay.paddle.com/checkout/test"
+        }}}
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    assert response.status_code == 503
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_paddle_checkout_accepts_trusted_configured_checkout_url(client, monkeypatch):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
     monkeypatch.setenv("PADDLE_CHECKOUT_URL", "https://pay.paddle.com/checkout")
     captured = {}
@@ -1531,6 +1569,9 @@ async def test_paddle_checkout_accepts_trusted_configured_checkout_url(client, m
 )
 async def test_paddle_checkout_rejects_untrusted_checkout_destinations(client, monkeypatch, checkout_url):
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
 
     def fake_request(path, method="GET", payload=None):
