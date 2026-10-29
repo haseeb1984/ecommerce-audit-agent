@@ -147,6 +147,7 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "audit_leads",
         "audit_quota_reservations",
         "audit_reports",
+        "white_label_branding",
         "saas_plan_packages",
         "saas_admin_action_logs",
         "saas_operation_events",
