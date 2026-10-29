@@ -2396,6 +2396,7 @@ async def test_expired_account_can_list_and_revoke_api_keys_without_audit_access
     assert listing.json()["key_count"] == 1
     assert listing.json()["keys_remaining"] == 9
     assert listing.json()["can_create"] is False
+    assert listing.json()["can_create_reason"] == "account_expired"
     key_id = listing.json()["items"][0]["id"]
     assert "key" not in listing.json()["items"][0]
 
@@ -3034,4 +3035,5 @@ async def test_api_key_list_disables_creation_at_account_key_cap(client):
     assert payload["key_count"] == 10
     assert payload["keys_remaining"] == 0
     assert payload["can_create"] is False
+    assert payload["can_create_reason"] == "key_limit_reached"
     assert "api_key_hash" not in response.text
