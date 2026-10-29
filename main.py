@@ -1152,29 +1152,29 @@ async def create_account_billing_portal(
 
     if not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Self-service billing is not configured.")
-    # Stream only the identifier column so long billing histories do not
+    # Stream only the identifier columns so long billing histories do not
     # materialize every webhook ORM object in application memory.
-    customer_ids = await db.stream_scalars(
-        select(PaymentWebhookEvent.paddle_customer_id)
+    customer_links = await db.stream(
+        select(PaymentWebhookEvent.paddle_customer_id, PaymentWebhookEvent.subscription_id)
         .where(
             PaymentWebhookEvent.license_id == license_obj.id,
             PaymentWebhookEvent.paddle_customer_id.is_not(None),
         )
         .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
     )
-    # Skip malformed historical identifiers rather than letting a newer bad
-    # event hide an older, valid customer link for this same license.
+    # Preserve the valid subscription links used to preselect subscriptions in
+    # the Paddle portal while skipping malformed customer IDs.
     customer_id = None
-    async for candidate in customer_ids:
-        if candidate and re.fullmatch(r"ctm_[A-Za-z0-9]+", candidate):
+    subscription_ids = []
+    async for row in customer_links:
+        candidate, subscription_id = row
+        if customer_id is None and candidate and re.fullmatch(r"ctm_[A-Za-z0-9]+", candidate):
             customer_id = candidate
-            break
+        if subscription_id and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id):
+            if subscription_id not in subscription_ids:
+                subscription_ids.append(subscription_id)
     if not customer_id:
         raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
-    subscription_ids = list(dict.fromkeys(
-        item.subscription_id for item in events
-        if item.subscription_id and re.fullmatch(r"sub_[A-Za-z0-9]+", item.subscription_id)
-    ))
     payload = {"subscription_ids": subscription_ids} if subscription_ids else {}
     try:
         result = await asyncio.to_thread(
