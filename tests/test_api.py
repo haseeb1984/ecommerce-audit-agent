@@ -3146,16 +3146,30 @@ async def test_admin_diagnostics_and_client_history_are_not_cached(client, monke
     assert history.headers["pragma"] == "no-cache"
 
 
+
 @pytest.mark.asyncio
 async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unknown_price(client, monkeypatch):
     secret = "paddle-test-subscription-update-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
-    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_update_starter123")
     monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_update_pro123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_PRO", "1000")
-    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async with AsyncSessionLocal() as db:
+        license_obj = SoftwareLicense(
+            license_key="subscription-update-license", client_name="Plan Change Buyer",
+            tier="starter", max_monthly_audits=100, is_active=True,
+        )
+        db.add(license_obj)
+        await db.flush()
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_subscription_update", status="provisioned",
+            license_id=license_obj.id, recipient_email="update@example.com",
+            subscription_id="sub_update123", paddle_customer_id="ctm_update123",
+        ))
+        await db.commit()
+        license_id = license_obj.id
 
     async def send(event):
         body = json.dumps(event, separators=(",", ":")).encode()
@@ -3166,23 +3180,11 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
             headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
         )
 
-    purchase = {"event_id": "evt_update_purchase", "event_type": "transaction.completed",
-        "data": {"id": "txn_update_purchase", "subscription_id": "sub_update123",
-        "status": "completed", "custom_data": {"license_tier": "starter"},
-        "customer_id": "ctm_update123", "customer": {"email": "update@example.com", "name": "Plan Change Buyer"},
-        "items": [{"price": {"id": "pri_update_starter123"}, "quantity": 1}]}}
-    purchased = await send(purchase)
-    assert purchased.status_code == 200
-    async with AsyncSessionLocal() as db:
-        license_obj = (await db.execute(select(SoftwareLicense).where(
-            SoftwareLicense.client_name == "Plan Change Buyer"))).scalar_one()
-        license_id = license_obj.id
-
     update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
         "data": {"id": "sub_update123", "customer_id": "ctm_update123",
         "items": [{"price": {"id": "pri_update_pro123"}, "quantity": 1}]}}
     changed = await send(update)
-    assert changed.status_code == 200
+    assert changed.status_code == 200, changed.text
     assert changed.json()["status"] == "plan_reconciled"
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(select(SoftwareLicense).where(
@@ -3194,7 +3196,7 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
     unknown = {"event_id": "evt_update_unknown", "event_type": "subscription.updated",
         "data": {"id": "sub_update123", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
     ignored = await send(unknown)
-    assert ignored.status_code == 200
+    assert ignored.status_code == 200, ignored.text
     assert ignored.json()["status"] == "unmapped_price_ignored"
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(select(SoftwareLicense).where(
