@@ -23,6 +23,22 @@ class SoftwareLicense(Base):
     audit_reservations = relationship("AuditQuotaReservation", back_populates="license")
 
 
+class WhiteLabelBranding(Base):
+    """Per-license white-label settings, accessible only to eligible plans."""
+
+    __tablename__ = "white_label_branding"
+
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    brand_name = Column(String(100), nullable=False)
+    logo_url = Column(String(2048), nullable=True)
+    primary_color = Column(String(7), nullable=False, default="#155a8a", server_default="#155a8a")
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class APIKey(Base):
     __tablename__ = "api_keys"
 
