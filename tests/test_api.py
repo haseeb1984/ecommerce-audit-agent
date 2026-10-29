@@ -2970,3 +2970,42 @@ async def test_expired_customer_can_open_only_a_valid_paddle_billing_portal(clie
     )
     assert invalid.status_code == 502
     assert invalid.json()["detail"] == "Unable to open self-service billing. Please retry later."
+
+
+def test_paddle_api_request_rejects_oversized_provider_response(monkeypatch):
+    import io
+    import urllib.request
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, limit=-1):
+            assert limit == 2 * 1024 * 1024 + 1
+            return b"x" * limit
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_test_key")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="response exceeded the allowed size"):
+        main._paddle_api_request("/transactions")
+
+
+@pytest.mark.parametrize("payload", [b"null", b"[]", b'"text"', b"123"])
+def test_paddle_api_request_rejects_non_object_json(monkeypatch, payload):
+    import urllib.request
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, limit=-1):
+            return payload
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_test_key")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match="invalid JSON object"):
+        main._paddle_api_request("/transactions")
