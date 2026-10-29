@@ -2173,6 +2173,80 @@ async def test_health_check_returns_not_ready_when_required_database_indexes_are
     assert raised.value.detail["missing_indexes"] == [required_indexes[0]]
 
 
+
+@pytest.mark.asyncio
+async def test_paddle_past_due_retries_until_subscription_is_linked_and_deduplicates(client, monkeypatch):
+    secret = "paddle-test-past-due-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_pastdue123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    # A lifecycle event that arrives before purchase reconciliation must remain
+    # retryable rather than being acknowledged and lost.
+    early_past_due = {
+        "event_id": "evt_past_due_before_purchase",
+        "event_type": "subscription.past_due",
+        "data": {"id": "sub_past_due_retry", "customer_id": "ctm_past_due"},
+    }
+    early = await send(early_past_due)
+    assert early.status_code == 503
+    assert early.json()["detail"] == "Payment-failure event is awaiting subscription reconciliation."
+
+    purchase = {
+        "event_id": "evt_past_due_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_past_due_purchase",
+            "subscription_id": "sub_past_due_retry",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_past_due",
+            "customer": {"email": "past-due@example.com", "name": "Past Due Customer"},
+            "items": [{"price": {"id": "pri_pastdue123"}, "quantity": 1}],
+        },
+    }
+    provision = await send(purchase)
+    assert provision.status_code == 200
+
+    first = await send(early_past_due)
+    assert first.status_code == 200
+    assert first.json()["status"] == "subscription_past_due"
+
+    # Distinct event IDs for the same past-due subscription lifecycle state should
+    # not create repeated customer-facing records.
+    redelivery = {**early_past_due, "event_id": "evt_past_due_redelivered"}
+    duplicate = await send(redelivery)
+    assert duplicate.status_code == 200
+    assert duplicate.json() == {
+        "status": "already_processed",
+        "event_id": "evt_past_due_before_purchase",
+    }
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.client_name == "Past Due Customer")
+        )).scalar_one()
+        assert license_obj.is_active is True
+        past_due_events = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.subscription_id == "sub_past_due_retry",
+                PaymentWebhookEvent.status == "subscription_past_due",
+            )
+        )).scalars().all()
+        assert len(past_due_events) == 1
+
 @pytest.mark.asyncio
 async def test_paddle_payment_failure_is_recorded_without_immediately_deactivating_license(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
