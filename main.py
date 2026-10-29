@@ -340,6 +340,13 @@ async def comprehensive_audit_pdf(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a phase-one evidence report as a PDF, using the existing license quota."""
+    # Standard audit access is also an explicit entitlement, not merely a UI hint.
+    # Fail closed for blank/unknown tiers before reserving quota or making network calls.
+    if not plan_features(license_obj.tier)["standard_audits"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Standard audit access is not available for this account plan.",
+        )
     try:
         target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
