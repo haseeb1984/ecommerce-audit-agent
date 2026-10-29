@@ -265,6 +265,14 @@ async def audit_lead(
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db)
 ):
+    # This endpoint produces the premium conversion dossier. Enforce the plan
+    # entitlement before quota reservation or any billable external provider calls.
+    if not plan_features(license_obj.tier)["conversion_dossier"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Conversion dossier access requires an Agency, Pro, or Whitelabel plan.",
+        )
+
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
