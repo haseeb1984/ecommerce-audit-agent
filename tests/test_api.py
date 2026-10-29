@@ -2866,3 +2866,57 @@ async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names
         assert other.client_name == "Other Customer"
 
     assert (await client.get("/api/v1/account/profile")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_expired_customer_can_open_only_a_valid_paddle_billing_portal(client, monkeypatch):
+    from datetime import timedelta
+    from database import AsyncSessionLocal
+    from models import PaymentWebhookEvent, SoftwareLicense
+    from sqlalchemy import select
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_portal_test")
+    license_id = await create_license(key="expired-billing-portal")
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        license_obj.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        license_obj.is_active = False
+        db.add(PaymentWebhookEvent(
+            event_id="evt_expired_portal_link",
+            status="delivered",
+            license_id=license_id,
+            transaction_id="txn_expired_portal",
+            subscription_id="sub_expired_portal",
+            paddle_customer_id="ctm_expiredportal",
+            recipient_email="expired-portal@example.com",
+        ))
+        await db.commit()
+
+    monkeypatch.setattr(
+        main, "_paddle_api_request",
+        lambda *args, **kwargs: {"data": {"urls": {"general": {
+            "overview": "https://customer-portal.paddle.com/overview/session-test"
+        }}}},
+    )
+    valid = await client.post(
+        "/api/v1/account/billing-portal",
+        headers={"X-License-Key": "expired-billing-portal"},
+    )
+    assert valid.status_code == 200, valid.text
+    assert valid.json()["portal_url"] == "https://customer-portal.paddle.com/overview/session-test"
+    assert valid.json()["expires_in_seconds"] == 900
+    assert valid.headers["cache-control"] == "no-store, private"
+    assert valid.headers["pragma"] == "no-cache"
+
+    monkeypatch.setattr(
+        main, "_paddle_api_request",
+        lambda *args, **kwargs: {"data": {"url": "https://attacker.example/collect"}},
+    )
+    invalid = await client.post(
+        "/api/v1/account/billing-portal",
+        headers={"X-License-Key": "expired-billing-portal"},
+    )
+    assert invalid.status_code == 502
+    assert invalid.json()["detail"] == "Unable to open self-service billing. Please retry later."
