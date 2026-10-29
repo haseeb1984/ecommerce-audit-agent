@@ -2508,3 +2508,53 @@ async def test_recursive_crawl_rejects_relative_links_from_off_origin_base(monke
     assert second_product in checked
     assert unsafe_relative not in requested
     assert not any("outside.example" in url for url in requested)
+
+
+
+@pytest.mark.asyncio
+async def test_crawl_expands_bounded_children_of_secondary_sitemap_indexes(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    homepage = "https://shop.example/"
+    primary = "https://shop.example/catalog-main.xml"
+    secondary_index = "https://shop.example/catalog-extra-index.xml"
+    child_sitemap = "https://shop.example/catalog-extra-products.xml"
+    primary_product = "https://shop.example/products/main"
+    nested_product = "https://shop.example/products/nested"
+    requested = []
+
+    async def fake_safe_get(client, url):
+        requested.append(url)
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
+        if url == "https://shop.example/robots.txt":
+            return 200, (
+                f"User-agent: *\\nSitemap: {primary}\\nSitemap: {secondary_index}\\n"
+            ), {"content-type": "text/plain"}, url
+        if url == primary:
+            return 200, (
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{primary_product}</loc></url></urlset>'
+            ), {"content-type": "application/xml"}, url
+        if url == secondary_index:
+            return 200, (
+                '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<sitemap><loc>{child_sitemap}</loc></sitemap></sitemapindex>'
+            ), {"content-type": "application/xml"}, url
+        if url == child_sitemap:
+            return 200, (
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{nested_product}</loc></url></urlset>'
+            ), {"content-type": "application/xml"}, url
+        if url in {primary_product, nested_product}:
+            return 200, '<html><head><title>Product</title></head><body><h1>Product</h1></body></html>', {"content-type": "text/html"}, url
+        if url in {"https://shop.example/llms.txt", "https://shop.example/sitemap.xml"}:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected request: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert primary_product in checked
+    assert nested_product in checked
+    assert requested.count(child_sitemap) == 1
+    assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
