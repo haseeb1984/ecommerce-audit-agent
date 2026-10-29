@@ -3045,7 +3045,7 @@ async def admin_operations(request: Request, db: AsyncSession = Depends(get_asyn
         "zero_or_negative_quota_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.max_monthly_audits <= 0))).scalar_one() or 0),
         "active_but_expired_licenses": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at.is_not(None), SoftwareLicense.expires_at <= now))).scalar_one() or 0),
         "active_without_expiry": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(True), SoftwareLicense.expires_at.is_(None)))).scalar_one() or 0),
-        "inactive_with_future_expiry": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_(False), SoftwareLicense.expires_at > now))).scalar_one() or 0),
+        "inactive_with_future_expiry": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(SoftwareLicense.is_active.is_(False), SoftwareLicense.expires_at > now))).scalar_one() or 0),
         "licenses_missing_tier": int((await db.execute(select(sql_func.count(SoftwareLicense.id)).where(or_(SoftwareLicense.tier.is_(None), SoftwareLicense.tier == "")))).scalar_one() or 0),
     }
     lifecycle_rows = (await db.execute(
