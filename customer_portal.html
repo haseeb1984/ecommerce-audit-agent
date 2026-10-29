@@ -119,7 +119,7 @@
   };
   const authHeaders = () => ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
