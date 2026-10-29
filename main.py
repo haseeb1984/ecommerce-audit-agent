@@ -1152,20 +1152,23 @@ async def create_account_billing_portal(
 
     if not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Self-service billing is not configured.")
-    events = (await db.execute(
-        select(PaymentWebhookEvent)
+    # Stream only the identifier column so long billing histories do not
+    # materialize every webhook ORM object in application memory.
+    customer_ids = await db.stream_scalars(
+        select(PaymentWebhookEvent.paddle_customer_id)
         .where(
             PaymentWebhookEvent.license_id == license_obj.id,
             PaymentWebhookEvent.paddle_customer_id.is_not(None),
         )
         .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
-    )).scalars().all()
+    )
     # Skip malformed historical identifiers rather than letting a newer bad
     # event hide an older, valid customer link for this same license.
-    customer_id = next((
-        item.paddle_customer_id for item in events
-        if item.paddle_customer_id and re.fullmatch(r"ctm_[A-Za-z0-9]+", item.paddle_customer_id)
-    ), None)
+    customer_id = None
+    async for candidate in customer_ids:
+        if candidate and re.fullmatch(r"ctm_[A-Za-z0-9]+", candidate):
+            customer_id = candidate
+            break
     if not customer_id:
         raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     subscription_ids = list(dict.fromkeys(
