@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, WhiteLabelBranding
 from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -94,6 +94,13 @@ class ReportEmailRequest(BaseModel):
 class AccountProfileUpdate(BaseModel):
     """Customer-editable account display name; billing identity stays with the payment provider."""
     client_name: str = Field(..., min_length=1, max_length=255)
+
+
+class WhiteLabelBrandingUpdate(BaseModel):
+    """Editable customer-facing branding metadata; logo URLs are never fetched by the API."""
+    brand_name: str = Field(..., min_length=1, max_length=100)
+    logo_url: str | None = Field(default=None, max_length=2048)
+    primary_color: str = Field(default="#155a8a", min_length=7, max_length=7)
 
 
 def custom_openapi():
@@ -965,6 +972,86 @@ async def update_account_profile(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"client_name": license_obj.client_name, "updated": True}
+
+
+@app.get("/api/v1/account/branding")
+async def get_account_branding(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return white-label configuration only to plans entitled to white-label branding."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding requires a Whitelabel plan.")
+    from sqlalchemy import select
+
+    settings = (await db.execute(
+        select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id)
+    )).scalar_one_or_none()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    if settings is None:
+        return {"brand_name": license_obj.client_name, "logo_url": None, "primary_color": "#155a8a", "configured": False}
+    return {
+        "brand_name": settings.brand_name,
+        "logo_url": settings.logo_url,
+        "primary_color": settings.primary_color,
+        "configured": True,
+        "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+    }
+
+
+@app.put("/api/v1/account/branding")
+async def update_account_branding(
+    payload: WhiteLabelBrandingUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Save plan-gated branding metadata without fetching remote logo resources."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding requires a Whitelabel plan.")
+
+    brand_name = payload.brand_name.strip()
+    if not brand_name:
+        raise HTTPException(status_code=422, detail="Brand name cannot be blank.")
+    logo_url = (payload.logo_url or "").strip() or None
+    if logo_url:
+        parsed = urlsplit(logo_url)
+        if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise HTTPException(status_code=422, detail="Logo URL must be a valid HTTPS URL without embedded credentials.")
+    primary_color = payload.primary_color.strip()
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", primary_color):
+        raise HTTPException(status_code=422, detail="Primary color must be a six-digit hex color such as #155a8a.")
+
+    from sqlalchemy import select
+    settings = (await db.execute(
+        select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id)
+    )).scalar_one_or_none()
+    if settings is None:
+        settings = WhiteLabelBranding(
+            license_id=license_obj.id,
+            brand_name=brand_name,
+            logo_url=logo_url,
+            primary_color=primary_color.lower(),
+        )
+        db.add(settings)
+    else:
+        settings.brand_name = brand_name
+        settings.logo_url = logo_url
+        settings.primary_color = primary_color.lower()
+    await db.commit()
+    await db.refresh(settings)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "brand_name": settings.brand_name,
+        "logo_url": settings.logo_url,
+        "primary_color": settings.primary_color,
+        "configured": True,
+        "updated": True,
+        "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+    }
 
 
 @app.get("/api/v1/account/usage")
