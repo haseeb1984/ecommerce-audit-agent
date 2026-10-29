@@ -148,7 +148,10 @@ final class AI_Ecommerce_Audit_Bridge {
         if (!is_wp_error($usage)) {
             $data = json_decode(wp_remote_retrieve_body($usage), true);
             if (is_array($data)) {
+                $features = isset($data['features']) && is_array($data['features']) ? $data['features'] : [];
+                // Missing feature metadata must fail closed in the customer interface.
                 $can_run_audit = ($data['entitlement_state'] ?? '') === 'active'
+                    && ($features['standard_audits'] ?? false) === true
                     && isset($data['remaining']) && is_numeric($data['remaining'])
                     && (int) $data['remaining'] > 0;
                 $used = isset($data['consumed']) && is_numeric($data['consumed']) ? max(0, (int) $data['consumed']) : (isset($data['used']) && is_numeric($data['used']) ? max(0, (int) $data['used']) : null);
@@ -160,8 +163,22 @@ final class AI_Ecommerce_Audit_Bridge {
                 } else {
                     $usage_markup = '<p>' . esc_html__('Usage details are unavailable. Audit submission is disabled until account status can be verified.', 'ai-ecommerce-audit-bridge') . '</p>';
                 }
+                $feature_labels = [
+                    'standard_audits' => __('Standard website audits', 'ai-ecommerce-audit-bridge'),
+                    'conversion_dossier' => __('Conversion opportunity dossier', 'ai-ecommerce-audit-bridge'),
+                    'white_label_branding' => __('White-label branding', 'ai-ecommerce-audit-bridge'),
+                    'direct_api_access' => __('Direct API access', 'ai-ecommerce-audit-bridge'),
+                ];
+                $usage_markup .= '<h3>' . esc_html__('Included plan features', 'ai-ecommerce-audit-bridge') . '</h3><ul>';
+                foreach ($feature_labels as $feature_key => $feature_label) {
+                    $included = ($features[$feature_key] ?? false) === true;
+                    $usage_markup .= '<li>' . esc_html($feature_label) . ': <strong>'
+                        . esc_html($included ? __('Included', 'ai-ecommerce-audit-bridge') : __('Not included', 'ai-ecommerce-audit-bridge'))
+                        . '</strong></li>';
+                }
+                $usage_markup .= '</ul>';
                 if (!$can_run_audit) {
-                    $usage_markup .= '<p role="status">' . esc_html__('Audits are unavailable because the account is inactive, the plan is unavailable, the quota is exhausted, or entitlement status could not be verified.', 'ai-ecommerce-audit-bridge') . '</p>';
+                    $usage_markup .= '<p role="status">' . esc_html__('Audits are unavailable because the account is inactive, the plan is not entitled, the quota is exhausted, or entitlement status could not be verified.', 'ai-ecommerce-audit-bridge') . '</p>';
                 }
             }
         } else {
@@ -213,7 +230,9 @@ final class AI_Ecommerce_Audit_Bridge {
             wp_die(esc_html($usage->get_error_message()), '', ['response' => 502]);
         }
         $usage_data = json_decode(wp_remote_retrieve_body($usage), true);
+        $features = is_array($usage_data) && isset($usage_data['features']) && is_array($usage_data['features']) ? $usage_data['features'] : [];
         if (!is_array($usage_data) || ($usage_data['entitlement_state'] ?? '') !== 'active'
+            || ($features['standard_audits'] ?? false) !== true
             || !isset($usage_data['remaining']) || !is_numeric($usage_data['remaining'])
             || (int) $usage_data['remaining'] <= 0) {
             wp_die(esc_html__('The account is not currently entitled to run an audit or its quota is exhausted. Refresh the dashboard or contact support.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
