@@ -1211,8 +1211,10 @@ async def list_account_api_keys(
     expires_at = license_obj.expires_at
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    can_create = bool(license_obj.is_active) and not (
-        expires_at is not None and expires_at <= now
+    can_create = (
+        bool(license_obj.is_active)
+        and not (expires_at is not None and expires_at <= now)
+        and len(rows) < 10
     )
     return {
         "items": [
