@@ -38,6 +38,13 @@
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
 <div style="margin-top:16px"><h3 style="margin:0 0 8px;font-size:1rem">Included plan features</h3><div id="planFeatures" class="reports" aria-live="polite"><p class="muted">Connect your account to view included features.</p></div></div>
+<div style="margin-top:18px;border-top:1px solid #dce5ef;padding-top:16px">
+<h3 style="margin:0 0 8px;font-size:1rem">White-label branding</h3>
+<p class="muted">Configure your brand name, HTTPS logo URL, and primary color. This feature is available on Whitelabel plans; saved settings do not yet re-skin existing PDF reports.</p>
+<div class="row"><div><label for="brandName">Brand name</label><input id="brandName" type="text" maxlength="100" placeholder="Your brand name" disabled></div><div><label for="brandLogoUrl">Logo URL (HTTPS)</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.svg" disabled></div></div>
+<div class="row"><div><label for="brandPrimaryColor">Primary color</label><input id="brandPrimaryColor" type="color" value="#155a8a" disabled></div><div style="align-self:end"><button id="saveBranding" type="button" disabled>Save branding settings</button></div></div>
+<div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to manage white-label branding.</div>
+</div>
 </section>
 <section class="panel" aria-labelledby="billingHistoryHeading">
 <h2 id="billingHistoryHeading">Billing history</h2>
@@ -112,7 +119,7 @@
   };
   const authHeaders = () => ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -431,6 +438,27 @@
     setStatus("profileStatus", "Account profile loaded.", "success");
     return profile;
   }
+  async function loadBranding() {
+    const controls = ["brandName", "brandLogoUrl", "brandPrimaryColor", "saveBranding"];
+    try {
+      const response = await api("/api/v1/account/branding");
+      const data = await response.json();
+      $("brandName").value = data.brand_name || "";
+      $("brandLogoUrl").value = data.logo_url || "";
+      $("brandPrimaryColor").value = /^#[0-9a-f]{6}$/i.test(data.primary_color || "") ? data.primary_color : "#155a8a";
+      controls.forEach(id => { $(id).disabled = false; });
+      setStatus("brandingStatus", data.configured ? "White-label branding settings loaded." : "White-label plan detected. Configure your branding below.", "success");
+      return true;
+    } catch (error) {
+      if (String(error.message || "").includes("403")) {
+        $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandPrimaryColor").value = "#155a8a";
+        controls.forEach(id => { $(id).disabled = true; });
+        setStatus("brandingStatus", "White-label branding is not included in this plan.", "error");
+        return false;
+      }
+      throw error;
+    }
+  }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
     const usage = await response.json();
@@ -748,6 +776,9 @@
     $("loadMoreReports").hidden = true;
     $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
+    $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandPrimaryColor").value = "#155a8a";
+    ["brandName", "brandLogoUrl", "brandPrimaryColor", "saveBranding"].forEach(id => { $(id).disabled = true; });
+    setStatus("brandingStatus", "Connect your account to manage white-label branding.");
     const featureContainer = $("planFeatures"); if (featureContainer) { featureContainer.replaceChildren(); const note = document.createElement("p"); note.className = "muted"; note.textContent = "Connect your account to view included features."; featureContainer.append(note); }
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
@@ -774,8 +805,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadBranding()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "white-label branding"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -808,6 +839,31 @@
     $("target").value = "";
     setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
     setStatus("auditStatus", "Connect your credential first.");
+  });
+  $("saveBranding").addEventListener("click", async () => {
+    if (!credential) { setStatus("brandingStatus", "Connect your account first.", "error"); return; }
+    const payload = {
+      brand_name: $("brandName").value.trim(),
+      logo_url: $("brandLogoUrl").value.trim() || null,
+      primary_color: $("brandPrimaryColor").value
+    };
+    const button = $("saveBranding"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/branding", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      $("brandName").value = data.brand_name || payload.brand_name;
+      $("brandLogoUrl").value = data.logo_url || "";
+      $("brandPrimaryColor").value = data.primary_color || payload.primary_color;
+      setStatus("brandingStatus", "White-label branding settings saved.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message || "Unable to save branding settings.", "error");
+    } finally {
+      button.disabled = !credential || $("brandName").disabled;
+    }
   });
   $("saveProfile").addEventListener("click", async () => {
     if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
