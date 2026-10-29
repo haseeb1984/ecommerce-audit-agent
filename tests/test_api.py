@@ -26,7 +26,7 @@ async def create_license(
     quota=10,
     active=True,
     expires_at=None,
-    tier="test",
+    tier="pro",
 ):
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
@@ -209,7 +209,7 @@ def test_coverage_manifest_redacts_credentials_query_and_fragment_from_all_urls(
 
 @pytest.mark.asyncio
 async def test_account_usage_reports_monthly_quota_without_exposing_license_key(client):
-    license_id = await create_license(key="usage-private-license", quota=5)
+    license_id = await create_license(key="usage-private-license", quota=5, tier="test")
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         db.add(AuditLead(
@@ -288,6 +288,29 @@ async def test_root_and_database_health(client):
         "schema_ready": True,
         "result": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_starter_cannot_run_conversion_dossier_and_consumes_no_quota(client, monkeypatch):
+    license_id = await create_license(key="starter-dossier-blocked", quota=5, tier="starter")
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("premium dossier provider must not run for Starter")
+    monkeypatch.setattr(main.agent, "process_lead", should_not_run)
+
+    response = await client.post(
+        "/api/v1/audit-lead", params={"domain": "shop.example"},
+        headers={"X-License-Key": "starter-dossier-blocked"},
+    )
+    assert response.status_code == 403
+    async with AsyncSessionLocal() as db:
+        reservations = (await db.execute(select(func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == license_id
+        ))).scalar_one()
+        leads = (await db.execute(select(func.count(AuditLead.id)).where(
+            AuditLead.license_id == license_id
+        ))).scalar_one()
+    assert reservations == 0
+    assert leads == 0
 
 
 @pytest.mark.asyncio
