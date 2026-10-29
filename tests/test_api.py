@@ -3144,3 +3144,65 @@ async def test_admin_diagnostics_and_client_history_are_not_cached(client, monke
     assert history.status_code == 200, history.text
     assert history.headers["cache-control"] == "no-store, private"
     assert history.headers["pragma"] == "no-cache"
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unknown_price(client, monkeypatch):
+    secret = "paddle-test-subscription-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_update_starter123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_update_pro123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_PRO", "1000")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook", content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {"event_id": "evt_update_purchase", "event_type": "transaction.completed",
+        "data": {"id": "txn_update_purchase", "subscription_id": "sub_update123",
+        "status": "completed", "custom_data": {"license_tier": "starter"},
+        "customer_id": "ctm_update123", "customer": {"email": "update@example.com", "name": "Plan Change Buyer"},
+        "items": [{"price": {"id": "pri_update_starter123"}, "quantity": 1}]}}
+    purchased = await send(purchase)
+    assert purchased.status_code == 200
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.client_name == "Plan Change Buyer"))).scalar_one()
+        license_id = license_obj.id
+
+    update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
+        "data": {"id": "sub_update123", "customer_id": "ctm_update123",
+        "items": [{"price": {"id": "pri_update_pro123"}, "quantity": 1}]}}
+    changed = await send(update)
+    assert changed.status_code == 200
+    assert changed.json()["status"] == "plan_reconciled"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.tier == "pro"
+        assert license_obj.max_monthly_audits == 1000
+        before_unknown = (license_obj.tier, license_obj.max_monthly_audits)
+
+    unknown = {"event_id": "evt_update_unknown", "event_type": "subscription.updated",
+        "data": {"id": "sub_update123", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
+    ignored = await send(unknown)
+    assert ignored.status_code == 200
+    assert ignored.json()["status"] == "unmapped_price_ignored"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert (license_obj.tier, license_obj.max_monthly_audits) == before_unknown
+        assert (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_update_unknown"))).scalar_one_or_none() is not None
+
+    duplicate = await send(update)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
