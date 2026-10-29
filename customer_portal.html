@@ -385,8 +385,22 @@
   async function createApiKey() {
     if (!credential) { setStatus("apiKeyStatus", "Connect your account first.", "error"); return; }
     const operationSessionVersion = accountSessionVersion;
-    if (!apiKeyCreationAllowed) { setStatus("apiKeyStatus", "API key creation requires an active, unexpired account.", "error"); renderApiKeys(); return; }
-    if (apiKeyRows.length >= apiKeyLimit) { setStatus("apiKeyStatus", "API key limit reached. Revoke an existing key first.", "error"); renderApiKeys(); return; }
+    if (!apiKeyCreationAllowed) {
+      const messages = {
+        key_limit_reached: "API key limit reached. Revoke an existing key before creating another.",
+        account_expired: "Your license has expired. Renew your subscription before creating API keys.",
+        account_inactive: "This account is inactive or revoked. Contact the account administrator.",
+        available: "API key creation is currently unavailable. Refresh the account status and try again."
+      };
+      setStatus("apiKeyStatus", messages[apiKeyCreationReason] || messages.available, "error");
+      renderApiKeys();
+      return;
+    }
+    if (apiKeyRows.length >= apiKeyLimit) {
+      setStatus("apiKeyStatus", "API key limit reached. Revoke an existing key first.", "error");
+      renderApiKeys();
+      return;
+    }
     const button = $("createApiKey"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/api-keys", {method:"POST"});
