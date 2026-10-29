@@ -1705,7 +1705,11 @@ async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
 
 
 @app.post("/api/v1/billing/checkout")
-async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSession = Depends(get_async_db)):
+async def create_paddle_checkout(
+    payload: PaddleCheckoutRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
     """Create a transaction using an active server-managed package price; the client cannot set amounts."""
     tier = payload.tier.strip().lower()
     plans = await _db_payment_plans(db, active_only=True)
@@ -1738,6 +1742,8 @@ async def create_paddle_checkout(payload: PaddleCheckoutRequest, db: AsyncSessio
         transaction_id = response.get("data", {}).get("id")
         if not isinstance(transaction_id, str) or not re.fullmatch(r"txn_[A-Za-z0-9]+", transaction_id):
             raise RuntimeError("Paddle did not return a valid transaction ID")
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
         return {"checkout_url": url, "transaction_id": transaction_id}
     except Exception as exc:
         logger.error("Paddle checkout creation failed (error_type=%s)", type(exc).__name__)
