@@ -1704,7 +1704,15 @@ def _paddle_api_request(path: str, method: str = "GET", payload: dict | None = N
 
 def _configured_payment_plans() -> list[dict]:
     plans = []
-    for tier, label, default_quota in (("STARTER", "Starter", 100), ("PRO", "Pro", 500), ("BUSINESS", "Business", 2000)):
+    # Keep existing Pro/Business environment names working while also supporting
+    # the documented Agency/Whitelabel package names for new installations.
+    for tier, label, default_quota in (
+        ("STARTER", "Starter", 100),
+        ("PRO", "Pro", 500),
+        ("BUSINESS", "Business", 2000),
+        ("AGENCY", "Agency", 500),
+        ("WHITELABEL", "Whitelabel", 2000),
+    ):
         price_id = os.getenv(f"PADDLE_PRICE_ID_{tier}", "").strip()
         if not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id): continue
         try: quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
