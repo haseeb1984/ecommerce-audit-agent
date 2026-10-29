@@ -1517,6 +1517,13 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
 async def test_paddle_checkout_fails_closed_when_purchase_fulfillment_is_not_ready(
     client, monkeypatch, missing_setting
 ):
+    async def configured_test_plan(db, active_only=True):
+        return [{
+            "tier": "starter", "label": "Starter",
+            "monthly_audit_allowance": 100, "max_concurrent_audits": 1,
+            "price_id": "pri_checkout_readiness123", "is_active": True,
+        }]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_test_plan)
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_checkout_readiness123")
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
