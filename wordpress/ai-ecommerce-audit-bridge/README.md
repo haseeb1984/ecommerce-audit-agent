@@ -15,14 +15,14 @@ This plugin adds a server-side WordPress bridge to the Ecommerce Audit Agent Fas
 - Authenticated request for `GET /api/v1/account/usage`.
 - Monthly quota display including active reservations when returned by the API.
 - Hide audit submission unless the live account entitlement is active and quota remains; re-check entitlement server-side on form submission.
-- Nonce-protected audit form for signed-in WordPress users.
+- Nonce-protected audit form restricted to trusted site operators by default (`manage_options`); a site administrator may deliberately grant a narrower or broader capability with the `aieab_dashboard_capability` filter.
 - Server-side request to `POST /api/v1/comprehensive-audit?domain=...` and validation of the returned PDF content type and PDF signature before download.
 - HTTPS-only API base URL, bounded HTTP timeout, no automatic redirects, generic error messages, private/no-cache download headers, and no credential in browser JavaScript.
 
 ## Boundaries and remaining work
 
 - Billing and package entitlement authority remains in the FastAPI/Paddle backend; the plugin does not create or validate payment events independently.
-- Configure the WordPress page to require login and use an appropriate membership/access-control policy for the intended customer group.
+- The dashboard and audit submission both require the `manage_options` capability by default because the API credential is shared at site level. A site owner can use the `aieab_dashboard_capability` filter to delegate access to a trusted role; do not grant it to general storefront customers.
 - The API credential is configured by a WordPress administrator and is shared by the WordPress site. Customer-specific WordPress account linking and automated WordPress/Paddle identity lifecycle are not implemented in this initial bridge.
 - Feature-gated Full Dossier and white-label branding controls are not implemented in this initial bridge.
 - PHP/WordPress integration tests and an end-to-end sandbox run are still required before production use.
