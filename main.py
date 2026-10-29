@@ -3046,9 +3046,11 @@ async def admin_retry_license_email(event_id: str, request: Request,
 
 
 @app.get("/api/v1/admin/operations")
-async def admin_operations(request: Request, db: AsyncSession = Depends(get_async_db)):
+async def admin_operations(request: Request, response: Response, db: AsyncSession = Depends(get_async_db)):
     """Private operational diagnostics without exposing environment values or customer secrets."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
     from sqlalchemy import select, func as sql_func, or_
     now = datetime.now(timezone.utc)
@@ -3444,10 +3446,12 @@ async def admin_report_evidence(
 
 
 @app.get("/api/v1/admin/clients/{license_id}/history")
-async def admin_client_history(license_id: int, request: Request, limit: int = Query(100, ge=1, le=500),
+async def admin_client_history(license_id: int, request: Request, response: Response, limit: int = Query(100, ge=1, le=500),
                               db: AsyncSession = Depends(get_async_db)):
     """Return a single client's audit, report, reservation and payment-provisioning history."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     from sqlalchemy import select
     client = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_id))).scalar_one_or_none()
     if client is None:
