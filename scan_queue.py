@@ -58,6 +58,9 @@ async def enqueue_scan_request(
         raise ValueError("At least one website URL is required.")
 
     now = _utcnow()
+    request_hash = hashlib.sha256(
+        "\\n".join(normalized_urls).encode("utf-8")
+    ).hexdigest()
     existing_batches = (await db.execute(
         select(ScanBatch).where(
             ScanBatch.license_key == license_key,
@@ -65,6 +68,8 @@ async def enqueue_scan_request(
         ).order_by(ScanBatch.batch_number)
     )).scalars().all()
     if existing_batches:
+        if any(batch.request_hash != request_hash for batch in existing_batches):
+            raise ValueError("This request ID has already been used for a different URL list.")
         existing_ids = [batch.id for batch in existing_batches]
         existing_jobs = (await db.execute(
             select(WebsiteScanJob.id).where(WebsiteScanJob.batch_id.in_(existing_ids))
@@ -100,6 +105,7 @@ async def enqueue_scan_request(
                 requested_by=requested_by,
                 package_tier=package_tier,
                 request_id=request_id,
+                request_hash=request_hash,
                 batch_number=first_batch_number + len(created_batches),
                 batch_size=batch_size,
                 total_urls=len(chunk),
@@ -254,8 +260,11 @@ async def complete_scan_job(
     job_id: str,
     worker_id: str,
     result_reference: str | None = None,
+    quota_committed: bool = False,
 ) -> bool:
     """Mark a claimed job complete and record quota usage exactly once."""
+    if not quota_committed:
+        raise ValueError("A scan can only complete after the licensing service confirms quota consumption.")
     now = _utcnow()
     try:
         job = await db.scalar(
@@ -344,9 +353,8 @@ async def fail_or_retry_scan_job(
         job.locked_by = None
         if job.attempt_count < job.max_attempts:
             job.status = "retry_wait"
-            job.next_attempt_at = now + timedelta(
-                seconds=max(1, min(retry_delay_seconds, 3600))
-            )
+            backoff = max(1, min(retry_delay_seconds * (2 ** max(0, job.attempt_count - 1)), 3600))
+            job.next_attempt_at = now + timedelta(seconds=backoff)
             if batch is not None:
                 batch.queued_count += 1
                 batch.status = "queued"
