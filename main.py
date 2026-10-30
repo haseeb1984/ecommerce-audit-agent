@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession
-from auth import verify_license_or_api_key, verify_customer_account, verify_customer_account, verify_customer_account, CUSTOMER_BEARER
+from auth import verify_license_or_api_key, verify_customer_account, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
