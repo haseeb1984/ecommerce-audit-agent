@@ -1048,7 +1048,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
 
 
 @app.post("/api/v1/account/auth/verify-code")
-async def verify_account_login_code(payload: AccountLoginVerify, request: Request, response: Response, db: AsyncSession = Depends(get_async_db)):
+async def verify_account_login_code(payload: AccountLoginVerify, request: Request, response: Response, db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Consume a one-time code and issue an opaque 30-day customer session."""
     from sqlalchemy import select
     email = payload.email.strip().lower()
@@ -1058,10 +1058,10 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
     now = datetime.now(timezone.utc)
-    challenge = (await db.execute(select(AccountLoginChallenge).where(
-        AccountLoginChallenge.email == email,
-        AccountLoginChallenge.consumed_at.is_(None),
-    ).order_by(AccountLoginChallenge.created_at.desc()).limit(1).with_for_update())).scalar_one_or_none()
+    challenge = (await db.execute(select(CustomerLoginChallenge).where(
+        CustomerLoginChallenge.email == email,
+        CustomerLoginChallenge.consumed_at.is_(None),
+    ).order_by(CustomerLoginChallenge.created_at.desc()).limit(1).with_for_update())).scalar_one_or_none()
     if challenge is None:
         raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
     expiry = challenge.expires_at
@@ -1069,33 +1069,43 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
         expiry = expiry.replace(tzinfo=timezone.utc)
     if expiry <= now or challenge.attempts >= 5:
         challenge.consumed_at = now
-        await db.commit()
+        await operational_db.commit()
         raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
     expected = hmac.new(auth_secret.encode(), f"{challenge.id}:{email}:{payload.code}".encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, challenge.code_hash):
         challenge.attempts += 1
         if challenge.attempts >= 5:
             challenge.consumed_at = now
-        await db.commit()
+        await operational_db.commit()
         raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
     license_obj = (await db.execute(select(SoftwareLicense).where(
-        SoftwareLicense.id == challenge.license_id,
+        SoftwareLicense.license_key == challenge.license_key,
     ))).scalar_one_or_none()
     if license_obj is None:
         challenge.consumed_at = now
-        await db.commit()
+        await operational_db.commit()
         raise HTTPException(status_code=401, detail="Customer account is unavailable.")
     challenge.consumed_at = now
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    session = AccountSession(
-        token_hash=token_hash, license_id=license_obj.id, email=email,
+    session = CustomerSession(
+        token_hash=token_hash, license_key=license_obj.license_key, email=email,
         expires_at=now + timedelta(days=30), created_at=now,
         public_id=secrets.token_urlsafe(24),
         user_agent=(request.headers.get("user-agent") or "")[:500],
     )
-    db.add(session)
-    await db.commit()
+    operational_db.add(session)
+    existing_account = await operational_db.scalar(select(CustomerAccount).where(
+        CustomerAccount.license_key == license_obj.license_key,
+        CustomerAccount.email == email,
+    ))
+    if existing_account is None:
+        operational_db.add(CustomerAccount(
+            id=secrets.token_urlsafe(24), license_key=license_obj.license_key,
+            email=email, display_name=license_obj.client_name, status="active",
+            created_at=now, updated_at=now,
+        ))
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
