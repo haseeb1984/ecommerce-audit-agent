@@ -110,6 +110,9 @@ function eaa_wp_api_request($path, $method = 'GET', $body = null, $timeout = 25)
             'User-Agent' => 'EcommerceAuditAgentWordPress/' . EAA_WP_VERSION,
         ),
     );
+    if (!empty($settings['site_id'])) {
+        $args['headers']['X-WordPress-Site-ID'] = sanitize_text_field($settings['site_id']);
+    }
     if (null !== $body) {
         $args['headers']['Content-Type'] = 'application/json';
         $args['body'] = wp_json_encode($body);
