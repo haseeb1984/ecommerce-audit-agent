@@ -1056,14 +1056,24 @@ async def logout_account_session(
 @app.post("/api/v1/account/auth/logout-all")
 async def logout_all_account_sessions(
     response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Revoke every active browser session for the authenticated customer account."""
-    from sqlalchemy import update
+    """Revoke every active browser session for the verified customer email across linked licenses."""
+    from sqlalchemy import select, update
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Email sign-in is required to revoke all devices.")
+    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == token_hash,
+        AccountSession.revoked_at.is_(None),
+    ))).scalar_one_or_none()
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
     result = await db.execute(update(AccountSession).where(
-        AccountSession.license_id == license_obj.id,
+        AccountSession.email == current.email,
         AccountSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await db.commit()
