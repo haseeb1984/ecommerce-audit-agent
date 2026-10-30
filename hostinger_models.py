@@ -76,13 +76,14 @@ class CustomerWebsite(HostingerBase):
     submitted_by = Column(String(254), nullable=True)
     url = Column(String(2048), nullable=False)
     normalized_url = Column(String(2048), nullable=False)
+    normalized_url_hash = Column(String(64), nullable=False)
     host = Column(String(253), nullable=False, index=True)
     label = Column(String(160), nullable=True)
     status = Column(String(24), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     __table_args__ = (
-        UniqueConstraint("license_key", "normalized_url", name="uq_customer_websites_license_url"),
+        UniqueConstraint("license_key", "normalized_url_hash", name="uq_customer_websites_license_url_hash"),
         Index("ix_customer_websites_license_status", "license_key", "status"),
     )
 
@@ -93,6 +94,7 @@ class ScanBatch(HostingerBase):
     license_key = Column(String(100), nullable=False, index=True)
     requested_by = Column(String(254), nullable=True)
     package_tier = Column(String(50), nullable=False)
+    request_id = Column(String(128), nullable=False)
     batch_number = Column(Integer, nullable=False)
     batch_size = Column(Integer, nullable=False, default=10)
     total_urls = Column(Integer, nullable=False, default=0)
@@ -106,7 +108,7 @@ class ScanBatch(HostingerBase):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     __table_args__ = (
-        UniqueConstraint("license_key", "id", name="uq_scan_batches_license_id"),
+        UniqueConstraint("license_key", "request_id", name="uq_scan_batches_license_request"),
         UniqueConstraint("license_key", "batch_number", "created_at", name="uq_scan_batches_sequence"),
         Index("ix_scan_batches_claim", "status", "available_at", "created_at"),
     )
