@@ -927,6 +927,7 @@ async def get_account_profile(
         "account_status": account_status,
         "created_at": license_obj.created_at.isoformat() if license_obj.created_at else None,
         "expires_at": expires_at.isoformat() if expires_at else None,
+        "billing_period_ends_at": license_obj.billing_period_ends_at.isoformat() if license_obj.billing_period_ends_at else None,
     }
 
 
@@ -1116,6 +1117,7 @@ async def account_billing_history(
             "tier": license_obj.tier,
             "is_active": bool(license_obj.is_active),
             "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
+            "billing_period_ends_at": license_obj.billing_period_ends_at.isoformat() if license_obj.billing_period_ends_at else None,
         },
         "items": [
             {
@@ -1773,6 +1775,28 @@ async def create_paddle_checkout(
         raise HTTPException(status_code=502, detail="Unable to start Paddle checkout; verify billing configuration.") from exc
 
 
+def _paddle_billing_period_end(payload: dict) -> datetime | None:
+    """Read Paddle's billing-period end from transaction or subscription payloads."""
+    candidates = []
+    for key in ("current_billing_period", "billing_period"):
+        period = payload.get(key)
+        if isinstance(period, dict):
+            candidates.extend((period.get("ends_at"), period.get("end_at")))
+    for raw in candidates:
+        if raw is None:
+            continue
+        if not isinstance(raw, str) or len(raw) > 80:
+            raise HTTPException(status_code=400, detail="Paddle billing period end is invalid.")
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Paddle billing period end is invalid.")
+        if parsed.tzinfo is None:
+            raise HTTPException(status_code=400, detail="Paddle billing period end must include a timezone.")
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
 async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
     """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
     bind = db.get_bind()
@@ -2087,6 +2111,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         if canceled is None and plan is not None:
             license_obj.tier = plan["tier"]
             license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
+        billing_period_end = _paddle_billing_period_end(transaction)
+        if billing_period_end is not None and canceled is None:
+            license_obj.billing_period_ends_at = billing_period_end
         status = "subscription_updated" if plan is not None else "subscription_update_unmapped_price"
         db.add(PaymentWebhookEvent(
             event_id=event_id, status=status, license_id=license_obj.id,
@@ -2217,6 +2244,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
                 linked_license.is_active = True
+                billing_period_end = _paddle_billing_period_end(transaction)
+                if billing_period_end is not None:
+                    linked_license.billing_period_ends_at = billing_period_end
                 renewal_customer_id = str(
                     transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
@@ -2271,7 +2301,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
             raise HTTPException(status_code=400, detail="Completed Paddle transaction has no valid customer email.")
         license_obj = SoftwareLicense(license_key=secrets.token_urlsafe(32), client_name=(customer_name or recipient)[:255],
-            tier=plan["tier"], max_monthly_audits=plan["monthly_audit_allowance"], is_active=True)
+            tier=plan["tier"], max_monthly_audits=plan["monthly_audit_allowance"], is_active=True,
+            billing_period_ends_at=_paddle_billing_period_end(transaction))
         db.add(license_obj)
         await db.flush()
         webhook_event = PaymentWebhookEvent(

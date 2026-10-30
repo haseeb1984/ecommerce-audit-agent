@@ -3302,3 +3302,87 @@ async def test_paddle_subscription_update_unlinked_license_returns_retryable_503
             PaymentWebhookEvent.event_id == "evt_unlinked_plan_update"
         ))).scalar_one_or_none()
         assert stored is None
+
+
+@pytest.mark.asyncio
+async def test_paddle_billing_period_end_is_saved_on_purchase_and_renewal(client, monkeypatch):
+    secret = "paddle-billing-period-test-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_billingperiodstarter123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post("/api/v1/billing/paddle-webhook", content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"})
+
+    purchase = {
+        "event_id": "evt_billing_period_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_billingperiodpurchase123", "status": "completed",
+            "subscription_id": "sub_billingperiod123", "customer_id": "ctm_billingperiod123",
+            "customer": {"email": "billing-period@example.com", "name": "Billing Period"},
+            "items": [{"price": {"id": "pri_billingperiodstarter123"}, "quantity": 1}],
+            "billing_period": {"starts_at": "2026-10-01T00:00:00Z", "ends_at": "2026-11-01T00:00:00Z"},
+        },
+    }
+    created = await send(purchase)
+    assert created.status_code == 200, created.text
+    async with AsyncSessionLocal() as db:
+        record = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_billing_period_purchase"))).scalar_one()
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == record.license_id))).scalar_one()
+        license_id = license_obj.id
+        assert license_obj.billing_period_ends_at.isoformat() == "2026-11-01T00:00:00+00:00"
+
+    renewal = {
+        "event_id": "evt_billing_period_renewal",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_billingperiodrenewal123", "status": "completed",
+            "subscription_id": "sub_billingperiod123", "customer_id": "ctm_billingperiod123",
+            "customer": {"email": "billing-period@example.com"},
+            "items": [{"price": {"id": "pri_billingperiodstarter123"}, "quantity": 1}],
+            "billing_period": {"starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z"},
+        },
+    }
+    renewed = await send(renewal)
+    assert renewed.status_code == 200, renewed.text
+    assert renewed.json()["status"] == "subscription_renewed"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.billing_period_ends_at.isoformat() == "2026-12-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_update_refreshes_billing_period_end(client, monkeypatch):
+    secret = "paddle-subscription-period-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_periodupdatepro123")
+    license_id = await create_license(key="period-update-license", quota=100)
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(event_id="evt_period_update_seed", status="delivered",
+            license_id=license_id, recipient_email="period@example.com",
+            subscription_id="sub_period_update123", paddle_customer_id="ctm_period_update123"))
+        await db.commit()
+
+    event = {"event_id": "evt_period_update", "event_type": "subscription.updated",
+        "data": {"id": "sub_period_update123",
+            "items": [{"price": {"id": "pri_periodupdatepro123"}, "quantity": 1}],
+            "current_billing_period": {"starts_at": "2026-10-01T00:00:00Z",
+                "ends_at": "2026-11-15T00:00:00Z"}}}
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+    response = await client.post("/api/v1/billing/paddle-webhook", content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"})
+    assert response.status_code == 200, response.text
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.billing_period_ends_at.isoformat() == "2026-11-15T00:00:00+00:00"

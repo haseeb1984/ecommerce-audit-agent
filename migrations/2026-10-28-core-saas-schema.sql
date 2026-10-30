@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS software_licenses (
     max_monthly_audits INTEGER DEFAULT 100,
     is_active BOOLEAN DEFAULT TRUE,
     expires_at TIMESTAMPTZ NULL,
+    billing_period_ends_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -132,3 +133,6 @@ CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_license_id ON payment_webho
 CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id ON payment_webhook_events (transaction_id);
 CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id ON payment_webhook_events (subscription_id);
 CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_paddle_customer_id ON payment_webhook_events (paddle_customer_id);
+
+-- Forward-compatible billing-period metadata for existing customer licenses.
+ALTER TABLE software_licenses ADD COLUMN IF NOT EXISTS billing_period_ends_at TIMESTAMPTZ NULL;

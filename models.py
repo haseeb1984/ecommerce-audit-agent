@@ -16,6 +16,7 @@ class SoftwareLicense(Base):
     max_monthly_audits = Column(Integer, default=100)
     is_active = Column(Boolean, default=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
+    billing_period_ends_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     api_keys = relationship("APIKey", back_populates="license")
