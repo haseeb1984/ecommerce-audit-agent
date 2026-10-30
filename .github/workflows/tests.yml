@@ -36,6 +36,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+      - name: Set up PHP for WordPress bridge syntax validation
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: Validate WordPress bridge PHP syntax
+        run: php -l wordpress/ai-ecommerce-audit-bridge/ai-ecommerce-audit-bridge.php
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
