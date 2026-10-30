@@ -202,3 +202,5 @@ class AccountSession(Base):
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    public_id = Column(String(64), unique=True, nullable=True, index=True)
+    user_agent = Column(String(500), nullable=True)
