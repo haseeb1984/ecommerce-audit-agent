@@ -1766,7 +1766,7 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-packages-key")
     headers = {"X-Admin-Key": "test-admin-packages-key"}
     payload = {
-        "tier": "qa-test-plan",
+        "tier": "agency_pro",
         "label": "QA Test Plan",
         "monthly_audit_allowance": 37,
         "max_concurrent_audits": 4,
@@ -1776,14 +1776,20 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
 
     unauthorized = await client.get("/api/v1/admin/packages")
     assert unauthorized.status_code in (401, 403)
+    unsupported = await client.post(
+        "/api/v1/admin/packages",
+        headers=headers,
+        json={**payload, "tier": "custom-unmapped-tier"},
+    )
+    assert unsupported.status_code == 422, unsupported.text
 
     created = await client.post("/api/v1/admin/packages", headers=headers, json=payload)
     assert created.status_code == 200, created.text
-    assert created.json() == {"status": "created", "tier": "qa-test-plan"}
+    assert created.json() == {"status": "created", "tier": "agency_pro"}
 
     listed = await client.get("/api/v1/admin/packages", headers=headers)
     assert listed.status_code == 200, listed.text
-    package = next(item for item in listed.json()["packages"] if item["tier"] == "qa-test-plan")
+    package = next(item for item in listed.json()["packages"] if item["tier"] == "agency_pro")
     assert package["monthly_audit_allowance"] == 37
     assert package["max_concurrent_audits"] == 4
     assert package["price_id"] == "pri_QaTestPlan123"
@@ -1797,21 +1803,21 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
         "paddle_price_id": None,
     }
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-test-plan", headers=headers, json=updated_payload
+        "/api/v1/admin/packages/agency_pro", headers=headers, json=updated_payload
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json() == {"status": "updated", "tier": "qa-test-plan"}
+    assert updated.json() == {"status": "updated", "tier": "agency_pro"}
 
     deactivated = await client.delete(
-        "/api/v1/admin/packages/qa-test-plan", headers=headers
+        "/api/v1/admin/packages/agency_pro", headers=headers
     )
     assert deactivated.status_code == 200, deactivated.text
-    assert deactivated.json() == {"status": "deactivated", "tier": "qa-test-plan"}
+    assert deactivated.json() == {"status": "deactivated", "tier": "agency_pro"}
 
     final_list = await client.get("/api/v1/admin/packages", headers=headers)
     assert final_list.status_code == 200, final_list.text
     final_package = next(
-        item for item in final_list.json()["packages"] if item["tier"] == "qa-test-plan"
+        item for item in final_list.json()["packages"] if item["tier"] == "agency_pro"
     )
     assert final_package["label"] == "QA Test Plan Updated"
     assert final_package["monthly_audit_allowance"] == 73
