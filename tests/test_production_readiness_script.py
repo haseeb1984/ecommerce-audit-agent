@@ -49,6 +49,8 @@ def test_schema_gate_includes_application_runtime_columns() -> None:
     assert {
         "monthly_audit_allowance", "max_concurrent_audits", "is_active",
     } <= required_columns["saas_plan_packages"]
+    assert {"session_id", "token_hash", "email", "expires_at", "revoked_at"} <= required_columns["account_sessions"]
+    assert {"id", "email", "code_hash", "attempts", "consumed_at"} <= required_columns["account_login_challenges"]
 
 def test_core_schema_enforces_unique_paddle_price_mapping() -> None:
     migration = ROOT / "migrations" / "2026-10-28-core-saas-schema.sql"
@@ -66,4 +68,5 @@ def test_schema_gate_requires_critical_operational_indexes() -> None:
     assert "ix_audit_quota_reservations_license_created" in required_indexes
     assert "ix_payment_webhook_events_transaction_id" in required_indexes
     assert "ix_payment_webhook_events_subscription_id" in required_indexes
+    assert "uq_account_sessions_session_id" in required_indexes
 
