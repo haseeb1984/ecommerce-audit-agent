@@ -1522,8 +1522,8 @@ async def register_wordpress_site(
 
 @app.get("/api/v1/integrations/wordpress/sites/status")
 async def wordpress_site_status(
+    response: Response,
     site_id: str = Query(..., min_length=20, max_length=64),
-    response: Response = None,
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
