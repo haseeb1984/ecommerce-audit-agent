@@ -213,7 +213,7 @@ async def claim_next_scan_job(
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_at < stale_before,
             )
-            .with_for_update(skip_locked=True)
+            .with_for_update()
         )).scalars().all()
         for expired in expired_jobs:
             batch = await db.scalar(
@@ -224,7 +224,14 @@ async def claim_next_scan_job(
             expired.locked_at = None
             expired.locked_by = None
             expired.last_error_code = "WORKER_LEASE_EXPIRED"
-            if expired.attempt_count < expired.max_attempts:
+            if batch is not None and batch.status == "cancel_requested":
+                expired.status = "failed"
+                expired.completed_at = now
+                batch.failed_count += 1
+                if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+                    batch.status = "cancelled"
+                    batch.completed_at = now
+            elif expired.attempt_count < expired.max_attempts:
                 expired.status = "retry_wait"
                 expired.next_attempt_at = now
                 if batch is not None:
@@ -235,8 +242,8 @@ async def claim_next_scan_job(
                 expired.completed_at = now
                 if batch is not None:
                     batch.failed_count += 1
-                    if batch.completed_count + batch.failed_count >= batch.total_urls:
-                        batch.status = "failed"
+                    if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+                        batch.status = "failed" if batch.cancelled_count == 0 else "cancelled"
                         batch.completed_at = now
         earliest_batch = (
             select(func.min(ScanBatch.batch_number))
@@ -324,8 +331,11 @@ async def complete_scan_job(
         if batch is not None:
             batch.processing_count = max(0, batch.processing_count - 1)
             batch.completed_count += 1
-            if batch.completed_count + batch.failed_count >= batch.total_urls:
-                batch.status = "completed" if batch.failed_count == 0 else "failed"
+            if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+                batch.status = (
+                    "cancelled" if batch.cancelled_count
+                    else ("completed" if batch.failed_count == 0 else "failed")
+                )
                 batch.completed_at = now
 
         usage_key = f"scan-complete:{job.id}"
@@ -386,7 +396,15 @@ async def fail_or_retry_scan_job(
         job.last_error_code = safe_error
         job.locked_at = None
         job.locked_by = None
-        if job.attempt_count < job.max_attempts:
+        if batch is not None and batch.status == "cancel_requested":
+            job.status = "failed"
+            job.completed_at = now
+            batch.failed_count += 1
+            if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+                batch.status = "cancelled"
+                batch.completed_at = now
+            outcome = "failed"
+        elif job.attempt_count < job.max_attempts:
             job.status = "retry_wait"
             backoff = max(1, min(retry_delay_seconds * (2 ** max(0, job.attempt_count - 1)), 3600))
             job.next_attempt_at = now + timedelta(seconds=backoff)
@@ -399,8 +417,8 @@ async def fail_or_retry_scan_job(
             job.completed_at = now
             if batch is not None:
                 batch.failed_count += 1
-                if batch.completed_count + batch.failed_count >= batch.total_urls:
-                    batch.status = "failed"
+                if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+                    batch.status = "failed" if batch.cancelled_count == 0 else "cancelled"
                     batch.completed_at = now
             outcome = "failed"
 
