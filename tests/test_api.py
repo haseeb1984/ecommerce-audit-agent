@@ -1156,7 +1156,7 @@ async def test_second_paddle_checkout_for_same_email_does_not_mint_another_licen
             "data": {
                 "id": transaction_id,
                 "status": "completed",
-                "custom_data": {"license_tier": "starter"},
+                "custom_data": {"license_tier": "starter", "checkout_email": email.strip().lower()},
                 "customer_id": "ctm_single_identity",
                 "customer": {"email": email, "name": "Single Identity Buyer"},
                 "items": [{"price": {"id": "pri_single_identity"}, "quantity": 1}],
@@ -1189,6 +1189,53 @@ async def test_second_paddle_checkout_for_same_email_does_not_mint_another_licen
     assert len(licenses) == 1
     assert licenses[0].account_email == "single-identity@example.com"
     assert blocked.status == "duplicate_account_blocked"
+
+
+@pytest.mark.asyncio
+async def test_paddle_webhook_does_not_provision_when_checkout_email_differs(client, monkeypatch):
+    secret = "paddle-checkout-email-mismatch-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_email_mismatch")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    sent = []
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: sent.append(args))
+    event = {
+        "event_id": "evt_checkout_email_mismatch",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_checkout_email_mismatch",
+            "status": "completed",
+            "custom_data": {
+                "license_tier": "starter",
+                "checkout_email": "declared-owner@example.com",
+            },
+            "customer_id": "ctm_email_mismatch",
+            "customer": {"email": "actual-payer@example.com", "name": "Mismatch Buyer"},
+            "items": [{"price": {"id": "pri_email_mismatch"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+    headers = {"Paddle-Signature": f"ts={timestamp};h1={signature}"}
+
+    response = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "checkout_email_mismatch"
+    retry = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "checkout_email_mismatch"
+    assert sent == []
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.account_email == "declared-owner@example.com",
+        ))).scalar_one_or_none()
+        event_row = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_checkout_email_mismatch",
+        ))).scalar_one()
+    assert license_obj is None
+    assert event_row.status == "checkout_email_mismatch"
+    assert event_row.license_id is None
 
 
 @pytest.mark.asyncio
