@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent
 
 logger = logging.getLogger("audit_service")
 
@@ -3728,6 +3728,55 @@ def _sanitize_admin_log_value(value, *, depth: int = 0):
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return str(value)[:500]
+
+
+async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> None:
+    """Mirror a committed billing event to Hostinger without moving entitlement authority."""
+    if HostingerAsyncSessionLocal is None:
+        logger.warning("Billing history mirror skipped because Hostinger is unavailable.")
+        return
+    from sqlalchemy import select
+    try:
+        event = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+        )).scalar_one_or_none()
+        if event is None or event.license_id is None:
+            return
+        license_key = await db.scalar(
+            select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
+        )
+        if not license_key:
+            return
+        async with HostingerAsyncSessionLocal() as operational_db:
+            stored = await operational_db.get(CustomerBillingEvent, event.event_id)
+            if stored is None:
+                stored = CustomerBillingEvent(
+                    event_id=event.event_id,
+                    license_key=license_key,
+                    recipient_email=event.recipient_email[:254],
+                    status=event.status[:40],
+                    transaction_id=event.transaction_id,
+                    subscription_id=event.subscription_id,
+                    paddle_customer_id=event.paddle_customer_id,
+                    created_at=event.created_at,
+                    updated_at=event.updated_at,
+                )
+                operational_db.add(stored)
+            else:
+                stored.license_key = license_key
+                stored.recipient_email = event.recipient_email[:254]
+                stored.status = event.status[:40]
+                stored.transaction_id = event.transaction_id
+                stored.subscription_id = event.subscription_id
+                stored.paddle_customer_id = event.paddle_customer_id
+                stored.updated_at = event.updated_at
+            await operational_db.commit()
+    except Exception as exc:
+        logger.warning(
+            "Billing history mirror failed (error_type=%s, event_id_hash=%s)",
+            type(exc).__name__,
+            hashlib.sha256(event_id.encode()).hexdigest()[:12],
+        )
 
 
 async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
