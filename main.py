@@ -1462,6 +1462,11 @@ async def register_wordpress_site(
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
     site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
+    # Serialize registration per license, including the absent-row case, so
+    # concurrent registrations cannot exceed the site cap or race the unique host index.
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:identity))"), {
+        "identity": f"wordpress-license:{license_obj.id}"
+    })
     existing = (await db.execute(select(WordPressSite).where(
         WordPressSite.license_id == license_obj.id,
         WordPressSite.site_host == host,
@@ -1519,7 +1524,7 @@ async def register_wordpress_site(
 async def wordpress_site_status(
     site_id: str = Query(..., min_length=20, max_length=64),
     response: Response = None,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return the connected site's current license entitlement without revealing secrets."""
