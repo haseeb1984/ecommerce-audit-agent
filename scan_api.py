@@ -12,7 +12,7 @@ from hostinger_database import get_hostinger_db
 from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite
 from models import SoftwareLicense
 from plan_features import plan_features
-from scan_queue import enqueue_scan_request
+from scan_queue import enqueue_scan_request, cancel_scan_batch
 from ecommerce_agent import UniversalEcommerceAgent
 
 router = APIRouter()
@@ -111,7 +111,7 @@ async def list_scan_batches(
                 "queued": item.queued_count,
                 "processing": item.processing_count,
                 "completed": item.completed_count,
-                "failed": item.failed_count,
+                "failed": item.failed_count,\n                "cancelled": item.cancelled_count,
                 "status": item.status,
                 "created_at": item.created_at,
                 "started_at": item.started_at,
@@ -121,6 +121,28 @@ async def list_scan_batches(
         ],
         "limit": limit,
         "offset": offset,
+    }
+
+
+@router.post("/api/v1/scan-batches/{batch_id}/cancel")
+async def cancel_customer_scan_batch(
+    batch_id: str,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Cancel queued URLs in a customer's batch without interrupting in-flight work."""
+    result = await cancel_scan_batch(
+        db, batch_id=batch_id, license_key=license_obj.license_key,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Scan batch not found.")
+    return {
+        "message": (
+            "Queued URLs were cancelled. Already-running scans will finish safely."
+            if result["in_flight_jobs"]
+            else "The scan batch cancellation has been recorded."
+        ),
+        **result,
     }
 
 
@@ -156,7 +178,7 @@ async def get_scan_batch(
         "queued": batch.queued_count,
         "processing": batch.processing_count,
         "completed": batch.completed_count,
-        "failed": batch.failed_count,
+        "failed": batch.failed_count,\n        "cancelled": batch.cancelled_count,
         "jobs": [
             {
                 "id": job.id,
