@@ -3712,3 +3712,75 @@ async def test_admin_can_review_and_revoke_customer_browser_sessions(client, mon
             SaaSAdminActionLog.entity_id == str(license_id),
         ))).scalar_one()
         assert "customer reported a lost device" in action.details_json
+
+
+
+@pytest.mark.asyncio
+async def test_customer_can_list_and_switch_only_email_linked_licenses(client, monkeypatch):
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
+    first_id = await create_license(key="multi-license-first")
+    second_id = await create_license(key="multi-license-second")
+    unrelated_id = await create_license(key="multi-license-unrelated")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_multi_license_first",
+                status="provisioned",
+                license_id=first_id,
+                recipient_email="multi-account@example.com",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_multi_license_second",
+                status="provisioned",
+                license_id=second_id,
+                recipient_email="MULTI-ACCOUNT@example.com",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_multi_license_unrelated",
+                status="provisioned",
+                license_id=unrelated_id,
+                recipient_email="someone-else@example.com",
+            ),
+        ])
+        await db.commit()
+
+    requested = await client.post("/api/v1/account/auth/request-code", json={
+        "email": "multi-account@example.com",
+    })
+    assert requested.status_code == 202
+    login = await client.post("/api/v1/account/auth/verify-code", json={
+        "email": "multi-account@example.com", "code": sent[0],
+    })
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    listed = await client.get("/api/v1/account/licenses", headers=headers)
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert {item["id"] for item in items} == {first_id, second_id}
+    assert sum(bool(item["selected"]) for item in items) == 1
+
+    switched = await client.post(
+        "/api/v1/account/licenses/switch",
+        headers=headers,
+        json={"license_id": second_id},
+    )
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["account"]["license_id"] == second_id
+    profile = await client.get("/api/v1/account/profile", headers=headers)
+    assert profile.status_code == 200
+    assert profile.json()["client_name"] == "Automated Test"
+
+    forbidden = await client.post(
+        "/api/v1/account/licenses/switch",
+        headers=headers,
+        json={"license_id": unrelated_id},
+    )
+    assert forbidden.status_code == 403
+
+    listed_again = await client.get("/api/v1/account/licenses", headers=headers)
+    assert listed_again.status_code == 200
+    assert listed_again.json()["selected_license_id"] == second_id
