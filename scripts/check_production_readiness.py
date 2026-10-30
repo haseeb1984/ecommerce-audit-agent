@@ -41,6 +41,8 @@ REQUIRED_COLUMNS = {
     },
     "saas_operation_events": {"id", "event_type", "license_id", "domain", "error_type", "created_at"},
     "saas_admin_action_logs": {"id", "action", "entity_type", "entity_id", "details_json", "created_at"},
+    "account_login_challenges": {"id", "email", "license_id", "code_hash", "expires_at", "attempts", "consumed_at", "created_at"},
+    "account_sessions": {"token_hash", "session_id", "license_id", "email", "expires_at", "revoked_at", "created_at", "last_seen_at"},
 }
 
 # Indexes that protect uniqueness or keep high-volume account-scoped queries bounded.
@@ -51,6 +53,7 @@ REQUIRED_INDEXES = {
     "ix_audit_quota_reservations_license_created",
     "ix_payment_webhook_events_transaction_id",
     "ix_payment_webhook_events_subscription_id",
+    "uq_account_sessions_session_id",
 }
 
 REQUIRED_ENV_GROUPS = {
