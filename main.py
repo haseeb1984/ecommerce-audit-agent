@@ -193,6 +193,7 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "account_sessions",
         "account_email_change_challenges",
         "wordpress_sites",
+        "white_label_branding",
         "saas_admin_customer_notes",
     }
     try:
@@ -2076,8 +2077,6 @@ async def list_account_api_keys(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List metadata for this account's API keys; never return stored key material."""
-    if not plan_features(license_obj.tier)["direct_api_access"]:
-        raise HTTPException(status_code=403, detail="Direct API access is not included in this plan.")
     from sqlalchemy import select
 
     rows = (await db.execute(
@@ -2093,7 +2092,9 @@ async def list_account_api_keys(
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     is_expired = expires_at is not None and expires_at <= now
-    if len(rows) >= 10:
+    if not plan_features(license_obj.tier)["direct_api_access"]:
+        can_create_reason = "plan_not_eligible"
+    elif len(rows) >= 10:
         can_create_reason = "key_limit_reached"
     elif is_expired:
         can_create_reason = "account_expired"
