@@ -1608,19 +1608,19 @@ async def wordpress_site_status(
     response: Response,
     site_id: str = Query(..., min_length=20, max_length=64),
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return the connected site's current license entitlement without revealing secrets."""
     from sqlalchemy import select
-    site = (await db.execute(select(WordPressSite).where(
-        WordPressSite.id == site_id,
-        WordPressSite.license_id == license_obj.id,
-        WordPressSite.status == "active",
+    site = (await operational_db.execute(select(WordPressInstallation).where(
+        WordPressInstallation.id == site_id,
+        WordPressInstallation.license_key == license_obj.license_key,
+        WordPressInstallation.status == "active",
     ))).scalar_one_or_none()
     if site is None:
         raise HTTPException(status_code=404, detail="WordPress site connection not found.")
     site.last_seen_at = datetime.now(timezone.utc)
-    await db.commit()
+    await operational_db.commit()
     expires_at = license_obj.expires_at
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
