@@ -3220,3 +3220,85 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
     duplicate = await send(update)
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "already_processed"
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_update_after_cancellation_is_sticky(client, monkeypatch):
+    secret = "paddle-test-canceled-plan-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_canceledpro123")
+    license_id = await create_license(key="canceled-plan-update-license", quota=100)
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_canceled_plan_update",
+            status="subscription_canceled",
+            license_id=license_id,
+            subscription_id="sub_canceled_plan_update",
+            recipient_email="canceled@example.com",
+        ))
+        await db.commit()
+
+    event = {
+        "event_id": "evt_late_plan_update",
+        "event_type": "subscription.updated",
+        "data": {
+            "id": "sub_canceled_plan_update",
+            "items": [{"price": {"id": "pri_canceledpro123"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ignored_after_cancellation"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.tier == "test"
+        assert license_obj.max_monthly_audits == 100
+        assert license_obj.is_active is True
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_late_plan_update"
+        ))).scalar_one()
+        assert stored.status == "subscription_updated"
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_update_unlinked_license_returns_retryable_503(client, monkeypatch):
+    secret = "paddle-test-unlinked-plan-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    event = {
+        "event_id": "evt_unlinked_plan_update",
+        "event_type": "subscription.updated",
+        "data": {
+            "id": "sub_not_linked_yet",
+            "items": [{"price": {"id": "pri_unmapped123"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Subscription update is awaiting license reconciliation."
+    async with AsyncSessionLocal() as db:
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_unlinked_plan_update"
+        ))).scalar_one_or_none()
+        assert stored is None
