@@ -95,6 +95,7 @@ class ScanBatch(HostingerBase):
     requested_by = Column(String(254), nullable=True)
     package_tier = Column(String(50), nullable=False)
     request_id = Column(String(128), nullable=False)
+    request_hash = Column(String(64), nullable=False)
     batch_number = Column(Integer, nullable=False)
     batch_size = Column(Integer, nullable=False, default=10)
     total_urls = Column(Integer, nullable=False, default=0)
