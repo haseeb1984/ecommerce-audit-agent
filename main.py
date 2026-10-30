@@ -1418,15 +1418,16 @@ async def list_customer_account_licenses(
     credentials=Depends(CUSTOMER_BEARER),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List every license linked to the verified checkout email on this browser session."""
     from sqlalchemy import func, select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Email sign-in is required to manage linked licenses.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
+    session = (await operational_db.execute(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
     ))).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
@@ -1450,9 +1451,9 @@ async def list_customer_account_licenses(
             "tier": item.tier,
             "is_active": bool(item.is_active),
             "expires_at": item.expires_at.isoformat() if item.expires_at else None,
-            "selected": item.id == session.license_id,
+            "selected": item.license_key == session.license_key,
         } for item in licenses],
-        "selected_license_id": session.license_id,
+        "selected_license_key": session.license_key,
     }
 
 
