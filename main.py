@@ -977,7 +977,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
 
 
 @app.post("/api/v1/account/auth/verify-code")
-async def verify_account_login_code(payload: AccountLoginVerify, response: Response, db: AsyncSession = Depends(get_async_db)):
+async def verify_account_login_code(payload: AccountLoginVerify, request: Request, response: Response, db: AsyncSession = Depends(get_async_db)):
     """Consume a one-time code and issue an opaque 30-day customer session."""
     from sqlalchemy import select
     email = payload.email.strip().lower()
@@ -1020,6 +1020,8 @@ async def verify_account_login_code(payload: AccountLoginVerify, response: Respo
     session = AccountSession(
         token_hash=token_hash, license_id=license_obj.id, email=email,
         expires_at=now + timedelta(days=30), created_at=now,
+        public_id=secrets.token_urlsafe(24),
+        user_agent=(request.headers.get("user-agent") or "")[:500],
     )
     db.add(session)
     await db.commit()
@@ -1032,6 +1034,83 @@ async def verify_account_login_code(payload: AccountLoginVerify, response: Respo
         "expires_at": session.expires_at.isoformat(),
         "account": {"client_name": license_obj.client_name, "tier": license_obj.tier},
     }
+
+
+@app.get("/api/v1/account/auth/sessions")
+async def list_customer_device_sessions(
+    response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List active devices for the verified email without exposing session token digests."""
+    from sqlalchemy import select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Customer session is required.")
+    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == token_hash,
+        AccountSession.revoked_at.is_(None),
+    ))).scalar_one_or_none()
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(
+        select(AccountSession, SoftwareLicense.client_name)
+        .join(SoftwareLicense, SoftwareLicense.id == AccountSession.license_id)
+        .where(
+            AccountSession.email == current.email,
+            AccountSession.revoked_at.is_(None),
+            AccountSession.expires_at > now,
+            AccountSession.public_id.is_not(None),
+        )
+        .order_by(AccountSession.last_seen_at.desc().nullslast(), AccountSession.created_at.desc())
+        .limit(100)
+    )).all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{
+        "id": session.public_id,
+        "client_name": client_name,
+        "user_agent": session.user_agent or "Unknown device",
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "last_seen_at": session.last_seen_at.isoformat() if session.last_seen_at else None,
+        "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+        "current": session.token_hash == token_hash,
+    } for session, client_name in rows]}
+
+
+@app.delete("/api/v1/account/auth/sessions/{session_id}")
+async def revoke_customer_device_session(
+    session_id: str,
+    response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke one other active device belonging to the same verified customer email."""
+    from sqlalchemy import select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Customer session is required.")
+    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == token_hash,
+        AccountSession.revoked_at.is_(None),
+    ))).scalar_one_or_none()
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    target = (await db.execute(select(AccountSession).where(
+        AccountSession.public_id == session_id,
+        AccountSession.email == current.email,
+        AccountSession.revoked_at.is_(None),
+    ).with_for_update())).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Active customer device was not found.")
+    if target.token_hash == token_hash:
+        raise HTTPException(status_code=422, detail="Use sign out to end the current device session.")
+    target.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "session_id": target.public_id}
 
 
 @app.post("/api/v1/account/auth/logout")
