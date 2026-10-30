@@ -389,7 +389,10 @@ function eaa_wp_render_admin_page() {
         $status_response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
         if (!is_wp_error($status_response)) {
             $settings['last_status'] = eaa_wp_json($status_response);
+            $settings['connection_error'] = '';
             update_option(EAA_WP_OPTION, $settings, false);
+        } else {
+            $error = $status_response->get_error_message();
         }
         $usage_response = eaa_wp_api_request('/api/v1/account/usage');
         if (!is_wp_error($usage_response)) {
@@ -428,6 +431,8 @@ function eaa_wp_render_admin_page() {
                         <p><?php esc_html_e('Site:', 'ecommerce-audit-agent'); ?> <?php echo esc_html(home_url('/')); ?></p>
                         <p><?php esc_html_e('WordPress site ID:', 'ecommerce-audit-agent'); ?> <code><?php echo esc_html($settings['site_id']); ?></code></p>
                         <?php if (!empty($settings['last_status']['license']['entitlement_state'])) : ?><p><?php esc_html_e('SaaS entitlement:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html($settings['last_status']['license']['entitlement_state']); ?></strong></p><?php endif; ?>
+                    <?php if (!empty($settings['last_status']['license']['expires_at'])) : ?><p><?php esc_html_e('License expiry:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) $settings['last_status']['license']['expires_at']); ?></p><?php endif; ?>
+                    <?php if (!empty($settings['last_sync'])) : ?><p class="description"><?php esc_html_e('Last status synchronization:', 'ecommerce-audit-agent'); ?> <?php echo esc_html(wp_date(get_option('date_format') . ' ' . get_option('time_format'), (int) $settings['last_sync'])); ?></p><?php endif; ?>
                         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                             <input type="hidden" name="action" value="eaa_disconnect_site">
                             <?php wp_nonce_field('eaa_disconnect_site'); ?>
@@ -462,6 +467,13 @@ function eaa_wp_render_admin_page() {
                 <?php if (is_array($billing)) : ?>
                     <p><?php esc_html_e('Plan:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html((string) ($billing['account']['tier'] ?? '—')); ?></strong> · <?php esc_html_e('Billing period ends:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) ($billing['account']['billing_period_ends_at'] ?? '—')); ?></p>
                     <?php if (!empty($billing['attention_items'])) : ?><p><?php esc_html_e('Billing events requiring attention:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) count($billing['attention_items'])); ?></p><?php endif; ?>
+                    <?php if (!empty($billing['items']) && is_array($billing['items'])) : ?>
+                        <table class="widefat striped"><thead><tr><th><?php esc_html_e('Event', 'ecommerce-audit-agent'); ?></th><th><?php esc_html_e('Status', 'ecommerce-audit-agent'); ?></th><th><?php esc_html_e('Subscription', 'ecommerce-audit-agent'); ?></th><th><?php esc_html_e('Updated', 'ecommerce-audit-agent'); ?></th></tr></thead><tbody>
+                        <?php foreach (array_slice($billing['items'], 0, 5) as $event) : ?>
+                            <tr><td><?php echo esc_html((string) ($event['event_id'] ?? '—')); ?></td><td><?php echo esc_html((string) ($event['status'] ?? 'unknown')); ?></td><td><?php echo esc_html((string) ($event['subscription_id'] ?? '—')); ?></td><td><?php echo esc_html((string) ($event['updated_at'] ?? '—')); ?></td></tr>
+                        <?php endforeach; ?>
+                        </tbody></table>
+                    <?php endif; ?>
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                         <input type="hidden" name="action" value="eaa_open_billing">
                         <?php wp_nonce_field('eaa_open_billing'); ?>
