@@ -4835,7 +4835,7 @@ async def admin_customer_account_detail(
     sessions = (await operational_db.execute(select(CustomerSession).where(CustomerSession.license_key.in_(license_keys)).order_by(CustomerSession.created_at.desc()).limit(200))).scalars().all()
     payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids)).order_by(PaymentWebhookEvent.updated_at.desc()).limit(200))).scalars().all()
     notes = (await operational_db.execute(select(AdminCustomerNote).where(
-        func.lower(AdminCustomerNote.customer_email) == normalized
+        sql_func.lower(AdminCustomerNote.customer_email) == normalized
     ).order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc()).limit(100))).scalars().all()
     wordpress_sites = (await operational_db.execute(select(WordPressInstallation).where(
         WordPressInstallation.license_key.in_(license_keys)
@@ -4943,7 +4943,7 @@ async def admin_add_customer_note(
     created = AdminCustomerNote(
         license_key=(await db.scalar(select(SoftwareLicense.license_key).join(
             PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(func.lower(PaymentWebhookEvent.recipient_email) == normalized).limit(1))),
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).limit(1))),
         customer_email=normalized,
         note=payload.note.strip(),
         created_by="admin",
