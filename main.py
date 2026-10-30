@@ -4080,6 +4080,46 @@ async def admin_list_client_sessions(
     return {"client_id": license_id, "items": items, "limit": 100}
 
 
+@app.delete("/api/v1/admin/clients/{license_id}/sessions/{session_id}")
+async def admin_revoke_client_session(
+    license_id: int,
+    session_id: str,
+    payload: AdminAPIKeyRevoke,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke one customer browser session with an auditable operator reason."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    item = (await db.execute(
+        select(AccountSession).where(
+            AccountSession.session_id == session_id,
+            AccountSession.license_id == license_id,
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Customer session not found.")
+    was_active = item.revoked_at is None
+    if was_active:
+        item.revoked_at = datetime.now(timezone.utc)
+    await _write_admin_log(db, "client.session_revoked", "client", license_id, {
+        "session_id": item.session_id,
+        "email": item.email,
+        "already_revoked": not was_active,
+        "reason": payload.reason.strip(),
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "client_id": license_id, "session_id": item.session_id}
+
+
 @app.post("/api/v1/admin/clients/{license_id}/sessions/revoke-all")
 async def admin_revoke_client_sessions(
     license_id: int,
