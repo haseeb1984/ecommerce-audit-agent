@@ -1121,7 +1121,7 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
     headers = {"Paddle-Signature": f"ts={timestamp};h1={signature}"}
     first = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
     assert first.status_code == 200 and first.json()["status"] == "provisioned"
-    assert len(sent) == 1 and sent[0][0] == "buyer@example.com" and sent[0][2:] == ("starter", 100)
+    assert len(sent) == 1 and sent[0][0] == "single-identity@example.com" and sent[0][2:] == ("starter", 100)
     duplicate = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
     assert duplicate.status_code == 200 and duplicate.json()["status"] == "already_processed" and len(sent) == 1
     async with AsyncSessionLocal() as db:
@@ -1164,13 +1164,13 @@ async def test_second_paddle_checkout_for_same_email_does_not_mint_another_licen
         }
 
     first = await send(purchase(
-        "evt_single_identity_first", "txn_single_identity_first", "Buyer@Example.com",
+        "evt_single_identity_first", "txn_single_identity_first", "Single-Identity@Example.com",
     ))
     assert first.status_code == 200 and first.json()["status"] == "provisioned"
     assert len(sent) == 1
 
     second_event = purchase(
-        "evt_single_identity_second", "txn_single_identity_second", " buyer@example.com ",
+        "evt_single_identity_second", "txn_single_identity_second", " single-identity@example.com ",
     )
     second = await send(second_event)
     assert second.status_code == 200, second.text
@@ -1181,13 +1181,13 @@ async def test_second_paddle_checkout_for_same_email_does_not_mint_another_licen
 
     async with AsyncSessionLocal() as db:
         licenses = (await db.execute(select(SoftwareLicense).where(
-            func.lower(SoftwareLicense.account_email) == "buyer@example.com",
+            func.lower(SoftwareLicense.account_email) == "single-identity@example.com",
         ))).scalars().all()
         blocked = (await db.execute(select(PaymentWebhookEvent).where(
             PaymentWebhookEvent.event_id == "evt_single_identity_second",
         ))).scalar_one()
     assert len(licenses) == 1
-    assert licenses[0].account_email == "buyer@example.com"
+    assert licenses[0].account_email == "single-identity@example.com"
     assert blocked.status == "duplicate_account_blocked"
 
 
