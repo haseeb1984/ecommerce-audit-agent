@@ -8,6 +8,8 @@ import logging
 import os
 import smtplib
 import json
+import io
+import zipfile
 from email.message import EmailMessage
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -1619,6 +1621,44 @@ async def disconnect_wordpress_site(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "disconnected", "site_id": site.id}
+
+
+@app.get("/wordpress-plugin-guide", response_class=HTMLResponse)
+async def wordpress_plugin_guide():
+    """Public installation guide for the downloadable WordPress integration."""
+    return HTMLResponse("""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WordPress Plugin Setup · Ecommerce Audit Agent</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;color:#172334;background:#f4f7fb;margin:0}.wrap{max-width:820px;margin:36px auto;padding:28px;background:white;border:1px solid #dce5ef;border-radius:14px}h1,h2{line-height:1.2}a.button{display:inline-block;background:#155a8a;color:white;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:700}.muted{color:#586b7e}li{margin:8px 0}</style></head>
+<body><main class="wrap"><h1>Connect WordPress or WooCommerce</h1>
+<p class="muted">Install the official Ecommerce Audit Agent plugin, connect your SaaS license, and manage audits from WordPress.</p>
+<p><a class="button" href="/wordpress-plugin.zip">Download WordPress plugin (.zip)</a></p>
+<h2>Requirements</h2><ul><li>WordPress 6.2 or newer</li><li>PHP 7.4 or newer with OpenSSL enabled</li><li>HTTPS configured on your WordPress site</li><li>Outbound HTTPS requests allowed by your hosting provider</li><li>A valid Ecommerce Audit Agent SaaS license</li><li>WooCommerce is optional</li></ul>
+<h2>Installation</h2><ol><li>Download the plugin ZIP above.</li><li>In WordPress, open Plugins → Add New Plugin → Upload Plugin.</li><li>Choose the ZIP, install it, and activate Ecommerce Audit Agent.</li><li>Open Ecommerce Audit in the WordPress admin menu.</li><li>Paste your SaaS license key and save. The plugin registers this WordPress site with your license.</li><li>View your entitlement and monthly quota, run an audit, download saved reports, or open the Paddle billing portal from the plugin dashboard.</li></ol>
+<h2>Account management</h2><p>Sign in to your SaaS customer portal to view all connected WordPress installations and disconnect a site. Disconnecting a site does not delete your license, billing history, or saved audit reports.</p>
+<p class="muted">The plugin sends its license credential only from your WordPress server to the configured HTTPS SaaS API. It encrypts the saved key at rest and never exposes it to public storefront visitors.</p>
+</main></body></html>""", headers={"Cache-Control":"public, max-age=300"})
+
+
+@app.get("/wordpress-plugin.zip")
+async def download_wordpress_plugin():
+    """Build a WordPress-installable ZIP with the expected top-level plugin folder."""
+    plugin_dir = Path(__file__).resolve().parent / "wordpress-plugin" / "ecommerce-audit-agent"
+    required_files = ("ecommerce-audit-agent.php", "readme.txt", "uninstall.php")
+    if any(not (plugin_dir / filename).is_file() for filename in required_files):
+        raise HTTPException(status_code=503, detail="The WordPress plugin package is not available on this deployment.")
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as package:
+        for filename in required_files:
+            package.write(plugin_dir / filename, arcname=f"ecommerce-audit-agent/{filename}")
+    return Response(
+        content=archive.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="ecommerce-audit-agent.zip"',
+            "Cache-Control": "public, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/v1/account/wordpress-sites")
