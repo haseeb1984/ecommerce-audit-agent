@@ -1,19 +1,20 @@
-# Customer multi-license account switching
+# Customer account identity (supersedes multi-license switching)
 
-A passwordless customer browser session is bound to the verified checkout email and has one currently selected license.
+The former multi-license listing and switching behavior is retired. A normalized verified checkout email identifies one customer account and one license. Customer sessions may be active on multiple devices, but every session for that email remains bound to the same license.
 
-## API
+## Retired API
 
-- `GET /api/v1/account/licenses` lists license records associated with the session email through provisioned payment webhook records. The response includes safe display metadata and the currently selected license ID.
-- `POST /api/v1/account/licenses/switch` accepts `{"license_id": 123}` and changes the selected license on the current browser session only.
-- Both endpoints require a valid customer bearer session. Legacy license/API-key credentials cannot enumerate or switch linked licenses.
-- The switch operation checks the target license against the exact normalized verified email on the session before changing the session's license ID.
-- Responses are private/no-store. The API does not expose license keys, API secrets, payment identifiers, or session digests.
+- `GET /api/v1/account/licenses` is no longer registered.
+- `POST /api/v1/account/licenses/switch` is no longer registered.
+- The customer portal no longer displays a linked-license selector.
 
-## Portal behavior
+## Current identity behavior
 
-The customer portal shows a linked-license selector only after passwordless email sign-in. Selecting another license refreshes report history, usage, activity, API keys, billing history, and profile data for the newly selected license. Existing license-key and API-key access remains a single-license legacy flow.
+- The checkout API requires an email and rejects an email that already owns or is historically linked to an account before creating a new Paddle transaction.
+- The webhook compares the declared checkout email with Paddle's customer email and refuses to provision when they differ.
+- A duplicate purchase event is retained as `duplicate_account_blocked`; it does not create or email another license.
+- Passwordless login resolves one canonical account or accepts a legacy email only when payment history maps it to exactly one license. Ambiguous legacy mappings fail closed.
+- Subscription renewals and lifecycle updates continue to reconcile against the original subscription/license relationship.
+- Multiple device sessions are supported and can be revoked individually or together; this does not imply multiple licenses per email.
 
-## Identity boundary
-
-This release uses the verified checkout email as the account grouping key; it does not introduce a separate customer master identity record or merge licenses with different checkout email addresses. Changing billing email is not an account-linking operation. A future customer identity phase can introduce verified email change and explicit account-linking workflows with additional proof and audit controls.
+See `docs/wordpress-identity-and-white-label.md` and migration `20261031_single_customer_license_identity.sql` for the rollout and legacy-data safety rules.
