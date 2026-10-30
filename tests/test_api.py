@@ -3794,6 +3794,51 @@ async def test_admin_can_review_and_revoke_customer_browser_sessions(client, mon
 
 
 @pytest.mark.asyncio
+async def test_admin_can_revoke_one_customer_device_with_audit_reason(client, monkeypatch):
+    admin_key = "test-admin-single-device-revocation"
+    monkeypatch.setenv("ADMIN_API_KEY", admin_key)
+    license_id = await create_license(key="admin-single-device-license")
+    async with AsyncSessionLocal() as db:
+        item = main.AccountSession(
+            token_hash=hashlib.sha256(b"admin-single-device-token").hexdigest(),
+            license_id=license_id,
+            email="single-device@example.com",
+            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+        )
+        db.add(item)
+        await db.commit()
+        session_id = item.session_id
+
+    headers = {"X-Admin-Key": admin_key}
+    listed = await client.get(f"/api/v1/admin/clients/{license_id}/sessions", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["session_id"] == session_id
+    assert "token_hash" not in listed.json()["items"][0]
+
+    revoked = await client.delete(
+        f"/api/v1/admin/clients/{license_id}/sessions/{session_id}",
+        headers=headers,
+        json={"reason": "customer reported unknown device"},
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "revoked"
+
+    wrong_client = await client.delete(
+        f"/api/v1/admin/clients/{license_id + 100000}/sessions/{session_id}",
+        headers=headers,
+        json={"reason": "scope isolation check"},
+    )
+    assert wrong_client.status_code == 404
+
+    async with AsyncSessionLocal() as db:
+        action = (await db.execute(select(SaaSAdminActionLog).where(
+            SaaSAdminActionLog.action == "client.session_revoked",
+            SaaSAdminActionLog.entity_id == str(license_id),
+        ))).scalar_one()
+        assert "customer reported unknown device" in action.details_json
+
+
+@pytest.mark.asyncio
 async def test_customer_can_list_and_switch_only_email_linked_licenses(client, monkeypatch):
     monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
     sent = []
