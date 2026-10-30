@@ -1342,7 +1342,8 @@ def _normalize_wordpress_site_url(value: str) -> str:
             if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", host):
                 raise ValueError
         path = parsed.path.rstrip("/")
-        normalized = f"https://{host}{path}/"
+        authority_host = f"[{host}]" if ":" in host else host
+        normalized = f"https://{authority_host}{path}/"
         if len(normalized) > 255:
             raise ValueError
         return normalized
@@ -1423,6 +1424,9 @@ async def claim_wordpress_site_link(
     """Redeem a license-bound, expiring code once and bind the authenticated WP site."""
     from sqlalchemy import select
     site_url = _normalize_wordpress_site_url(payload.site_url)
+    wp_user_email = payload.wp_user_email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", wp_user_email):
+        raise HTTPException(status_code=422, detail="A valid WordPress administrator email address is required.")
     token_hash = hashlib.sha256(payload.token.strip().encode("utf-8")).hexdigest()
     now = datetime.now(timezone.utc)
     challenge = (await db.execute(
@@ -1456,7 +1460,7 @@ async def claim_wordpress_site_link(
             site_url=site_url,
             wp_user_id=payload.wp_user_id,
             wp_user_login=payload.wp_user_login.strip(),
-            wp_user_email=payload.wp_user_email.strip().lower(),
+            wp_user_email=wp_user_email,
             linked_at=now,
             updated_at=now,
         )
@@ -1464,7 +1468,7 @@ async def claim_wordpress_site_link(
     else:
         existing.wp_user_id = payload.wp_user_id
         existing.wp_user_login = payload.wp_user_login.strip()
-        existing.wp_user_email = payload.wp_user_email.strip().lower()
+        existing.wp_user_email = wp_user_email
         existing.updated_at = now
     challenge.consumed_at = now
     await db.commit()
@@ -1540,6 +1544,10 @@ async def update_account_branding(
     logo_url = (payload.logo_url or "").strip() or None
     if logo_url:
         parsed = urlsplit(logo_url)
+        try:
+            parsed.port  # Access validates malformed and out-of-range port syntax.
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Logo URL must contain a valid HTTPS port.") from exc
         if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise HTTPException(status_code=422, detail="Logo URL must be a valid HTTPS URL without embedded credentials.")
     primary_color = payload.primary_color.strip()
