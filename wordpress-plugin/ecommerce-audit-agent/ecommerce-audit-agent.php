@@ -85,6 +85,15 @@ function eaa_wp_api_request($path, $method = 'GET', $body = null, $timeout = 25)
         return $license_key;
     }
     $license_key = trim((string) $license_key);
+    // Upgrade an older plaintext option to authenticated encryption on first use.
+    if ('' !== $license_key && 0 !== strpos((string) ($settings['license_key'] ?? ''), 'eaa2:')) {
+        $encrypted = eaa_wp_encrypt_license($license_key);
+        if (is_wp_error($encrypted)) {
+            return $encrypted;
+        }
+        $settings['license_key'] = $encrypted;
+        update_option(EAA_WP_OPTION, $settings, false);
+    }
     if ('' === $license_key) {
         return new WP_Error('eaa_missing_license', __('Enter your SaaS license key to connect this site.', 'ecommerce-audit-agent'));
     }
@@ -178,24 +187,41 @@ add_action('admin_menu', function () {
     );
 });
 
-add_action('admin_init', function () {
-    if (!current_user_can('manage_options')) {
+function eaa_wp_sync_site_status() {
+    $settings = eaa_wp_settings();
+    if (empty($settings['license_key']) || empty($settings['site_id'])) {
         return;
     }
+    $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
+    $settings['last_sync'] = time();
+    if (is_wp_error($response)) {
+        $settings['connection_error'] = $response->get_error_message();
+    } else {
+        $settings['connection_error'] = '';
+        $settings['last_status'] = eaa_wp_json($response);
+    }
+    update_option(EAA_WP_OPTION, $settings, false);
+}
+
+add_action('eaa_wp_scheduled_status_sync', 'eaa_wp_sync_site_status');
+register_activation_hook(__FILE__, function () {
+    if (!wp_next_scheduled('eaa_wp_scheduled_status_sync')) {
+        wp_schedule_event(time() + 300, 'twicedaily', 'eaa_wp_scheduled_status_sync');
+    }
     $settings = eaa_wp_settings();
-    if (!empty($settings['license_key']) && !empty($settings['site_id']) && empty($settings['connection_error'])) {
-        $last = isset($settings['last_sync']) ? (int) $settings['last_sync'] : 0;
-        if ($last < time() - 6 * HOUR_IN_SECONDS) {
-            $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
-            $settings['last_sync'] = time();
-            if (is_wp_error($response)) {
-                $settings['connection_error'] = $response->get_error_message();
-            } else {
-                $settings['connection_error'] = '';
-                $settings['last_status'] = eaa_wp_json($response);
-            }
-            update_option(EAA_WP_OPTION, $settings, false);
-        }
+    if (!empty($settings['license_key'])) {
+        eaa_wp_register_site();
+    }
+});
+register_deactivation_hook(__FILE__, function () {
+    $timestamp = wp_next_scheduled('eaa_wp_scheduled_status_sync');
+    if ($timestamp) {
+        wp_unschedule_event($timestamp, 'eaa_wp_scheduled_status_sync');
+    }
+});
+add_action('admin_init', function () {
+    if (!wp_next_scheduled('eaa_wp_scheduled_status_sync')) {
+        wp_schedule_event(time() + 300, 'twicedaily', 'eaa_wp_scheduled_status_sync');
     }
 });
 
