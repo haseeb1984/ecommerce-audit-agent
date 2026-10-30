@@ -1780,7 +1780,7 @@ async def update_account_profile(
 @app.get("/api/v1/account/branding")
 async def get_account_branding(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
     if not plan_features(license_obj.tier)["white_label_branding"]:
@@ -1788,14 +1788,14 @@ async def get_account_branding(
     from sqlalchemy import select
     item = (await db.execute(select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id))).scalar_one_or_none()
     response.headers["Cache-Control"] = "no-store, private"
-    return {"brand_name": item.brand_name if item else license_obj.client_name, "logo_url": item.logo_url if item else None, "primary_color": item.primary_color if item else "#155a8a"}
+    return {"brand_name": item.brand_name if item else license_obj.client_name, "logo_url": item.logo_url if item else None, "primary_color": item.primary_color if item else "#155a8a", "configured": item is not None, "updated_at": item.updated_at.isoformat() if item and item.updated_at else None}
 
 
 @app.put("/api/v1/account/branding")
 async def update_account_branding(
     payload: WhiteLabelBrandingUpdate,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):
     if not plan_features(license_obj.tier)["white_label_branding"]:
