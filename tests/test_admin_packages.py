@@ -13,7 +13,7 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "qa-plan",
+            "tier": "agency_pro",
             "label": "QA Plan",
             "monthly_audit_allowance": 250,
             "max_concurrent_audits": 2,
@@ -26,17 +26,17 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
 
     listed = await client.get("/api/v1/admin/packages", headers=headers)
     assert listed.status_code == 200
-    package = next(item for item in listed.json()["packages"] if item["tier"] == "qa-plan")
+    package = next(item for item in listed.json()["packages"] if item["tier"] == "agency_pro")
     assert package["monthly_audit_allowance"] == 250
     assert package["max_concurrent_audits"] == 2
     assert package["is_active"] is True
     assert "price_id" in package
 
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-plan",
+        "/api/v1/admin/packages/agency_pro",
         headers=headers,
         json={
-            "tier": "qa-plan",
+            "tier": "agency_pro",
             "label": "QA Plan Plus",
             "monthly_audit_allowance": 400,
             "max_concurrent_audits": 3,
@@ -47,10 +47,10 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
     assert updated.status_code == 200, updated.text
     assert updated.json()["status"] == "updated"
 
-    deactivated = await client.delete("/api/v1/admin/packages/qa-plan", headers=headers)
+    deactivated = await client.delete("/api/v1/admin/packages/agency_pro", headers=headers)
     assert deactivated.status_code == 200
     packages = (await client.get("/api/v1/admin/packages", headers=headers)).json()["packages"]
-    package = next(item for item in packages if item["tier"] == "qa-plan")
+    package = next(item for item in packages if item["tier"] == "agency_pro")
     assert package["is_active"] is False
     assert package["monthly_audit_allowance"] == 400
 
@@ -150,7 +150,7 @@ async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "support-tier",
+            "tier": "agency_pro",
             "label": "Support Tier",
             "monthly_audit_allowance": 321,
             "max_concurrent_audits": 2,
@@ -176,12 +176,12 @@ async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_
     response = await client.patch(
         f"/api/v1/admin/clients/{license_id}",
         headers=headers,
-        json={"client_name": "Updated QA Client", "tier": "support-tier", "is_active": False},
+        json={"client_name": "Updated QA Client", "tier": "agency_pro", "is_active": False},
     )
     assert response.status_code == 200, response.text
     updated_client = response.json()["client"]
     assert updated_client["client_name"] == "Updated QA Client"
-    assert updated_client["tier"] == "support-tier"
+    assert updated_client["tier"] == "agency_pro"
     assert updated_client["monthly_limit"] == 321
     assert updated_client["is_active"] is False
     assert "qa-license-marker" not in response.text
@@ -208,7 +208,7 @@ async def test_admin_packages_reject_duplicate_paddle_price_mapping(client, monk
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "paddle-plan-a",
+            "tier": "starter",
             "label": "Paddle Plan A",
             "monthly_audit_allowance": 100,
             "max_concurrent_audits": 1,
@@ -222,7 +222,7 @@ async def test_admin_packages_reject_duplicate_paddle_price_mapping(client, monk
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "paddle-plan-b",
+            "tier": "agency",
             "label": "Paddle Plan B",
             "monthly_audit_allowance": 500,
             "max_concurrent_audits": 2,
@@ -377,7 +377,7 @@ async def test_package_allowance_update_only_changes_inherited_customer_quotas(c
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "qa-quota-propagation",
+            "tier": "agency_pro",
             "label": "Quota Propagation",
             "monthly_audit_allowance": 250,
             "max_concurrent_audits": 2,
@@ -391,14 +391,14 @@ async def test_package_allowance_update_only_changes_inherited_customer_quotas(c
         inherited = SoftwareLicense(
             license_key="quota-inherited-license",
             client_name="Inherited quota",
-            tier="qa-quota-propagation",
+            tier="agency_pro",
             max_monthly_audits=250,
             is_active=True,
         )
         overridden = SoftwareLicense(
             license_key="quota-overridden-license",
             client_name="Overridden quota",
-            tier="qa-quota-propagation",
+            tier="agency_pro",
             max_monthly_audits=999,
             is_active=True,
         )
@@ -407,10 +407,10 @@ async def test_package_allowance_update_only_changes_inherited_customer_quotas(c
         inherited_id, overridden_id = inherited.id, overridden.id
 
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-quota-propagation",
+        "/api/v1/admin/packages/agency_pro",
         headers=headers,
         json={
-            "tier": "qa-quota-propagation",
+            "tier": "agency_pro",
             "label": "Quota Propagation Plus",
             "monthly_audit_allowance": 400,
             "max_concurrent_audits": 3,
