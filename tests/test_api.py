@@ -26,7 +26,7 @@ async def create_license(
     quota=10,
     active=True,
     expires_at=None,
-    tier="pro",
+    tier="business",
 ):
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
