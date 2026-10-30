@@ -3799,23 +3799,23 @@ async def _billing_license_ids_for_email(
     return ids | legacy_ids
 
 
-async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> None:
+async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> bool:
     """Mirror a committed billing event to Hostinger without moving entitlement authority."""
     if HostingerAsyncSessionLocal is None:
         logger.warning("Billing history mirror skipped because Hostinger is unavailable.")
-        return
+        return False
     from sqlalchemy import select
     try:
         event = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
         if event is None or event.license_id is None:
-            return
+            return False
         license_key = await db.scalar(
             select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
         )
         if not license_key:
-            return
+            return False
         async with HostingerAsyncSessionLocal() as operational_db:
             stored = await operational_db.get(CustomerBillingEvent, event.event_id)
             if stored is None:
@@ -3840,12 +3840,14 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> N
                 stored.paddle_customer_id = event.paddle_customer_id
                 stored.updated_at = event.updated_at
             await operational_db.commit()
+        return True
     except Exception as exc:
         logger.warning(
             "Billing history mirror failed (error_type=%s, event_id_hash=%s)",
             type(exc).__name__,
             hashlib.sha256(event_id.encode()).hexdigest()[:12],
         )
+        return False
 
 
 async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
@@ -4141,6 +4143,48 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
     await _write_admin_log(db, "package.deactivated", "package", tier)
     await db.commit()
     return {"status": "deactivated", "tier": tier}
+
+
+
+@app.post("/api/v1/admin/billing/reconcile")
+async def admin_reconcile_billing_history(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1000000),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Repair a bounded page of Hostinger billing mirrors from canonical webhook records."""
+    _require_admin_key(request)
+    if HostingerAsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Operational billing storage is unavailable.")
+    from sqlalchemy import select, func
+    total = int((await db.execute(
+        select(func.count(PaymentWebhookEvent.event_id)).where(
+            PaymentWebhookEvent.license_id.is_not(None)
+        )
+    )).scalar_one() or 0)
+    events = (await db.execute(
+        select(PaymentWebhookEvent.event_id)
+        .where(PaymentWebhookEvent.license_id.is_not(None))
+        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    repaired = 0
+    failed = 0
+    for event_id in events:
+        if await _sync_billing_event_to_hostinger(db, event_id):
+            repaired += 1
+        else:
+            failed += 1
+    return {
+        "status": "completed" if failed == 0 else "partial",
+        "total_source_events": total,
+        "page_count": len(events),
+        "repaired": repaired,
+        "failed": failed,
+        "next_offset": offset + len(events) if offset + len(events) < total else None,
+    }
 
 
 @app.get("/api/v1/admin/actions")
