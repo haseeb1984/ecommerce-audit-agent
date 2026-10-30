@@ -27,6 +27,7 @@
 </div>
 <div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button><button id="logoutAllSessions" class="secondary" type="button" disabled>Sign out all devices</button></div>
 <div id="loginStatus" class="status" role="status" aria-live="polite">Passwordless sign-in is available for accounts with a verified checkout email.</div>
+<div id="deviceSessionsPanel" hidden><h3>Signed-in devices</h3><p class="muted">Review recent browser sessions and sign out a device you no longer recognize. Session tokens are never displayed.</p><button id="refreshDeviceSessions" class="secondary" type="button" disabled>Refresh devices</button><div id="deviceSessions" class="reports" aria-live="polite"><p class="muted">Sign in with email to review devices.</p></div><p id="deviceSessionsStatus" class="status" role="status" aria-live="polite"></p></div>
 </section>
 <section class="panel">
 <h2>1. Connect your license</h2>
@@ -124,6 +125,8 @@
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
     for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions"]) $(id).disabled = !connected;
+    $("deviceSessionsPanel").hidden = !connected || !sessionToken;
+    $("refreshDeviceSessions").disabled = !connected || !sessionToken;
     $("linkedLicenses").disabled = !connected || !sessionToken;
     $("linkedLicensesPanel").hidden = !connected || !sessionToken;
   }
@@ -431,6 +434,50 @@
       if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", error.message, "error");
     } finally {
       if (operationSessionVersion === accountSessionVersion) renderApiKeys();
+    }
+  }
+  async function loadDeviceSessions() {
+    if (!sessionToken) { $("deviceSessionsPanel").hidden = true; return; }
+    const response = await api("/api/v1/account/auth/sessions");
+    const data = await response.json();
+    const box = $("deviceSessions"); box.replaceChildren();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) box.append(el("p", "No browser sessions found.", "muted"));
+    for (const item of items) {
+      const row = el("div", undefined, "historyitem");
+      const state = item.current ? "This device · " : "";
+      row.append(el("strong", state + (item.status || "unknown").replace(/^./, ch => ch.toUpperCase())));
+      row.append(el("span", "Signed in " + date(item.created_at) + " · Last active " + date(item.last_seen_at) + " · Expires " + date(item.expires_at), "small"));
+      if (item.revoked_at) row.append(el("span", "Revoked " + date(item.revoked_at), "small"));
+      if (item.status === "active") {
+        const revoke = el("button", item.current ? "Sign out this device" : "Sign out device", "secondary");
+        revoke.addEventListener("click", () => revokeDeviceSession(item.session_id, Boolean(item.current), revoke));
+        row.append(revoke);
+      }
+      box.append(row);
+    }
+    $("deviceSessionsPanel").hidden = false;
+    setStatus("deviceSessionsStatus", "Showing " + items.length + " of " + (data.total || 0) + " recent sessions.", "success");
+  }
+  async function revokeDeviceSession(sessionId, isCurrent, button) {
+    if (!sessionToken || !sessionId) return;
+    if (!window.confirm(isCurrent ? "Sign out this browser now?" : "Sign out this browser session?")) return;
+    button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/sessions/" + encodeURIComponent(sessionId), {method:"DELETE"});
+      const data = await response.json();
+      if (data.current_session || isCurrent) {
+        accountSessionVersion += 1;
+        sessionToken = ""; credential = ""; headerName = "X-License-Key";
+        $("credential").value = ""; clearAccountView(); setAccountControls(false);
+        setStatus("loginStatus", "This device was signed out. Sign in again to continue.", "success");
+      } else {
+        await loadDeviceSessions();
+        setStatus("deviceSessionsStatus", "Selected device signed out.", "success");
+      }
+    } catch (error) {
+      setStatus("deviceSessionsStatus", error.message, "error");
+      button.disabled = false;
     }
   }
   async function loadAccountLicenses() {
@@ -881,6 +928,7 @@
       if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
     }
   });
+  $("refreshDeviceSessions").addEventListener("click", () => loadDeviceSessions().catch(error => setStatus("deviceSessionsStatus", error.message, "error")));
   $("logoutAllSessions").addEventListener("click", async () => {
     if (!credential) { setStatus("loginStatus", "Sign in to manage customer sessions.", "error"); return; }
     const button = $("logoutAllSessions"); button.disabled = true;
