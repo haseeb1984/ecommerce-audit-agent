@@ -43,6 +43,16 @@
 <div id="linkedLicensesPanel" hidden><label for="linkedLicenses">Linked licenses for this email</label><select id="linkedLicenses" disabled><option value="">Loading linked licenses…</option></select><p class="muted">Switching changes the active license for this browser session only.</p></div>
 <button id="saveProfile" type="button" disabled>Save account name</button>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+<div class="emailbox" style="margin-top:16px">
+  <label for="newAccountEmail">Change verified account email</label>
+  <input id="newAccountEmail" type="email" maxlength="254" autocomplete="email" placeholder="new-address@example.com">
+  <div class="report-actions"><button id="requestEmailChange" type="button" disabled>Send verification code</button></div>
+  <label for="emailChangeCode">Six-digit code sent to the new address</label>
+  <input id="emailChangeCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456">
+  <button id="verifyEmailChange" type="button" disabled>Verify and update account email</button>
+  <p class="muted">Your existing email and linked licenses remain unchanged until the new address is verified. On success, other signed-in devices are signed out. Paddle billing identity is not changed.</p>
+  <div id="emailChangeStatus" class="status" role="status" aria-live="polite">Sign in with email to change your account address.</div>
+</div>
 </section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
@@ -822,7 +832,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
@@ -893,6 +903,8 @@
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
       setAccountControls(true);
+      $("requestEmailChange").disabled = !sessionToken;
+      $("verifyEmailChange").disabled = true;
       $("runAudit").disabled = !auditAccess;
       renderApiKeys();
       $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
@@ -942,6 +954,53 @@
     setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
     setStatus("auditStatus", "Connect your credential first.");
   });
+  let emailChangeChallengeId = "";
+  $("requestEmailChange").addEventListener("click", async () => {
+    if (!sessionToken) { setStatus("emailChangeStatus", "Sign in with your verified email before changing it.", "error"); return; }
+    const newEmail = $("newAccountEmail").value.trim();
+    if (!newEmail) { setStatus("emailChangeStatus", "Enter the new email address.", "error"); return; }
+    const button = $("requestEmailChange"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/email-change/request-code", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({new_email: newEmail})
+      });
+      const data = await response.json();
+      emailChangeChallengeId = String(data.challenge_id || "");
+      if (!emailChangeChallengeId) throw new Error("The server did not return a verification challenge.");
+      $("emailChangeCode").value = "";
+      setStatus("emailChangeStatus", data.message || "Verification code sent to the new address.", "success");
+      $("verifyEmailChange").disabled = false;
+    } catch (error) {
+      emailChangeChallengeId = "";
+      setStatus("emailChangeStatus", error.message, "error");
+    } finally { button.disabled = !sessionToken; }
+  });
+  $("verifyEmailChange").addEventListener("click", async () => {
+    if (!sessionToken || !emailChangeChallengeId) { setStatus("emailChangeStatus", "Request a new email verification code first.", "error"); return; }
+    const code = $("emailChangeCode").value.trim();
+    if (!/^[0-9]{6}$/.test(code)) { setStatus("emailChangeStatus", "Enter the six-digit code sent to the new email.", "error"); return; }
+    const button = $("verifyEmailChange"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/email-change/verify-code", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({challenge_id: emailChangeChallengeId, code})
+      });
+      const data = await response.json();
+      emailChangeChallengeId = "";
+      $("loginEmail").value = data.email || $("newAccountEmail").value.trim();
+      $("newAccountEmail").value = "";
+      $("emailChangeCode").value = "";
+      accountSessionVersion += 1;
+      await Promise.allSettled([loadAccountLicenses(), loadDeviceSessions()]);
+      setStatus("emailChangeStatus", data.message || "Your account email has been updated.", "success");
+      setStatus("loginStatus", "Account email updated. Use the new email for future sign-ins.", "success");
+    } catch (error) {
+      setStatus("emailChangeStatus", error.message, "error");
+      button.disabled = false;
+    }
+  });
+
   $("saveProfile").addEventListener("click", async () => {
     if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
     const clientName = $("profileName").value.trim();
