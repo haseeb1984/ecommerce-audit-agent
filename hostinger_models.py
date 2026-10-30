@@ -257,3 +257,21 @@ class AdminActionLog(HostingerBase):
         Index("ix_admin_action_logs_created", "created_at", "id"),
         Index("ix_admin_action_logs_entity", "entity_type", "entity_id", "created_at"),
     )
+
+
+class CustomerBillingEvent(HostingerBase):
+    """Customer-visible payment/subscription event mirror; license authority stays in PostgreSQL."""
+    __tablename__ = "customer_billing_events"
+    event_id = Column(String(255), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    recipient_email = Column(String(254), nullable=False, index=True)
+    status = Column(String(40), nullable=False)
+    transaction_id = Column(String(100), nullable=True, index=True)
+    subscription_id = Column(String(100), nullable=True, index=True)
+    paddle_customer_id = Column(String(100), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    __table_args__ = (
+        Index("ix_customer_billing_license_created", "license_key", "created_at"),
+        Index("ix_customer_billing_email_created", "recipient_email", "created_at"),
+    )
