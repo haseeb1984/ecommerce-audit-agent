@@ -163,6 +163,10 @@ async function loadCustomerAccount(email){
  if(!d.billing_events.length)billingBox.append(el("p","No billing events recorded.","muted"));
  for(const x of d.billing_events){const row=el("div",undefined,"historyitem");row.append(el("strong",x.status+" · "+x.event_id),el("span","License #"+x.license_id+" · Transaction "+(x.transaction_id||"—")+" · Subscription "+(x.subscription_id||"—")+" · "+date(x.updated_at),"small"));if(x.subscription_id){const cancel=el("button","Cancel at period end","secondary");cancel.addEventListener("click",()=>cancelCustomerSubscription(x.subscription_id,"next_billing_period"));row.append(cancel)}billingBox.append(row)}
  box.append(billingBox);
+ const wpBox=el("div",undefined,"historybox");wpBox.append(el("h4","Connected WordPress sites"));
+ if(!d.wordpress_sites||!d.wordpress_sites.length)wpBox.append(el("p","No WordPress sites linked to this customer.","muted"));
+ for(const site of (d.wordpress_sites||[])){wpBox.append(el("div",site.site_url+" · "+site.status+" · WP "+(site.wordpress_version||"—")+" · WooCommerce "+(site.woocommerce_version||"—")+" · Plugin "+site.plugin_version+" · Last seen "+date(site.last_seen_at),"historyitem"))}
+ box.append(wpBox);
  const notes=el("div",undefined,"historybox");notes.append(el("h4","Internal support notes"));
  if(!d.support_notes.length)notes.append(el("p","No support notes yet.","muted"));
  for(const n of d.support_notes)notes.append(el("div",n.note+" · "+n.created_by+" · "+date(n.created_at),"historyitem"));
