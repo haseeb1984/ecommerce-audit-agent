@@ -1124,6 +1124,7 @@ async def request_customer_email_change(
     response: Response,
     credentials=Depends(CUSTOMER_BEARER),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Challenge a proposed address without changing the existing verified account identity."""
     from sqlalchemy import select, func, update
@@ -1133,9 +1134,9 @@ async def request_customer_email_change(
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", new_email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    current = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
+    current = (await operational_db.execute(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
@@ -1155,37 +1156,36 @@ async def request_customer_email_change(
     ))).scalars().all())
     if new_license_ids - old_license_ids:
         raise HTTPException(status_code=409, detail="That email is already linked to a different customer account.")
-    recent_count = int((await db.execute(select(func.count(AccountEmailChangeChallenge.id)).where(
-        AccountEmailChangeChallenge.old_email == old_email,
-        AccountEmailChangeChallenge.created_at >= now - timedelta(hours=1),
+    recent_count = int((await operational_db.execute(select(func.count(CustomerEmailChangeChallenge.id)).where(
+        CustomerEmailChangeChallenge.old_email == old_email,
+        CustomerEmailChangeChallenge.created_at >= now - timedelta(hours=1),
     ))).scalar_one() or 0)
-    latest = (await db.execute(select(AccountEmailChangeChallenge).where(
-        AccountEmailChangeChallenge.old_email == old_email,
-    ).order_by(AccountEmailChangeChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest = (await operational_db.execute(select(CustomerEmailChangeChallenge).where(
+        CustomerEmailChangeChallenge.old_email == old_email,
+    ).order_by(CustomerEmailChangeChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
         raise HTTPException(status_code=429, detail="Please wait before requesting another email verification code.")
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Customer account security is temporarily unavailable.")
-    await db.execute(update(AccountEmailChangeChallenge).where(
-        AccountEmailChangeChallenge.old_email == old_email,
-        AccountEmailChangeChallenge.consumed_at.is_(None),
+    await operational_db.execute(update(CustomerEmailChangeChallenge).where(
+        CustomerEmailChangeChallenge.old_email == old_email,
+        CustomerEmailChangeChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
     code = f"{secrets.randbelow(1000000):06d}"
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"email-change:{challenge_id}:{old_email}:{new_email}:{code}".encode(), hashlib.sha256).hexdigest()
-    challenge = AccountEmailChangeChallenge(
-        id=challenge_id, old_email=old_email, new_email=new_email,
-        license_id=current.license_id, code_hash=digest,
-        expires_at=now + timedelta(minutes=10), attempts=0, created_at=now,
+    challenge = CustomerEmailChangeChallenge(
+        id=challenge_id, license_key=current.license_key, old_email=old_email, new_email=new_email,
+        code_hash=digest, expires_at=now + timedelta(minutes=10), attempts=0, created_at=now,
     )
-    db.add(challenge)
-    await db.commit()
+    operational_db.add(challenge)
+    await operational_db.commit()
     try:
         _send_account_email_change_code(new_email, code)
     except Exception as exc:
         challenge.consumed_at = datetime.now(timezone.utc)
-        await db.commit()
+        await operational_db.commit()
         logger.warning("Customer email-change verification delivery failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Unable to deliver an email verification code right now.") from exc
     return {
@@ -1202,6 +1202,7 @@ async def verify_customer_email_change(
     response: Response,
     credentials=Depends(CUSTOMER_BEARER),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Atomically move the verified customer email and revoke every other device session."""
     from sqlalchemy import select, update, func
@@ -1214,17 +1215,17 @@ async def verify_customer_email_change(
         raise HTTPException(status_code=503, detail="Customer account security is temporarily unavailable.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
     now = datetime.now(timezone.utc)
-    current = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
+    current = (await operational_db.execute(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     old_email = current.email.strip().lower()
-    challenge = (await db.execute(select(AccountEmailChangeChallenge).where(
-        AccountEmailChangeChallenge.id == payload.challenge_id,
-        AccountEmailChangeChallenge.old_email == old_email,
-        AccountEmailChangeChallenge.consumed_at.is_(None),
+    challenge = (await operational_db.execute(select(CustomerEmailChangeChallenge).where(
+        CustomerEmailChangeChallenge.id == payload.challenge_id,
+        CustomerEmailChangeChallenge.old_email == old_email,
+        CustomerEmailChangeChallenge.consumed_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
     if challenge is None:
         raise HTTPException(status_code=401, detail="Verification code is invalid or expired.")
@@ -1233,7 +1234,7 @@ async def verify_customer_email_change(
         expiry = expiry.replace(tzinfo=timezone.utc)
     if expiry <= now or challenge.attempts >= 5:
         challenge.consumed_at = now
-        await db.commit()
+        await operational_db.commit()
         raise HTTPException(status_code=401, detail="Verification code is invalid or expired.")
     expected = hmac.new(
         auth_secret.encode(),
@@ -1259,7 +1260,7 @@ async def verify_customer_email_change(
     ))).scalars().all())
     if new_license_ids - old_license_ids:
         challenge.consumed_at = now
-        await db.commit()
+        await operational_db.commit()
         raise HTTPException(status_code=409, detail="That email is now linked to a different customer account.")
     await db.execute(update(PaymentWebhookEvent).where(
         func.lower(PaymentWebhookEvent.recipient_email) == old_email,
@@ -1269,18 +1270,19 @@ async def verify_customer_email_change(
     await db.execute(update(WordPressSite).where(
         func.lower(WordPressSite.customer_email) == old_email,
     ).values(customer_email=challenge.new_email))
-    await db.execute(update(AccountLoginChallenge).where(
-        AccountLoginChallenge.email == old_email,
-        AccountLoginChallenge.consumed_at.is_(None),
+    await operational_db.execute(update(CustomerLoginChallenge).where(
+        CustomerLoginChallenge.email == old_email,
+        CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
-    await db.execute(update(AccountSession).where(
-        AccountSession.email == old_email,
-        AccountSession.token_hash != token_hash,
-        AccountSession.revoked_at.is_(None),
+    await operational_db.execute(update(CustomerSession).where(
+        CustomerSession.email == old_email,
+        CustomerSession.token_hash != token_hash,
+        CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     current.email = challenge.new_email
     current.last_seen_at = now
     challenge.consumed_at = now
+    await operational_db.commit()
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
