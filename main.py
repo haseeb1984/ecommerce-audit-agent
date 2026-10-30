@@ -1548,7 +1548,16 @@ async def update_account_branding(
             parsed.port  # Access validates malformed and out-of-range port syntax.
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Logo URL must contain a valid HTTPS port.") from exc
-        if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+        try:
+            parsed.port  # Access validates malformed and out-of-range port syntax.
+            address = ipaddress.ip_address(hostname)
+            if not address.is_global:
+                raise ValueError("non-public logo host")
+        except ValueError as exc:
+            if hostname and not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}", hostname):
+                raise HTTPException(status_code=422, detail="Logo URL must use a valid public HTTPS hostname.") from exc
+        if parsed.scheme.lower() != "https" or not hostname or parsed.username or parsed.password:
             raise HTTPException(status_code=422, detail="Logo URL must be a valid HTTPS URL without embedded credentials.")
     primary_color = payload.primary_color.strip()
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", primary_color):
