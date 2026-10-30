@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge, WordPressSite
-from auth import verify_license_or_api_key, verify_customer_account, CUSTOMER_BEARER
+from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
@@ -4573,6 +4573,9 @@ async def admin_customer_account_detail(
         SELECT id, note, created_by, created_at FROM saas_admin_customer_notes
         WHERE LOWER(customer_email)=:email ORDER BY created_at DESC, id DESC LIMIT 100
     """), {"email": normalized})).mappings().all()
+    wordpress_sites = (await db.execute(select(WordPressSite).where(
+        WordPressSite.license_id.in_(ids)
+    ).order_by(WordPressSite.created_at.desc()).limit(100))).scalars().all()
     now = datetime.now(timezone.utc)
     return {
         "email": normalized,
@@ -4602,6 +4605,15 @@ async def admin_customer_account_detail(
             "id": item["id"], "note": item["note"], "created_by": item["created_by"],
             "created_at": item["created_at"].isoformat() if item["created_at"] else None,
         } for item in notes],
+        "wordpress_sites": [{
+            "site_id": item.id, "license_id": item.license_id, "site_url": item.site_url,
+            "site_host": item.site_host, "admin_email": item.admin_email,
+            "wordpress_version": item.wordpress_version, "woocommerce_version": item.woocommerce_version,
+            "plugin_version": item.plugin_version, "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,
+        } for item in wordpress_sites],
     }
 
 
