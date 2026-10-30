@@ -451,3 +451,72 @@ async def defer_scan_job(
     except Exception:
         await db.rollback()
         raise
+
+
+async def cancel_scan_batch(
+    db: AsyncSession,
+    *,
+    batch_id: str,
+    license_key: str,
+) -> dict | None:
+    """Cancel work not yet claimed; allow in-flight scans to finish safely.
+
+    Processing jobs are deliberately not force-killed: their external audit and
+    licensing reservation may already be in progress. The batch remains
+    cancel_requested until those jobs reach a terminal state.
+    """
+    now = _utcnow()
+    try:
+        batch = await db.scalar(
+            select(ScanBatch).where(
+                ScanBatch.id == batch_id,
+                ScanBatch.license_key == license_key,
+            ).with_for_update()
+        )
+        if batch is None:
+            await db.rollback()
+            return None
+        if batch.status in ("completed", "failed", "cancelled"):
+            await db.commit()
+            return {
+                "batch_id": batch.id,
+                "status": batch.status,
+                "cancelled_jobs": 0,
+                "in_flight_jobs": 0,
+            }
+
+        pending = (await db.execute(
+            select(WebsiteScanJob).where(
+                WebsiteScanJob.batch_id == batch.id,
+                WebsiteScanJob.license_key == license_key,
+                WebsiteScanJob.status.in_(("queued", "retry_wait")),
+            ).with_for_update(skip_locked=True)
+        )).scalars().all()
+        for job in pending:
+            job.status = "cancelled"
+            job.completed_at = now
+            job.last_error_code = "CANCELLED_BY_CUSTOMER"
+        cancelled_now = len(pending)
+        batch.queued_count = max(0, batch.queued_count - cancelled_now)
+        batch.cancelled_count = (batch.cancelled_count or 0) + cancelled_now
+        in_flight = int((await db.execute(
+            select(func.count(WebsiteScanJob.id)).where(
+                WebsiteScanJob.batch_id == batch.id,
+                WebsiteScanJob.status == "processing",
+            )
+        )).scalar_one() or 0)
+        if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+            batch.status = "cancelled"
+            batch.completed_at = now
+        else:
+            batch.status = "cancel_requested"
+        await db.commit()
+        return {
+            "batch_id": batch.id,
+            "status": batch.status,
+            "cancelled_jobs": cancelled_now,
+            "in_flight_jobs": in_flight,
+        }
+    except Exception:
+        await db.rollback()
+        raise
