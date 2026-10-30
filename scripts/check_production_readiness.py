@@ -7,6 +7,7 @@ strings, customer data, or credential material. It never applies migrations.
 """
 import asyncio
 import os
+import re
 import sys
 
 
@@ -46,7 +47,7 @@ def _configuration_status() -> tuple[list[str], list[str]]:
             ready = any(os.getenv(name, "").strip() for name in names)
         elif group == "paddle_price_catalog":
             ready = all(
-                __import__("re").fullmatch(r"pri_[A-Za-z0-9]+", os.getenv(name, "").strip())
+                re.fullmatch(r"pri_[A-Za-z0-9]+", os.getenv(name, "").strip())
                 for name in names
             )
         elif group == "customer_account_auth":
