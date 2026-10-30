@@ -34,28 +34,6 @@ from audit_checks import (
 from crawl_checks import MAX_CRAWL_PAGES, MAX_LINKS_FROM_HOME, MAX_URLS_FROM_SITEMAP
 
 
-def _format_check_outcome_summary(recorded_outcomes: list[object]) -> str:
-    """Summarize only explicit outcome records; never infer missing pages as passes."""
-    counts = {
-        key: sum(1 for outcome in recorded_outcomes if getattr(outcome, "outcome", None) == key)
-        for key in ("pass", "issue", "warning", "not_assessed", "error")
-    }
-    denominator = len(recorded_outcomes)
-    if denominator == 0:
-        return (
-            "Unavailable for this specific check — no matching explicit per-page outcome record was found. "
-            "No pass percentage is inferred from missing findings."
-        )
-    states = ", ".join(
-        f"{key.replace('_', ' ')} {counts[key]} ({counts[key] / denominator * 100:.1f}%)"
-        for key in ("pass", "issue", "warning", "not_assessed", "error")
-    )
-    return (
-        f"Recorded outcomes for this check: tested-page denominator {denominator}; {states}. "
-        "Counts include only pages with explicit outcome records; they do not imply full-site coverage."
-    )
-
-
 def _format_check_outcome_summary_from_dicts(recorded_outcomes: list[dict[str, object]]) -> str:
     """Summarize serialized, URL-linked outcomes without inferring unrecorded checks."""
     counts = {
