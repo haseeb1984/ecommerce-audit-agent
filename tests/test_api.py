@@ -3153,8 +3153,8 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
 
     secret = "paddle-test-subscription-update-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_update_starter123")
-    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_update_pro123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_updatestarter123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_updatepro123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_PRO", "1000")
 
@@ -3167,7 +3167,7 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
         await db.execute(text("""
             INSERT INTO saas_plan_packages
                 (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
-            VALUES ('pro', 'Test Pro', 1000, 5, 'pri_update_pro123', TRUE)
+            VALUES ('pro', 'Test Pro', 1000, 5, 'pri_updatepro123', TRUE)
             ON CONFLICT (tier) DO UPDATE SET
                 paddle_price_id = EXCLUDED.paddle_price_id,
                 monthly_audit_allowance = EXCLUDED.monthly_audit_allowance,
@@ -3194,7 +3194,7 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
 
     update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
         "data": {"id": "sub_update123", "customer_id": "ctm_update123",
-        "items": [{"price": {"id": "pri_update_pro123"}, "quantity": 1}]}}
+        "items": [{"price": {"id": "pri_updatepro123"}, "quantity": 1}]}}
     changed = await send(update)
     assert changed.status_code == 200, changed.text
     assert changed.json()["status"] == "plan_reconciled"
