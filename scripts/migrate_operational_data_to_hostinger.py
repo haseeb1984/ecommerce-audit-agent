@@ -233,7 +233,7 @@ async def migrate(apply_changes: bool) -> None:
             lambda row: ({
                 "event_id": row.event_id,
                 "license_key": license_key_by_id.get(row.license_id),
-                "recipient_email": row.recipient_email[:254],
+                "recipient_email": (row.recipient_email or "").strip().lower()[:254],
                 "status": row.status[:40],
                 "transaction_id": row.transaction_id,
                 "subscription_id": row.subscription_id,
@@ -303,19 +303,6 @@ async def migrate(apply_changes: bool) -> None:
             "to_copy": note_copied,
             "already_present_or_unmapped": note_skipped,
         }
-
-        reports["admin_action_logs"] = await _copy_rows(
-            source, target, SaaSAdminActionLog, AdminActionLog,
-            lambda row: {
-                "id": row.id,
-                "action": row.action,
-                "entity_type": row.entity_type,
-                "entity_id": row.entity_id,
-                "details_json": row.details_json or "{}",
-                "created_at": row.created_at,
-            },
-            "id",
-        )
 
         for name, report in reports.items():
             logger.info("%s: %s", name, report)
