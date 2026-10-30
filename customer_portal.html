@@ -40,7 +40,7 @@
 <p class="muted">Update the display name shown in your account. Subscription billing identity and payment details remain managed by Paddle.</p>
 <div class="row"><div><label for="profileName">Account name</label><input id="profileName" type="text" maxlength="255" autocomplete="organization" placeholder="Your business or account name"></div><div><label for="profileTier">Current plan</label><input id="profileTier" type="text" readonly aria-readonly="true" value="—"></div></div>
 <p id="profileMeta" class="muted">Connect your account to view profile details.</p>
-<div id="linkedLicensesPanel" hidden><label for="linkedLicenses">Linked licenses for this email</label><select id="linkedLicenses" disabled><option value="">Loading linked licenses…</option></select><p class="muted">Switching changes the active license for this browser session only.</p></div>
+
 <button id="saveProfile" type="button" disabled>Save account name</button>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
@@ -143,8 +143,6 @@
     for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "generateWordPressLinkCode", "refreshWordPressLinks"]) $(id).disabled = !connected;
     $("deviceSessionsPanel").hidden = !connected || !sessionToken;
     $("refreshDeviceSessions").disabled = !connected || !sessionToken;
-    $("linkedLicenses").disabled = !connected || !sessionToken;
-    $("linkedLicensesPanel").hidden = !connected || !sessionToken;
   }
   setAccountControls(false);
   loadPlans();
@@ -532,49 +530,6 @@
       card.append(details, unlink); container.append(card);
     }
   }
-  async function loadAccountLicenses() {
-    if (!sessionToken) { $("linkedLicensesPanel").hidden = true; return; }
-    const response = await api("/api/v1/account/licenses");
-    const data = await response.json();
-    const select = $("linkedLicenses");
-    select.replaceChildren();
-    for (const item of (Array.isArray(data.items) ? data.items : [])) {
-      const option = document.createElement("option");
-      option.value = String(item.id);
-      option.textContent = (item.client_name || "Account") + " · " + (item.tier || "plan") + (item.is_active ? "" : " · inactive");
-      option.selected = Boolean(item.selected);
-      select.append(option);
-    }
-    $("linkedLicensesPanel").hidden = false;
-    select.disabled = data.items.length < 2;
-    if (!data.items.length) {
-      const option = document.createElement("option"); option.value = ""; option.textContent = "No linked licenses found"; select.append(option);
-    }
-  }
-  async function switchAccountLicense() {
-    const targetId = Number($("linkedLicenses").value);
-    if (!sessionToken || !Number.isInteger(targetId) || targetId <= 0) return;
-    const select = $("linkedLicenses"); select.disabled = true;
-    try {
-      const response = await api("/api/v1/account/licenses/switch", {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({license_id: targetId})
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Unable to switch linked account.");
-      accountSessionVersion += 1;
-      clearAccountView();
-      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadBranding(), loadWordPressLinks()]);
-      await loadAccountLicenses();
-      const failed = results.filter(item => item.status === "rejected").length;
-      $("runAudit").disabled = results[1].status !== "fulfilled" || results[2].status !== "fulfilled";
-      renderApiKeys();
-      setStatus("connectStatus", failed ? "Switched account. " + failed + " account panel(s) could not be refreshed." : "Switched to " + (data.account.client_name || "linked account") + ".", failed ? "error" : "success");
-    } catch (error) {
-      setStatus("profileStatus", error.message, "error");
-      await loadAccountLicenses().catch(() => {});
-    } finally { select.disabled = false; }
-  }
   async function loadProfile() {
     const response = await api("/api/v1/account/profile");
     const profile = await response.json();
@@ -923,7 +878,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
@@ -941,7 +896,6 @@
     $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
-  $("linkedLicenses").addEventListener("change", switchAccountLicense);
   $("requestLoginCode").addEventListener("click", async () => {
     const email = $("loginEmail").value.trim();
     if (!email) { setStatus("loginStatus", "Enter the email address used at checkout.", "error"); return; }
@@ -993,8 +947,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadBranding(), loadWordPressLinks()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "white-label branding", "WordPress site links"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadBranding(), loadWordPressLinks()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "white-label branding", "WordPress site links"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
