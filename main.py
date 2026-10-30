@@ -4254,6 +4254,16 @@ class AdminClientUpdate(BaseModel):
     expires_at: datetime | None = None
 
 
+class AdminCustomerAccountAction(BaseModel):
+    action: str = Field(..., pattern="^(suspend|reactivate|revoke_sessions)$")
+    reason: str = Field(..., min_length=3, max_length=500)
+    confirm_email: str = Field(..., min_length=3, max_length=254)
+
+
+class AdminCustomerNoteInput(BaseModel):
+    note: str = Field(..., min_length=3, max_length=4000)
+
+
 class AdminAPIKeyCreate(BaseModel):
     client_id: int = Field(..., ge=1)
     label: str = Field(default="Admin-created key", min_length=1, max_length=100)
@@ -4261,6 +4271,187 @@ class AdminAPIKeyCreate(BaseModel):
 
 class AdminAPIKeyRevoke(BaseModel):
     reason: str = Field(default="operator revocation", min_length=1, max_length=200)
+
+
+
+@app.get("/api/v1/admin/customers")
+async def admin_customer_directory(
+    request: Request,
+    response: Response,
+    search: str = Query(default="", max_length=254),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Account-level customer directory aggregated across verified checkout identities."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func, distinct
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    normalized = search.strip().lower()
+    query = select(
+        sql_func.lower(PaymentWebhookEvent.recipient_email).label("email"),
+        sql_func.count(distinct(PaymentWebhookEvent.license_id)).label("license_count"),
+        sql_func.max(PaymentWebhookEvent.updated_at).label("last_billing_activity"),
+    ).where(
+        PaymentWebhookEvent.recipient_email.is_not(None),
+        PaymentWebhookEvent.recipient_email != "",
+        PaymentWebhookEvent.license_id.is_not(None),
+    ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email))
+    count_query = select(sql_func.count()).select_from(
+        select(sql_func.lower(PaymentWebhookEvent.recipient_email))
+        .where(
+            PaymentWebhookEvent.recipient_email.is_not(None),
+            PaymentWebhookEvent.recipient_email != "",
+            PaymentWebhookEvent.license_id.is_not(None),
+        ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email)).subquery()
+    )
+    if normalized:
+        literal = normalized.replace("%", "").replace("_", "")
+        query = query.having(sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(f"%{literal}%"))
+        count_query = count_query.where(sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(f"%{literal}%"))
+    total = int((await db.execute(count_query)).scalar_one() or 0)
+    rows = (await db.execute(query.order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc()).offset(offset).limit(limit))).all()
+    items = []
+    for row in rows:
+        email = row.email
+        license_rows = (await db.execute(select(SoftwareLicense).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == email).distinct())).scalars().all()
+        now = datetime.now(timezone.utc)
+        active = sum(1 for lic in license_rows if lic.is_active and (lic.expires_at is None or (lic.expires_at.replace(tzinfo=timezone.utc) if lic.expires_at.tzinfo is None else lic.expires_at) >= now))
+        items.append({
+            "email": email,
+            "license_count": len(license_rows),
+            "active_license_count": active,
+            "inactive_license_count": len(license_rows) - active,
+            "last_billing_activity": row.last_billing_activity.isoformat() if row.last_billing_activity else None,
+        })
+    return {"items": items, "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(items) < total}}
+
+
+@app.get("/api/v1/admin/customers/detail")
+async def admin_customer_account_detail(
+    email: str = Query(..., min_length=3, max_length=254),
+    request: Request = None,
+    response: Response = None,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return an account-wide view across licenses, billing, sessions and support notes."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func
+    normalized = email.strip().lower()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    rows = (await db.execute(select(SoftwareLicense).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct().order_by(SoftwareLicense.created_at.desc()))).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Customer account not found.")
+    ids = [item.id for item in rows]
+    sessions = (await db.execute(select(AccountSession).where(AccountSession.license_id.in_(ids)).order_by(AccountSession.created_at.desc()).limit(200))).scalars().all()
+    payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids)).order_by(PaymentWebhookEvent.updated_at.desc()).limit(200))).scalars().all()
+    notes = (await db.execute(text("""
+        SELECT id, note, created_by, created_at FROM saas_admin_customer_notes
+        WHERE LOWER(customer_email)=:email ORDER BY created_at DESC, id DESC LIMIT 100
+    """), {"email": normalized})).mappings().all()
+    now = datetime.now(timezone.utc)
+    return {
+        "email": normalized,
+        "licenses": [{
+            "id": item.id, "client_name": item.client_name, "tier": item.tier,
+            "is_active": bool(item.is_active), "expired": bool(item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now),
+            "monthly_limit": item.max_monthly_audits,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "billing_period_ends_at": item.billing_period_ends_at.isoformat() if item.billing_period_ends_at else None,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        } for item in rows],
+        "sessions": [{
+            "email": item.email, "license_id": item.license_id,
+            "status": "revoked" if item.revoked_at else ("expired" if (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now else "active"),
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
+        } for item in sessions],
+        "billing_events": [{
+            "event_id": item.event_id, "license_id": item.license_id, "status": item.status,
+            "transaction_id": item.transaction_id, "subscription_id": item.subscription_id,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in payments],
+        "support_notes": [{
+            "id": item["id"], "note": item["note"], "created_by": item["created_by"],
+            "created_at": item["created_at"].isoformat() if item["created_at"] else None,
+        } for item in notes],
+    }
+
+
+@app.post("/api/v1/admin/customers/actions")
+async def admin_customer_account_action(
+    payload: AdminCustomerAccountAction,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Apply an explicit account-wide lifecycle action with email confirmation and audit logging."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func, update
+    normalized = payload.confirm_email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+        raise HTTPException(status_code=422, detail="Enter a valid customer email for confirmation.")
+    ids = list((await db.execute(select(SoftwareLicense.id).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct())).scalars().all())
+    if not ids:
+        raise HTTPException(status_code=404, detail="Customer account not found.")
+    now = datetime.now(timezone.utc)
+    if payload.action in {"suspend", "reactivate"}:
+        active = payload.action == "reactivate"
+        result = await db.execute(update(SoftwareLicense).where(SoftwareLicense.id.in_(ids)).values(is_active=active))
+        changed = int(result.rowcount or 0)
+    else:
+        result = await db.execute(update(AccountSession).where(
+            AccountSession.license_id.in_(ids), AccountSession.revoked_at.is_(None)
+        ).values(revoked_at=now))
+        changed = int(result.rowcount or 0)
+    await _write_admin_log(db, "customer.account_" + payload.action, "customer", normalized, {
+        "license_ids": ids, "changed_count": changed, "reason": payload.reason.strip(),
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": payload.action + "d" if payload.action == "suspend" else payload.action + "ed", "email": normalized, "license_count": len(ids), "changed_count": changed}
+
+
+@app.post("/api/v1/admin/customers/notes")
+async def admin_add_customer_note(
+    payload: AdminCustomerNoteInput,
+    email: str = Query(..., min_length=3, max_length=254),
+    request: Request = None,
+    response: Response = None,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Append a bounded internal support note to a customer identity."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func
+    normalized = email.strip().lower()
+    license_count = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized))).scalar_one() or 0)
+    if not license_count:
+        raise HTTPException(status_code=404, detail="Customer account not found.")
+    result = await db.execute(text("""
+        INSERT INTO saas_admin_customer_notes (customer_email, note, created_by)
+        VALUES (:email, :note, 'admin')
+        RETURNING id, created_at
+    """), {"email": normalized, "note": payload.note.strip()})
+    created = result.mappings().one()
+    await _write_admin_log(db, "customer.support_note_added", "customer", normalized, {"note_id": created["id"]})
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"id": created["id"], "email": normalized, "created_at": created["created_at"].isoformat() if created["created_at"] else None}
 
 
 @app.get("/api/v1/admin/clients/{license_id}/sessions")
