@@ -17,7 +17,7 @@ plan_features.py is the canonical display and authorization feature map:
 - The admin package API and UI reject unmapped tier IDs so operators cannot accidentally sell a package whose features are all disabled.
 - Blank or unknown plan identifiers fail closed.
 
-The backend enforces standard-audit, conversion-dossier, white-label, and direct API access before quota reservation, provider calls, or key creation. Customer and WordPress interfaces use the same feature metadata for visibility, but UI hiding is not treated as authorization.
+The backend enforces standard-audit, conversion-dossier, white-label, and direct API access before quota reservation, provider calls, or key creation. Existing direct API keys stop authorizing audit API calls after a downgrade to a plan without direct API access; the customer account surface remains available for key revocation and billing recovery. Customer and WordPress interfaces use the same feature metadata for visibility, but UI hiding is not treated as authorization.
 
 ## White-label settings
 
