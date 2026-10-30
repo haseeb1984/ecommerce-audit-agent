@@ -291,6 +291,29 @@ function eaa_wp_handle_save_settings() {
     exit;
 }
 
+add_action('admin_post_eaa_save_white_label', 'eaa_wp_handle_save_white_label');
+function eaa_wp_handle_save_white_label() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
+    }
+    check_admin_referer('eaa_save_white_label');
+    $brand_name = isset($_POST['white_label_brand_name']) ? sanitize_text_field(wp_unslash($_POST['white_label_brand_name'])) : '';
+    $logo_url = isset($_POST['white_label_logo_url']) ? esc_url_raw(trim(wp_unslash($_POST['white_label_logo_url']))) : '';
+    $primary_color = isset($_POST['white_label_primary_color']) ? sanitize_hex_color(wp_unslash($_POST['white_label_primary_color'])) : '';
+    if ('' === trim($brand_name) || !$primary_color || ('' !== $logo_url && 'https' !== strtolower((string) wp_parse_url($logo_url, PHP_URL_SCHEME)))) {
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'branding_invalid'), admin_url('admin.php')));
+        exit;
+    }
+    $result = eaa_wp_api_request('/api/v1/account/branding', 'PUT', array(
+        'brand_name' => $brand_name,
+        'logo_url' => '' !== $logo_url ? $logo_url : null,
+        'primary_color' => $primary_color,
+    ));
+    $notice = is_wp_error($result) ? 'branding_failed' : 'branding_saved';
+    wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => $notice), admin_url('admin.php')));
+    exit;
+}
+
 add_action('admin_post_eaa_disconnect_site', 'eaa_wp_handle_disconnect');
 function eaa_wp_handle_disconnect() {
     if (!current_user_can('manage_options')) {
@@ -392,6 +415,7 @@ function eaa_wp_render_admin_page() {
     $usage = null;
     $reports = array();
     $billing = null;
+    $branding = null;
     $error = isset($settings['connection_error']) ? $settings['connection_error'] : '';
     if (!empty($settings['site_id']) && '' === $error) {
         $status_response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
@@ -405,6 +429,12 @@ function eaa_wp_render_admin_page() {
         $usage_response = eaa_wp_api_request('/api/v1/account/usage');
         if (!is_wp_error($usage_response)) {
             $usage = eaa_wp_json($usage_response);
+        }
+        if (is_array($usage) && !empty($usage['features']['white_label_branding'])) {
+            $branding_response = eaa_wp_api_request('/api/v1/account/branding');
+            if (!is_wp_error($branding_response)) {
+                $branding = eaa_wp_json($branding_response);
+            }
         }
         $billing_response = eaa_wp_api_request('/api/v1/account/billing-history?limit=5&offset=0');
         if (!is_wp_error($billing_response)) {
@@ -426,6 +456,8 @@ function eaa_wp_render_admin_page() {
         <?php if ('disconnected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('WordPress site disconnected. Your SaaS license and reports remain intact.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('' !== $error) : ?><div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div><?php endif; ?>
         <?php if ('invalid_url' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The API URL must use HTTPS.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('branding_saved' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('White-label branding saved to your SaaS account.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('branding_failed' === $notice || 'branding_invalid' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('White-label branding could not be saved. Check your plan eligibility and HTTPS logo URL.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('connection_failed' === $notice || 'disconnect_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The SaaS connection action could not be completed. Review the connection message and retry.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <style>
             .eaa-wrap{max-width:1100px}.eaa-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:18px 0}.eaa-card{background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:18px}.eaa-card h2{margin-top:0}.eaa-stat{font-size:28px;font-weight:700}.eaa-primary{background:<?php echo esc_attr($color); ?>!important;border-color:<?php echo esc_attr($color); ?>!important}
@@ -500,6 +532,22 @@ function eaa_wp_render_admin_page() {
                     </tbody></table>
                 <?php else : ?><p><?php esc_html_e('No saved reports are available for this license yet.', 'ecommerce-audit-agent'); ?></p><?php endif; ?>
             </div>
+            <?php if (is_array($usage) && !empty($usage['features']['white_label_branding'])) : ?>
+            <div class="eaa-card" style="margin-top:16px">
+                <h2><?php esc_html_e('White-label branding', 'ecommerce-audit-agent'); ?></h2>
+                <p><?php esc_html_e('Configure the customer-facing brand identity for your eligible SaaS plan.', 'ecommerce-audit-agent'); ?></p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="eaa_save_white_label">
+                    <?php wp_nonce_field('eaa_save_white_label'); ?>
+                    <table class="form-table"><tbody>
+                        <tr><th><label for="eaa-white-brand"><?php esc_html_e('Brand name', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-white-brand" name="white_label_brand_name" type="text" class="regular-text" maxlength="100" required value="<?php echo esc_attr((string) ($branding['brand_name'] ?? '')); ?>"></td></tr>
+                        <tr><th><label for="eaa-white-logo"><?php esc_html_e('Logo URL (HTTPS)', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-white-logo" name="white_label_logo_url" type="url" class="regular-text" value="<?php echo esc_attr((string) ($branding['logo_url'] ?? '')); ?>"></td></tr>
+                        <tr><th><label for="eaa-white-color"><?php esc_html_e('Primary color', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-white-color" name="white_label_primary_color" type="color" value="<?php echo esc_attr((string) ($branding['primary_color'] ?? '#155a8a')); ?>"></td></tr>
+                    </tbody></table>
+                    <?php submit_button(__('Save white-label branding', 'ecommerce-audit-agent')); ?>
+                </form>
+            </div>
+            <?php endif; ?>
             <div class="eaa-card" style="margin-top:16px">
                 <h2><?php esc_html_e('Connection and branding settings', 'ecommerce-audit-agent'); ?></h2>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
