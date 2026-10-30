@@ -3850,6 +3850,77 @@ class AdminAPIKeyRevoke(BaseModel):
     reason: str = Field(default="operator revocation", min_length=1, max_length=200)
 
 
+@app.get("/api/v1/admin/clients/{license_id}/sessions")
+async def admin_list_client_sessions(
+    license_id: int,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List customer session metadata without exposing bearer tokens or token digests."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    rows = (await db.execute(
+        select(AccountSession).where(AccountSession.license_id == license_id)
+        .order_by(AccountSession.created_at.desc()).limit(100)
+    )).scalars().all()
+    now = datetime.now(timezone.utc)
+    items = []
+    for item in rows:
+        expiry = item.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        state = "revoked" if item.revoked_at is not None else ("expired" if expiry <= now else "active")
+        items.append({
+            "email": item.email,
+            "status": state,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            "expires_at": expiry.isoformat(),
+            "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
+        })
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"client_id": license_id, "items": items, "limit": 100}
+
+
+@app.post("/api/v1/admin/clients/{license_id}/sessions/revoke-all")
+async def admin_revoke_client_sessions(
+    license_id: int,
+    payload: AdminAPIKeyRevoke,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke all browser sessions for a selected customer and record the operator action."""
+    _require_admin_key(request)
+    from sqlalchemy import select, update
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    now = datetime.now(timezone.utc)
+    result = await db.execute(update(AccountSession).where(
+        AccountSession.license_id == license_id,
+        AccountSession.revoked_at.is_(None),
+    ).values(revoked_at=now))
+    count = int(result.rowcount or 0)
+    await _write_admin_log(db, "client.sessions_revoked", "client", license_id, {
+        "revoked_count": count,
+        "reason": payload.reason.strip(),
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "client_id": license_id, "revoked_count": count}
+
+
 @app.get("/api/v1/admin/clients/{license_id}/api-keys")
 async def admin_list_client_api_keys(
     license_id: int,
