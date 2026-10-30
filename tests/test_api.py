@@ -1131,6 +1131,67 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
 
 
 @pytest.mark.asyncio
+async def test_second_paddle_checkout_for_same_email_does_not_mint_another_license(client, monkeypatch):
+    secret = "paddle-single-customer-identity-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_single_identity")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    sent = []
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: sent.append(args))
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    def purchase(event_id, transaction_id, email):
+        return {
+            "event_id": event_id,
+            "event_type": "transaction.completed",
+            "data": {
+                "id": transaction_id,
+                "status": "completed",
+                "custom_data": {"license_tier": "starter"},
+                "customer_id": "ctm_single_identity",
+                "customer": {"email": email, "name": "Single Identity Buyer"},
+                "items": [{"price": {"id": "pri_single_identity"}, "quantity": 1}],
+            },
+        }
+
+    first = await send(purchase(
+        "evt_single_identity_first", "txn_single_identity_first", "Buyer@Example.com",
+    ))
+    assert first.status_code == 200 and first.json()["status"] == "provisioned"
+    assert len(sent) == 1
+
+    second_event = purchase(
+        "evt_single_identity_second", "txn_single_identity_second", " buyer@example.com ",
+    )
+    second = await send(second_event)
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "duplicate_account_blocked"
+    retry = await send(second_event)
+    assert retry.status_code == 200 and retry.json()["status"] == "duplicate_account_blocked"
+    assert len(sent) == 1
+
+    async with AsyncSessionLocal() as db:
+        licenses = (await db.execute(select(SoftwareLicense).where(
+            func.lower(SoftwareLicense.account_email) == "buyer@example.com",
+        ))).scalars().all()
+        blocked = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_single_identity_second",
+        ))).scalar_one()
+    assert len(licenses) == 1
+    assert licenses[0].account_email == "buyer@example.com"
+    assert blocked.status == "duplicate_account_blocked"
+
+
+@pytest.mark.asyncio
 async def test_paddle_subscription_renewal_reuses_existing_license_without_resending_key(client, monkeypatch):
     secret = "paddle-test-webhook-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
