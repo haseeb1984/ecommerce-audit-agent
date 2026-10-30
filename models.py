@@ -2,7 +2,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -24,6 +24,21 @@ class SoftwareLicense(Base):
     leads = relationship("AuditLead", back_populates="license")
     audit_reservations = relationship("AuditQuotaReservation", back_populates="license")
 
+
+class WhiteLabelBranding(Base):
+    """Per-license white-label settings, accessible only to eligible plans."""
+
+    __tablename__ = "white_label_branding"
+
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    brand_name = Column(String(100), nullable=False)
+    logo_url = Column(String(2048), nullable=True)
+    primary_color = Column(String(7), nullable=False, default="#155a8a", server_default="#155a8a")
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 class APIKey(Base):
     __tablename__ = "api_keys"
@@ -147,6 +162,50 @@ class SaaSOperationEvent(Base):
     error_type = Column(String(120), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+
+class WordPressLinkChallenge(Base):
+    """Hashed, short-lived, single-use proof used to link a WordPress site to a license."""
+
+    __tablename__ = "wordpress_link_challenges"
+    __table_args__ = (
+        Index("ix_wordpress_link_challenges_license_expires", "license_id", "expires_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token_hash = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class WordPressSiteLink(Base):
+    """A verified WordPress site and the local user who completed its one-time claim."""
+
+    __tablename__ = "wordpress_site_links"
+    __table_args__ = (
+        UniqueConstraint("license_id", "site_url", name="uq_wordpress_site_links_license_site"),
+        Index("ix_wordpress_site_links_license_linked", "license_id", "linked_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    license_id = Column(
+        Integer,
+        ForeignKey("software_licenses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    site_url = Column(String(255), nullable=False)
+    wp_user_id = Column(Integer, nullable=False)
+    wp_user_login = Column(String(60), nullable=False)
+    wp_user_email = Column(String(254), nullable=False)
+    linked_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class PaymentWebhookEvent(Base):
     """Idempotency and retry state for verified hosted-checkout webhook events."""
