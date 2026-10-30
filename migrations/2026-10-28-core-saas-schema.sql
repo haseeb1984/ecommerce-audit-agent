@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS audit_leads (
     email_body TEXT NULL,
     source_channel VARCHAR(50) DEFAULT 'wordpress_hub',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+,
+  source_job_id VARCHAR(64) UNIQUE);
 
 CREATE TABLE IF NOT EXISTS audit_quota_reservations (
     id SERIAL PRIMARY KEY,
