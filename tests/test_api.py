@@ -3398,3 +3398,29 @@ async def test_wordpress_link_rejects_insecure_or_ambiguous_site_urls(client):
             },
         )
         assert response.status_code == 422, (site_url, response.text)
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_expired_code_is_rejected_and_consumed(client):
+    license_id = await create_license(key="wp-link-expired-license")
+    headers = {"X-License-Key": "wp-link-expired-license"}
+    token = (await client.post(
+        "/api/v1/account/wordpress-link/challenges", headers=headers
+    )).json()["token"]
+    async with AsyncSessionLocal() as db:
+        challenge = (await db.execute(
+            select(WordPressLinkChallenge).where(WordPressLinkChallenge.license_id == license_id)
+        )).scalar_one()
+        challenge.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        await db.commit()
+    payload = {
+        "token": token,
+        "site_url": "https://shop.example.com/",
+        "wp_user_id": 5,
+        "wp_user_login": "admin",
+        "wp_user_email": "admin@example.com",
+    }
+    expired = await client.post("/api/v1/account/wordpress-link/claim", headers=headers, json=payload)
+    assert expired.status_code == 410
+    replay = await client.post("/api/v1/account/wordpress-link/claim", headers=headers, json=payload)
+    assert replay.status_code == 400

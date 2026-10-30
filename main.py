@@ -1024,6 +1024,9 @@ async def create_wordpress_link_challenge(
     """Issue a one-time 10-minute code; only its SHA-256 hash is persisted."""
     from sqlalchemy import select
     now = datetime.now(timezone.utc)
+    # Serialize challenge issuance per license so concurrent requests cannot leave
+    # multiple simultaneously redeemable codes for the same account.
+    await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_obj.id).with_for_update())
     existing = (await db.execute(
         select(WordPressLinkChallenge)
         .where(
