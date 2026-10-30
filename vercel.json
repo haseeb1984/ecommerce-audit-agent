@@ -10,5 +10,11 @@
       "src": "/(.*)",
       "dest": "main.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/internal/scan-worker/run?max_jobs=1",
+      "schedule": "* * * * *"
+    }
   ]
 }
