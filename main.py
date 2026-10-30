@@ -1593,6 +1593,56 @@ async def disconnect_wordpress_site(
     return {"status": "disconnected", "site_id": site.id}
 
 
+@app.get("/api/v1/account/wordpress-sites")
+async def list_account_wordpress_sites(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List WordPress installations linked to the currently selected customer license."""
+    from sqlalchemy import select
+    rows = (await db.execute(
+        select(WordPressSite).where(WordPressSite.license_id == license_obj.id)
+        .order_by(WordPressSite.created_at.desc(), WordPressSite.id.desc()).limit(100)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{
+        "site_id": row.id, "site_url": row.site_url, "site_host": row.site_host,
+        "admin_email": row.admin_email, "wordpress_version": row.wordpress_version,
+        "woocommerce_version": row.woocommerce_version, "plugin_version": row.plugin_version,
+        "status": row.status, "created_at": row.created_at.isoformat() if row.created_at else None,
+        "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+        "disconnected_at": row.disconnected_at.isoformat() if row.disconnected_at else None,
+    } for row in rows]}
+
+
+@app.post("/api/v1/account/wordpress-sites/{site_id}/disconnect")
+async def customer_disconnect_wordpress_site(
+    site_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Let an authenticated customer disconnect only a site owned by the selected license."""
+    from sqlalchemy import select
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", site_id):
+        raise HTTPException(status_code=422, detail="Invalid WordPress site identifier.")
+    site = (await db.execute(select(WordPressSite).where(
+        WordPressSite.id == site_id,
+        WordPressSite.license_id == license_obj.id,
+        WordPressSite.status == "active",
+    ).with_for_update())).scalar_one_or_none()
+    if site is None:
+        raise HTTPException(status_code=404, detail="Connected WordPress site not found.")
+    site.status = "disconnected"
+    site.disconnected_at = datetime.now(timezone.utc)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "disconnected", "site_id": site.id}
+
+
 @app.get("/api/v1/account/profile")
 async def get_account_profile(
     response: Response,
