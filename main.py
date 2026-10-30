@@ -4260,6 +4260,13 @@ class AdminCustomerAccountAction(BaseModel):
     confirm_email: str = Field(..., min_length=3, max_length=254)
 
 
+class AdminSubscriptionCancel(BaseModel):
+    subscription_id: str = Field(..., min_length=8, max_length=100)
+    effective_from: str = Field(default="next_billing_period", pattern="^(next_billing_period|immediately)$")
+    confirm_subscription_id: str = Field(..., min_length=8, max_length=100)
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 class AdminCustomerNoteInput(BaseModel):
     note: str = Field(..., min_length=3, max_length=4000)
 
@@ -4272,6 +4279,60 @@ class AdminAPIKeyCreate(BaseModel):
 class AdminAPIKeyRevoke(BaseModel):
     reason: str = Field(default="operator revocation", min_length=1, max_length=200)
 
+
+
+
+@app.post("/api/v1/admin/subscriptions/cancel")
+async def admin_cancel_subscription(
+    payload: AdminSubscriptionCancel,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Request cancellation through Paddle; provider webhook remains authoritative for entitlement state."""
+    _require_admin_key(request)
+    subscription_id = payload.subscription_id.strip()
+    if not re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id):
+        raise HTTPException(status_code=422, detail="Paddle subscription identifier is invalid.")
+    if not hmac.compare_digest(subscription_id, payload.confirm_subscription_id.strip()):
+        raise HTTPException(status_code=422, detail="Subscription confirmation does not match.")
+    from sqlalchemy import select
+    event = (await db.execute(select(PaymentWebhookEvent).where(
+        PaymentWebhookEvent.subscription_id == subscription_id
+    ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))).scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Subscription is not linked to a recorded customer billing event.")
+    if not os.getenv("PADDLE_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="Paddle API is not configured.")
+    try:
+        provider = await asyncio.to_thread(
+            _paddle_api_request,
+            f"/subscriptions/{subscription_id}/cancel",
+            "POST",
+            {"effective_from": payload.effective_from},
+        )
+        data = provider.get("data") if isinstance(provider, dict) else None
+        if not isinstance(data, dict) or data.get("id") != subscription_id:
+            raise RuntimeError("Paddle returned an unexpected subscription response")
+    except Exception as exc:
+        logger.warning("Admin Paddle cancellation request failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Paddle did not confirm the subscription cancellation request.") from None
+    await _write_admin_log(db, "subscription.cancellation_requested", "subscription", subscription_id, {
+        "effective_from": payload.effective_from,
+        "provider_status": str(data.get("status") or "")[:40],
+        "license_id": event.license_id,
+        "reason": payload.reason.strip(),
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "cancellation_requested",
+        "subscription_id": subscription_id,
+        "effective_from": payload.effective_from,
+        "provider_status": data.get("status"),
+        "message": "Paddle accepted the cancellation request. Local access changes only when the verified subscription webhook is processed.",
+    }
 
 
 @app.get("/api/v1/admin/customers")
