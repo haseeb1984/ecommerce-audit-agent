@@ -30,7 +30,7 @@ async def _count(model) -> int:
 
 @pytest.mark.asyncio
 async def test_operator_plan_allowance_overrides_legacy_license_quota(client, monkeypatch):
-    tier = "agency"
+    tier = "agency_pro"
     license_id = await _create_license(key="catalogue-quota-license", tier=tier, legacy_quota=100)
     async with AsyncSessionLocal() as db:
         db.add(SaaSPlanPackage(
