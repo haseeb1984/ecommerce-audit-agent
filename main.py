@@ -1781,7 +1781,7 @@ async def update_account_profile(
 @app.get("/api/v1/account/branding")
 async def get_account_branding(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
     if not plan_features(license_obj.tier)["white_label_branding"]:
@@ -1796,7 +1796,7 @@ async def get_account_branding(
 async def update_account_branding(
     payload: WhiteLabelBrandingUpdate,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
 ):
     if not plan_features(license_obj.tier)["white_label_branding"]:
