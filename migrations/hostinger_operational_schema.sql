@@ -261,6 +261,7 @@ CREATE TABLE IF NOT EXISTS operational_diagnostic_events (
   license_key VARCHAR(100) NULL,
   domain VARCHAR(255) NULL,
   error_type VARCHAR(120) NULL,
+  legacy_source_id BIGINT NULL UNIQUE,
   created_at DATETIME(6) NOT NULL,
   KEY ix_operational_diagnostic_events_license_key (license_key),
   KEY ix_operational_diagnostic_created (created_at, id),
