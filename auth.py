@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from database import get_async_db
 from models import SoftwareLicense, APIKey
-from hostinger_database import get_hostinger_db
+from hostinger_database import HostingerAsyncSessionLocal
 from hostinger_models import CustomerSession
 
 # Define explicit scheme_names to prevent Swagger UI schema collisions
@@ -34,15 +34,20 @@ async def verify_license_or_api_key(
     license_key: str = Security(LICENSE_HEADER),
     credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
     db: AsyncSession = Depends(get_async_db),
-    operational_db: AsyncSession = Depends(get_hostinger_db),
 ) -> SoftwareLicense:
     """Authenticate a caller without holding a database lock during audit work."""
 
     if credentials is not None:
         token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-        session = (await operational_db.execute(select(CustomerSession).where(
-            CustomerSession.token_hash == token_hash
-        ))).scalar_one_or_none()
+        if HostingerAsyncSessionLocal is None:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer session storage is unavailable.")
+        async with HostingerAsyncSessionLocal() as operational_db:
+            session = (await operational_db.execute(select(CustomerSession).where(
+                CustomerSession.token_hash == token_hash
+            ))).scalar_one_or_none()
+            if session is not None:
+                session.last_seen_at = datetime.now(timezone.utc)
+                await operational_db.commit()
         now = datetime.now(timezone.utc)
         if session is None or session.revoked_at is not None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session is invalid or revoked.")
@@ -56,7 +61,6 @@ async def verify_license_or_api_key(
         ))).scalar_one_or_none()
         if license_obj is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
-        session.last_seen_at = now
     elif not api_key and not license_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -186,9 +190,15 @@ async def verify_customer_account(
         if credentials.scheme.lower() != "bearer" or not credentials.credentials:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid customer session.")
         token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-        session = (await operational_db.execute(
-            select(CustomerSession).where(CustomerSession.token_hash == token_hash)
-        )).scalar_one_or_none()
+        if HostingerAsyncSessionLocal is None:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer session storage is unavailable.")
+        async with HostingerAsyncSessionLocal() as operational_db:
+            session = (await operational_db.execute(
+                select(CustomerSession).where(CustomerSession.token_hash == token_hash)
+            )).scalar_one_or_none()
+            if session is not None:
+                session.last_seen_at = datetime.now(timezone.utc)
+                await operational_db.commit()
         now = datetime.now(timezone.utc)
         if session is None or session.revoked_at is not None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session is invalid or revoked.")
@@ -202,7 +212,6 @@ async def verify_customer_account(
         )).scalar_one_or_none()
         if license_obj is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
-        session.last_seen_at = now
         return license_obj
 
     # Backward compatibility for existing license-key and API-key customers.
