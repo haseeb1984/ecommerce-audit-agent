@@ -3265,7 +3265,7 @@ async def test_paddle_subscription_update_after_cancellation_is_sticky(client, m
         )).scalar_one()
         assert license_obj.tier == "test"
         assert license_obj.max_monthly_audits == 100
-        assert license_obj.is_active is True
+        assert license_obj.is_active is False
         stored = (await db.execute(select(PaymentWebhookEvent).where(
             PaymentWebhookEvent.event_id == "evt_late_plan_update"
         ))).scalar_one()
