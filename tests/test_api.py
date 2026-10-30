@@ -4098,12 +4098,20 @@ async def test_white_label_branding_can_be_saved_and_read_by_eligible_license(cl
 async def test_white_label_branding_rejects_unsafe_logo_urls_and_invalid_colors(client):
     await create_license(key="white-label-validation-license", tier="enterprise")
     headers = {"X-License-Key": "white-label-validation-license"}
-    bad_url = await client.put(
-        "/api/v1/account/branding",
-        headers=headers,
-        json={"brand_name": "Northstar", "logo_url": "http://assets.example.com/logo.svg", "primary_color": "#112233"},
-    )
-    assert bad_url.status_code == 422, bad_url.text
+    for logo_url in [
+        "http://assets.example.com/logo.svg",
+        "https://user:pass@assets.example.com/logo.svg",
+        "https://localhost/logo.svg",
+        "https://127.0.0.1/logo.svg",
+        "https://assets.example.com:badport/logo.svg",
+        "https://bad host/logo.svg",
+    ]:
+        bad_url = await client.put(
+            "/api/v1/account/branding",
+            headers=headers,
+            json={"brand_name": "Northstar", "logo_url": logo_url, "primary_color": "#112233"},
+        )
+        assert bad_url.status_code == 422, (logo_url, bad_url.text)
     bad_color = await client.put(
         "/api/v1/account/branding",
         headers=headers,
