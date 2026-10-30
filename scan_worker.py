@@ -88,12 +88,12 @@ async def _execute_audit(target_url: str) -> dict:
         findings=result.findings,
         limitations=result.limitations,
         check_outcomes=result.check_outcomes,
-        executed_categories=["technical_seo", "crawlability", "conversion_paid_traffic"],
         run_context={"modules": modules},
     )
     finding_data = [item.dict() for item in result.findings]
     outcome_data = [item.dict() for item in result.check_outcomes]
-    score = metrics.mobile_score if metrics is not None else None
+    # Do not label a PageSpeed mobile score as a composite audit score.
+    score = None
     summary = {
         "checked_at_utc": result.checked_at_utc,
         "pages_checked": result.pages_checked,
