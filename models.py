@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
@@ -196,6 +197,7 @@ class AccountSession(Base):
     )
 
     token_hash = Column(String(64), primary_key=True)
+    session_id = Column(String(32), nullable=False, unique=True, default=lambda: uuid.uuid4().hex, index=True)
     license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
     email = Column(String(255), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
