@@ -4330,3 +4330,36 @@ async def test_wordpress_site_linking_accepts_passwordless_customer_session(clie
     listed = await client.get("/api/v1/account/wordpress-link", headers=headers)
     assert listed.status_code == 200, listed.text
     assert listed.json()["links"][0]["site_url"] == "https://bearer-shop.example.com/"
+
+
+@pytest.mark.asyncio
+async def test_existing_api_key_loses_direct_access_after_plan_downgrade(client, monkeypatch):
+    license_id = await create_license(key="api-key-downgrade-license", tier="whitelabel")
+    raw_key = "eaa_existing-key-for-downgrade"
+    async with AsyncSessionLocal() as db:
+        db.add(APIKey(
+            license_id=license_id,
+            api_key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix=raw_key[:10],
+        ))
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id
+        ))).scalar_one()
+        license_obj.tier = "starter"
+        await db.commit()
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("direct API audit must be blocked after downgrade")
+    monkeypatch.setattr(main, "run_phase_one_checks", should_not_run)
+    response = await client.post(
+        "/api/v1/comprehensive-audit",
+        params={"domain": "shop.example"},
+        headers={"X-API-Key": raw_key},
+    )
+    assert response.status_code == 403, response.text
+    assert "Direct API access is not included" in response.json()["detail"]
+    async with AsyncSessionLocal() as db:
+        reservations = (await db.execute(select(func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == license_id
+        ))).scalar_one()
+    assert reservations == 0
