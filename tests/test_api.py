@@ -3537,6 +3537,15 @@ async def test_customer_passwordless_login_issues_and_revokes_session(client, mo
     )
     assert profile.status_code == 200, profile.text
     assert profile.json()["client_name"] == "Automated Test"
+    usage = await client.get(
+        "/api/v1/account/usage",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert usage.status_code == 200, usage.text
+    async with AsyncSessionLocal() as db:
+        stored_session = (await db.execute(select(main.AccountSession))).scalar_one()
+        assert stored_session.token_hash == hashlib.sha256(token.encode()).hexdigest()
+        assert stored_session.token_hash != token
 
     reused = await client.post(
         "/api/v1/account/auth/verify-code",
