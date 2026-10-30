@@ -4488,13 +4488,19 @@ async def admin_operations(
             "expires_at": license_row.expires_at.isoformat() if license_row.expires_at else None,
             "max_monthly_audits": license_row.max_monthly_audits, "flags": flags,
         })
-    # Probe DB with a harmless query and return only health state, never connection details.
+    # Probe both database responsibilities independently; never expose connection details.
     try:
         await db.execute(text("SELECT 1"))
         database_status = "healthy"
     except Exception as exc:
-        logger.error("Admin database diagnostic failed (error_type=%s)", type(exc).__name__)
+        logger.error("Licensing database diagnostic failed (error_type=%s)", type(exc).__name__)
         database_status = "unavailable"
+    try:
+        await operational_db.execute(text("SELECT 1"))
+        operational_database_status = "healthy"
+    except Exception as exc:
+        logger.error("Operational database diagnostic failed (error_type=%s)", type(exc).__name__)
+        operational_database_status = "unavailable"
 
     # Keep delivery recovery metrics separate from ordinary subscription lifecycle
     # events; a payment failure or cancellation is not a pending license email.
@@ -4548,21 +4554,34 @@ async def admin_operations(
     active_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at > now
     ))).scalar_one()
-    recent_failures = (await db.execute(text("""
-        SELECT id, event_type, license_id, domain, error_type, created_at
-        FROM saas_operation_events
-        WHERE created_at >= NOW() - INTERVAL '24 hours'
-        ORDER BY created_at DESC, id DESC LIMIT 100
-    """))).mappings().all()
-    failures_24h = (await db.execute(text("""
-        SELECT COUNT(*) FROM saas_operation_events
-        WHERE created_at >= NOW() - INTERVAL '24 hours'
-    """))).scalar_one()
+    recent_failures = (await operational_db.execute(
+        select(OperationalDiagnosticEvent)
+        .where(OperationalDiagnosticEvent.created_at >= now - timedelta(hours=24))
+        .order_by(OperationalDiagnosticEvent.created_at.desc(), OperationalDiagnosticEvent.id.desc())
+        .limit(100)
+    )).scalars().all()
+    failures_24h = int((await operational_db.execute(
+        select(sql_func.count(OperationalDiagnosticEvent.id)).where(
+            OperationalDiagnosticEvent.created_at >= now - timedelta(hours=24)
+        )
+    )).scalar_one() or 0)
+    diagnostic_license_keys = {
+        row.license_key for row in recent_failures if row.license_key
+    }
+    diagnostic_license_ids = {}
+    if diagnostic_license_keys:
+        diagnostic_license_ids = {
+            key: license_id for license_id, key in (await db.execute(
+                select(SoftwareLicense.id, SoftwareLicense.license_key)
+                .where(SoftwareLicense.license_key.in_(diagnostic_license_keys))
+            )).all()
+        }
     smtp_status = _smtp_configuration_status()
     return {
         "generated_at": now.isoformat(),
         "health": {
             "database": database_status,
+            "operational_database": operational_database_status,
             "paddle_api_key_configured": bool(os.getenv("PADDLE_API_KEY", "").strip()),
             "paddle_webhook_secret_configured": bool(os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()),
             "smtp_configured": smtp_status["configured"],
@@ -4583,9 +4602,10 @@ async def admin_operations(
         },
         "license_attention": license_attention,
         "recent_failures": [{
-            "id": row["id"], "event_type": row["event_type"], "license_id": row["license_id"],
-            "domain": row["domain"], "error_type": row["error_type"],
-            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "id": row.id, "event_type": row.event_type,
+            "license_id": diagnostic_license_ids.get(row.license_key),
+            "domain": row.domain, "error_type": row.error_type,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
         } for row in recent_failures],
         "pending_payment_events": [{
             "event_id": item.event_id,
