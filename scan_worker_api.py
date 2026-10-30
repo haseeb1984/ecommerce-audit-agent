@@ -9,9 +9,9 @@ from scan_worker import process_scan_queue
 router = APIRouter()
 
 
-@router.post("/internal/scan-worker/run")
+@router.get("/internal/scan-worker/run")
 async def run_scan_worker(
-    max_jobs: int = Query(5, ge=1, le=10),
+    max_jobs: int = Query(1, ge=1, le=1),
     authorization: str | None = Header(default=None),
 ):
     expected = os.getenv("SCAN_WORKER_TOKEN", "").strip()
