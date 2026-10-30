@@ -3494,3 +3494,104 @@ async def test_paddle_subscription_updated_reconciles_status_transitions_and_sti
             select(SoftwareLicense).where(SoftwareLicense.id == license_id)
         )).scalar_one()
         assert license_obj.is_active is False
+
+
+
+@pytest.mark.asyncio
+async def test_customer_passwordless_login_issues_and_revokes_session(client, monkeypatch):
+    secret = "customer-auth-test-secret-at-least-32-bytes"
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", secret)
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append((email, code)))
+    license_id = await create_license(key="passwordless-customer-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_passwordless_customer_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="customer-login@example.com",
+        ))
+        await db.commit()
+
+    requested = await client.post(
+        "/api/v1/account/auth/request-code",
+        json={"email": " Customer-Login@example.com "},
+    )
+    assert requested.status_code == 202, requested.text
+    assert requested.json()["status"] == "accepted"
+    assert sent and sent[0][0] == "customer-login@example.com"
+
+    verified = await client.post(
+        "/api/v1/account/auth/verify-code",
+        json={"email": "customer-login@example.com", "code": sent[0][1]},
+    )
+    assert verified.status_code == 200, verified.text
+    body = verified.json()
+    assert body["status"] == "authenticated"
+    token = body["access_token"]
+    assert body["token_type"] == "Bearer"
+
+    profile = await client.get(
+        "/api/v1/account/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["client_name"] == "Automated Test"
+
+    reused = await client.post(
+        "/api/v1/account/auth/verify-code",
+        json={"email": "customer-login@example.com", "code": sent[0][1]},
+    )
+    assert reused.status_code == 401
+
+    logged_out = await client.post(
+        "/api/v1/account/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert logged_out.status_code == 200, logged_out.text
+    rejected = await client.get(
+        "/api/v1/account/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rejected.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_passwordless_login_limits_code_attempts_and_hides_unknown_email(client, monkeypatch):
+    secret = "customer-auth-test-secret-at-least-32-bytes"
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", secret)
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append((email, code)))
+    unknown = await client.post(
+        "/api/v1/account/auth/request-code",
+        json={"email": "unknown-customer@example.com"},
+    )
+    assert unknown.status_code == 202
+    assert unknown.json()["status"] == "accepted"
+    assert sent == []
+
+    license_id = await create_license(key="passwordless-attempt-limit-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_passwordless_attempt_limit_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="attempt-limit@example.com",
+        ))
+        await db.commit()
+    requested = await client.post(
+        "/api/v1/account/auth/request-code",
+        json={"email": "attempt-limit@example.com"},
+    )
+    assert requested.status_code == 202, requested.text
+    for _ in range(5):
+        wrong = await client.post(
+            "/api/v1/account/auth/verify-code",
+            json={"email": "attempt-limit@example.com", "code": "000000"},
+        )
+        assert wrong.status_code == 401
+    correct = await client.post(
+        "/api/v1/account/auth/verify-code",
+        json={"email": "attempt-limit@example.com", "code": sent[-1][1]},
+    )
+    assert correct.status_code == 401
