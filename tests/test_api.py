@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense, WordPressLinkChallenge, WordPressSiteLink
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
 from coverage_manifest import build_coverage_manifest
@@ -3282,3 +3282,119 @@ async def test_white_label_branding_rejects_unsafe_logo_urls_and_invalid_colors(
         json={"brand_name": "Northstar", "logo_url": None, "primary_color": "red"},
     )
     assert bad_color.status_code == 422, bad_color.text
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_challenge_is_hashed_expiring_and_single_use(client):
+    license_id = await create_license(key="wp-link-owner-license")
+    headers = {"X-License-Key": "wp-link-owner-license"}
+    issued = await client.post("/api/v1/account/wordpress-link/challenges", headers=headers)
+    assert issued.status_code == 200, issued.text
+    payload = issued.json()
+    assert len(payload["token"]) >= 32
+    assert payload["expires_in_seconds"] == 600
+    async with AsyncSessionLocal() as db:
+        challenge = (await db.execute(
+            select(WordPressLinkChallenge).where(WordPressLinkChallenge.license_id == license_id)
+        )).scalar_one()
+        assert challenge.token_hash != payload["token"]
+        assert challenge.token_hash == hashlib.sha256(payload["token"].encode()).hexdigest()
+        assert challenge.consumed_at is None
+
+
+@pytest.mark.asyncio
+async def test_wordpress_site_link_claim_lists_and_unlinks_with_owner_credential(client):
+    await create_license(key="wp-link-claim-license")
+    headers = {"X-License-Key": "wp-link-claim-license"}
+    challenge = (await client.post(
+        "/api/v1/account/wordpress-link/challenges", headers=headers
+    )).json()["token"]
+    claim = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers=headers,
+        json={
+            "token": challenge,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 17,
+            "wp_user_login": "storeadmin",
+            "wp_user_email": "ADMIN@EXAMPLE.COM",
+        },
+    )
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["linked"] is True
+    assert claim.json()["site_url"] == "https://shop.example.com/"
+    listed = await client.get("/api/v1/account/wordpress-link", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["links"][0]["wp_user_email"] == "admin@example.com"
+    replay = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers=headers,
+        json={
+            "token": challenge,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 17,
+            "wp_user_login": "storeadmin",
+            "wp_user_email": "admin@example.com",
+        },
+    )
+    assert replay.status_code == 400
+    removed = await client.delete(
+        "/api/v1/account/wordpress-link",
+        headers=headers,
+        params={"site_url": "https://shop.example.com/"},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["unlinked"] is True
+    assert (await client.get("/api/v1/account/wordpress-link", headers=headers)).json()["links"] == []
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_challenge_cannot_be_redeemed_by_another_license(client):
+    await create_license(key="wp-link-license-a")
+    await create_license(key="wp-link-license-b")
+    token = (await client.post(
+        "/api/v1/account/wordpress-link/challenges",
+        headers={"X-License-Key": "wp-link-license-a"},
+    )).json()["token"]
+    response = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers={"X-License-Key": "wp-link-license-b"},
+        json={
+            "token": token,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 1,
+            "wp_user_login": "admin",
+            "wp_user_email": "admin@example.com",
+        },
+    )
+    assert response.status_code == 400
+    links = await client.get(
+        "/api/v1/account/wordpress-link", headers={"X-License-Key": "wp-link-license-b"}
+    )
+    assert links.json()["links"] == []
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_rejects_insecure_or_ambiguous_site_urls(client):
+    await create_license(key="wp-link-invalid-url-license")
+    headers = {"X-License-Key": "wp-link-invalid-url-license"}
+    token = (await client.post("/api/v1/account/wordpress-link/challenges", headers=headers)).json()["token"]
+    for site_url in [
+        "http://shop.example.com/",
+        "https://user:pass@shop.example.com/",
+        "https://shop.example.com/?token=secret",
+        "https://localhost/",
+        "https://127.0.0.1/",
+    ]:
+        response = await client.post(
+            "/api/v1/account/wordpress-link/claim",
+            headers=headers,
+            json={
+                "token": token,
+                "site_url": site_url,
+                "wp_user_id": 1,
+                "wp_user_login": "admin",
+                "wp_user_email": "admin@example.com",
+            },
+        )
+        assert response.status_code == 422, (site_url, response.text)

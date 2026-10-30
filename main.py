@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, WhiteLabelBranding
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, WhiteLabelBranding, WordPressLinkChallenge, WordPressSiteLink
 from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -152,6 +152,8 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "saas_admin_action_logs",
         "saas_operation_events",
         "payment_webhook_events",
+        "wordpress_link_challenges",
+        "wordpress_site_links",
     }
     try:
         result = await db.execute(text("SELECT 1"))
@@ -973,6 +975,187 @@ async def update_account_profile(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"client_name": license_obj.client_name, "updated": True}
+
+
+
+class WordPressLinkClaimRequest(BaseModel):
+    token: str = Field(..., min_length=32, max_length=128)
+    site_url: str = Field(..., min_length=8, max_length=255)
+    wp_user_id: int = Field(..., ge=1)
+    wp_user_login: str = Field(..., min_length=1, max_length=60)
+    wp_user_email: str = Field(..., min_length=3, max_length=254)
+
+
+def _normalize_wordpress_site_url(value: str) -> str:
+    """Accept a canonical public HTTPS WordPress home URL; never fetch it."""
+    raw = value.strip()
+    try:
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if (parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password
+                or parsed.port not in (None, 443) or parsed.query or parsed.fragment):
+            raise ValueError
+        if host in {"localhost", "localhost.localdomain"} or "." not in host:
+            raise ValueError
+        try:
+            address = ipaddress.ip_address(host)
+            if not address.is_global:
+                raise ValueError
+        except ValueError:
+            if re.fullmatch(r"[0-9.]+", host):
+                raise ValueError
+            if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", host):
+                raise ValueError
+        path = parsed.path.rstrip("/")
+        normalized = f"https://{host}{path}/"
+        if len(normalized) > 255:
+            raise ValueError
+        return normalized
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="WordPress site URL must be a public HTTPS home URL without credentials, query, or fragment.")
+
+
+@app.post("/api/v1/account/wordpress-link/challenges")
+async def create_wordpress_link_challenge(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Issue a one-time 10-minute code; only its SHA-256 hash is persisted."""
+    from sqlalchemy import select
+    now = datetime.now(timezone.utc)
+    existing = (await db.execute(
+        select(WordPressLinkChallenge)
+        .where(
+            WordPressLinkChallenge.license_id == license_obj.id,
+            WordPressLinkChallenge.consumed_at.is_(None),
+            WordPressLinkChallenge.expires_at > now,
+        )
+        .with_for_update()
+    )).scalars().all()
+    for challenge in existing:
+        challenge.consumed_at = now
+    token = secrets.token_urlsafe(32)
+    db.add(WordPressLinkChallenge(
+        license_id=license_obj.id,
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        expires_at=now + timedelta(minutes=10),
+    ))
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"token": token, "expires_at": (now + timedelta(minutes=10)).isoformat(), "expires_in_seconds": 600}
+
+
+@app.get("/api/v1/account/wordpress-link")
+async def get_wordpress_site_links(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    from sqlalchemy import select
+    links = (await db.execute(
+        select(WordPressSiteLink)
+        .where(WordPressSiteLink.license_id == license_obj.id)
+        .order_by(WordPressSiteLink.linked_at.desc())
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"links": [
+        {
+            "id": item.id,
+            "site_url": item.site_url,
+            "wp_user_id": item.wp_user_id,
+            "wp_user_login": item.wp_user_login,
+            "wp_user_email": item.wp_user_email,
+            "linked_at": item.linked_at.isoformat() if item.linked_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
+        for item in links
+    ]}
+
+
+@app.post("/api/v1/account/wordpress-link/claim")
+async def claim_wordpress_site_link(
+    payload: WordPressLinkClaimRequest,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Redeem a license-bound, expiring code once and bind the authenticated WP site."""
+    from sqlalchemy import select
+    site_url = _normalize_wordpress_site_url(payload.site_url)
+    token_hash = hashlib.sha256(payload.token.strip().encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    challenge = (await db.execute(
+        select(WordPressLinkChallenge)
+        .where(
+            WordPressLinkChallenge.license_id == license_obj.id,
+            WordPressLinkChallenge.token_hash == token_hash,
+        )
+        .with_for_update()
+    )).scalar_one_or_none()
+    if challenge is None or challenge.consumed_at is not None:
+        raise HTTPException(status_code=400, detail="WordPress link code is invalid or has already been used.")
+    expires_at = challenge.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= now:
+        challenge.consumed_at = now
+        await db.commit()
+        raise HTTPException(status_code=410, detail="WordPress link code has expired. Generate a new code.")
+    existing = (await db.execute(
+        select(WordPressSiteLink)
+        .where(
+            WordPressSiteLink.license_id == license_obj.id,
+            WordPressSiteLink.site_url == site_url,
+        )
+        .with_for_update()
+    )).scalar_one_or_none()
+    if existing is None:
+        existing = WordPressSiteLink(
+            license_id=license_obj.id,
+            site_url=site_url,
+            wp_user_id=payload.wp_user_id,
+            wp_user_login=payload.wp_user_login.strip(),
+            wp_user_email=payload.wp_user_email.strip().lower(),
+            linked_at=now,
+            updated_at=now,
+        )
+        db.add(existing)
+    else:
+        existing.wp_user_id = payload.wp_user_id
+        existing.wp_user_login = payload.wp_user_login.strip()
+        existing.wp_user_email = payload.wp_user_email.strip().lower()
+        existing.updated_at = now
+    challenge.consumed_at = now
+    await db.commit()
+    await db.refresh(existing)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"linked": True, "site_url": existing.site_url, "wp_user_id": existing.wp_user_id, "linked_at": existing.linked_at.isoformat()}
+
+
+@app.delete("/api/v1/account/wordpress-link")
+async def unlink_wordpress_site(
+    site_url: str = Query(..., min_length=8, max_length=255),
+    response: Response = None,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    from sqlalchemy import delete
+    normalized = _normalize_wordpress_site_url(site_url)
+    result = await db.execute(
+        delete(WordPressSiteLink).where(
+            WordPressSiteLink.license_id == license_obj.id,
+            WordPressSiteLink.site_url == normalized,
+        )
+    )
+    await db.commit()
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+    return {"unlinked": bool(result.rowcount)}
 
 
 @app.get("/api/v1/account/branding")
