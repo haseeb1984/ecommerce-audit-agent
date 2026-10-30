@@ -6,7 +6,7 @@ The installable plugin source is in `wordpress-plugin/ecommerce-audit-agent/`:
 
 - `ecommerce-audit-agent.php` — admin dashboard, authenticated SaaS client, site registration, usage display, audit execution, and saved-report download.
 - `readme.txt` — WordPress.org-style installation and security documentation.
-- `uninstall.php` — removes plugin-local settings when the plugin is uninstalled.
+- `uninstall.php` — attempts to disconnect the remote SaaS site identity, then removes plugin-local credentials and settings. If the WordPress host is offline during uninstall, the customer can disconnect the stale site from the SaaS customer portal.
 
 The plugin requires WordPress 6.2+, PHP 7.4+, and outbound HTTPS. WooCommerce is optional; when active, its version is registered as site metadata.
 
@@ -17,7 +17,7 @@ The plugin requires WordPress 6.2+, PHP 7.4+, and outbound HTTPS. WooCommerce is
 3. Open **Ecommerce Audit** in the WordPress administrator menu.
 4. Enter the license key and keep the API base URL on HTTPS. The hosted service URL is prefilled.
 5. Save and connect. The plugin registers the WordPress installation against the authenticated license.
-6. Use the dashboard to view plan/quota state, run a comprehensive audit, and download saved reports.
+6. Use the dashboard to view plan/quota and billing state, run a comprehensive audit, and download saved reports. The customer portal also lists linked WordPress sites and lets the account owner disconnect an installation.
 
 The plugin encrypts the saved license credential at rest with AES-256-GCM using a key derived from the WordPress authentication salt, and decrypts it only when making a server-side API request. The license key is sent server-to-server in the `X-License-Key` header. It is never rendered into the admin HTML, public page markup, browser JavaScript, shortcode output, or report URLs. Rotating WordPress salts requires the administrator to enter the license key again. A site connection is scoped to the exact license that authenticated the request. The SaaS backend derives the billing customer email from the verified Paddle provisioning event for that license; the plugin does not let a site submit an arbitrary customer identity.
 
@@ -29,11 +29,12 @@ All integration endpoints require the existing license or API-key authentication
 - `GET /api/v1/integrations/wordpress/sites/status?site_id=...` — returns the registered site's connection and current license entitlement metadata. It supports expired entitlements for status visibility while keeping audit access blocked by the regular audit authentication dependency.
 - `POST /api/v1/integrations/wordpress/sites/disconnect` — disconnects the site without deleting the license, billing history, reports, or customer account.
 - `GET /api/v1/account/usage` — returns the license-scoped monthly quota.
+- `GET /api/v1/account/wordpress-sites` and `POST /api/v1/account/wordpress-sites/{site_id}/disconnect` — let signed-in customers inspect and revoke connected WordPress installations from the customer portal.
 - `POST /api/v1/comprehensive-audit?domain=...` — executes the existing licensed audit and returns a PDF.
 - `GET /api/v1/reports` and `GET /api/v1/reports/{id}/pdf` — list and download reports scoped to the authenticated license.
 - `GET /api/v1/account/billing-history` and `POST /api/v1/account/billing-portal` — show license-scoped billing lifecycle information and open the Paddle customer portal.
 
-The API enforces a maximum of ten active WordPress installations per license. Registration is serialized per license, and a unique license/hostname index prevents duplicate records. Reconnecting the same hostname reactivates its existing site record.
+The API enforces a maximum of ten active WordPress installations per license. WordPress sends its registered site ID with audit and report requests; disconnected or mismatched site IDs are rejected, while normal customer-portal/API-key workflows continue to use their existing license-scoped authentication. Registration is serialized per license, and a unique license/hostname index prevents duplicate records. Reconnecting the same hostname reactivates its existing site record.
 
 ## Identity and subscription synchronization
 
@@ -53,6 +54,7 @@ The plugin dashboard includes:
 - HTTPS API endpoint configuration for self-hosted SaaS deployments.
 - Local admin display name and accent-color settings.
 - Nonce-protected save, connect, disconnect, audit, and download actions restricted to `manage_options`.
+- Twice-daily WordPress scheduled entitlement/status heartbeat, with status visible in the dashboard.
 
 The WooCommerce version is detected automatically. The plugin does not modify WooCommerce checkout, customer orders, payment methods, or storefront output.
 
@@ -63,7 +65,7 @@ Apply `migrations/20261031_wordpress_sites.sql` before deploying the backend rev
 ## Security and operational notes
 
 - The plugin makes outbound requests only to a validated HTTPS API base URL, with TLS certificate verification and redirects disabled. The saved license credential is authenticated-encrypted at rest with AES-256-GCM.
-- The backend authenticates every registration, status, disconnect, audit, usage, and report request.
+- The backend authenticates every registration, status, disconnect, audit, usage, and report request. Plugin audit and report calls also carry `X-WordPress-Site-ID`; the backend checks that the site belongs to the authenticated license and remains active before permitting audit or report access.
 - Customer report downloads are proxied through the authenticated WordPress administrator action. PDFs are not written to public WordPress uploads.
 - Site registration and disconnect operations do not reveal license secrets or customer billing-provider credentials.
 - No production migration, customer installation, provider transaction, merge, or deployment is performed by a source change alone.
