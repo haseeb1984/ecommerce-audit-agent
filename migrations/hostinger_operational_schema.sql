@@ -68,12 +68,13 @@ CREATE TABLE IF NOT EXISTS customer_websites (
   submitted_by VARCHAR(254) NULL,
   url VARCHAR(2048) NOT NULL,
   normalized_url VARCHAR(2048) NOT NULL,
+  normalized_url_hash CHAR(64) NOT NULL,
   host VARCHAR(253) NOT NULL,
   label VARCHAR(160) NULL,
   status VARCHAR(24) NOT NULL DEFAULT 'active',
   created_at DATETIME(6) NOT NULL,
   updated_at DATETIME(6) NOT NULL,
-  UNIQUE KEY uq_customer_websites_license_url (license_key, normalized_url(512)),
+  UNIQUE KEY uq_customer_websites_license_url_hash (license_key, normalized_url_hash),
   KEY ix_customer_websites_license_status (license_key, status),
   KEY ix_customer_websites_host (host)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS scan_batches (
   license_key VARCHAR(100) NOT NULL,
   requested_by VARCHAR(254) NULL,
   package_tier VARCHAR(50) NOT NULL,
+  request_id VARCHAR(128) NOT NULL,
   batch_number INT NOT NULL,
   batch_size INT NOT NULL DEFAULT 10,
   total_urls INT NOT NULL DEFAULT 0,
@@ -97,7 +99,8 @@ CREATE TABLE IF NOT EXISTS scan_batches (
   created_at DATETIME(6) NOT NULL,
   KEY ix_scan_batches_claim (status, available_at, created_at),
   KEY ix_scan_batches_license_key (license_key),
-  KEY ix_scan_batches_license_sequence (license_key, batch_number)
+  KEY ix_scan_batches_license_sequence (license_key, batch_number),
+  UNIQUE KEY uq_scan_batches_license_request (license_key, request_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS website_scan_jobs (
