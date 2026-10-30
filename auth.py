@@ -2,12 +2,12 @@ import hashlib
 from datetime import datetime, timezone
 
 from fastapi import Security, HTTPException, status, Depends
-from fastapi.security import APIKeyHeader
+from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_async_db
-from models import SoftwareLicense, APIKey
+from models import SoftwareLicense, APIKey, AccountSession
 
 # Define explicit scheme_names to prevent Swagger UI schema collisions
 API_KEY_HEADER = APIKeyHeader(
@@ -149,4 +149,53 @@ async def verify_account_credentials_for_billing(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid account credentials.",
         )
+    return license_obj
+
+
+
+CUSTOMER_BEARER = HTTPBearer(auto_error=False, scheme_name="CustomerSessionAuth")
+
+
+async def verify_customer_account(
+    credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
+    api_key: str = Security(API_KEY_HEADER),
+    license_key: str = Security(LICENSE_HEADER),
+    db: AsyncSession = Depends(get_async_db),
+) -> SoftwareLicense:
+    """Resolve a customer account using a passwordless session or legacy key."""
+    if credentials is not None:
+        if credentials.scheme.lower() != "bearer" or not credentials.credentials:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid customer session.")
+        token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+        session = (await db.execute(
+            select(AccountSession).where(AccountSession.token_hash == token_hash)
+        )).scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        if session is None or session.revoked_at is not None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session is invalid or revoked.")
+        expiry = session.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= now:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session has expired. Sign in again.")
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == session.license_id)
+        )).scalar_one_or_none()
+        if license_obj is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
+        session.last_seen_at = now
+        return license_obj
+
+    # Backward compatibility for existing license-key and API-key customers.
+    if not api_key and not license_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sign in with your verified email or provide an existing account key.")
+    if api_key:
+        key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        stmt = select(SoftwareLicense).join(APIKey).where(APIKey.api_key_hash == key_hash)
+    else:
+        stmt = select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
+    license_obj = (await db.execute(stmt)).scalar_one_or_none()
+    if license_obj is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid account credentials.")
     return license_obj
