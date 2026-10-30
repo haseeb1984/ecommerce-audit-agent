@@ -4765,6 +4765,7 @@ async def admin_customer_account_detail(
     request: Request = None,
     response: Response = None,
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return an account-wide view across licenses, billing, sessions and support notes."""
     _require_admin_key(request)
@@ -4778,7 +4779,8 @@ async def admin_customer_account_detail(
     if not rows:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
-    sessions = (await db.execute(select(AccountSession).where(AccountSession.license_id.in_(ids)).order_by(AccountSession.created_at.desc()).limit(200))).scalars().all()
+    license_keys = [item.license_key for item in rows]
+    sessions = (await operational_db.execute(select(CustomerSession).where(CustomerSession.license_key.in_(license_keys)).order_by(CustomerSession.created_at.desc()).limit(200))).scalars().all()
     payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids)).order_by(PaymentWebhookEvent.updated_at.desc()).limit(200))).scalars().all()
     notes = (await db.execute(text("""
         SELECT id, note, created_by, created_at FROM saas_admin_customer_notes
@@ -4799,7 +4801,7 @@ async def admin_customer_account_detail(
             "created_at": item.created_at.isoformat() if item.created_at else None,
         } for item in rows],
         "sessions": [{
-            "email": item.email, "license_id": item.license_id,
+            "email": item.email, "license_key": item.license_key,
             "status": "revoked" if item.revoked_at else ("expired" if (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now else "active"),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
@@ -4834,6 +4836,7 @@ async def admin_customer_account_action(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Apply an explicit account-wide lifecycle action with email confirmation and audit logging."""
     _require_admin_key(request)
@@ -4852,9 +4855,11 @@ async def admin_customer_account_action(
         result = await db.execute(update(SoftwareLicense).where(SoftwareLicense.id.in_(ids)).values(is_active=active))
         changed = int(result.rowcount or 0)
     else:
-        result = await db.execute(update(AccountSession).where(
-            AccountSession.license_id.in_(ids), AccountSession.revoked_at.is_(None)
+        license_keys = list((await db.execute(select(SoftwareLicense.license_key).where(SoftwareLicense.id.in_(ids)))).scalars().all())
+        result = await operational_db.execute(update(CustomerSession).where(
+            CustomerSession.license_key.in_(license_keys), CustomerSession.revoked_at.is_(None)
         ).values(revoked_at=now))
+        await operational_db.commit()
         changed = int(result.rowcount or 0)
     await _write_admin_log(db, "customer.account_" + payload.action, "customer", normalized, {
         "license_ids": ids, "changed_count": changed, "reason": payload.reason.strip(),
@@ -4902,6 +4907,7 @@ async def admin_list_client_sessions(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List customer session metadata without exposing bearer tokens or token digests."""
     _require_admin_key(request)
@@ -4912,8 +4918,8 @@ async def admin_list_client_sessions(
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     rows = (await db.execute(
-        select(AccountSession).where(AccountSession.license_id == license_id)
-        .order_by(AccountSession.created_at.desc()).limit(100)
+        select(CustomerSession).where(CustomerSession.license_key == client.license_key)
+        .order_by(CustomerSession.created_at.desc()).limit(100)
     )).scalars().all()
     now = datetime.now(timezone.utc)
     items = []
@@ -4942,6 +4948,7 @@ async def admin_revoke_client_sessions(
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Revoke all browser sessions for a selected customer and record the operator action."""
     _require_admin_key(request)
@@ -4952,11 +4959,12 @@ async def admin_revoke_client_sessions(
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     now = datetime.now(timezone.utc)
-    result = await db.execute(update(AccountSession).where(
-        AccountSession.license_id == license_id,
-        AccountSession.revoked_at.is_(None),
+    result = await operational_db.execute(update(CustomerSession).where(
+        CustomerSession.license_key == client.license_key,
+        CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     count = int(result.rowcount or 0)
+    await operational_db.commit()
     await _write_admin_log(db, "client.sessions_revoked", "client", license_id, {
         "revoked_count": count,
         "reason": payload.reason.strip(),
