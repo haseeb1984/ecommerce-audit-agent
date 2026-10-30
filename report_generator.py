@@ -91,12 +91,6 @@ def _outcome_breakdown_table(recorded_outcomes: list[object], small_style: Parag
     denominator = sum(counts.values())
     if not denominator:
         return None
-    tested_pages = {
-        str(item.get("page_url") or item.get("url") or "")
-        if isinstance(item, dict)
-        else str(getattr(item, "page_url", "") or "")
-        for item in recorded_outcomes
-    } - {""}
     header = ["Recorded outcome", "Count", "Share"]
     rows = [[_p(value, small_style) for value in header]]
     for state in states:
