@@ -4413,7 +4413,12 @@ async def admin_retry_license_email(event_id: str, request: Request,
 
 
 @app.get("/api/v1/admin/operations")
-async def admin_operations(request: Request, response: Response, db: AsyncSession = Depends(get_async_db)):
+async def admin_operations(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
     """Private operational diagnostics without exposing environment values or customer secrets."""
     _require_admin_key(request)
     response.headers["Cache-Control"] = "no-store, private"
@@ -4486,34 +4491,45 @@ async def admin_operations(request: Request, response: Response, db: AsyncSessio
     # Keep delivery recovery metrics separate from ordinary subscription lifecycle
     # events; a payment failure or cancellation is not a pending license email.
     email_recovery_statuses = ("email_pending", "email_sending")
-    pending_email = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)).where(
-        PaymentWebhookEvent.status.in_(email_recovery_statuses)
-    ))).scalar_one()
-    payment_events = (await db.execute(
-        select(PaymentWebhookEvent)
-        .where(PaymentWebhookEvent.status.in_(email_recovery_statuses))
-        .order_by(PaymentWebhookEvent.updated_at.asc()).limit(50)
+    pending_email = int((await operational_db.execute(
+        select(sql_func.count(CustomerBillingEvent.event_id)).where(
+            CustomerBillingEvent.status.in_(email_recovery_statuses)
+        )
+    )).scalar_one() or 0)
+    payment_events = (await operational_db.execute(
+        select(CustomerBillingEvent)
+        .where(CustomerBillingEvent.status.in_(email_recovery_statuses))
+        .order_by(CustomerBillingEvent.updated_at.asc()).limit(50)
     )).scalars().all()
     billing_attention_statuses = ("payment_failed", "subscription_past_due", "subscription_canceled")
     billing_attention_counts = {}
     for lifecycle_status in billing_attention_statuses:
-        billing_attention_counts[lifecycle_status] = int((await db.execute(
-            select(sql_func.count(PaymentWebhookEvent.event_id)).where(
-                PaymentWebhookEvent.status == lifecycle_status
+        billing_attention_counts[lifecycle_status] = int((await operational_db.execute(
+            select(sql_func.count(CustomerBillingEvent.event_id)).where(
+                CustomerBillingEvent.status == lifecycle_status
             )
         )).scalar_one() or 0)
-    billing_attention_events = (await db.execute(
-        select(PaymentWebhookEvent)
-        .where(PaymentWebhookEvent.status.in_(billing_attention_statuses))
-        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+    billing_attention_events = (await operational_db.execute(
+        select(CustomerBillingEvent)
+        .where(CustomerBillingEvent.status.in_(billing_attention_statuses))
+        .order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.event_id.desc())
         .limit(50)
     )).scalars().all()
-    stale_email_sending_count = int((await db.execute(
-        select(sql_func.count(PaymentWebhookEvent.event_id)).where(
-            PaymentWebhookEvent.status == "email_sending",
-            PaymentWebhookEvent.updated_at <= now - timedelta(minutes=10),
+    stale_email_sending_count = int((await operational_db.execute(
+        select(sql_func.count(CustomerBillingEvent.event_id)).where(
+            CustomerBillingEvent.status == "email_sending",
+            CustomerBillingEvent.updated_at <= now - timedelta(minutes=10),
         )
     )).scalar_one() or 0)
+    billing_license_keys = {item.license_key for item in [*payment_events, *billing_attention_events]}
+    billing_license_ids = {}
+    if billing_license_keys:
+        billing_license_ids = {
+            key: license_id for license_id, key in (await db.execute(
+                select(SoftwareLicense.id, SoftwareLicense.license_key)
+                .where(SoftwareLicense.license_key.in_(billing_license_keys))
+            )).all()
+        }
     expired_reservation_count = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at <= now
     ))).scalar_one()
@@ -4568,7 +4584,7 @@ async def admin_operations(request: Request, response: Response, db: AsyncSessio
             "transaction_id": item.transaction_id,
             "subscription_id": item.subscription_id,
             "status": item.status,
-            "license_id": item.license_id,
+            "license_id": billing_license_ids.get(item.license_key),
             "recipient_email": item.recipient_email,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
@@ -4578,7 +4594,7 @@ async def admin_operations(request: Request, response: Response, db: AsyncSessio
             "transaction_id": item.transaction_id,
             "subscription_id": item.subscription_id,
             "status": item.status,
-            "license_id": item.license_id,
+            "license_id": billing_license_ids.get(item.license_key),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in billing_attention_events],
@@ -4600,6 +4616,7 @@ async def admin_overview(
     client_status: str = Query(default="all", pattern="^(all|active|inactive|expired|expiring_7d|expiring_30d|no_expiry)$"),
     tier_filter: str = Query(default="", max_length=50),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return global platform metrics plus a bounded, searchable and filterable client page."""
     _require_admin_key(request)
@@ -4612,15 +4629,19 @@ async def admin_overview(
     if normalized_search:
         literal_search = normalized_search.replace("%", "").replace("_", "")
         pattern = f"%{literal_search}%"
-        email_match = select(PaymentWebhookEvent.event_id).where(
-            PaymentWebhookEvent.license_id == SoftwareLicense.id,
-            sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
-        ).exists()
+        matching_license_keys = set((await operational_db.execute(
+            select(CustomerBillingEvent.license_key).where(
+                sql_func.lower(CustomerBillingEvent.recipient_email).ilike(pattern.lower())
+            ).distinct()
+        )).scalars().all())
+        matching_license_ids = set((await db.execute(
+            select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(matching_license_keys))
+        )).scalars().all()) if matching_license_keys else set()
         client_filter = or_(
             SoftwareLicense.client_name.ilike(pattern),
             SoftwareLicense.tier.ilike(pattern),
             cast(SoftwareLicense.id, String).ilike(pattern),
-            email_match,
+            SoftwareLicense.id.in_(matching_license_ids),
         )
     count_query = select(sql_func.count(SoftwareLicense.id))
     filtered_query = select(SoftwareLicense)
@@ -4674,7 +4695,7 @@ async def admin_overview(
     total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at > now
     ))).scalar_one()
-    total_webhooks = (await db.execute(select(sql_func.count(PaymentWebhookEvent.event_id)))).scalar_one()
+    total_webhooks = (await operational_db.execute(select(sql_func.count(CustomerBillingEvent.event_id)))).scalar_one()
     monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
         AuditLead.created_at >= month_start
     ))).scalar_one()
@@ -4708,20 +4729,21 @@ async def admin_overview(
     # bounded query. This field is only returned by the admin-key-protected overview.
     contact_email_by_license = {}
     if licenses:
-        contact_email_rows = (await db.execute(
-            select(
-                PaymentWebhookEvent.license_id,
-                PaymentWebhookEvent.recipient_email,
-            ).where(
-                PaymentWebhookEvent.license_id.in_([item.id for item in licenses])
-            ).order_by(
-                PaymentWebhookEvent.updated_at.desc(),
-                PaymentWebhookEvent.created_at.desc(),
-                PaymentWebhookEvent.event_id.desc(),
+        visible_license_keys = [item.license_key for item in licenses]
+        contact_email_rows = (await operational_db.execute(
+            select(CustomerBillingEvent.license_key, CustomerBillingEvent.recipient_email)
+            .where(CustomerBillingEvent.license_key.in_(visible_license_keys))
+            .order_by(
+                CustomerBillingEvent.updated_at.desc(),
+                CustomerBillingEvent.created_at.desc(),
+                CustomerBillingEvent.event_id.desc(),
             )
         )).all()
-        for license_id, recipient_email in contact_email_rows:
-            contact_email_by_license.setdefault(license_id, recipient_email)
+        license_id_by_key = {item.license_key: item.id for item in licenses}
+        for license_key, recipient_email in contact_email_rows:
+            license_id = license_id_by_key.get(license_key)
+            if license_id is not None:
+                contact_email_by_license.setdefault(license_id, recipient_email)
 
     client_rows = []
     for item in licenses:
