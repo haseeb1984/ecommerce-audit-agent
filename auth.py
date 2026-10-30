@@ -183,7 +183,6 @@ async def verify_customer_account(
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
     db: AsyncSession = Depends(get_async_db),
-    operational_db: AsyncSession = Depends(get_hostinger_db),
 ) -> SoftwareLicense:
     """Resolve a customer account using a Hostinger-backed session or legacy key."""
     if credentials is not None:
