@@ -43,7 +43,7 @@ from database import Base, get_async_db
 from scan_api import router as scan_router
 from scan_worker_api import router as scan_worker_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, WordPressSite, WhiteLabelBranding
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, WhiteLabelBranding
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -1275,8 +1275,8 @@ async def verify_customer_email_change(
     ).values(recipient_email=challenge.new_email))
     # Keep the linked WordPress customer identity synchronized with the verified
     # SaaS email change in the same transaction as the billing identity records.
-    await db.execute(update(WordPressSite).where(
-        func.lower(WordPressSite.customer_email) == old_email,
+    await operational_db.execute(update(WordPressInstallation).where(
+        func.lower(WordPressInstallation.customer_email) == old_email,
     ).values(customer_email=challenge.new_email))
     await operational_db.execute(update(CustomerLoginChallenge).where(
         CustomerLoginChallenge.email == old_email,
@@ -4826,9 +4826,9 @@ async def admin_customer_account_detail(
         SELECT id, note, created_by, created_at FROM saas_admin_customer_notes
         WHERE LOWER(customer_email)=:email ORDER BY created_at DESC, id DESC LIMIT 100
     """), {"email": normalized})).mappings().all()
-    wordpress_sites = (await db.execute(select(WordPressSite).where(
-        WordPressSite.license_id.in_(ids)
-    ).order_by(WordPressSite.created_at.desc()).limit(100))).scalars().all()
+    wordpress_sites = (await operational_db.execute(select(WordPressInstallation).where(
+        WordPressInstallation.license_key.in_(license_keys)
+    ).order_by(WordPressInstallation.created_at.desc()).limit(100))).scalars().all()
     now = datetime.now(timezone.utc)
     return {
         "email": normalized,
@@ -4859,7 +4859,7 @@ async def admin_customer_account_detail(
             "created_at": item["created_at"].isoformat() if item["created_at"] else None,
         } for item in notes],
         "wordpress_sites": [{
-            "site_id": item.id, "license_id": item.license_id, "site_url": item.site_url,
+            "site_id": item.id, "license_key": item.license_key, "site_url": item.site_url,
             "site_host": item.site_host, "admin_email": item.admin_email,
             "wordpress_version": item.wordpress_version, "woocommerce_version": item.woocommerce_version,
             "plugin_version": item.plugin_version, "status": item.status,
