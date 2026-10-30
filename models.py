@@ -250,6 +250,19 @@ class AccountEmailChangeChallenge(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+
+
+class WhiteLabelBranding(Base):
+    """Per-license white-label branding configuration."""
+    __tablename__ = "white_label_branding"
+
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), primary_key=True)
+    brand_name = Column(String(100), nullable=False)
+    logo_url = Column(String(2048), nullable=True)
+    primary_color = Column(String(7), nullable=False, default="#155a8a", server_default="#155a8a")
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class SaaSAdminCustomerNote(Base):
     """Append-only internal support note attached to a normalized customer email."""
     __tablename__ = "saas_admin_customer_notes"
