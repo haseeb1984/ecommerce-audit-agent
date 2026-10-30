@@ -205,3 +205,23 @@ CREATE TABLE IF NOT EXISTS customer_report_files (
   KEY ix_customer_report_files_license (license_key),
   KEY ix_customer_report_files_job (job_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS website_scan_results (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  job_id VARCHAR(64) NOT NULL UNIQUE,
+  license_key VARCHAR(100) NOT NULL,
+  website_id VARCHAR(64) NOT NULL,
+  target_url VARCHAR(2048) NOT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'completed',
+  overall_score INT NULL,
+  finding_count INT NOT NULL DEFAULT 0,
+  findings_json LONGTEXT NOT NULL,
+  check_outcomes_json LONGTEXT NOT NULL,
+  coverage_json LONGTEXT NOT NULL,
+  summary_json LONGTEXT NOT NULL,
+  created_at DATETIME(6) NOT NULL,
+  KEY ix_website_scan_results_license_created (license_key, created_at),
+  KEY ix_website_scan_results_website_created (website_id, created_at),
+  KEY ix_website_scan_results_job_id (job_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
