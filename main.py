@@ -3685,10 +3685,15 @@ async def admin_overview(
     if normalized_search:
         literal_search = normalized_search.replace("%", "").replace("_", "")
         pattern = f"%{literal_search}%"
+        email_match = select(PaymentWebhookEvent.event_id).where(
+            PaymentWebhookEvent.license_id == SoftwareLicense.id,
+            sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
+        ).exists()
         client_filter = or_(
             SoftwareLicense.client_name.ilike(pattern),
             SoftwareLicense.tier.ilike(pattern),
             cast(SoftwareLicense.id, String).ilike(pattern),
+            email_match,
         )
     count_query = select(sql_func.count(SoftwareLicense.id))
     filtered_query = select(SoftwareLicense)
@@ -3772,6 +3777,25 @@ async def admin_overview(
     reports_by_license = {row[0]: int(row[1] or 0) for row in report_rows}
     reservations_by_license = {row[0]: int(row[1] or 0) for row in reservation_rows}
 
+    # Fetch the most recently verified checkout email per visible license in one
+    # bounded query. This field is only returned by the admin-key-protected overview.
+    contact_email_by_license = {}
+    if licenses:
+        contact_email_rows = (await db.execute(
+            select(
+                PaymentWebhookEvent.license_id,
+                PaymentWebhookEvent.recipient_email,
+            ).where(
+                PaymentWebhookEvent.license_id.in_([item.id for item in licenses])
+            ).order_by(
+                PaymentWebhookEvent.updated_at.desc(),
+                PaymentWebhookEvent.created_at.desc(),
+                PaymentWebhookEvent.event_id.desc(),
+            )
+        )).all()
+        for license_id, recipient_email in contact_email_rows:
+            contact_email_by_license.setdefault(license_id, recipient_email)
+
     client_rows = []
     for item in licenses:
         used_month = monthly_by_license.get(item.id, 0)
@@ -3780,6 +3804,7 @@ async def admin_overview(
         active_runs = reservations_by_license.get(item.id, 0)
         client_rows.append({
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
+            "contact_email": contact_email_by_license.get(item.id),
             "is_active": bool(item.is_active),
             "expired": bool(item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now),
             "created_at": item.created_at.isoformat() if item.created_at else None,
