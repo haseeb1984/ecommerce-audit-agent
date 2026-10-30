@@ -3022,6 +3022,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
         ))
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
         await _record_operation_event(db, status, linked_event.license_id, None, None)
         return {"status": status, "event_id": event_id, "license_id": linked_event.license_id}
 
@@ -3095,6 +3096,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             updated_at=now,
         ))
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
         if was_active != bool(license_obj.is_active):
             await _record_operation_event(db, lifecycle_status, license_obj.id, None, None)
         return {"status": lifecycle_status, "event_id": event_id, "license_id": license_obj.id}
@@ -3149,6 +3151,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             updated_at=now,
         ))
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
         if changed:
             await _record_operation_event(db, "subscription_canceled", license_obj.id, None, None)
             logger.info("Paddle subscription cancellation applied (license_id=%s)", license_obj.id)
@@ -3254,6 +3257,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=now, updated_at=now,
         ))
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
         if was_active != bool(license_obj.is_active) or (plan is not None and not is_canceled):
             await _record_operation_event(db, event_status, license_obj.id, None, None)
         if is_canceled:
@@ -3360,6 +3364,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 paddle_customer_id=(customer_id[:100] or cancellation_event.paddle_customer_id),
             ))
             await db.commit()
+            await _sync_billing_event_to_hostinger(db, event_id)
             return {"status": "subscription_canceled", "event_id": event_id,
                     "license_id": cancellation_event.license_id}
         if linked_subscription_event is not None and linked_subscription_event.license_id is not None:
@@ -3400,6 +3405,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 )
                 db.add(renewal_event)
                 await db.commit()
+                await _sync_billing_event_to_hostinger(db, event_id)
                 await _record_operation_event(db, "subscription_renewed", linked_license.id, None, None)
                 return {"status": "subscription_renewed", "event_id": event_id, "license_id": linked_license.id}
 
@@ -3452,6 +3458,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         )
         db.add(webhook_event)
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
     elif webhook_event.status == "delivered":
         return {"status": "already_processed", "event_id": event_id}
     if not webhook_event.transaction_id:
@@ -3463,6 +3470,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         event_customer_id = str(transaction.get("customer_id") or event_customer.get("id") or "").strip()
         webhook_event.paddle_customer_id = event_customer_id[:100] or None
     await db.commit()
+    await _sync_billing_event_to_hostinger(db, event_id)
 
     # Claim email delivery atomically so simultaneous Paddle retries cannot send
     # the same license email twice. A stale claim can be recovered after a worker
@@ -3492,12 +3500,14 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             return {"status": "already_processed", "event_id": event_id}
         return {"status": "delivery_in_progress", "event_id": event_id}
     await db.commit()
+    await _sync_billing_event_to_hostinger(db, event_id)
 
     license_obj = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == webhook_event.license_id))).scalar_one_or_none()
     if license_obj is None:
         webhook_event.status = "email_pending"
         webhook_event.updated_at = datetime.now(timezone.utc)
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
         raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
     try:
         await asyncio.to_thread(_send_license_email, webhook_event.recipient_email, license_obj.license_key,
@@ -3507,10 +3517,12 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         webhook_event.status = "email_pending"
         webhook_event.updated_at = datetime.now(timezone.utc)
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event_id)
         raise HTTPException(status_code=502, detail="Payment was recorded; license email is pending SMTP delivery retry.") from exc
     webhook_event.status = "delivered"
     webhook_event.updated_at = datetime.now(timezone.utc)
     await db.commit()
+    await _sync_billing_event_to_hostinger(db, event_id)
     return {"status": "provisioned", "event_id": event_id}
 
 def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: bytes) -> None:
