@@ -4177,6 +4177,9 @@ async def admin_reconcile_billing_history(
             repaired += 1
         else:
             failed += 1
+    await _write_admin_log(db, "billing.history_reconciled", "billing_history", None, {
+        "offset": offset, "page_count": len(events), "repaired": repaired, "failed": failed,
+    })
     return {
         "status": "completed" if failed == 0 else "partial",
         "total_source_events": total,
