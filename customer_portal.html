@@ -910,6 +910,7 @@
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
       setAccountControls(true);
+      if (sessionToken) await loadDeviceSessions().catch(error => setStatus("deviceSessionsStatus", error.message, "error"));
       $("runAudit").disabled = !auditAccess;
       renderApiKeys();
       $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
