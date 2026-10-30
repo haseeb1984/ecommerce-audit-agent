@@ -929,7 +929,7 @@
   }
   async function submitBulkScans() {
     if (!credential) { setStatus("bulkScanStatus", "Connect your license, API key, or customer account first.", "error"); return; }
-    const urls = $("bulkUrls").value.split(/\\r?\\n/).map(value => value.trim()).filter(Boolean);
+    const urls = $("bulkUrls").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
     if (!urls.length) { setStatus("bulkScanStatus", "Enter at least one website URL, one per line.", "error"); return; }
     if (urls.length > 1000) { setStatus("bulkScanStatus", "A single submission can contain at most 1,000 URLs.", "error"); return; }
     const button = $("submitBulkScans"); button.disabled = true;
