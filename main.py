@@ -1138,8 +1138,8 @@ async def claim_wordpress_site_link(
 
 @app.delete("/api/v1/account/wordpress-link")
 async def unlink_wordpress_site(
+    response: Response,
     site_url: str = Query(..., min_length=8, max_length=255),
-    response: Response = None,
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
     db: AsyncSession = Depends(get_async_db),
 ):

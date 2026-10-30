@@ -29,3 +29,17 @@ def test_wordpress_api_request_preserves_license_header_with_json_content_type()
     assert "$request_args['headers'] = array_merge(" in source
     assert "$defaults['headers']" in source
     assert "isset($args['headers']) && is_array($args['headers']) ? $args['headers'] : []" in source
+
+
+def test_wordpress_identity_linking_is_admin_only_nonce_protected_and_server_side():
+    source = Path("wordpress/ai-ecommerce-audit-bridge/ai-ecommerce-audit-bridge.php").read_text()
+    assert "ACTION_LINK_SITE" in source
+    assert "admin_post_' . self::ACTION_LINK_SITE" in source
+    assert "current_user_can('manage_options')" in source
+    assert "wp_verify_nonce" in source
+    assert "'/api/v1/account/wordpress-link/claim'" in source
+    assert "'site_url' => home_url('/')" in source
+    assert "'wp_user_id' => (int) $user->ID" in source
+    assert "wp_get_current_user()" in source
+    assert "ACTION_UNLINK_SITE" in source
+    assert "'/api/v1/account/wordpress-link?site_url='" in source

@@ -16,6 +16,8 @@ final class AI_Ecommerce_Audit_Bridge {
     private const OPTION = 'aieab_settings';
     private const ACTION_AUDIT = 'aieab_run_audit';
     private const ACTION_SAVE_BRANDING = 'aieab_save_branding';
+    private const ACTION_LINK_SITE = 'aieab_link_wordpress_site';
+    private const ACTION_UNLINK_SITE = 'aieab_unlink_wordpress_site';
 
     public static function boot(): void {
         add_action('admin_menu', [self::class, 'add_settings_page']);
@@ -23,6 +25,8 @@ final class AI_Ecommerce_Audit_Bridge {
         add_shortcode('ai_ecommerce_audit_dashboard', [self::class, 'render_dashboard']);
         add_action('admin_post_' . self::ACTION_AUDIT, [self::class, 'handle_audit']);
         add_action('admin_post_' . self::ACTION_SAVE_BRANDING, [self::class, 'handle_save_branding']);
+        add_action('admin_post_' . self::ACTION_LINK_SITE, [self::class, 'handle_link_wordpress_site']);
+        add_action('admin_post_' . self::ACTION_UNLINK_SITE, [self::class, 'handle_unlink_wordpress_site']);
     }
 
     /**
@@ -100,6 +104,50 @@ final class AI_Ecommerce_Audit_Bridge {
                 </table>
                 <?php submit_button(__('Save API settings', 'ai-ecommerce-audit-bridge')); ?>
             </form>
+
+            <hr />
+            <?php if (isset($_GET['aieab_site_linked']) && sanitize_text_field(wp_unslash($_GET['aieab_site_linked'])) === '1') : ?><div class="notice notice-success"><p><?php echo esc_html__('WordPress site linked successfully.', 'ai-ecommerce-audit-bridge'); ?></p></div><?php endif; ?>
+            <?php if (isset($_GET['aieab_site_unlinked']) && sanitize_text_field(wp_unslash($_GET['aieab_site_unlinked'])) === '1') : ?><div class="notice notice-success"><p><?php echo esc_html__('WordPress site unlinked successfully.', 'ai-ecommerce-audit-bridge'); ?></p></div><?php endif; ?>
+            <h2><?php echo esc_html__('WordPress customer identity link', 'ai-ecommerce-audit-bridge'); ?></h2>
+            <p><?php echo esc_html__('A customer generates a one-time code in the SaaS account portal, then a trusted WordPress administrator redeems it for this site and their current WordPress user. Codes expire after 10 minutes and can be used once.', 'ai-ecommerce-audit-bridge'); ?></p>
+            <?php
+            if (self::configured()) {
+                $site_url = home_url('/');
+                $link_response = self::api_request('GET', '/api/v1/account/wordpress-link?site_url=' . rawurlencode($site_url));
+                if (!is_wp_error($link_response)) {
+                    $link_data = json_decode(wp_remote_retrieve_body($link_response), true);
+                    $links = is_array($link_data) && isset($link_data['links']) && is_array($link_data['links']) ? $link_data['links'] : [];
+                    foreach ($links as $link) {
+                        if (($link['site_url'] ?? '') === $site_url) {
+                            echo '<p><strong>' . esc_html__('Connected site:', 'ai-ecommerce-audit-bridge') . '</strong> ' . esc_html($site_url) . '</p>';
+                            echo '<p>' . esc_html(sprintf(__('Linked WordPress user: %1$s (ID %2$d)', 'ai-ecommerce-audit-bridge'), (string) ($link['wp_user_login'] ?? ''), (int) ($link['wp_user_id'] ?? 0))) . '</p>';
+                            ?>
+                            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                                <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION_UNLINK_SITE); ?>">
+                                <?php wp_nonce_field(self::ACTION_UNLINK_SITE, 'aieab_unlink_nonce'); ?>
+                                <?php submit_button(__('Unlink this WordPress site', 'ai-ecommerce-audit-bridge'), 'secondary'); ?>
+                            </form>
+                            <?php
+                            break;
+                        }
+                    }
+                    if (empty($links) || !array_filter($links, static function ($link) use ($site_url) { return ($link['site_url'] ?? '') === $site_url; })) {
+                        echo '<p>' . esc_html__('This WordPress site is not linked to the configured SaaS license.', 'ai-ecommerce-audit-bridge') . '</p>';
+                    }
+                } else {
+                    echo '<p>' . esc_html__('WordPress link status is temporarily unavailable. Save valid API settings and retry.', 'ai-ecommerce-audit-bridge') . '</p>';
+                }
+                ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION_LINK_SITE); ?>">
+                    <?php wp_nonce_field(self::ACTION_LINK_SITE, 'aieab_link_nonce'); ?>
+                    <label for="aieab-link-token"><?php echo esc_html__('One-time code from the SaaS account portal', 'ai-ecommerce-audit-bridge'); ?></label>
+                    <input id="aieab-link-token" class="regular-text" type="password" name="link_token" autocomplete="off" minlength="32" maxlength="128" required>
+                    <?php submit_button(__('Link this site and current WordPress user', 'ai-ecommerce-audit-bridge')); ?>
+                </form>
+            <?php } else { ?>
+                <p><?php echo esc_html__('Save the HTTPS API URL and license credential before linking a site.', 'ai-ecommerce-audit-bridge'); ?></p>
+            <?php } ?>
             <p><?php echo esc_html__('Add the [ai_ecommerce_audit_dashboard] shortcode to a page restricted to signed-in customers. Billing and plan assignment remain controlled by the backend Paddle integration.', 'ai-ecommerce-audit-bridge'); ?></p>
         </div>
         <?php
@@ -255,6 +303,60 @@ final class AI_Ecommerce_Audit_Bridge {
         </section>
         <?php
         return (string) ob_get_clean();
+    }
+
+
+    public static function handle_link_wordpress_site(): void {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Only a site administrator can link this WordPress site.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+        if (!isset($_POST['aieab_link_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['aieab_link_nonce'])), self::ACTION_LINK_SITE)) {
+            wp_die(esc_html__('The form expired. Refresh the page and try again.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+        if (!self::configured()) {
+            wp_die(esc_html__('The audit API is not configured.', 'ai-ecommerce-audit-bridge'), '', ['response' => 503]);
+        }
+        $token = isset($_POST['link_token']) ? trim((string) wp_unslash($_POST['link_token'])) : '';
+        if (strlen($token) < 32 || strlen($token) > 128) {
+            wp_die(esc_html__('Enter the one-time code generated in the SaaS account portal.', 'ai-ecommerce-audit-bridge'), '', ['response' => 422]);
+        }
+        $user = wp_get_current_user();
+        if (!$user || !$user->exists() || (int) $user->ID < 1 || !is_email($user->user_email)) {
+            wp_die(esc_html__('The current WordPress administrator profile is incomplete.', 'ai-ecommerce-audit-bridge'), '', ['response' => 422]);
+        }
+        $result = self::api_request('POST', '/api/v1/account/wordpress-link/claim', [
+            'headers' => ['Content-Type' => 'application/json'],
+            'body' => wp_json_encode([
+                'token' => $token,
+                'site_url' => home_url('/'),
+                'wp_user_id' => (int) $user->ID,
+                'wp_user_login' => (string) $user->user_login,
+                'wp_user_email' => (string) $user->user_email,
+            ]),
+        ]);
+        if (is_wp_error($result)) {
+            wp_die(esc_html($result->get_error_message()), '', ['response' => 400]);
+        }
+        wp_safe_redirect(add_query_arg('aieab_site_linked', '1', admin_url('options-general.php?page=ai-ecommerce-audit-bridge')));
+        exit;
+    }
+
+    public static function handle_unlink_wordpress_site(): void {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('Only a site administrator can unlink this WordPress site.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+        if (!isset($_POST['aieab_unlink_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['aieab_unlink_nonce'])), self::ACTION_UNLINK_SITE)) {
+            wp_die(esc_html__('The form expired. Refresh the page and try again.', 'ai-ecommerce-audit-bridge'), '', ['response' => 403]);
+        }
+        if (!self::configured()) {
+            wp_die(esc_html__('The audit API is not configured.', 'ai-ecommerce-audit-bridge'), '', ['response' => 503]);
+        }
+        $result = self::api_request('DELETE', '/api/v1/account/wordpress-link?site_url=' . rawurlencode(home_url('/')));
+        if (is_wp_error($result)) {
+            wp_die(esc_html($result->get_error_message()), '', ['response' => 502]);
+        }
+        wp_safe_redirect(add_query_arg('aieab_site_unlinked', '1', admin_url('options-general.php?page=ai-ecommerce-audit-bridge')));
+        exit;
     }
 
     public static function handle_save_branding(): void {
