@@ -1650,23 +1650,23 @@ async def wordpress_site_status(
 
 @app.post("/api/v1/integrations/wordpress/sites/disconnect")
 async def disconnect_wordpress_site(
-    payload: WordPressSiteAction,
+    payload: WordPressInstallationAction,
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Disconnect a site without deleting license, customer, billing, or audit history."""
     from sqlalchemy import select
-    site = (await db.execute(select(WordPressSite).where(
-        WordPressSite.id == payload.site_id,
-        WordPressSite.license_id == license_obj.id,
-        WordPressSite.status == "active",
+    site = (await operational_db.execute(select(WordPressInstallation).where(
+        WordPressInstallation.id == payload.site_id,
+        WordPressInstallation.license_key == license_obj.license_key,
+        WordPressInstallation.status == "active",
     ).with_for_update())).scalar_one_or_none()
     if site is None:
         raise HTTPException(status_code=404, detail="WordPress site connection not found.")
     site.status = "disconnected"
     site.disconnected_at = datetime.now(timezone.utc)
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "disconnected", "site_id": site.id}
