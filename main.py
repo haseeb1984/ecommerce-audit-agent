@@ -43,7 +43,7 @@ from database import Base, get_async_db
 from scan_api import router as scan_router
 from scan_worker_api import router as scan_worker_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge, WordPressSite, WhiteLabelBranding
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, WordPressSite, WhiteLabelBranding
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
