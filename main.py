@@ -1072,6 +1072,98 @@ async def logout_all_account_sessions(
     return {"status": "sessions_revoked", "revoked_count": int(result.rowcount or 0)}
 
 
+@app.get("/api/v1/account/licenses")
+async def list_customer_account_licenses(
+    response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List every license linked to the verified checkout email on this browser session."""
+    from sqlalchemy import func, select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Email sign-in is required to manage linked licenses.")
+    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    session = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == token_hash,
+        AccountSession.revoked_at.is_(None),
+    ))).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    linked_ids = (await db.execute(
+        select(SoftwareLicense.id).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(
+            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
+            SoftwareLicense.id.is_not(None),
+        ).distinct()
+    )).scalars().all()
+    licenses = (await db.execute(select(SoftwareLicense).where(
+        SoftwareLicense.id.in_(linked_ids)
+    ).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc()))).scalars().all() if linked_ids else []
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "items": [{
+            "id": item.id,
+            "client_name": item.client_name,
+            "tier": item.tier,
+            "is_active": bool(item.is_active),
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "selected": item.id == session.license_id,
+        } for item in licenses],
+        "selected_license_id": session.license_id,
+    }
+
+
+@app.post("/api/v1/account/licenses/switch")
+async def switch_customer_account_license(
+    request: Request,
+    response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Switch the current browser session only to a license linked to its verified email."""
+    from sqlalchemy import func, select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Email sign-in is required to switch linked licenses.")
+    try:
+        payload = await request.json()
+        target_id = int(payload.get("license_id"))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=422, detail="A valid license_id is required.")
+    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    session = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == token_hash,
+        AccountSession.revoked_at.is_(None),
+    ).with_for_update())).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    allowed = (await db.execute(select(SoftwareLicense.id).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(
+        SoftwareLicense.id == target_id,
+        func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
+    ).limit(1))).scalar_one_or_none()
+    if allowed is None:
+        raise HTTPException(status_code=403, detail="That license is not linked to this verified customer email.")
+    target = (await db.execute(select(SoftwareLicense).where(
+        SoftwareLicense.id == target_id
+    ))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Linked license was not found.")
+    session.license_id = target.id
+    session.last_seen_at = datetime.now(timezone.utc)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "switched", "account": {
+        "client_name": target.client_name, "tier": target.tier,
+        "license_id": target.id, "is_active": bool(target.is_active),
+    }}
+
+
 @app.get("/api/v1/account/profile")
 async def get_account_profile(
     response: Response,
