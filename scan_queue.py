@@ -388,3 +388,43 @@ async def fail_or_retry_scan_job(
     except Exception:
         await db.rollback()
         raise
+
+
+async def defer_scan_job(
+    db: AsyncSession,
+    *,
+    job_id: str,
+    worker_id: str,
+    delay_seconds: int = 30,
+) -> bool:
+    """Return a claimed job to the queue when package concurrency is temporarily full."""
+    now = _utcnow()
+    try:
+        job = await db.scalar(
+            select(WebsiteScanJob)
+            .where(
+                WebsiteScanJob.id == job_id,
+                WebsiteScanJob.status == "processing",
+                WebsiteScanJob.locked_by == worker_id[:128],
+            )
+            .with_for_update()
+        )
+        if job is None:
+            await db.rollback()
+            return False
+        batch = await db.get(ScanBatch, job.batch_id)
+        job.status = "retry_wait"
+        job.attempt_count = max(0, job.attempt_count - 1)
+        job.next_attempt_at = now + timedelta(seconds=max(5, min(delay_seconds, 300)))
+        job.locked_at = None
+        job.locked_by = None
+        job.last_error_code = "PACKAGE_CONCURRENCY_WAIT"
+        if batch is not None:
+            batch.processing_count = max(0, batch.processing_count - 1)
+            batch.queued_count += 1
+            batch.status = "queued"
+        await db.commit()
+        return True
+    except Exception:
+        await db.rollback()
+        raise
