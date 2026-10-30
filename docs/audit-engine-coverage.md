@@ -8,6 +8,7 @@ For each successfully fetched HTML page, the bounded crawler records independent
 
 - Ecommerce catalog navigation and product/category signals.
 - Sensitive-looking fields in GET forms.
+- Accessible-name and ARIA relationships, including labels, duplicate IDs, and focusable content hidden from assistive technology.
 - Product structured-data inspection, including a clean no-signal result.
 - Hreflang and international SEO declarations.
 - Analytics/pixel tags and visible consent-interface signals.
@@ -16,6 +17,7 @@ For each successfully fetched HTML page, the bounded crawler records independent
 - TLS/transport and mixed-content review.
 - Common public exposure-path probes.
 - Sampled internal URL HTTP responses.
+- Cross-page duplicate title and meta-description comparisons within the bounded crawl sample.
 
 An outcome is scoped to the page and method shown in its record. The internal-link outcome covers only the bounded sample actually fetched; it is not a full-site link inventory.
 
