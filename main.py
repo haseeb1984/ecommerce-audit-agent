@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge
 from auth import verify_license_or_api_key, verify_customer_account, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -104,6 +104,15 @@ class AccountLoginVerify(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
 
 
+class AccountEmailChangeRequest(BaseModel):
+    new_email: str = Field(..., min_length=3, max_length=254)
+
+
+class AccountEmailChangeVerify(BaseModel):
+    challenge_id: str = Field(..., min_length=20, max_length=64)
+    code: str = Field(..., min_length=6, max_length=6)
+
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -160,6 +169,7 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "payment_webhook_events",
         "account_login_challenges",
         "account_sessions",
+        "account_email_change_challenges",
     }
     try:
         result = await db.execute(text("SELECT 1"))
@@ -2002,6 +2012,43 @@ def _send_account_login_code(recipient: str, code: str) -> None:
         f"Your customer account sign-in code is: {code}\n\n"
         "This code expires in 10 minutes and can be used once. "
         "If you did not request it, you can ignore this email."
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
+def _send_account_email_change_code(recipient: str, code: str) -> None:
+    """Deliver a new-address ownership challenge using the configured SMTP relay."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = _configured_smtp_port()
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+    message = EmailMessage()
+    message["Subject"] = "Verify your new E-commerce Audit Agent account email"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"Your new customer account email verification code is: {code}\n\n"
+        "This code expires in 10 minutes and can be used once. "
+        "Your existing account email remains active until this code is verified. "
+        "If you did not request this change, ignore this message and your account will remain unchanged."
     )
     if mode == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=15) as server:
