@@ -26,6 +26,7 @@
   <div><label for="loginCode">Six-digit sign-in code</label><input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456"></div>
 </div>
 <div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button><button id="logoutAllSessions" class="secondary" type="button" disabled>Sign out all devices</button></div>
+<div id="deviceSessions" class="reports" aria-live="polite" style="margin-top:14px"><p class="muted">Sign in to manage devices connected to your customer account.</p></div>
 <div id="loginStatus" class="status" role="status" aria-live="polite">Passwordless sign-in is available for accounts with a verified checkout email.</div>
 </section>
 <section class="panel">
@@ -433,6 +434,34 @@
       if (operationSessionVersion === accountSessionVersion) renderApiKeys();
     }
   }
+  async function loadDeviceSessions() {
+    const container = $("deviceSessions");
+    if (!sessionToken) { container.replaceChildren(); const note=document.createElement("p"); note.className="muted"; note.textContent="Email sign-in is required to manage devices."; container.append(note); return; }
+    const response = await api("/api/v1/account/auth/sessions");
+    const data = await response.json();
+    container.replaceChildren();
+    const heading = document.createElement("strong"); heading.textContent = "Signed-in devices (" + ((data.items || []).length) + ")"; container.append(heading);
+    for (const item of (Array.isArray(data.items) ? data.items : [])) {
+      const card = document.createElement("div"); card.className = "report";
+      const details = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = item.current ? "This device" : (item.client_name || "Customer device");
+      const meta = document.createElement("small");
+      meta.textContent = String(item.user_agent || "Unknown device").slice(0,180) + " · Last active: " + (item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Not yet active");
+      details.append(title, meta); card.append(details);
+      if (!item.current) {
+        const revoke = document.createElement("button"); revoke.type="button"; revoke.className="secondary"; revoke.textContent="Sign out device";
+        revoke.addEventListener("click", async () => {
+          revoke.disabled=true;
+          try { await api("/api/v1/account/auth/sessions/" + encodeURIComponent(item.id), {method:"DELETE"}); await loadDeviceSessions(); setStatus("loginStatus","Selected device has been signed out.","success"); }
+          catch(error) { revoke.disabled=false; setStatus("loginStatus",error.message,"error"); }
+        });
+        card.append(revoke);
+      } else { const current=document.createElement("small"); current.textContent="Current browser session"; card.append(current); }
+      container.append(card);
+    }
+    if (!(data.items || []).length) { const note=document.createElement("p"); note.className="muted"; note.textContent="No active devices found."; container.append(note); }
+  }
+
   async function loadAccountLicenses() {
     if (!sessionToken) { $("linkedLicensesPanel").hidden = true; return; }
     const response = await api("/api/v1/account/licenses");
@@ -467,6 +496,7 @@
       clearAccountView();
       const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()]);
       await loadAccountLicenses();
+      if (sessionToken) await loadDeviceSessions().catch(() => {});
       const failed = results.filter(item => item.status === "rejected").length;
       $("runAudit").disabled = results[1].status !== "fulfilled" || results[2].status !== "fulfilled";
       renderApiKeys();
