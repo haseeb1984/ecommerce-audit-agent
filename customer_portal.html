@@ -54,6 +54,13 @@
   <div id="emailChangeStatus" class="status" role="status" aria-live="polite">Sign in with email to change your account address.</div>
 </div>
 </section>
+<section class="panel" aria-labelledby="wordpressSitesHeading">
+<h2 id="wordpressSitesHeading">Connected WordPress sites</h2>
+<p class="muted">Install the Ecommerce Audit Agent plugin on your WordPress or WooCommerce store and connect it with this account's license. Review connected installations here and disconnect access when a site is no longer yours.</p>
+<p><a href="/docs/wordpress-integration" target="_blank" rel="noopener">WordPress plugin installation guide</a></p>
+<div id="wordpressSites" class="reports" aria-live="polite"><p class="muted">Connect your account to view WordPress installations.</p></div>
+<div id="wordpressSitesStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
@@ -504,7 +511,7 @@
       if (!response.ok) throw new Error(data.detail || "Unable to switch linked account.");
       accountSessionVersion += 1;
       clearAccountView();
-      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()]);
+      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites()]);
       await loadAccountLicenses();
       if (sessionToken) await loadDeviceSessions().catch(() => {});
       const failed = results.filter(item => item.status === "rejected").length;
@@ -515,6 +522,43 @@
       setStatus("profileStatus", error.message, "error");
       await loadAccountLicenses().catch(() => {});
     } finally { select.disabled = false; }
+  }
+  async function loadWordPressSites() {
+    const container = $("wordpressSites");
+    const response = await api("/api/v1/account/wordpress-sites");
+    const data = await response.json();
+    container.replaceChildren();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
+      container.append(empty);
+    }
+    for (const site of items) {
+      const card = document.createElement("div"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = site.site_url || site.site_host || "WordPress site";
+      const meta = document.createElement("small");
+      meta.textContent = "Status: " + (site.status || "unknown") + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
+      info.append(title, meta); card.append(info);
+      if (site.status === "active") {
+        const button = document.createElement("button"); button.className = "secondary"; button.type = "button"; button.textContent = "Disconnect site";
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Disconnect " + (site.site_host || "this WordPress site") + " from the currently selected license? Existing reports and billing history will remain available.")) return;
+          button.disabled = true;
+          try {
+            await api("/api/v1/account/wordpress-sites/" + encodeURIComponent(site.site_id) + "/disconnect", {method:"POST"});
+            setStatus("wordpressSitesStatus", "WordPress site disconnected. License and audit reports were not deleted.", "success");
+            await loadWordPressSites();
+          } catch (error) {
+            setStatus("wordpressSitesStatus", error.message, "error"); button.disabled = false;
+          }
+        });
+        card.append(button);
+      }
+      container.append(card);
+    }
+    setStatus("wordpressSitesStatus", items.length + " WordPress installation(s) found for this license.", "success");
   }
   async function loadProfile() {
     const response = await api("/api/v1/account/profile");
