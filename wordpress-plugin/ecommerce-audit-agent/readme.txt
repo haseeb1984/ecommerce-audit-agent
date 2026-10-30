@@ -12,8 +12,8 @@ Connect a WordPress or WooCommerce store to Ecommerce Audit Agent. Manage your l
 
 == Installation ==
 
-1. Upload the `ecommerce-audit-agent` folder to `/wp-content/plugins/`, or install the ZIP from Plugins > Add New > Upload Plugin.
-2. Activate **Ecommerce Audit Agent**.
+1. Download the plugin ZIP from the SaaS customer portal or `/wordpress-plugin.zip` on your Ecommerce Audit Agent deployment.
+2. In WordPress, open Plugins > Add New > Upload Plugin, upload the ZIP, install, and activate it.
 3. Open **Ecommerce Audit** in the WordPress administrator menu.
 4. Enter the SaaS license key issued to your customer account. The API base defaults to the hosted Ecommerce Audit Agent service and must use HTTPS.
 5. Save and connect. The plugin registers this WordPress installation against the license.
