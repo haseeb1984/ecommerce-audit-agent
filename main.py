@@ -1514,14 +1514,24 @@ async def list_customer_account_licenses(
     ))).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    linked_ids = (await db.execute(
-        select(SoftwareLicense.id).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(
-            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-            SoftwareLicense.id.is_not(None),
+    linked_license_keys = set((await operational_db.execute(
+        select(CustomerBillingEvent.license_key).where(
+            func.lower(CustomerBillingEvent.recipient_email) == session.email.lower()
         ).distinct()
-    )).scalars().all()
+    )).scalars().all())
+    linked_ids = (await db.execute(
+        select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(linked_license_keys))
+    )).scalars().all() if linked_license_keys else []
+    if not linked_ids:
+        # Compatibility path for accounts whose billing history has not yet been migrated.
+        linked_ids = (await db.execute(
+            select(SoftwareLicense.id).join(
+                PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+            ).where(
+                func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
+                SoftwareLicense.id.is_not(None),
+            ).distinct()
+        )).scalars().all()
     licenses = (await db.execute(select(SoftwareLicense).where(
         SoftwareLicense.id.in_(linked_ids)
     ).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc()))).scalars().all() if linked_ids else []
@@ -2101,34 +2111,53 @@ async def account_billing_history(
     offset: int = Query(0, ge=0, le=10000000),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Return a bounded, paginated billing-event history scoped to the authenticated license."""
+    """Return customer billing history from Hostinger, with legacy PostgreSQL fallback."""
     from sqlalchemy import select, func as sql_func
 
-    ownership_filter = PaymentWebhookEvent.license_id == license_obj.id
-    total = int((await db.execute(
-        select(sql_func.count(PaymentWebhookEvent.event_id)).where(ownership_filter)
+    ownership_filter = CustomerBillingEvent.license_key == license_obj.license_key
+    total = int((await operational_db.execute(
+        select(sql_func.count(CustomerBillingEvent.event_id)).where(ownership_filter)
     )).scalar_one() or 0)
-    events = (await db.execute(
-        select(PaymentWebhookEvent)
+    events = (await operational_db.execute(
+        select(CustomerBillingEvent)
         .where(ownership_filter)
-        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .order_by(CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc())
         .offset(offset)
         .limit(limit)
     )).scalars().all()
-    # Keep a compact, separately surfaced queue of recent events that may need
-    # customer attention. This is deliberately not presented as authoritative
-    # subscription state: Paddle's portal remains the source for payment actions.
     attention_statuses = (
         "payment_failed", "subscription_past_due", "subscription_canceled",
         "email_pending", "email_sending",
     )
-    attention_events = (await db.execute(
-        select(PaymentWebhookEvent)
-        .where(ownership_filter, PaymentWebhookEvent.status.in_(attention_statuses))
-        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+    attention_events = (await operational_db.execute(
+        select(CustomerBillingEvent)
+        .where(ownership_filter, CustomerBillingEvent.status.in_(attention_statuses))
+        .order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.event_id.desc())
         .limit(10)
     )).scalars().all()
+
+    # Existing accounts remain readable until the one-time Hostinger data copy
+    # has been applied. New webhook events are mirrored after their PG commit.
+    if total == 0:
+        legacy_filter = PaymentWebhookEvent.license_id == license_obj.id
+        total = int((await db.execute(
+            select(sql_func.count(PaymentWebhookEvent.event_id)).where(legacy_filter)
+        )).scalar_one() or 0)
+        events = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(legacy_filter)
+            .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+            .offset(offset).limit(limit)
+        )).scalars().all()
+        attention_events = (await db.execute(
+            select(PaymentWebhookEvent)
+            .where(legacy_filter, PaymentWebhookEvent.status.in_(attention_statuses))
+            .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+            .limit(10)
+        )).scalars().all()
+
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -2139,29 +2168,22 @@ async def account_billing_history(
             "expires_at": license_obj.expires_at.isoformat() if license_obj.expires_at else None,
             "billing_period_ends_at": license_obj.billing_period_ends_at.isoformat() if license_obj.billing_period_ends_at else None,
         },
-        "items": [
-            {
-                "event_id": item.event_id,
-                "status": item.status,
-                "transaction_id": item.transaction_id,
-                "subscription_id": item.subscription_id,
-                "created_at": item.created_at.isoformat() if item.created_at else None,
-                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            }
-            for item in events
-        ],
-        "attention_items": [
-            {
-                "event_id": item.event_id,
-                "status": item.status,
-                "subscription_id": item.subscription_id,
-                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            }
-            for item in attention_events
-        ],
+        "items": [{
+            "event_id": item.event_id,
+            "status": item.status,
+            "transaction_id": item.transaction_id,
+            "subscription_id": item.subscription_id,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in events],
+        "attention_items": [{
+            "event_id": item.event_id,
+            "status": item.status,
+            "subscription_id": item.subscription_id,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in attention_events],
         "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(events) < total},
     }
-
 
 @app.post("/api/v1/account/billing-portal")
 async def create_account_billing_portal(
