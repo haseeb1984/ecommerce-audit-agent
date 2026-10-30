@@ -203,7 +203,9 @@ async def claim_next_scan_job(
             .with_for_update(skip_locked=True)
         )).scalars().all()
         for expired in expired_jobs:
-            batch = await db.get(ScanBatch, expired.batch_id)
+            batch = await db.scalar(
+                select(ScanBatch).where(ScanBatch.id == expired.batch_id).with_for_update()
+            )
             if batch is not None:
                 batch.processing_count = max(0, batch.processing_count - 1)
             expired.locked_at = None
@@ -254,7 +256,9 @@ async def claim_next_scan_job(
         job.started_at = job.started_at or now
         job.locked_at = now
         job.locked_by = worker_id[:128]
-        batch = await db.get(ScanBatch, job.batch_id)
+        batch = await db.scalar(
+            select(ScanBatch).where(ScanBatch.id == job.batch_id).with_for_update()
+        )
         if batch is not None:
             batch.status = "processing"
             batch.started_at = batch.started_at or now
@@ -301,7 +305,9 @@ async def complete_scan_job(
         job.locked_by = None
         job.quota_consumed = True
 
-        batch = await db.get(ScanBatch, job.batch_id)
+        batch = await db.scalar(
+            select(ScanBatch).where(ScanBatch.id == job.batch_id).with_for_update()
+        )
         if batch is not None:
             batch.processing_count = max(0, batch.processing_count - 1)
             batch.completed_count += 1
@@ -358,7 +364,9 @@ async def fail_or_retry_scan_job(
             await db.rollback()
             return "not_owned"
 
-        batch = await db.get(ScanBatch, job.batch_id)
+        batch = await db.scalar(
+            select(ScanBatch).where(ScanBatch.id == job.batch_id).with_for_update()
+        )
         if batch is not None:
             batch.processing_count = max(0, batch.processing_count - 1)
 
@@ -412,7 +420,9 @@ async def defer_scan_job(
         if job is None:
             await db.rollback()
             return False
-        batch = await db.get(ScanBatch, job.batch_id)
+        batch = await db.scalar(
+            select(ScanBatch).where(ScanBatch.id == job.batch_id).with_for_update()
+        )
         job.status = "retry_wait"
         job.attempt_count = max(0, job.attempt_count - 1)
         job.next_attempt_at = now + timedelta(seconds=max(5, min(delay_seconds, 300)))
