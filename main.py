@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge, WordPressSite
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge, WordPressSite, WhiteLabelBranding
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -50,6 +50,7 @@ from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
+from plan_features import plan_features
 
 logger = logging.getLogger("audit_service")
 
@@ -103,6 +104,12 @@ class ReportEmailRequest(BaseModel):
     # Bound untrusted request data before the route performs DB lookup or SMTP work.
     recipient_email: str = Field(..., min_length=3, max_length=254)
     recipient_confirmed: bool = False
+
+
+class WhiteLabelBrandingUpdate(BaseModel):
+    brand_name: str = Field(..., min_length=1, max_length=100)
+    logo_url: str | None = Field(default=None, max_length=2048)
+    primary_color: str = Field(default="#155a8a", min_length=7, max_length=7)
 
 
 class AccountProfileUpdate(BaseModel):
@@ -311,6 +318,9 @@ async def audit_lead(
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db)
 ):
+    # Conversion dossiers are a premium entitlement; reject before quota reservation or provider calls.
+    if not plan_features(license_obj.tier)["conversion_dossier"]:
+        raise HTTPException(status_code=403, detail="Conversion dossiers require a Pro, Agency, or Business plan.")
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
@@ -398,7 +408,9 @@ async def comprehensive_audit_pdf(
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Create a phase-one evidence report as a PDF, using the existing license quota."""
+    """Create an evidence report as a PDF, using the existing license quota."""
+    if not plan_features(license_obj.tier)["standard_audits"]:
+        raise HTTPException(status_code=403, detail="Standard audits are not included in this plan.")
     try:
         target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
@@ -1765,6 +1777,50 @@ async def update_account_profile(
     return {"client_name": license_obj.client_name, "updated": True}
 
 
+@app.get("/api/v1/account/branding")
+async def get_account_branding(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
+    from sqlalchemy import select
+    item = (await db.execute(select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id))).scalar_one_or_none()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"brand_name": item.brand_name if item else license_obj.client_name, "logo_url": item.logo_url if item else None, "primary_color": item.primary_color if item else "#155a8a"}
+
+
+@app.put("/api/v1/account/branding")
+async def update_account_branding(
+    payload: WhiteLabelBrandingUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
+    brand_name = payload.brand_name.strip()
+    logo_url = payload.logo_url.strip() if payload.logo_url else None
+    color = payload.primary_color.strip()
+    if not brand_name or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        raise HTTPException(status_code=422, detail="Provide a brand name and a six-digit hex color.")
+    if logo_url:
+        parsed = urlsplit(logo_url)
+        if parsed.scheme.lower() != "https" or not parsed.netloc or parsed.username or parsed.password:
+            raise HTTPException(status_code=422, detail="Logo URL must be a valid HTTPS URL without embedded credentials.")
+    from sqlalchemy import select
+    item = (await db.execute(select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id))).scalar_one_or_none()
+    if item is None:
+        item = WhiteLabelBranding(license_id=license_obj.id, brand_name=brand_name, logo_url=logo_url, primary_color=color)
+        db.add(item)
+    else:
+        item.brand_name, item.logo_url, item.primary_color = brand_name, logo_url, color
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"brand_name": brand_name, "logo_url": logo_url, "primary_color": color, "updated": True}
+
+
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
@@ -1828,6 +1884,7 @@ async def get_account_usage(
     response.headers["Pragma"] = "no-cache"
     return {
         "tier": str(license_obj.tier or "starter"),
+        "features": plan_features(license_obj.tier),
         "plan_label": str(package_row["label"]) if package_row is not None else str(license_obj.tier or "starter"),
         "plan_available": bool(package_row["is_active"]) if package_row is not None else None,
         "monthly_limit": limit,
@@ -2019,6 +2076,8 @@ async def list_account_api_keys(
     db: AsyncSession = Depends(get_async_db),
 ):
     """List metadata for this account's API keys; never return stored key material."""
+    if not plan_features(license_obj.tier)["direct_api_access"]:
+        raise HTTPException(status_code=403, detail="Direct API access is not included in this plan.")
     from sqlalchemy import select
 
     rows = (await db.execute(
@@ -2076,6 +2135,8 @@ async def create_account_api_key(
     """
     from sqlalchemy import select, func as sql_func
 
+    if not plan_features(license_obj.tier)["direct_api_access"]:
+        raise HTTPException(status_code=403, detail="Direct API access is not included in this plan.")
     expires_at = license_obj.expires_at
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
