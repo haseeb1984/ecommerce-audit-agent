@@ -4068,6 +4068,7 @@ async def admin_list_client_sessions(
             expiry = expiry.replace(tzinfo=timezone.utc)
         state = "revoked" if item.revoked_at is not None else ("expired" if expiry <= now else "active")
         items.append({
+            "session_id": item.session_id,
             "email": item.email,
             "status": state,
             "created_at": item.created_at.isoformat() if item.created_at else None,
