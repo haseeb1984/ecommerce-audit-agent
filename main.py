@@ -1583,6 +1583,11 @@ async def switch_customer_account_license(
         func.lower(CustomerBillingEvent.recipient_email) == session.email.lower(),
     ).limit(1)) if target_license_key else None
     if allowed is None:
+        allowed = (await db.execute(select(PaymentWebhookEvent.event_id).where(
+            PaymentWebhookEvent.license_id == target_id,
+            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
+        ).limit(1))).scalar_one_or_none()
+    if allowed is None:
         raise HTTPException(status_code=403, detail="That license is not linked to this verified customer email.")
     target = (await db.execute(select(SoftwareLicense).where(
         SoftwareLicense.id == target_id
@@ -1629,6 +1634,11 @@ async def register_wordpress_site(
     owner_email = await operational_db.scalar(select(CustomerBillingEvent.recipient_email).where(
         CustomerBillingEvent.license_key == license_obj.license_key,
     ).order_by(CustomerBillingEvent.updated_at.desc()).limit(1))
+    if not owner_email:
+        owner_email = await db.scalar(select(PaymentWebhookEvent.recipient_email).where(
+            PaymentWebhookEvent.license_id == license_obj.id,
+            PaymentWebhookEvent.recipient_email.is_not(None),
+        ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))
     account = await operational_db.scalar(select(CustomerAccount).where(
         CustomerAccount.license_key == license_obj.license_key
     ).with_for_update())
@@ -5080,6 +5090,12 @@ async def admin_customer_account_detail(
         .order_by(SoftwareLicense.created_at.desc())
     )).scalars().all() if customer_license_keys else []
     if not rows:
+        # Legacy fallback until Hostinger billing history migration is applied.
+        rows = (await db.execute(select(SoftwareLicense).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized)
+        .distinct().order_by(SoftwareLicense.created_at.desc()))).scalars().all()
+    if not rows:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
     license_keys = [item.license_key for item in rows]
@@ -5157,6 +5173,11 @@ async def admin_customer_account_action(
     ids = list((await db.execute(
         select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(account_license_keys))
     )).scalars().all()) if account_license_keys else []
+    if not ids:
+        ids = list((await db.execute(select(SoftwareLicense.id).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
+        )).scalars().all())
     if not ids:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     now = datetime.now(timezone.utc)
