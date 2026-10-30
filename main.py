@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, WebsiteScanResult, AdminCustomerNote
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote
 
 logger = logging.getLogger("audit_service")
 
@@ -356,7 +356,8 @@ async def audit_lead(
     email: str = Query("", max_length=255, description="User email for audit copy"),
     source: str = Query("web_audit", max_length=50, description="Traffic source tag"),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     # Conversion dossiers are a premium entitlement; reject before quota reservation or provider calls.
     if not plan_features(license_obj.tier)["conversion_dossier"]:
@@ -395,6 +396,46 @@ async def audit_lead(
         )
         await db.commit()
         reservation_id = None
+
+        # PostgreSQL owns quota and the canonical lead; Hostinger owns customer
+        # usage/activity history. Keep the audit successful if the secondary
+        # operational event write is temporarily unavailable.
+        try:
+            usage_key = f"legacy-audit:{db_lead.id}"
+            operational_db.add(CustomerUsageEvent(
+                license_key=license_obj.license_key,
+                job_id=None,
+                event_key=usage_key,
+                event_type="audit_completed",
+                quantity=1,
+                package_tier=license_obj.tier,
+                details_json=json.dumps({
+                    "audit_lead_id": db_lead.id,
+                    "domain": dossier.audit.domain,
+                    "source": source[:50],
+                }, separators=(",", ":"), ensure_ascii=True),
+                created_at=reserved_at,
+            ))
+            operational_db.add(CustomerActivityEvent(
+                license_key=license_obj.license_key,
+                actor_email=email.strip().lower()[:254] or None,
+                event_type="audit_completed",
+                entity_type="audit_lead",
+                entity_id=str(db_lead.id),
+                details_json=json.dumps({
+                    "domain": dossier.audit.domain,
+                    "source": source[:50],
+                }, separators=(",", ":"), ensure_ascii=True),
+                created_at=reserved_at,
+            ))
+            await operational_db.commit()
+        except Exception as history_exc:
+            await operational_db.rollback()
+            logger.warning(
+                "Customer audit history write failed (error_type=%s, audit_lead_id=%s)",
+                type(history_exc).__name__,
+                db_lead.id,
+            )
         return dossier
     except HTTPException as exc:
         await db.rollback()
