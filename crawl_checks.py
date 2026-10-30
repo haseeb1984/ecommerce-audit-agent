@@ -2119,6 +2119,20 @@ async def run_bounded_site_crawl(
                 category="accessibility", page_url=final_url,
                 findings=accessibility_findings, method="static HTML accessibility signal inspection",
             )
+            aria_findings = [
+                item for item in accessibility_findings
+                if any(token in item.title.lower() for token in (
+                    "aria reference", "label or aria", "duplicate html ids",
+                    "accessible name", "accessible labels", "accessible label",
+                    "focusable controls may be hidden",
+                ))
+            ]
+            _record_static_check_outcome(
+                outcome_records, check_id="aria.accessible_names_and_relationships",
+                category="aria", page_url=final_url,
+                findings=aria_findings,
+                method="static HTML accessible-name, label association, ID-reference and aria-hidden focusability inspection",
+            )
             # Trust inventory is source-level only and explicitly avoids authenticity claims.
             trust_findings = inspect_trust_signals(body, final_url)
             findings.extend(trust_findings)
@@ -2706,6 +2720,27 @@ async def run_bounded_site_crawl(
                     "Repeated descriptions may not summarize individual pages well. Search engines can choose different snippets.",
                     "Use page-specific descriptions where they provide useful information; do not change them solely to force a ranking result.",
                     ["Compare the listed pages in a crawler.", "Retest after changes."], urls[0],
+                ))
+        if outcome_records is not None:
+            duplicate_content_findings = [
+                item for item in findings if item.category == "duplicate_content"
+            ]
+            if pages_checked:
+                _record_static_check_outcome(
+                    outcome_records, check_id="content_quality.duplicate_metadata",
+                    category="content_quality", page_url=normalized,
+                    findings=duplicate_content_findings,
+                    method="cross-page comparison of normalized HTML title and meta-description values within the bounded crawl sample",
+                )
+            else:
+                outcome_records.append(CheckOutcome(
+                    check_id="content_quality.duplicate_metadata",
+                    category="content_quality", page_url=normalized,
+                    outcome="not_assessed",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded cross-page title and meta-description comparison",
+                    evidence="No pages were successfully fetched; duplicate metadata could not be compared.",
+                    evidence_ref="content_quality.duplicate_metadata",
                 ))
 
     if len(candidates) >= MAX_CRAWL_PAGES - 1:
