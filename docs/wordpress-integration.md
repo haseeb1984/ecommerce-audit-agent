@@ -19,7 +19,7 @@ The plugin requires WordPress 6.2+, PHP 7.4+, and outbound HTTPS. WooCommerce is
 5. Save and connect. The plugin registers the WordPress installation against the authenticated license.
 6. Use the dashboard to view plan/quota state, run a comprehensive audit, and download saved reports.
 
-The plugin uses the license key server-to-server in the `X-License-Key` header. It does not put the key into public page markup, browser JavaScript, shortcode output, or report URLs. A site connection is scoped to the exact license that authenticated the request. The SaaS backend derives the billing customer email from the verified Paddle provisioning event for that license; the plugin does not let a site submit an arbitrary customer identity.
+The plugin encrypts the saved license credential at rest with AES-256-GCM using a key derived from the WordPress authentication salt, and decrypts it only when making a server-side API request. The license key is sent server-to-server in the `X-License-Key` header. It is never rendered into the admin HTML, public page markup, browser JavaScript, shortcode output, or report URLs. Rotating WordPress salts requires the administrator to enter the license key again. A site connection is scoped to the exact license that authenticated the request. The SaaS backend derives the billing customer email from the verified Paddle provisioning event for that license; the plugin does not let a site submit an arbitrary customer identity.
 
 ## SaaS API
 
@@ -62,7 +62,7 @@ Apply `migrations/20261031_wordpress_sites.sql` before deploying the backend rev
 
 ## Security and operational notes
 
-- The plugin makes outbound requests only to a validated HTTPS API base URL, with TLS certificate verification and redirects disabled.
+- The plugin makes outbound requests only to a validated HTTPS API base URL, with TLS certificate verification and redirects disabled. The saved license credential is authenticated-encrypted at rest with AES-256-GCM.
 - The backend authenticates every registration, status, disconnect, audit, usage, and report request.
 - Customer report downloads are proxied through the authenticated WordPress administrator action. PDFs are not written to public WordPress uploads.
 - Site registration and disconnect operations do not reveal license secrets or customer billing-provider credentials.
