@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, WebsiteScanResult
 
 logger = logging.getLogger("audit_service")
 
@@ -1889,6 +1889,7 @@ async def get_account_usage(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return the authenticated license's monthly quota status without exposing its key."""
     from sqlalchemy import select, func as sql_func
@@ -1943,6 +1944,12 @@ async def get_account_usage(
         entitlement_state = "quota_exhausted"
     else:
         entitlement_state = "active"
+    usage_events = (await operational_db.execute(
+        select(CustomerUsageEvent).where(
+            CustomerUsageEvent.license_key == license_obj.license_key,
+            CustomerUsageEvent.created_at >= month_start,
+        ).order_by(CustomerUsageEvent.created_at.desc()).limit(100)
+    )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -1959,6 +1966,12 @@ async def get_account_usage(
         "quota_state": "exhausted" if limit > 0 and remaining <= 0 else ("near_limit" if usage_percent >= 80 else "available"),
         "entitlement_state": entitlement_state,
         "max_concurrent_audits": int(package_row["max_concurrent_audits"]) if package_row is not None else None,
+        "history": [{
+            "event_key": item.event_key, "event_type": item.event_type,
+            "quantity": item.quantity,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "details": json.loads(item.details_json or "{}"),
+        } for item in usage_events],
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
         "expires_at": expires_at.isoformat() if expires_at else None,
@@ -1972,21 +1985,20 @@ async def account_audit_activity(
     offset: int = Query(default=0, ge=0, le=10000000),
     domain: str = Query(default="", max_length=253),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Return bounded, optionally domain-filtered audit activity without lead-contact data."""
+    """Return customer scan history from Hostinger without exposing lead-contact data."""
     from sqlalchemy import select, func as sql_func
-
-    filters = [AuditLead.license_id == license_obj.id]
     normalized_domain = domain.strip().lower().replace("%", "").replace("_", "")
+    filters = [WebsiteScanResult.license_key == license_obj.license_key]
     if normalized_domain:
-        filters.append(AuditLead.domain.ilike(f"%{normalized_domain}%"))
-    total = int((await db.execute(
-        select(sql_func.count(AuditLead.id)).where(*filters)
+        filters.append(WebsiteScanResult.target_url.ilike(f"%{normalized_domain}%"))
+    total = int((await operational_db.execute(
+        select(sql_func.count(WebsiteScanResult.id)).where(*filters)
     )).scalar_one() or 0)
-    rows = (await db.execute(
-        select(AuditLead).where(*filters)
-        .order_by(AuditLead.created_at.desc(), AuditLead.id.desc())
+    rows = (await operational_db.execute(
+        select(WebsiteScanResult).where(*filters)
+        .order_by(WebsiteScanResult.created_at.desc(), WebsiteScanResult.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
@@ -1994,10 +2006,10 @@ async def account_audit_activity(
     return {
         "items": [{
             "id": row.id,
-            "domain": row.domain,
-            "mobile_score": row.mobile_score,
-            "speed_index_sec": row.speed_index_sec,
-            "source": row.source_channel,
+            "domain": urlsplit(row.target_url).hostname or row.target_url,
+            "mobile_score": (json.loads(row.summary_json or "{}").get("pagespeed") or {}).get("mobile_score"),
+            "speed_index_sec": (json.loads(row.summary_json or "{}").get("pagespeed") or {}).get("speed_index_sec"),
+            "source": "bulk_scan",
             "created_at": row.created_at.isoformat() if row.created_at else None,
         } for row in rows],
         "page": {
