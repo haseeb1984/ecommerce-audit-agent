@@ -951,6 +951,12 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     if len(auth_secret) < 32:
         logger.error("Customer account sign-in is unavailable because ACCOUNT_AUTH_SECRET is not configured.")
         raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
+    # A newly issued code supersedes every older outstanding code for this email.
+    from sqlalchemy import update
+    await db.execute(update(AccountLoginChallenge).where(
+        AccountLoginChallenge.email == email,
+        AccountLoginChallenge.consumed_at.is_(None),
+    ).values(consumed_at=now))
     code = f"{secrets.randbelow(1000000):06d}"
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
@@ -984,7 +990,7 @@ async def verify_account_login_code(payload: AccountLoginVerify, response: Respo
     challenge = (await db.execute(select(AccountLoginChallenge).where(
         AccountLoginChallenge.email == email,
         AccountLoginChallenge.consumed_at.is_(None),
-    ).order_by(AccountLoginChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
+    ).order_by(AccountLoginChallenge.created_at.desc()).limit(1).with_for_update())).scalar_one_or_none()
     if challenge is None:
         raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
     expiry = challenge.expires_at
