@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, WebsiteScanResult
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, WebsiteScanResult, AdminCustomerNote
 
 logger = logging.getLogger("audit_service")
 
@@ -4834,10 +4834,9 @@ async def admin_customer_account_detail(
     license_keys = [item.license_key for item in rows]
     sessions = (await operational_db.execute(select(CustomerSession).where(CustomerSession.license_key.in_(license_keys)).order_by(CustomerSession.created_at.desc()).limit(200))).scalars().all()
     payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids)).order_by(PaymentWebhookEvent.updated_at.desc()).limit(200))).scalars().all()
-    notes = (await db.execute(text("""
-        SELECT id, note, created_by, created_at FROM saas_admin_customer_notes
-        WHERE LOWER(customer_email)=:email ORDER BY created_at DESC, id DESC LIMIT 100
-    """), {"email": normalized})).mappings().all()
+    notes = (await operational_db.execute(select(AdminCustomerNote).where(
+        func.lower(AdminCustomerNote.customer_email) == normalized
+    ).order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc()).limit(100))).scalars().all()
     wordpress_sites = (await operational_db.execute(select(WordPressInstallation).where(
         WordPressInstallation.license_key.in_(license_keys)
     ).order_by(WordPressInstallation.created_at.desc()).limit(100))).scalars().all()
@@ -4867,8 +4866,8 @@ async def admin_customer_account_detail(
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in payments],
         "support_notes": [{
-            "id": item["id"], "note": item["note"], "created_by": item["created_by"],
-            "created_at": item["created_at"].isoformat() if item["created_at"] else None,
+            "id": item.id, "note": item.note, "created_by": item.created_by,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
         } for item in notes],
         "wordpress_sites": [{
             "site_id": item.id, "license_key": item.license_key, "site_url": item.site_url,
@@ -4930,6 +4929,7 @@ async def admin_add_customer_note(
     request: Request = None,
     response: Response = None,
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Append a bounded internal support note to a customer identity."""
     _require_admin_key(request)
@@ -4940,13 +4940,18 @@ async def admin_add_customer_note(
     ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized))).scalar_one() or 0)
     if not license_count:
         raise HTTPException(status_code=404, detail="Customer account not found.")
-    result = await db.execute(text("""
-        INSERT INTO saas_admin_customer_notes (customer_email, note, created_by)
-        VALUES (:email, :note, 'admin')
-        RETURNING id, created_at
-    """), {"email": normalized, "note": payload.note.strip()})
-    created = result.mappings().one()
-    await _write_admin_log(db, "customer.support_note_added", "customer", normalized, {"note_id": created["id"]})
+    created = AdminCustomerNote(
+        license_key=",".join((await db.execute(select(SoftwareLicense.license_key).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct())).scalars().all())[:100],
+        customer_email=normalized,
+        note=payload.note.strip(),
+        created_by="admin",
+        created_at=datetime.now(timezone.utc),
+    )
+    operational_db.add(created)
+    await operational_db.commit()
+    await _write_admin_log(db, "customer.support_note_added", "customer", normalized, {"note_id": created.id})
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
