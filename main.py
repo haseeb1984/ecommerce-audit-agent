@@ -1175,6 +1175,9 @@ async def verify_customer_email_change(
             challenge.consumed_at = now
         await db.commit()
         raise HTTPException(status_code=401, detail="Verification code is invalid or expired.")
+    # Serialize claims for the same proposed address so two different accounts
+    # cannot both pass the collision check concurrently on PostgreSQL.
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:email))"), {"email": challenge.new_email})
     old_license_ids = set((await db.execute(select(PaymentWebhookEvent.license_id).where(
         func.lower(PaymentWebhookEvent.recipient_email) == old_email,
         PaymentWebhookEvent.license_id.is_not(None),
