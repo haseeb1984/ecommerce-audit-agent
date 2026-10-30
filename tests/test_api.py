@@ -3815,7 +3815,8 @@ async def test_admin_can_revoke_one_customer_device_with_audit_reason(client, mo
     assert listed.json()["items"][0]["session_id"] == session_id
     assert "token_hash" not in listed.json()["items"][0]
 
-    revoked = await client.delete(
+    revoked = await client.request(
+        "DELETE",
         f"/api/v1/admin/clients/{license_id}/sessions/{session_id}",
         headers=headers,
         json={"reason": "customer reported unknown device"},
@@ -3823,7 +3824,8 @@ async def test_admin_can_revoke_one_customer_device_with_audit_reason(client, mo
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["status"] == "revoked"
 
-    wrong_client = await client.delete(
+    wrong_client = await client.request(
+        "DELETE",
         f"/api/v1/admin/clients/{license_id + 100000}/sessions/{session_id}",
         headers=headers,
         json={"reason": "scope isolation check"},
