@@ -2,14 +2,14 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary, UniqueConstraint, text
 from sqlalchemy.orm import relationship
 from database import Base
 
 
 class SoftwareLicense(Base):
     __tablename__ = "software_licenses"
-    __table_args__ = (Index("uq_software_licenses_account_email_lower", func.lower("account_email"), unique=True),)
+    __table_args__ = (Index("uq_software_licenses_account_email_lower", text("lower(account_email)"), unique=True),)
 
     id = Column(Integer, primary_key=True, index=True)
     license_key = Column(String(100), unique=True, nullable=False, index=True)
