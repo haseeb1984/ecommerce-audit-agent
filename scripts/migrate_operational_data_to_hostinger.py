@@ -21,12 +21,14 @@ from models import (
     AccountSession,
     PaymentWebhookEvent,
     SaaSAdminCustomerNote,
+    SaaSAdminActionLog,
     SoftwareLicense,
     WhiteLabelBranding,
     WordPressSite,
 )
 from hostinger_models import (
     AdminCustomerNote,
+    AdminActionLog,
     CustomerAccount,
     CustomerBranding,
     CustomerEmailChangeChallenge,
@@ -243,6 +245,19 @@ async def migrate(apply_changes: bool) -> None:
             "to_copy": note_copied,
             "already_present_or_unmapped": note_skipped,
         }
+
+        reports["admin_action_logs"] = await _copy_rows(
+            source, target, SaaSAdminActionLog, AdminActionLog,
+            lambda row: {
+                "id": row.id,
+                "action": row.action,
+                "entity_type": row.entity_type,
+                "entity_id": row.entity_id,
+                "details_json": row.details_json or "{}",
+                "created_at": row.created_at,
+            },
+            "id",
+        )
 
         for name, report in reports.items():
             logger.info("%s: %s", name, report)
