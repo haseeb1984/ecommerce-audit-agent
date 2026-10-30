@@ -66,6 +66,7 @@
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
+<div class="panel" style="margin-top:12px"><h3>Included plan features</h3><div id="planFeatures" class="muted" aria-live="polite">Connect your account to view included features.</div></div>
 </section>
 <section class="panel" aria-labelledby="billingHistoryHeading">
 <h2 id="billingHistoryHeading">Billing history</h2>
@@ -593,6 +594,9 @@
     $("usageFill").style.width = percent + "%";
     $("usageBar").setAttribute("aria-valuenow", String(Math.round(percent)));
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
+    const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",direct_api_access:"Direct API access"};
+    const enabledFeatures = Object.entries(usage.features || {}).filter(([, enabled]) => enabled === true).map(([key]) => featureLabels[key] || key);
+    $("planFeatures").textContent = enabledFeatures.length ? enabledFeatures.join(" · ") : "No premium features are enabled for this plan.";
     const reset = usage.period_resets_at ? new Date(usage.period_resets_at) : null;
     $("usageReset").textContent = "Period resets: " + (reset && !Number.isNaN(reset.getTime()) ? reset.toLocaleDateString() : "not available");
     if (!usage.is_active) $("usageSummary").textContent += " · Account inactive";
