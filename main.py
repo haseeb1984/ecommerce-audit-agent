@@ -1714,13 +1714,13 @@ async def download_wordpress_plugin():
 async def list_account_wordpress_sites(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List WordPress installations linked to the currently selected customer license."""
     from sqlalchemy import select
     rows = (await db.execute(
-        select(WordPressSite).where(WordPressSite.license_id == license_obj.id)
-        .order_by(WordPressSite.created_at.desc(), WordPressSite.id.desc()).limit(100)
+        select(WordPressInstallation).where(WordPressInstallation.license_key == license_obj.license_key)
+        .order_by(WordPressInstallation.created_at.desc(), WordPressInstallation.id.desc()).limit(100)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -1745,16 +1745,16 @@ async def customer_disconnect_wordpress_site(
     from sqlalchemy import select
     if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", site_id):
         raise HTTPException(status_code=422, detail="Invalid WordPress site identifier.")
-    site = (await db.execute(select(WordPressSite).where(
-        WordPressSite.id == site_id,
-        WordPressSite.license_id == license_obj.id,
-        WordPressSite.status == "active",
+    site = (await operational_db.execute(select(WordPressInstallation).where(
+        WordPressInstallation.id == site_id,
+        WordPressInstallation.license_key == license_obj.license_key,
+        WordPressInstallation.status == "active",
     ).with_for_update())).scalar_one_or_none()
     if site is None:
         raise HTTPException(status_code=404, detail="Connected WordPress site not found.")
     site.status = "disconnected"
     site.disconnected_at = datetime.now(timezone.utc)
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "disconnected", "site_id": site.id}
