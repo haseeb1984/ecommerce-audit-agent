@@ -4941,9 +4941,9 @@ async def admin_add_customer_note(
     if not license_count:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     created = AdminCustomerNote(
-        license_key=",".join((await db.execute(select(SoftwareLicense.license_key).join(
+        license_key=(await db.scalar(select(SoftwareLicense.license_key).join(
             PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct())).scalars().all())[:100],
+        ).where(func.lower(PaymentWebhookEvent.recipient_email) == normalized).limit(1))),
         customer_email=normalized,
         note=payload.note.strip(),
         created_by="admin",
