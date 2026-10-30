@@ -13,6 +13,8 @@ plan_features.py is the canonical display and authorization feature map:
 - Starter: standard audits.
 - Agency / Pro: standard audits and conversion dossier.
 - Whitelabel / Enterprise / legacy Business: standard audits, conversion dossier, white-label branding, and direct API access.
+- Supported package IDs are `starter`, `agency`, `pro`, `agency_pro`, `whitelabel`, `white_label`, `enterprise`, and legacy `business`.
+- The admin package API and UI reject unmapped tier IDs so operators cannot accidentally sell a package whose features are all disabled.
 - Blank or unknown plan identifiers fail closed.
 
 The backend enforces standard-audit, conversion-dossier, white-label, and direct API access before quota reservation, provider calls, or key creation. Customer and WordPress interfaces use the same feature metadata for visibility, but UI hiding is not treated as authorization.
