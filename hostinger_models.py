@@ -275,3 +275,18 @@ class CustomerBillingEvent(HostingerBase):
         Index("ix_customer_billing_license_created", "license_key", "created_at"),
         Index("ix_customer_billing_email_created", "recipient_email", "created_at"),
     )
+
+
+class OperationalDiagnosticEvent(HostingerBase):
+    """Sanitized service diagnostics; license identifiers are external keys, not PG FKs."""
+    __tablename__ = "operational_diagnostic_events"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    event_type = Column(String(80), nullable=False)
+    license_key = Column(String(100), nullable=True, index=True)
+    domain = Column(String(255), nullable=True)
+    error_type = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    __table_args__ = (
+        Index("ix_operational_diagnostic_created", "created_at", "id"),
+        Index("ix_operational_diagnostic_type_created", "event_type", "created_at"),
+    )
