@@ -120,7 +120,6 @@ async def process_one_scan(worker_id: str) -> dict:
         license_key = job.license_key
         website_id = job.website_id
         target_url = job.target_url
-        package_tier = job.batch_id
         attempt = job.attempt_count
 
     reservation_id = None
