@@ -1230,14 +1230,8 @@ async def request_customer_email_change(
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    old_license_ids = set((await db.execute(select(PaymentWebhookEvent.license_id).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == old_email,
-        PaymentWebhookEvent.license_id.is_not(None),
-    ))).scalars().all())
-    new_license_ids = set((await db.execute(select(PaymentWebhookEvent.license_id).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == new_email,
-        PaymentWebhookEvent.license_id.is_not(None),
-    ))).scalars().all())
+    old_license_ids = await _billing_license_ids_for_email(db, operational_db, old_email)
+    new_license_ids = await _billing_license_ids_for_email(db, operational_db, new_email)
     if new_license_ids - old_license_ids:
         raise HTTPException(status_code=409, detail="That email is already linked to a different customer account.")
     recent_count = int((await operational_db.execute(select(func.count(CustomerEmailChangeChallenge.id)).where(
@@ -1334,14 +1328,8 @@ async def verify_customer_email_change(
     # Serialize claims for the same proposed address so two different accounts
     # cannot both pass the collision check concurrently on PostgreSQL.
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:email))"), {"email": challenge.new_email})
-    old_license_ids = set((await db.execute(select(PaymentWebhookEvent.license_id).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == old_email,
-        PaymentWebhookEvent.license_id.is_not(None),
-    ))).scalars().all())
-    new_license_ids = set((await db.execute(select(PaymentWebhookEvent.license_id).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == challenge.new_email,
-        PaymentWebhookEvent.license_id.is_not(None),
-    ))).scalars().all())
+    old_license_ids = await _billing_license_ids_for_email(db, operational_db, old_email)
+    new_license_ids = await _billing_license_ids_for_email(db, operational_db, challenge.new_email)
     if new_license_ids - old_license_ids:
         challenge.consumed_at = now
         await operational_db.commit()
@@ -1356,6 +1344,9 @@ async def verify_customer_email_change(
         ).values(email=challenge.new_email, updated_at=now))
     await db.execute(update(PaymentWebhookEvent).where(
         func.lower(PaymentWebhookEvent.recipient_email) == old_email,
+    ).values(recipient_email=challenge.new_email))
+    await operational_db.execute(update(CustomerBillingEvent).where(
+        func.lower(CustomerBillingEvent.recipient_email) == old_email,
     ).values(recipient_email=challenge.new_email))
     # Keep the linked WordPress customer identity synchronized with the verified
     # SaaS email change in the same transaction as the billing identity records.
@@ -3751,6 +3742,30 @@ def _sanitize_admin_log_value(value, *, depth: int = 0):
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return str(value)[:500]
+
+
+async def _billing_license_ids_for_email(
+    db: AsyncSession, operational_db: AsyncSession, email: str
+) -> set[int]:
+    """Resolve account links from Hostinger billing history with legacy PG fallback."""
+    from sqlalchemy import select, func
+    normalized = email.strip().lower()
+    license_keys = set((await operational_db.execute(
+        select(CustomerBillingEvent.license_key).where(
+            func.lower(CustomerBillingEvent.recipient_email) == normalized
+        )
+    )).scalars().all())
+    ids = set((await db.execute(
+        select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(license_keys))
+    )).scalars().all()) if license_keys else set()
+    # Retain compatibility until the one-time operational data copy is applied.
+    legacy_ids = set((await db.execute(
+        select(PaymentWebhookEvent.license_id).where(
+            func.lower(PaymentWebhookEvent.recipient_email) == normalized,
+            PaymentWebhookEvent.license_id.is_not(None),
+        )
+    )).scalars().all())
+    return ids | legacy_ids
 
 
 async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> None:
