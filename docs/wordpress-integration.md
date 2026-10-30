@@ -37,7 +37,7 @@ The API enforces a maximum of ten active WordPress installations per license. Re
 
 ## Identity and subscription synchronization
 
-Each WordPress site is associated with the authenticated SaaS `software_licenses.id`. The site record stores the verified checkout email derived from Paddle's payment provisioning event, plus the site administrator email as operational metadata. License tier, active state, expiry and billing-period end remain SaaS-owned. Paddle webhook reconciliation updates the underlying license, and the WordPress status endpoint reflects the current entitlement on its next refresh.
+Each WordPress site is associated with the authenticated SaaS `software_licenses.id`. The site record stores the verified checkout email derived from Paddle's payment provisioning event, plus the site administrator email as operational metadata. A verified customer email change updates the linked WordPress site identity in the same database transaction as the checkout identity change. License tier, active state, expiry and billing-period end remain SaaS-owned. Paddle webhook reconciliation updates the underlying license, and the WordPress status endpoint reflects the current entitlement on its next refresh.
 
 Disconnecting a WordPress site does not cancel a Paddle subscription or delete the license. Subscription cancellation and billing changes remain provider-owned and are managed through the SaaS billing workflows.
 
