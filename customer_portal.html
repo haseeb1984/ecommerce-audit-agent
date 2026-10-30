@@ -25,7 +25,7 @@
   <div><label for="loginEmail">Account email</label><input id="loginEmail" type="text" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com"></div>
   <div><label for="loginCode">Six-digit sign-in code</label><input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456"></div>
 </div>
-<div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button></div>
+<div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button><button id="logoutAllSessions" class="secondary" type="button" disabled>Sign out all devices</button></div>
 <div id="loginStatus" class="status" role="status" aria-live="polite">Passwordless sign-in is available for accounts with a verified checkout email.</div>
 </section>
 <section class="panel">
@@ -122,7 +122,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -833,6 +833,21 @@
     } finally {
       if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
     }
+  });
+  $("logoutAllSessions").addEventListener("click", async () => {
+    if (!credential) { setStatus("loginStatus", "Sign in to manage customer sessions.", "error"); return; }
+    const button = $("logoutAllSessions"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/logout-all", {method:"POST"});
+      const data = await response.json();
+      accountSessionVersion += 1;
+      sessionToken = ""; credential = ""; headerName = "X-License-Key";
+      $("credential").value = "";
+      clearAccountView(); setAccountControls(false);
+      setStatus("connectStatus", "All customer sessions were revoked.", "success");
+      setStatus("loginStatus", "All devices have been signed out. Sign in again to continue.", "success");
+    } catch (error) { setStatus("loginStatus", error.message, "error"); }
+    finally { button.disabled = !credential; }
   });
   $("disconnectAccount").addEventListener("click", () => {
     accountSessionVersion += 1;
