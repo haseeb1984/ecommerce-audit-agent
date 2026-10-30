@@ -166,3 +166,39 @@ class PaymentWebhookEvent(Base):
     recipient_email = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+
+class AccountLoginChallenge(Base):
+    """Short-lived one-time email code used to establish a customer account session."""
+    __tablename__ = "account_login_challenges"
+    __table_args__ = (
+        Index("ix_account_login_challenges_email_created", "email", "created_at"),
+        Index("ix_account_login_challenges_expires_at", "expires_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    email = Column(String(255), nullable=False, index=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class AccountSession(Base):
+    """Opaque customer bearer session; only its SHA-256 token digest is persisted."""
+    __tablename__ = "account_sessions"
+    __table_args__ = (
+        Index("ix_account_sessions_license_created", "license_id", "created_at"),
+        Index("ix_account_sessions_expires_at", "expires_at"),
+    )
+
+    token_hash = Column(String(64), primary_key=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
