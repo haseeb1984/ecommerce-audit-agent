@@ -252,6 +252,7 @@ class AccountSession(Base):
     __tablename__ = "account_sessions"
     __table_args__ = (
         Index("ix_account_sessions_license_created", "license_id", "created_at"),
+        Index("ix_account_sessions_email_created", "email", "created_at"),
         Index("ix_account_sessions_expires_at", "expires_at"),
     )
 
