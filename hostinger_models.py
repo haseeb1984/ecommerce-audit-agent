@@ -220,3 +220,25 @@ class CustomerReportFile(HostingerBase):
     mime_type = Column(String(100), nullable=False, default="application/pdf")
     byte_size = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class WebsiteScanResult(HostingerBase):
+    """Customer-owned scan history; PDF bytes remain in Hostinger private file storage."""
+    __tablename__ = "website_scan_results"
+    id = Column(String(64), primary_key=True)
+    job_id = Column(String(64), nullable=False, unique=True, index=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    website_id = Column(String(64), nullable=False, index=True)
+    target_url = Column(String(2048), nullable=False)
+    status = Column(String(24), nullable=False, default="completed")
+    overall_score = Column(Integer, nullable=True)
+    finding_count = Column(Integer, nullable=False, default=0)
+    findings_json = Column(Text, nullable=False, default="[]")
+    check_outcomes_json = Column(Text, nullable=False, default="[]")
+    coverage_json = Column(Text, nullable=False, default="{}")
+    summary_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    __table_args__ = (
+        Index("ix_website_scan_results_license_created", "license_key", "created_at"),
+        Index("ix_website_scan_results_website_created", "website_id", "created_at"),
+    )
