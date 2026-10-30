@@ -2084,7 +2084,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             select(PaymentWebhookEvent).where(
                 PaymentWebhookEvent.subscription_id == subscription_id,
                 PaymentWebhookEvent.license_id.is_not(None),
-            ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.id.desc()).limit(1)
+            ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()).limit(1)
         )).scalar_one_or_none()
         if linked_event is None or linked_event.license_id is None:
             raise HTTPException(status_code=503, detail="Subscription update is awaiting license reconciliation.")
