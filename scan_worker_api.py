@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.get("/internal/scan-worker/run")
 async def run_scan_worker(
-    max_jobs: int = Query(1, ge=1, le=1),
+    max_jobs: int = Query(10, ge=1, le=10),
     authorization: str | None = Header(default=None),
 ):
     expected = os.getenv("SCAN_WORKER_TOKEN", "").strip()
