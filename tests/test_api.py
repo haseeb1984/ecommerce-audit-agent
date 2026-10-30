@@ -3650,3 +3650,65 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert rejected.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_admin_can_review_and_revoke_customer_browser_sessions(client, monkeypatch):
+    admin_key = "test-admin-customer-session-controls"
+    monkeypatch.setenv("ADMIN_API_KEY", admin_key)
+    license_id = await create_license(key="admin-session-controls-license")
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            main.AccountSession(
+                token_hash=hashlib.sha256(b"active-admin-review-session").hexdigest(),
+                license_id=license_id,
+                email="admin-review@example.com",
+                expires_at=now + timedelta(days=10),
+                created_at=now - timedelta(days=1),
+                last_seen_at=now,
+            ),
+            main.AccountSession(
+                token_hash=hashlib.sha256(b"already-revoked-admin-review-session").hexdigest(),
+                license_id=license_id,
+                email="admin-review@example.com",
+                expires_at=now + timedelta(days=10),
+                revoked_at=now - timedelta(hours=1),
+            ),
+        ])
+        await db.commit()
+
+    headers = {"X-Admin-Key": admin_key}
+    listed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/sessions",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert len(items) == 2
+    assert {item["status"] for item in items} == {"active", "revoked"}
+    assert all("token_hash" not in item for item in items)
+    assert all("access_token" not in item for item in items)
+
+    revoked = await client.post(
+        f"/api/v1/admin/clients/{license_id}/sessions/revoke-all",
+        headers=headers,
+        json={"reason": "customer reported a lost device"},
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["revoked_count"] == 1
+
+    refreshed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/sessions",
+        headers=headers,
+    )
+    assert refreshed.status_code == 200
+    assert {item["status"] for item in refreshed.json()["items"]} == {"revoked"}
+
+    async with AsyncSessionLocal() as db:
+        action = (await db.execute(select(SaaSAdminActionLog).where(
+            SaaSAdminActionLog.action == "client.sessions_revoked",
+            SaaSAdminActionLog.entity_id == str(license_id),
+        ))).scalar_one()
+        assert "customer reported a lost device" in action.details_json
