@@ -5,6 +5,11 @@ routes must enforce access independently before implementing premium actions.
 """
 from typing import Any
 
+SUPPORTED_PLAN_TIERS = frozenset({
+    "starter", "agency", "pro", "agency_pro",
+    "whitelabel", "white_label", "enterprise", "business",
+})
+
 
 def plan_features(tier: Any) -> dict[str, bool]:
     """Return feature availability for known SaaS tiers; unknown tiers fail closed."""
