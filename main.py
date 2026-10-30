@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from scan_api import router as scan_router
+from scan_worker_api import router as scan_worker_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge, WordPressSite, WhiteLabelBranding
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
@@ -63,6 +64,7 @@ app = FastAPI(
 
 agent = UniversalEcommerceAgent()
 app.include_router(scan_router)
+app.include_router(scan_worker_router)
 
 
 @app.middleware("http")
@@ -897,8 +899,7 @@ async def comprehensive_audit_pdf(
         hostname = urlsplit(target_url).hostname or "website"
         safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:180]
         return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
+            content=pdf_bytes,            media_type="application/pdf",
             headers={                "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}.pdf"',
                 "X-Audit-Report-ID": str(report_id),
                 "Cache-Control": "no-store, private",
@@ -1797,8 +1798,7 @@ async def get_account_branding(
 async def update_account_branding(
     payload: WhiteLabelBrandingUpdate,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
-    db: AsyncSession = Depends(get_async_db),):
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),    db: AsyncSession = Depends(get_async_db),):
     if not plan_features(license_obj.tier)["white_label_branding"]:
         raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
     brand_name = payload.brand_name.strip()
@@ -2697,8 +2697,7 @@ async def create_paddle_checkout(
     if not os.getenv("PADDLE_WEBHOOK_SECRET", "").strip():
         raise HTTPException(status_code=503, detail="Paddle webhook verification is not configured.")
     smtp_status = _smtp_configuration_status()
-    if not smtp_status["configured"]:        raise HTTPException(status_code=503, detail="License delivery is not configured.")
-    transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
+    if not smtp_status["configured"]:        raise HTTPException(status_code=503, detail="License delivery is not configured.")    transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
                    "custom_data": {"license_tier": plan["tier"]}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
     if checkout_url:
@@ -3597,8 +3596,7 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
 
 
 def _safe_audit_metadata_url(value: str | None) -> str | None:    """Persist only public HTTP(S) URLs without credentials, private hosts, queries or fragments."""
-    if not value:
-        return None
+    if not value:        return None
     try:
         parts = urlsplit(str(value))
         if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
@@ -4497,8 +4495,7 @@ async def admin_download_audit_report(report_id: int, request: Request,
     report = (await db.execute(select(AuditReport).where(AuditReport.id == report_id))).scalar_one_or_none()
     if report is None:        raise HTTPException(status_code=404, detail="Audit report not found.")
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
-    return Response(
-        content=report.pdf_bytes,
+    return Response(        content=report.pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"',
