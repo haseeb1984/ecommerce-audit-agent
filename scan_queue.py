@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hostinger_models import (
@@ -86,12 +86,25 @@ async def enqueue_scan_request(
             "idempotent_replay": True,
         }
 
-    existing_max = await db.scalar(
-        select(func.max(ScanBatch.batch_number)).where(
-            ScanBatch.license_key == license_key
-        )
-    )
-    first_batch_number = int(existing_max or 0) + 1
+    # Allocate a contiguous per-license batch range under a MySQL row lock.
+    # The sequence row serializes concurrent submissions, avoiding duplicate or
+    # interleaved batch numbers when two customer requests arrive simultaneously.
+    await db.execute(text("""
+        INSERT IGNORE INTO scan_batch_sequences (license_key, next_batch_number)
+        SELECT :license_key, COALESCE(MAX(batch_number), 0) + 1
+        FROM scan_batches WHERE license_key = :license_key
+    """), {"license_key": license_key})
+    sequence = (await db.execute(text("""
+        SELECT next_batch_number FROM scan_batch_sequences
+        WHERE license_key = :license_key FOR UPDATE
+    """), {"license_key": license_key})).scalar_one()
+    first_batch_number = int(sequence)
+    batch_count = (len(normalized_urls) + batch_size - 1) // batch_size
+    await db.execute(text("""
+        UPDATE scan_batch_sequences
+        SET next_batch_number = :next_number
+        WHERE license_key = :license_key
+    """), {"license_key": license_key, "next_number": first_batch_number + batch_count})
     created_batches = []
     created_jobs = []
     already_queued = []
