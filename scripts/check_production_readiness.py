@@ -18,7 +18,7 @@ REQUIRED_COLUMNS = {
     # not just the minimum fields needed for a successful health-check response.
     "software_licenses": {
         "id", "license_key", "client_name", "tier", "max_monthly_audits",
-        "is_active", "expires_at", "created_at",
+        "is_active", "expires_at", "billing_period_ends_at", "created_at",
     },
     "api_keys": {"id", "license_id", "api_key_hash", "key_prefix", "created_at"},
     "audit_leads": {
@@ -43,6 +43,9 @@ REQUIRED_COLUMNS = {
     "saas_admin_action_logs": {"id", "action", "entity_type", "entity_id", "details_json", "created_at"},
     "account_login_challenges": {"id", "email", "license_id", "code_hash", "expires_at", "attempts", "consumed_at", "created_at"},
     "account_sessions": {"token_hash", "session_id", "license_id", "email", "expires_at", "revoked_at", "created_at", "last_seen_at"},
+    "white_label_branding": {"license_id", "brand_name", "logo_url", "primary_color", "updated_at"},
+    "wordpress_link_challenges": {"id", "license_id", "token_hash", "expires_at", "consumed_at", "created_at"},
+    "wordpress_site_links": {"id", "license_id", "site_url", "wp_user_id", "wp_user_login", "wp_user_email", "linked_at", "updated_at"},
 }
 
 # Indexes that protect uniqueness or keep high-volume account-scoped queries bounded.
@@ -54,6 +57,10 @@ REQUIRED_INDEXES = {
     "ix_payment_webhook_events_transaction_id",
     "ix_payment_webhook_events_subscription_id",
     "uq_account_sessions_session_id",
+    "ix_account_sessions_email_created",
+    "ix_wordpress_link_challenges_license_expires",
+    "ix_wordpress_site_links_license_linked",
+    "uq_wordpress_site_links_license_site",
 }
 
 REQUIRED_ENV_GROUPS = {
