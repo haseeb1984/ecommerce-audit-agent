@@ -256,6 +256,9 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
             for index in Base.metadata.tables[table_name].indexes
             if index.name
         }
+        # This PostgreSQL partial unique index enforces one Paddle price per tier
+        # and is intentionally checked alongside the ORM-declared indexes.
+        required_indexes.add("uq_saas_plan_packages_paddle_price_id")
         missing_indexes = sorted(required_indexes - existing_indexes)
         if missing_indexes:
             logger.error(
