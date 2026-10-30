@@ -3605,3 +3605,46 @@ async def test_customer_passwordless_login_limits_code_attempts_and_hides_unknow
         json={"email": "attempt-limit@example.com", "code": sent[-1][1]},
     )
     assert correct.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
+    license_id = await create_license(key="passwordless-logout-all-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_passwordless_logout_all_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="logout-all@example.com",
+        ))
+        await db.commit()
+    await client.post("/api/v1/account/auth/request-code", json={"email": "logout-all@example.com"})
+    login = await client.post("/api/v1/account/auth/verify-code", json={
+        "email": "logout-all@example.com", "code": sent[0],
+    })
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    async with AsyncSessionLocal() as db:
+        db.add(main.AccountSession(
+            token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
+            license_id=license_id,
+            email="logout-all@example.com",
+            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+        ))
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/account/auth/logout-all",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["revoked_count"] == 2
+    rejected = await client.get(
+        "/api/v1/account/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rejected.status_code == 401
