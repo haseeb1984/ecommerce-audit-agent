@@ -24,6 +24,43 @@ function eaa_wp_settings() {
     return is_array($settings) ? $settings : array();
 }
 
+function eaa_wp_encrypt_license($plain) {
+    if (!function_exists('openssl_encrypt') || !function_exists('random_bytes')) {
+        return new WP_Error('eaa_crypto_unavailable', __('This server needs OpenSSL and a secure random source to store the license safely.', 'ecommerce-audit-agent'));
+    }
+    try {
+        $iv = random_bytes(16);
+        $key = hash('sha256', wp_salt('auth'), true);
+        $cipher = openssl_encrypt($plain, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        if (false === $cipher) {
+            return new WP_Error('eaa_crypto_failed', __('The license key could not be encrypted.', 'ecommerce-audit-agent'));
+        }
+        return 'eaa1:' . base64_encode($iv . $cipher);
+    } catch (Throwable $error) {
+        return new WP_Error('eaa_crypto_failed', __('The license key could not be encrypted.', 'ecommerce-audit-agent'));
+    }
+}
+
+function eaa_wp_decrypt_license($stored) {
+    $stored = (string) $stored;
+    if (0 !== strpos($stored, 'eaa1:')) {
+        return $stored; // Backward compatibility for a pre-encryption saved option.
+    }
+    if (!function_exists('openssl_decrypt')) {
+        return new WP_Error('eaa_crypto_unavailable', __('OpenSSL is required to read the saved license key.', 'ecommerce-audit-agent'));
+    }
+    $packed = base64_decode(substr($stored, 5), true);
+    if (false === $packed || strlen($packed) <= 16) {
+        return new WP_Error('eaa_crypto_invalid', __('The saved license credential is damaged. Re-enter your license key.', 'ecommerce-audit-agent'));
+    }
+    $key = hash('sha256', wp_salt('auth'), true);
+    $plain = openssl_decrypt(substr($packed, 16), 'aes-256-cbc', $key, OPENSSL_RAW_DATA, substr($packed, 0, 16));
+    if (false === $plain || '' === $plain) {
+        return new WP_Error('eaa_crypto_invalid', __('The saved license credential cannot be decrypted. Re-enter your license key.', 'ecommerce-audit-agent'));
+    }
+    return $plain;
+}
+
 function eaa_wp_api_base() {
     $settings = eaa_wp_settings();
     $base = isset($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : EAA_WP_DEFAULT_API;
@@ -35,7 +72,11 @@ function eaa_wp_api_base() {
 
 function eaa_wp_api_request($path, $method = 'GET', $body = null, $timeout = 25) {
     $settings = eaa_wp_settings();
-    $license_key = isset($settings['license_key']) ? trim((string) $settings['license_key']) : '';
+    $license_key = isset($settings['license_key']) ? eaa_wp_decrypt_license($settings['license_key']) : '';
+    if (is_wp_error($license_key)) {
+        return $license_key;
+    }
+    $license_key = trim((string) $license_key);
     if ('' === $license_key) {
         return new WP_Error('eaa_missing_license', __('Enter your SaaS license key to connect this site.', 'ecommerce-audit-agent'));
     }
@@ -158,7 +199,14 @@ function eaa_wp_handle_save_settings() {
     check_admin_referer('eaa_save_settings');
     $settings = eaa_wp_settings();
     $license_input = isset($_POST['license_key']) ? sanitize_text_field(wp_unslash($_POST['license_key'])) : '';
-    $license = '' !== trim($license_input) ? trim($license_input) : (isset($settings['license_key']) ? (string) $settings['license_key'] : '');
+    $stored_license = isset($settings['license_key']) ? (string) $settings['license_key'] : '';
+    $license = '' !== trim($license_input) ? trim($license_input) : eaa_wp_decrypt_license($stored_license);
+    if (is_wp_error($license)) {
+        $settings['connection_error'] = $license->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'connection_failed'), admin_url('admin.php')));
+        exit;
+    }
     $api_base = isset($_POST['api_base']) ? esc_url_raw(trim(wp_unslash($_POST['api_base']))) : EAA_WP_DEFAULT_API;
     $scheme = strtolower((string) wp_parse_url($api_base, PHP_URL_SCHEME));
     if (!$api_base || !wp_http_validate_url($api_base) || 'https' !== $scheme) {
@@ -167,7 +215,18 @@ function eaa_wp_handle_save_settings() {
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'invalid_url'), admin_url('admin.php')));
         exit;
     }
-    $settings['license_key'] = $license;
+    if ('' !== trim($license_input)) {
+        $encrypted_license = eaa_wp_encrypt_license($license);
+        if (is_wp_error($encrypted_license)) {
+            $settings['connection_error'] = $encrypted_license->get_error_message();
+            update_option(EAA_WP_OPTION, $settings, false);
+            wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'connection_failed'), admin_url('admin.php')));
+            exit;
+        }
+        $settings['license_key'] = $encrypted_license;
+    } elseif ('' === trim((string) $license)) {
+        $settings['license_key'] = '';
+    }
     $settings['api_base'] = untrailingslashit($api_base);
     $settings['brand_name'] = isset($_POST['brand_name']) ? sanitize_text_field(wp_unslash($_POST['brand_name'])) : '';
     $settings['brand_color'] = isset($_POST['brand_color']) ? sanitize_hex_color(wp_unslash($_POST['brand_color'])) : '';
