@@ -4270,3 +4270,35 @@ async def test_starter_cannot_create_direct_api_keys(client):
             SoftwareLicense, APIKey.license_id == SoftwareLicense.id
         ).where(SoftwareLicense.license_key == "starter-no-direct-api"))).scalars().all()
     assert keys == []
+
+
+@pytest.mark.asyncio
+async def test_wordpress_site_linking_accepts_passwordless_customer_session(client):
+    license_id = await create_license(key="wp-link-bearer-license", tier="whitelabel")
+    raw_token = "customer-session-for-wordpress-linking"
+    async with AsyncSessionLocal() as db:
+        db.add(main.AccountSession(
+            token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            license_id=license_id,
+            email="wp-owner@example.com",
+            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+        ))
+        await db.commit()
+    headers = {"Authorization": f"Bearer {raw_token}"}
+    issued = await client.post("/api/v1/account/wordpress-link/challenges", headers=headers)
+    assert issued.status_code == 200, issued.text
+    claim = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers=headers,
+        json={
+            "token": issued.json()["token"],
+            "site_url": "https://bearer-shop.example.com/",
+            "wp_user_id": 22,
+            "wp_user_login": "owner",
+            "wp_user_email": "owner@example.com",
+        },
+    )
+    assert claim.status_code == 200, claim.text
+    listed = await client.get("/api/v1/account/wordpress-link", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["links"][0]["site_url"] == "https://bearer-shop.example.com/"
