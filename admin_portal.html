@@ -50,16 +50,18 @@ async function loadClientApiKeys(id){
  }
 }
 async function loadClientSessions(id){
+ $("refreshClientSessions").disabled=true;$("revokeClientSessions").disabled=true;
  const container=$("clientSessions");container.replaceChildren(el("p","Loading browser sessions…","muted"));
  const data=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/sessions");
  container.replaceChildren();
- if(!Array.isArray(data.items)||!data.items.length){container.append(el("p","No customer browser sessions have been created for this account.","muted"));return}
- for(const item of data.items){
+ if(!Array.isArray(data.items)||!data.items.length){container.append(el("p","No customer browser sessions have been created for this account.","muted"))}
+ else for(const item of data.items){
   const row=el("div",undefined,"historyitem");
   row.append(el("strong",(item.email||"Unknown email")+" · "+String(item.status||"unknown").toUpperCase()));
   row.append(el("span","Created "+date(item.created_at)+" · Last seen "+date(item.last_seen_at)+" · Expires "+date(item.expires_at)+(item.revoked_at?" · Revoked "+date(item.revoked_at):""),"small"));
   container.append(row);
  }
+ $("refreshClientSessions").disabled=false;$("revokeClientSessions").disabled=false;
 }
 async function revokeClientSessions(){
  if(currentHistoryId===null){status("Open a client's history first.","error");return}
