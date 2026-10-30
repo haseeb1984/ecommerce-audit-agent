@@ -157,7 +157,8 @@ function eaa_wp_handle_save_settings() {
     }
     check_admin_referer('eaa_save_settings');
     $settings = eaa_wp_settings();
-    $license = isset($_POST['license_key']) ? sanitize_text_field(wp_unslash($_POST['license_key'])) : '';
+    $license_input = isset($_POST['license_key']) ? sanitize_text_field(wp_unslash($_POST['license_key'])) : '';
+    $license = '' !== trim($license_input) ? trim($license_input) : (isset($settings['license_key']) ? (string) $settings['license_key'] : '');
     $api_base = isset($_POST['api_base']) ? esc_url_raw(trim(wp_unslash($_POST['api_base']))) : EAA_WP_DEFAULT_API;
     $scheme = strtolower((string) wp_parse_url($api_base, PHP_URL_SCHEME));
     if (!$api_base || !wp_http_validate_url($api_base) || 'https' !== $scheme) {
@@ -354,7 +355,7 @@ function eaa_wp_render_admin_page() {
                     <input type="hidden" name="action" value="eaa_save_settings">
                     <?php wp_nonce_field('eaa_save_settings'); ?>
                     <table class="form-table"><tbody>
-                        <tr><th><label for="eaa-license"><?php esc_html_e('SaaS license key', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-license" name="license_key" type="password" class="regular-text" autocomplete="new-password" value="<?php echo esc_attr((string) ($settings['license_key'] ?? '')); ?>" required></td></tr>
+                        <tr><th><label for="eaa-license"><?php esc_html_e('SaaS license key', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-license" name="license_key" type="password" class="regular-text" autocomplete="new-password" value="" placeholder="<?php echo !empty($settings['license_key']) ? esc_attr__('Saved license key — enter a new key only to replace it', 'ecommerce-audit-agent') : esc_attr__('Paste your SaaS license key', 'ecommerce-audit-agent'); ?>" <?php echo empty($settings['license_key']) ? 'required' : ''; ?>></td></tr>
                         <tr><th><label for="eaa-api"><?php esc_html_e('API base URL', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-api" name="api_base" type="url" class="regular-text" value="<?php echo esc_attr(eaa_wp_api_base()); ?>" required><p class="description"><?php esc_html_e('HTTPS only. Keep the default unless your SaaS instance is self-hosted.', 'ecommerce-audit-agent'); ?></p></td></tr>
                         <tr><th><label for="eaa-brand"><?php esc_html_e('Admin display name', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-brand" name="brand_name" type="text" class="regular-text" maxlength="100" value="<?php echo esc_attr((string) ($settings['brand_name'] ?? '')); ?>"></td></tr>
                         <tr><th><label for="eaa-color"><?php esc_html_e('Admin accent color', 'ecommerce-audit-agent'); ?></label></th><td><input id="eaa-color" name="brand_color" type="color" value="<?php echo esc_attr((string) ($settings['brand_color'] ?? '#1d4ed8')); ?>"></td></tr>
