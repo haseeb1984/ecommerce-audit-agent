@@ -256,6 +256,7 @@ async def migrate(apply_changes: bool) -> None:
         reports["operational_diagnostic_events"] = await _copy_rows(
             source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
             lambda row: ({
+                "id": row.id,
                 "event_type": row.event_type,
                 "license_key": license_key_by_id.get(row.license_id),
                 "domain": row.domain,
