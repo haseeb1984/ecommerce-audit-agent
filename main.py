@@ -1464,6 +1464,7 @@ async def switch_customer_account_license(
     credentials=Depends(CUSTOMER_BEARER),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Switch the current browser session only to a license linked to its verified email."""
     from sqlalchemy import func, select
@@ -1475,9 +1476,9 @@ async def switch_customer_account_license(
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=422, detail="A valid license_id is required.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
+    session = (await operational_db.execute(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
@@ -1494,9 +1495,9 @@ async def switch_customer_account_license(
     ))).scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail="Linked license was not found.")
-    session.license_id = target.id
+    session.license_key = target.license_key
     session.last_seen_at = datetime.now(timezone.utc)
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "switched", "account": {
