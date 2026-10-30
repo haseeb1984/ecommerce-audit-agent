@@ -262,6 +262,26 @@ function eaa_wp_handle_download_report() {
     exit;
 }
 
+add_action('admin_post_eaa_open_billing', 'eaa_wp_handle_open_billing');
+function eaa_wp_handle_open_billing() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('You are not allowed to manage billing.', 'ecommerce-audit-agent'), 403);
+    }
+    check_admin_referer('eaa_open_billing');
+    $response = eaa_wp_api_request('/api/v1/account/billing-portal', 'POST', array());
+    if (is_wp_error($response)) {
+        wp_die(esc_html($response->get_error_message()), 502);
+    }
+    $data = eaa_wp_json($response);
+    $url = isset($data['portal_url']) ? esc_url_raw($data['portal_url']) : '';
+    $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+    if ('https' !== strtolower((string) wp_parse_url($url, PHP_URL_SCHEME)) || !preg_match('/(^|\.)paddle\.com$/', $host)) {
+        wp_die(esc_html__('The billing provider returned an invalid portal URL.', 'ecommerce-audit-agent'), 502);
+    }
+    wp_redirect($url, 303); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect -- HTTPS Paddle URL is allowlisted above.
+    exit;
+}
+
 function eaa_wp_render_admin_page() {
     if (!current_user_can('manage_options')) {
         return;
@@ -270,6 +290,7 @@ function eaa_wp_render_admin_page() {
     $notice = isset($_GET['eaa_notice']) ? sanitize_key(wp_unslash($_GET['eaa_notice'])) : '';
     $usage = null;
     $reports = array();
+    $billing = null;
     $error = isset($settings['connection_error']) ? $settings['connection_error'] : '';
     if (!empty($settings['site_id']) && '' === $error) {
         $status_response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
@@ -280,6 +301,10 @@ function eaa_wp_render_admin_page() {
         $usage_response = eaa_wp_api_request('/api/v1/account/usage');
         if (!is_wp_error($usage_response)) {
             $usage = eaa_wp_json($usage_response);
+        }
+        $billing_response = eaa_wp_api_request('/api/v1/account/billing-history?limit=5&offset=0');
+        if (!is_wp_error($billing_response)) {
+            $billing = eaa_wp_json($billing_response);
         }
         $report_response = eaa_wp_api_request('/api/v1/reports?limit=10&offset=0');
         if (!is_wp_error($report_response)) {
@@ -338,6 +363,18 @@ function eaa_wp_render_admin_page() {
                     <input id="eaa-domain" name="domain" type="url" class="regular-text" placeholder="https://example.com" required>
                     <?php submit_button(__('Run audit and download PDF', 'ecommerce-audit-agent'), 'primary eaa-primary', 'submit', false, array('disabled' => !$connected)); ?>
                 </form>
+            </div>
+            <div class="eaa-card" style="margin-top:16px">
+                <h2><?php esc_html_e('Subscription and billing', 'ecommerce-audit-agent'); ?></h2>
+                <?php if (is_array($billing)) : ?>
+                    <p><?php esc_html_e('Plan:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html((string) ($billing['account']['tier'] ?? '—')); ?></strong> · <?php esc_html_e('Billing period ends:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) ($billing['account']['billing_period_ends_at'] ?? '—')); ?></p>
+                    <?php if (!empty($billing['attention_items'])) : ?><p><?php esc_html_e('Billing events requiring attention:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) count($billing['attention_items'])); ?></p><?php endif; ?>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <input type="hidden" name="action" value="eaa_open_billing">
+                        <?php wp_nonce_field('eaa_open_billing'); ?>
+                        <?php submit_button(__('Manage subscription and payment methods', 'ecommerce-audit-agent'), 'secondary', 'submit', false); ?>
+                    </form>
+                <?php else : ?><p><?php esc_html_e('Billing information is unavailable until the SaaS billing provider is configured.', 'ecommerce-audit-agent'); ?></p><?php endif; ?>
             </div>
             <div class="eaa-card" style="margin-top:16px">
                 <h2><?php esc_html_e('Recent saved reports', 'ecommerce-audit-agent'); ?></h2>
