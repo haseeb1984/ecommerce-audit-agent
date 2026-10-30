@@ -15,4 +15,4 @@ reportlab>=5.0.1,<6.0
 aiohttp>=3.10,<4.0
 defusedxml==0.7.1
 certifi==2026.10.19
-asyncmy>=0.2.10,<1.0
+asyncmy==0.2.17
