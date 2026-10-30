@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS software_licenses (
     id SERIAL PRIMARY KEY,
     license_key VARCHAR(100) NOT NULL UNIQUE,
     client_name VARCHAR(255) NOT NULL,
+    account_email VARCHAR(255) NULL,
     tier VARCHAR(50) DEFAULT 'starter',
     max_monthly_audits INTEGER DEFAULT 100,
     is_active BOOLEAN DEFAULT TRUE,
