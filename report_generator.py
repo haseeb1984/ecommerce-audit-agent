@@ -116,10 +116,6 @@ def _outcome_breakdown_table(recorded_outcomes: list[object], small_style: Parag
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
-    table._audit_denominator_note = (
-        f"Denominator: {denominator} explicit outcome record(s) across "
-        f"{len(tested_pages)} distinct tested page(s). Missing records are not passes."
-    )
     return table
 
 
@@ -1719,7 +1715,12 @@ def render_audit_pdf(
             story.extend([
                 Paragraph("<b>PAGE OUTCOME BREAKDOWN — THIS CHECK</b>", body_style),
                 outcome_table,
-                _p(outcome_table._audit_denominator_note, small_style),
+                _p(
+                    f"Denominator: {len(recorded_outcomes)} explicit outcome record(s) across "
+                    f"{len({str(getattr(item, 'page_url', '') or '') for item in recorded_outcomes if getattr(item, 'page_url', None)})} distinct tested page(s). "
+                    "Missing records are not passes.",
+                    small_style,
+                ),
                 Spacer(1, 1.5 * mm),
             ])
         else:
@@ -2079,6 +2080,13 @@ def render_audit_pdf(
                 for record in records if getattr(record, "evidence", None)
             ))
             method_text = "; ".join(method_names[:2]) or "Not recorded"
+            sample_page = next(
+                (_safe_public_url(str(getattr(record, "page_url", "") or "")) for record in records
+                 if _safe_public_url(str(getattr(record, "page_url", "") or ""))),
+                None,
+            )
+            if sample_page:
+                method_text += " | page: " + sample_page
             if evidence_samples:
                 method_text += " — " + evidence_samples[0]
             check_rows.append([
