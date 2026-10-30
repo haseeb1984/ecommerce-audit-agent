@@ -1134,8 +1134,14 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
 async def test_second_paddle_checkout_for_same_email_does_not_mint_another_license(client, monkeypatch):
     secret = "paddle-single-customer-identity-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_single_identity")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    async def configured_single_identity_plan(db, active_only=False):
+        return [{
+            "tier": "starter", "label": "Starter", "monthly_audit_allowance": 100,
+            "max_concurrent_audits": 1, "price_id": "pri_single_identity", "is_active": True,
+        }]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_single_identity_plan)
     sent = []
     monkeypatch.setattr(main, "_send_license_email", lambda *args: sent.append(args))
 
@@ -1159,7 +1165,7 @@ async def test_second_paddle_checkout_for_same_email_does_not_mint_another_licen
                 "custom_data": {"license_tier": "starter", "checkout_email": email.strip().lower()},
                 "customer_id": "ctm_single_identity",
                 "customer": {"email": email, "name": "Single Identity Buyer"},
-                "items": [{"price": {"id": "pri_01abc123"}, "quantity": 1}],
+                "items": [{"price": {"id": "pri_single_identity"}, "quantity": 1}],
             },
         }
 
@@ -1666,10 +1672,14 @@ async def test_paddle_checkout_blocks_email_that_already_owns_a_license(client, 
         await db.commit()
 
     monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    async def configured_existing_customer_plan(db, active_only=True):
+        return [{"tier": "starter", "label": "Starter", "monthly_audit_allowance": 100,
+                 "max_concurrent_audits": 1, "price_id": "pri_existing_customer", "is_active": True}]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_existing_customer_plan)
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_FROM", "reports@example.com")
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_existing_customer")
     called = False
 
     def fake_request(*args, **kwargs):
