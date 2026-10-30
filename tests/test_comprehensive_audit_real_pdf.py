@@ -36,7 +36,7 @@ class FakeDB:
 @pytest.mark.asyncio
 async def test_comprehensive_audit_returns_real_rendered_pdf_with_findings(monkeypatch):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=44)
+    license_obj = SimpleNamespace(id=44, tier="starter")
     reserved_at = datetime(2026, 10, 17, tzinfo=timezone.utc)
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(101, reserved_at)))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
