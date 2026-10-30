@@ -2084,7 +2084,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             select(PaymentWebhookEvent).where(
                 PaymentWebhookEvent.subscription_id == subscription_id,
                 PaymentWebhookEvent.license_id.is_not(None),
-            ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1)
+            ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.id.desc()).limit(1)
         )).scalar_one_or_none()
         if linked_event is None or linked_event.license_id is None:
             raise HTTPException(status_code=503, detail="Subscription update is awaiting license reconciliation.")
@@ -2121,7 +2121,11 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         provider_canceled = provider_status in {"canceled", "cancelled"}
         is_canceled = canceled is not None or provider_canceled
 
-        if not is_canceled:
+        if is_canceled:
+            # Both a newly reported cancellation and a previously confirmed
+            # cancellation must leave the linked license disabled.
+            license_obj.is_active = False
+        else:
             if plan is not None:
                 license_obj.tier = plan["tier"]
                 license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
