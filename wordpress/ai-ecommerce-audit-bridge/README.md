@@ -1,0 +1,44 @@
+# AI Ecommerce Audit SaaS Bridge (WordPress)
+
+This plugin adds a server-side WordPress bridge to the Ecommerce Audit Agent FastAPI service.
+
+## Install
+
+1. Copy this directory into `wp-content/plugins/ai-ecommerce-audit-bridge/`.
+2. Activate **AI Ecommerce Audit SaaS Bridge** in WordPress.
+3. Open **Settings -> Ecommerce Audit Bridge**.
+4. Set the HTTPS API base URL and a license/API credential. The credential is stored server-side and is not emitted into page markup.
+5. Add `[ai_ecommerce_audit_dashboard]` to a page that only authenticated customers can access.
+
+## Current functionality
+
+- Authenticated request for `GET /api/v1/account/usage`.
+- Monthly quota display including active reservations when returned by the API.
+- Hide audit submission unless the live account entitlement is active and quota remains; re-check entitlement server-side on form submission.
+- White-label settings form for eligible plans, with server-side entitlement re-check and HTTPS logo URL / hex-color validation.
+- Secure WordPress identity linking: the SaaS customer generates a 10-minute one-time code; a signed-in WordPress administrator redeems it for the current site and current WP user. The backend stores only the code hash, enforces license binding and replay protection, and supports explicit unlinking.
+- Nonce-protected audit form restricted to trusted site operators by default (`manage_options`); a site administrator may deliberately grant a narrower or broader capability with the `aieab_dashboard_capability` filter.
+- Server-side request to `POST /api/v1/comprehensive-audit?domain=...` and validation of the returned PDF content type and PDF signature before download.
+- HTTPS-only API base URL, bounded HTTP timeout, no automatic redirects, generic error messages, private/no-cache download headers, and no credential in browser JavaScript.
+
+## Boundaries and remaining work
+
+- Billing and package entitlement authority remains in the FastAPI/Paddle backend; the plugin does not create or validate payment events independently.
+- The dashboard and audit submission both require the `manage_options` capability by default because the API credential is shared at site level. A site owner can use the `aieab_dashboard_capability` filter to delegate access to a trusted role; do not grant it to general storefront customers.
+
+For example, to delegate the dashboard to a trusted custom capability, add this to a site-specific plugin after reviewing your role policy:
+
+```php
+add_filter('aieab_dashboard_capability', static function (): string {
+    return 'manage_woocommerce';
+});
+```
+
+Only use a capability that is assigned exclusively to trusted operators. The filter changes the WordPress-side access boundary; it does not create separate SaaS identities or separate billing accounts.
+- The API credential remains a server-side site integration secret, not a WordPress customer identity. Site linking records the site URL and the WordPress administrator who redeemed the one-time claim. Paddle customer/billing identity remains separate and is not inferred from WordPress email.
+- Feature-gated conversion dossier UI is not implemented in this bridge. White-label settings are configurable, but they do not yet re-skin generated PDF reports.
+- PHP/WordPress integration tests and an end-to-end sandbox run are still required before production use.
+
+## Security notes
+
+Use HTTPS for the FastAPI service. Do not expose the license credential in page content or client-side scripts. Restrict the dashboard page to authenticated users and keep WordPress, PHP, and the plugin updated.
