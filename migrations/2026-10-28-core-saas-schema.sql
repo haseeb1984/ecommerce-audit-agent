@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS account_login_challenges (
 );
 CREATE TABLE IF NOT EXISTS account_sessions (
     token_hash VARCHAR(64) PRIMARY KEY,
+    session_id VARCHAR(32) NOT NULL UNIQUE,
     license_id INTEGER NOT NULL REFERENCES software_licenses(id) ON DELETE CASCADE,
     email VARCHAR(255) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
