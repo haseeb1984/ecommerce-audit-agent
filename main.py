@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, OperationalDiagnosticEvent
 
 logger = logging.getLogger("audit_service")
 
@@ -3930,31 +3930,29 @@ def _safe_diagnostic_host(value: str | None) -> str | None:
 
 async def _record_operation_event(db: AsyncSession, event_type: str, license_id: int | None,
                                 domain: str | None, error_type: str | None) -> None:
-    """Best-effort diagnostic write with only a hostname and exception class; never store traceback/secrets."""
+    """Write sanitized diagnostics to Hostinger; PostgreSQL remains license authority."""
+    if HostingerAsyncSessionLocal is None:
+        logger.warning("Operational diagnostic event was not persisted because Hostinger is unavailable.")
+        return
     try:
-        dialect_name = db.get_bind().dialect.name
-        timestamp_type = "TIMESTAMPTZ" if dialect_name == "postgresql" else "DATETIME"
-        timestamp_default = "NOW()" if dialect_name == "postgresql" else "CURRENT_TIMESTAMP"
-        id_type = "BIGSERIAL PRIMARY KEY" if dialect_name == "postgresql" else "INTEGER PRIMARY KEY AUTOINCREMENT"
-        await db.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS saas_operation_events (
-                id {id_type},
-                event_type VARCHAR(80) NOT NULL,
-                license_id INTEGER REFERENCES software_licenses(id) ON DELETE SET NULL,
-                domain VARCHAR(255),
-                error_type VARCHAR(120),
-                created_at {timestamp_type} NOT NULL DEFAULT {timestamp_default}
+        license_key = None
+        if license_id is not None:
+            license_key = await db.scalar(
+                select(SoftwareLicense.license_key).where(SoftwareLicense.id == license_id)
             )
-        """))
-        await db.execute(text("""
-            INSERT INTO saas_operation_events (event_type, license_id, domain, error_type)
-            VALUES (:event_type, :license_id, :domain, :error_type)
-        """), {"event_type": event_type[:80], "license_id": license_id,
-               "domain": (domain or "")[:255] or None, "error_type": (error_type or "")[:120] or None})
-        await db.commit()
+        async with HostingerAsyncSessionLocal() as operational_db:
+            operational_db.add(OperationalDiagnosticEvent(
+                event_type=event_type[:80],
+                license_key=license_key,
+                domain=(domain or "")[:255] or None,
+                error_type=(error_type or "")[:120] or None,
+            ))
+            await operational_db.commit()
     except Exception as log_exc:
-        await db.rollback()
-        logger.warning("Operation diagnostic write failed (error_type=%s)", type(log_exc).__name__)
+        logger.warning(
+            "Operational diagnostic write failed (error_type=%s)",
+            type(log_exc).__name__,
+        )
 
 
 async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[dict]:
