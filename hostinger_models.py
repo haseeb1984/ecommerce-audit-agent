@@ -109,7 +109,7 @@ class ScanBatch(HostingerBase):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     __table_args__ = (
-        UniqueConstraint("license_key", "request_id", name="uq_scan_batches_license_request"),
+        UniqueConstraint("license_key", "request_id", "batch_number", name="uq_scan_batches_request_sequence"),
         UniqueConstraint("license_key", "batch_number", "created_at", name="uq_scan_batches_sequence"),
         Index("ix_scan_batches_claim", "status", "available_at", "created_at"),
     )
