@@ -29,6 +29,7 @@ CREATE INDEX IF NOT EXISTS ix_account_sessions_license_id ON account_sessions(li
 CREATE INDEX IF NOT EXISTS ix_account_sessions_license_created
     ON account_sessions(license_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_account_sessions_expires_at ON account_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS ix_account_sessions_email_created ON account_sessions(email, created_at);
 
 -- Opaque public identifier for customer device/session management.
 ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS session_id VARCHAR(32);
