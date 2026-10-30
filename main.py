@@ -5036,6 +5036,34 @@ async def admin_customer_directory(
         query.order_by(sql_func.max(CustomerBillingEvent.updated_at).desc())
         .offset(offset).limit(limit)
     )).all()
+    legacy_directory = False
+    if total == 0:
+        legacy_directory = True
+        legacy_query = select(
+            sql_func.lower(PaymentWebhookEvent.recipient_email).label("email"),
+            sql_func.count(distinct(PaymentWebhookEvent.license_id)).label("license_count"),
+            sql_func.max(PaymentWebhookEvent.updated_at).label("last_billing_activity"),
+        ).where(
+            PaymentWebhookEvent.recipient_email.is_not(None),
+            PaymentWebhookEvent.recipient_email != "",
+            PaymentWebhookEvent.license_id.is_not(None),
+        ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email))
+        legacy_count = select(sql_func.count(sql_func.distinct(
+            sql_func.lower(PaymentWebhookEvent.recipient_email)
+        ))).where(
+            PaymentWebhookEvent.recipient_email.is_not(None),
+            PaymentWebhookEvent.recipient_email != "",
+            PaymentWebhookEvent.license_id.is_not(None),
+        )
+        if normalized:
+            legacy_filter = sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(f"%{normalized.replace('%', '').replace('_', '')}%")
+            legacy_query = legacy_query.having(legacy_filter)
+            legacy_count = legacy_count.where(legacy_filter)
+        total = int((await db.execute(legacy_count)).scalar_one() or 0)
+        rows = (await db.execute(
+            legacy_query.order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc())
+            .offset(offset).limit(limit)
+        )).all()
     items = []
     now = datetime.now(timezone.utc)
     for row in rows:
@@ -5043,10 +5071,16 @@ async def admin_customer_directory(
             select(CustomerBillingEvent.license_key).where(
                 sql_func.lower(CustomerBillingEvent.recipient_email) == row.email
             ).distinct()
-        )).scalars().all())
-        license_rows = (await db.execute(
-            select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
-        )).scalars().all() if license_keys else []
+        )).scalars().all()) if not legacy_directory else set()
+        if legacy_directory:
+            license_rows = (await db.execute(select(SoftwareLicense).join(
+                PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+            ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == row.email)
+            .distinct())).scalars().all()
+        else:
+            license_rows = (await db.execute(
+                select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
+            )).scalars().all() if license_keys else []
         active = sum(
             1 for lic in license_rows
             if lic.is_active and (
@@ -5104,6 +5138,11 @@ async def admin_customer_account_detail(
         select(CustomerBillingEvent).where(CustomerBillingEvent.license_key.in_(license_keys))
         .order_by(CustomerBillingEvent.updated_at.desc()).limit(200)
     )).scalars().all()
+    if not payments:
+        payments = (await db.execute(
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids))
+            .order_by(PaymentWebhookEvent.updated_at.desc()).limit(200)
+        )).scalars().all()
     notes = (await operational_db.execute(select(AdminCustomerNote).where(
         sql_func.lower(AdminCustomerNote.customer_email) == normalized
     ).order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc()).limit(100))).scalars().all()
