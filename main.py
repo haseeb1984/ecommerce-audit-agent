@@ -39,8 +39,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
-from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession
+from auth import verify_license_or_api_key, verify_account_credentials_for_key_revocation, verify_account_credentials_for_billing, verify_customer_account, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
@@ -93,6 +93,15 @@ class ReportEmailRequest(BaseModel):
 class AccountProfileUpdate(BaseModel):
     """Customer-editable account display name; billing identity stays with the payment provider."""
     client_name: str = Field(..., min_length=1, max_length=255)
+
+
+class AccountLoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+
+
+class AccountLoginVerify(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+    code: str = Field(..., min_length=6, max_length=6)
 
 
 def custom_openapi():
@@ -901,6 +910,133 @@ h1{{margin-top:0}}p{{line-height:1.6;color:#46536a}}#status{{font-weight:600}}
 async def customer_portal():
     """Serve the lightweight, API-backed customer portal bundled with this repository."""
     return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
+
+
+@app.post("/api/v1/account/auth/request-code", status_code=202)
+async def request_account_login_code(payload: AccountLoginRequest, response: Response, db: AsyncSession = Depends(get_async_db)):
+    """Send a short-lived sign-in code without disclosing whether an email owns an account."""
+    from sqlalchemy import select, func
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    now = datetime.now(timezone.utc)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    recent_count = int((await db.execute(select(func.count(AccountLoginChallenge.id)).where(
+        AccountLoginChallenge.email == email,
+        AccountLoginChallenge.created_at >= now - timedelta(hours=1),
+    ))).scalar_one() or 0)
+    latest = (await db.execute(select(AccountLoginChallenge).where(
+        AccountLoginChallenge.email == email,
+    ).order_by(AccountLoginChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
+    if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
+        return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
+
+    linked = (await db.execute(select(PaymentWebhookEvent).where(
+        func.lower(PaymentWebhookEvent.recipient_email) == email,
+        PaymentWebhookEvent.license_id.is_not(None),
+    ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc()).limit(1))).scalar_one_or_none()
+    if linked is None:
+        return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
+
+    auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
+    if len(auth_secret) < 32:
+        logger.error("Customer account sign-in is unavailable because ACCOUNT_AUTH_SECRET is not configured.")
+        raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
+    code = f"{secrets.randbelow(1000000):06d}"
+    challenge_id = secrets.token_urlsafe(24)
+    digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
+    challenge = AccountLoginChallenge(
+        id=challenge_id, email=email, license_id=linked.license_id, code_hash=digest,
+        expires_at=now + timedelta(minutes=10), attempts=0, created_at=now,
+    )
+    db.add(challenge)
+    await db.commit()
+    try:
+        _send_account_login_code(email, code)
+    except Exception as exc:
+        challenge.consumed_at = datetime.now(timezone.utc)
+        await db.commit()
+        logger.warning("Customer sign-in email delivery failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Unable to deliver a sign-in code right now.") from exc
+    return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
+
+
+@app.post("/api/v1/account/auth/verify-code")
+async def verify_account_login_code(payload: AccountLoginVerify, response: Response, db: AsyncSession = Depends(get_async_db)):
+    """Consume a one-time code and issue an opaque 30-day customer session."""
+    from sqlalchemy import select
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"\\d{6}", payload.code):
+        raise HTTPException(status_code=422, detail="Sign-in code must contain six digits.")
+    auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
+    if len(auth_secret) < 32:
+        raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
+    now = datetime.now(timezone.utc)
+    challenge = (await db.execute(select(AccountLoginChallenge).where(
+        AccountLoginChallenge.email == email,
+        AccountLoginChallenge.consumed_at.is_(None),
+    ).order_by(AccountLoginChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
+    if challenge is None:
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    expiry = challenge.expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if expiry <= now or challenge.attempts >= 5:
+        challenge.consumed_at = now
+        await db.commit()
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    expected = hmac.new(auth_secret.encode(), f"{challenge.id}:{email}:{payload.code}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, challenge.code_hash):
+        challenge.attempts += 1
+        if challenge.attempts >= 5:
+            challenge.consumed_at = now
+        await db.commit()
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    license_obj = (await db.execute(select(SoftwareLicense).where(
+        SoftwareLicense.id == challenge.license_id,
+    ))).scalar_one_or_none()
+    if license_obj is None:
+        challenge.consumed_at = now
+        await db.commit()
+        raise HTTPException(status_code=401, detail="Customer account is unavailable.")
+    challenge.consumed_at = now
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    session = AccountSession(
+        token_hash=token_hash, license_id=license_obj.id, email=email,
+        expires_at=now + timedelta(days=30), created_at=now,
+    )
+    db.add(session)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "authenticated",
+        "access_token": raw_token,
+        "token_type": "Bearer",
+        "expires_at": session.expires_at.isoformat(),
+        "account": {"client_name": license_obj.client_name, "tier": license_obj.tier},
+    }
+
+
+@app.post("/api/v1/account/auth/logout")
+async def logout_account_session(
+    response: Response,
+    credentials = Depends(CUSTOMER_BEARER),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke the current customer session immediately."""
+    from sqlalchemy import select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Customer session is required.")
+    digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    session = (await db.execute(select(AccountSession).where(AccountSession.token_hash == digest))).scalar_one_or_none()
+    if session is not None and session.revoked_at is None:
+        session.revoked_at = datetime.now(timezone.utc)
+        await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"status": "logged_out"}
 
 
 @app.get("/api/v1/account/profile")
