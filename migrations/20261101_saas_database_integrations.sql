@@ -119,6 +119,15 @@ CREATE TABLE IF NOT EXISTS account_sessions (
     public_id VARCHAR(64) UNIQUE NULL,
     user_agent VARCHAR(500) NULL
 );
+-- Older passwordless-auth deployments predate the device-session metadata.
+ALTER TABLE account_sessions
+    ADD COLUMN IF NOT EXISTS public_id VARCHAR(64) NULL,
+    ADD COLUMN IF NOT EXISTS user_agent VARCHAR(500) NULL;
+UPDATE account_sessions
+    SET public_id = md5(token_hash || COALESCE(created_at::text, ''))
+    WHERE public_id IS NULL;
+ALTER TABLE account_sessions ALTER COLUMN public_id SET NOT NULL;
+
 CREATE INDEX IF NOT EXISTS ix_account_sessions_license_id ON account_sessions (license_id);
 CREATE INDEX IF NOT EXISTS ix_account_sessions_public_id ON account_sessions (public_id);
 CREATE INDEX IF NOT EXISTS ix_account_sessions_license_created
