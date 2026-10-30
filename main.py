@@ -125,6 +125,12 @@ def custom_openapi():
             "in": "header",
             "name": "X-License-Key",
             "description": "Enter your X-License-Key"
+        },
+        "CustomerSessionAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "opaque session token",
+            "description": "Passwordless customer account session"
         }
     }
     app.openapi_schema = openapi_schema
@@ -152,6 +158,8 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "saas_admin_action_logs",
         "saas_operation_events",
         "payment_webhook_events",
+        "account_login_challenges",
+        "account_sessions",
     }
     try:
         result = await db.execute(text("SELECT 1"))
