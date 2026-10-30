@@ -798,6 +798,7 @@
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
+    if (nextCredential !== "customer-session") sessionToken = "";
     if (!nextCredential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
     // A new connection attempt invalidates responses from any earlier identity,
     // including when the new credential text happens to match a prior one.
@@ -824,6 +825,7 @@
       // An obsolete connection attempt must not clear or overwrite a newer session.
       if (attemptSessionVersion !== accountSessionVersion) return;
       clearAccountView();
+      sessionToken = "";
       credential = "";
       $("credential").value = "";
       setAccountControls(false);
