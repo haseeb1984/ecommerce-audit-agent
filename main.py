@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation
 
 logger = logging.getLogger("audit_service")
 
@@ -391,7 +391,7 @@ async def audit_lead(
 async def verify_license_with_optional_wordpress_site(
     request: Request,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db),
 ) -> SoftwareLicense:
     """Authenticate normal SaaS clients and additionally enforce a supplied WordPress site identity."""
     site_id = request.headers.get("X-WordPress-Site-ID", "").strip()
@@ -399,10 +399,10 @@ async def verify_license_with_optional_wordpress_site(
         if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", site_id):
             raise HTTPException(status_code=403, detail="Invalid WordPress site connection.")
         from sqlalchemy import select
-        site = (await db.execute(select(WordPressSite.id).where(
-            WordPressSite.id == site_id,
-            WordPressSite.license_id == license_obj.id,
-            WordPressSite.status == "active",
+        site = (await operational_db.execute(select(WordPressInstallation.id).where(
+            WordPressInstallation.id == site_id,
+            WordPressInstallation.license_key == license_obj.license_key,
+            WordPressInstallation.status == "active",
         ))).scalar_one_or_none()
         if site is None:
             raise HTTPException(status_code=403, detail="This WordPress site is disconnected or not linked to the authenticated license.")
