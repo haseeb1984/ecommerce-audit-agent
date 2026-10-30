@@ -26,12 +26,13 @@ async def create_license(
     quota=10,
     active=True,
     expires_at=None,
+    tier="pro",
 ):
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
             license_key=key,
             client_name="Automated Test",
-            tier="test",
+            tier=tier,
             max_monthly_audits=quota,
             is_active=active,
             expires_at=expires_at,
@@ -208,7 +209,7 @@ def test_coverage_manifest_redacts_credentials_query_and_fragment_from_all_urls(
 
 @pytest.mark.asyncio
 async def test_account_usage_reports_monthly_quota_without_exposing_license_key(client):
-    license_id = await create_license(key="usage-private-license", quota=5)
+    license_id = await create_license(key="usage-private-license", quota=5, tier="test")
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         db.add(AuditLead(
