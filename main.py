@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, AccountEmailChangeChallenge, WordPressSite
 from auth import verify_license_or_api_key, verify_customer_account, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -82,6 +82,19 @@ async def apply_response_security_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
     return response
+
+
+
+class WordPressSiteRegister(BaseModel):
+    site_url: str = Field(..., min_length=8, max_length=2048)
+    admin_email: str = Field(..., min_length=3, max_length=254)
+    wordpress_version: str = Field(default="", max_length=30)
+    woocommerce_version: str = Field(default="", max_length=30)
+    plugin_version: str = Field(..., min_length=1, max_length=30)
+
+
+class WordPressSiteAction(BaseModel):
+    site_id: str = Field(..., min_length=20, max_length=64)
 
 
 class ReportEmailRequest(BaseModel):
@@ -170,6 +183,7 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "account_login_challenges",
         "account_sessions",
         "account_email_change_challenges",
+        "wordpress_sites",
     }
     try:
         result = await db.execute(text("SELECT 1"))
@@ -1421,6 +1435,152 @@ async def switch_customer_account_license(
         "client_name": target.client_name, "tier": target.tier,
         "license_id": target.id, "is_active": bool(target.is_active),
     }}
+
+
+
+@app.post("/api/v1/integrations/wordpress/sites/register", status_code=201)
+async def register_wordpress_site(
+    payload: WordPressSiteRegister,
+    request: Request,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Register or refresh one WordPress installation under the authenticated license."""
+    from sqlalchemy import select, func as sql_func
+    raw_url = payload.site_url.strip()
+    parsed = urlsplit(raw_url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
+    if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
+        raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
+    host = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
+    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    admin_email = payload.admin_email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
+        raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
+    site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
+    now = datetime.now(timezone.utc)
+    existing = (await db.execute(select(WordPressSite).where(
+        WordPressSite.license_id == license_obj.id,
+        WordPressSite.site_host == host,
+    ).with_for_update())).scalar_one_or_none()
+    if existing is None:
+        count = int((await db.execute(select(sql_func.count(WordPressSite.id)).where(
+            WordPressSite.license_id == license_obj.id,
+            WordPressSite.status == "active",
+        ))).scalar_one() or 0)
+        if count >= 10:
+            raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
+        existing = WordPressSite(
+            id=secrets.token_urlsafe(24),
+            license_id=license_obj.id,
+            site_url=site_url,
+            site_host=host,
+            admin_email=admin_email,
+            plugin_version=payload.plugin_version.strip(),
+            wordpress_version=payload.wordpress_version.strip() or None,
+            woocommerce_version=payload.woocommerce_version.strip() or None,
+            status="active",
+            created_at=now,
+            last_seen_at=now,
+        )
+        db.add(existing)
+    else:
+        existing.site_url = site_url
+        existing.admin_email = admin_email
+        existing.plugin_version = payload.plugin_version.strip()
+        existing.wordpress_version = payload.wordpress_version.strip() or None
+        existing.woocommerce_version = payload.woocommerce_version.strip() or None
+        existing.status = "active"
+        existing.disconnected_at = None
+        existing.last_seen_at = now
+    owner_email = (await db.execute(select(PaymentWebhookEvent.recipient_email).where(
+        PaymentWebhookEvent.license_id == license_obj.id,
+        PaymentWebhookEvent.recipient_email.is_not(None),
+    ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))).scalar_one_or_none()
+    existing.customer_email = owner_email.strip().lower() if owner_email else None
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "connected",
+        "site_id": existing.id,
+        "site_url": existing.site_url,
+        "site_host": existing.site_host,
+        "customer_email": existing.customer_email,
+        "license": {"id": license_obj.id, "client_name": license_obj.client_name, "tier": license_obj.tier},
+        "connected_at": existing.created_at.isoformat() if existing.created_at else None,
+    }
+
+
+@app.get("/api/v1/integrations/wordpress/sites/status")
+async def wordpress_site_status(
+    site_id: str = Query(..., min_length=20, max_length=64),
+    response: Response = None,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return the connected site's current license entitlement without revealing secrets."""
+    from sqlalchemy import select
+    site = (await db.execute(select(WordPressSite).where(
+        WordPressSite.id == site_id,
+        WordPressSite.license_id == license_obj.id,
+        WordPressSite.status == "active",
+    ))).scalar_one_or_none()
+    if site is None:
+        raise HTTPException(status_code=404, detail="WordPress site connection not found.")
+    site.last_seen_at = datetime.now(timezone.utc)
+    await db.commit()
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "connected",
+        "site_id": site.id,
+        "site_url": site.site_url,
+        "site_host": site.site_host,
+        "license": {
+            "id": license_obj.id,
+            "client_name": license_obj.client_name,
+            "tier": license_obj.tier,
+            "is_active": bool(license_obj.is_active),
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "entitlement_state": "inactive" if not license_obj.is_active else ("expired" if expires_at and expires_at <= now else "active"),
+        },
+        "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None,
+        "plugin_version": site.plugin_version,
+        "wordpress_version": site.wordpress_version,
+        "woocommerce_version": site.woocommerce_version,
+    }
+
+
+@app.post("/api/v1/integrations/wordpress/sites/disconnect")
+async def disconnect_wordpress_site(
+    payload: WordPressSiteAction,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Disconnect a site without deleting license, customer, billing, or audit history."""
+    from sqlalchemy import select
+    site = (await db.execute(select(WordPressSite).where(
+        WordPressSite.id == payload.site_id,
+        WordPressSite.license_id == license_obj.id,
+        WordPressSite.status == "active",
+    ).with_for_update())).scalar_one_or_none()
+    if site is None:
+        raise HTTPException(status_code=404, detail="WordPress site connection not found.")
+    site.status = "disconnected"
+    site.disconnected_at = datetime.now(timezone.utc)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "disconnected", "site_id": site.id}
 
 
 @app.get("/api/v1/account/profile")
