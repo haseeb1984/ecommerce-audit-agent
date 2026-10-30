@@ -195,6 +195,8 @@ function packagePayload(p){
  const allowance=Number(a),concurrency=Number(c);
  const normalizedTier=tier.trim().toLowerCase(),normalizedLabel=label.trim(),normalizedPrice=price.trim();
  if(!/^[a-z0-9_-]{2,50}$/.test(normalizedTier)){status("Package tier must be 2–50 lowercase letters, numbers, underscores or hyphens.","error");return null}
+ const supportedTiers=["starter","agency","pro","agency_pro","whitelabel","white_label","enterprise","business"];
+ if(!supportedTiers.includes(normalizedTier)){status("Choose a supported tier: "+supportedTiers.join(", ")+".","error");return null}
  if(!normalizedLabel||normalizedLabel.length>100){status("Package display name must be 1–100 characters.","error");return null}
  if(!Number.isInteger(allowance)||allowance<1||allowance>10000000||!Number.isInteger(concurrency)||concurrency<1||concurrency>10000){status("Monthly and concurrent limits must be within the supported positive whole-number ranges.","error");return null}
  if(normalizedPrice&&!/^pri_[A-Za-z0-9]+$/.test(normalizedPrice)){status("Paddle price ID must use the expected pri_ identifier format.","error");return null}
