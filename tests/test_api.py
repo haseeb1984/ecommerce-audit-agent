@@ -3149,6 +3149,8 @@ async def test_admin_diagnostics_and_client_history_are_not_cached(client, monke
 
 @pytest.mark.asyncio
 async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unknown_price(client, monkeypatch):
+    from sqlalchemy import text
+
     secret = "paddle-test-subscription-update-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_update_starter123")
