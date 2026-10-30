@@ -1522,8 +1522,9 @@ async def register_wordpress_site(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Register or refresh one WordPress installation under the authenticated license."""
+    """Register or refresh one WordPress installation in Hostinger."""
     from sqlalchemy import select, func as sql_func
     raw_url = payload.site_url.strip()
     parsed = urlsplit(raw_url)
@@ -1539,58 +1540,56 @@ async def register_wordpress_site(
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
     site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
-    # Serialize registration per license, including the absent-row case, so
-    # concurrent registrations cannot exceed the site cap or race the unique host index.
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:identity))"), {
-        "identity": f"wordpress-license:{license_obj.id}"
-    })
-    existing = (await db.execute(select(WordPressSite).where(
-        WordPressSite.license_id == license_obj.id,
-        WordPressSite.site_host == host,
-    ).with_for_update())).scalar_one_or_none()
+    owner_email = await db.scalar(select(PaymentWebhookEvent.recipient_email).where(
+        PaymentWebhookEvent.license_id == license_obj.id,
+        PaymentWebhookEvent.recipient_email.is_not(None),
+    ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))
+    account = await operational_db.scalar(select(CustomerAccount).where(
+        CustomerAccount.license_key == license_obj.license_key
+    ).with_for_update())
+    if account is None:
+        account = CustomerAccount(
+            id=secrets.token_urlsafe(24), license_key=license_obj.license_key,
+            email=(owner_email or admin_email).strip().lower(),
+            display_name=license_obj.client_name, status="active",
+            created_at=now, updated_at=now,
+        )
+        operational_db.add(account)
+        await operational_db.flush()
+    existing = await operational_db.scalar(select(WordPressInstallation).where(
+        WordPressInstallation.license_key == license_obj.license_key,
+        WordPressInstallation.site_host == host,
+    ).with_for_update())
+    active_count = int((await operational_db.execute(select(sql_func.count(WordPressInstallation.id)).where(
+        WordPressInstallation.license_key == license_obj.license_key,
+        WordPressInstallation.status == "active",
+    ))).scalar_one() or 0)
     if existing is None:
-        count = int((await db.execute(select(sql_func.count(WordPressSite.id)).where(
-            WordPressSite.license_id == license_obj.id,
-            WordPressSite.status == "active",
-        ))).scalar_one() or 0)
-        if count >= 10:
+        if active_count >= 10:
             raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
-        existing = WordPressSite(
-            id=secrets.token_urlsafe(24),
-            license_id=license_obj.id,
-            site_url=site_url,
-            site_host=host,
-            admin_email=admin_email,
+        existing = WordPressInstallation(
+            id=secrets.token_urlsafe(24), license_key=license_obj.license_key,
+            site_url=site_url, site_host=host, admin_email=admin_email,
+            customer_email=owner_email.strip().lower() if owner_email else None,
             plugin_version=payload.plugin_version.strip(),
             wordpress_version=payload.wordpress_version.strip() or None,
             woocommerce_version=payload.woocommerce_version.strip() or None,
-            status="active",
-            created_at=now,
-            last_seen_at=now,
+            status="active", created_at=now, last_seen_at=now,
         )
-        db.add(existing)
+        operational_db.add(existing)
     else:
-        if existing.status != "active":
-            active_count = int((await db.execute(select(sql_func.count(WordPressSite.id)).where(
-                WordPressSite.license_id == license_obj.id,
-                WordPressSite.status == "active",
-            ))).scalar_one() or 0)
-            if active_count >= 10:
-                raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
+        if existing.status != "active" and active_count >= 10:
+            raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
         existing.site_url = site_url
         existing.admin_email = admin_email
+        existing.customer_email = owner_email.strip().lower() if owner_email else None
         existing.plugin_version = payload.plugin_version.strip()
         existing.wordpress_version = payload.wordpress_version.strip() or None
         existing.woocommerce_version = payload.woocommerce_version.strip() or None
         existing.status = "active"
         existing.disconnected_at = None
         existing.last_seen_at = now
-    owner_email = (await db.execute(select(PaymentWebhookEvent.recipient_email).where(
-        PaymentWebhookEvent.license_id == license_obj.id,
-        PaymentWebhookEvent.recipient_email.is_not(None),
-    ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))).scalar_one_or_none()
-    existing.customer_email = owner_email.strip().lower() if owner_email else None
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
