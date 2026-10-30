@@ -6,6 +6,12 @@ The customer portal can issue a one-time WordPress link token. The token is retu
 
 Customers can list and unlink their own site connections from the SaaS portal. The plugin requires a signed-in WordPress user and the configured site capability; site linking and unlinking require the WordPress manage_options capability and a nonce. The plugin sends the SaaS credential server-side only.
 
+## Customer account identity
+
+A normalized, verified checkout email identifies exactly one SaaS customer account and one license. Customer sessions may exist on multiple devices, but they all remain attached to that single license; the portal does not offer license listing or switching. A later checkout using the same email is recorded as `duplicate_account_blocked` for operator reconciliation and never creates or emails a second license key. Subscription lifecycle updates and renewals continue to update the existing license through its original subscription linkage.
+
+The `software_licenses.account_email` field is the canonical identity, protected by a case-insensitive unique database index. Passwordless login resolves that field; legacy payment-event lookup is allowed only when all matching events identify exactly one license. Ambiguous historical duplicates fail closed rather than selecting whichever payment event happens to be newest. The migration deliberately stops with an actionable error when it finds duplicate email-to-license mappings: operators must reconcile those records without silently discarding billing, audit, API-key, or usage history before the unique index can be installed.
+
 ## Plan entitlements
 
 plan_features.py is the canonical display and authorization feature map:
@@ -31,6 +37,7 @@ Apply migrations in order after the core SaaS schema:
 2. 20261030_customer_passwordless_auth.sql
 3. 20261030_paddle_billing_period.sql
 4. 20261030_customer_identity_wordpress_linking.sql
+5. 20261031_single_customer_license_identity.sql
 
 For a new database, the core schema also includes the account-session, white-label, and WordPress identity tables. The migrations are idempotent for their create/index operations. Run python scripts/check_production_readiness.py against the intended staging schema after migration; it is read-only and does not apply schema changes.
 
