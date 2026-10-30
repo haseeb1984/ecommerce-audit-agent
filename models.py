@@ -206,6 +206,30 @@ class AccountSession(Base):
     user_agent = Column(String(500), nullable=True)
 
 
+
+class WordPressSite(Base):
+    """A WordPress installation linked to a single authenticated SaaS license."""
+    __tablename__ = "wordpress_sites"
+    __table_args__ = (
+        Index("ix_wordpress_sites_license_created", "license_id", "created_at"),
+        Index("ix_wordpress_sites_license_host", "license_id", "site_host", unique=True),
+    )
+
+    id = Column(String(64), primary_key=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    site_url = Column(String(2048), nullable=False)
+    site_host = Column(String(253), nullable=False)
+    admin_email = Column(String(254), nullable=False)
+    customer_email = Column(String(254), nullable=True)
+    wordpress_version = Column(String(30), nullable=True)
+    woocommerce_version = Column(String(30), nullable=True)
+    plugin_version = Column(String(30), nullable=False)
+    status = Column(String(20), nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    disconnected_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class AccountEmailChangeChallenge(Base):
     """One-time proof that an authenticated customer controls a proposed new email."""
     __tablename__ = "account_email_change_challenges"
