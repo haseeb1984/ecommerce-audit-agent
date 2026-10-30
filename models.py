@@ -253,12 +253,17 @@ class AccountEmailChangeChallenge(Base):
 class SaaSAdminCustomerNote(Base):
     """Append-only internal support note attached to a normalized customer email."""
     __tablename__ = "saas_admin_customer_notes"
-    __table_args__ = (
-        Index("ix_saas_admin_customer_notes_email_created", "customer_email", "created_at"),
-    )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     customer_email = Column(String(254), nullable=False)
     note = Column(Text, nullable=False)
     created_by = Column(String(100), nullable=False, default="admin", server_default="admin")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_saas_admin_customer_notes_email_created",
+            func.lower(customer_email),
+            created_at.desc(),
+        ),
+    )
