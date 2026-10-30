@@ -29,13 +29,14 @@ function eaa_wp_encrypt_license($plain) {
         return new WP_Error('eaa_crypto_unavailable', __('This server needs OpenSSL and a secure random source to store the license safely.', 'ecommerce-audit-agent'));
     }
     try {
-        $iv = random_bytes(16);
+        $iv = random_bytes(12);
+        $tag = '';
         $key = hash('sha256', wp_salt('auth'), true);
-        $cipher = openssl_encrypt($plain, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
-        if (false === $cipher) {
+        $cipher = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if (false === $cipher || 16 !== strlen($tag)) {
             return new WP_Error('eaa_crypto_failed', __('The license key could not be encrypted.', 'ecommerce-audit-agent'));
         }
-        return 'eaa1:' . base64_encode($iv . $cipher);
+        return 'eaa2:' . base64_encode($iv . $tag . $cipher);
     } catch (Throwable $error) {
         return new WP_Error('eaa_crypto_failed', __('The license key could not be encrypted.', 'ecommerce-audit-agent'));
     }
@@ -43,18 +44,25 @@ function eaa_wp_encrypt_license($plain) {
 
 function eaa_wp_decrypt_license($stored) {
     $stored = (string) $stored;
-    if (0 !== strpos($stored, 'eaa1:')) {
-        return $stored; // Backward compatibility for a pre-encryption saved option.
+    if (0 !== strpos($stored, 'eaa2:')) {
+        return $stored; // Backward compatibility for an older plain-text option.
     }
     if (!function_exists('openssl_decrypt')) {
         return new WP_Error('eaa_crypto_unavailable', __('OpenSSL is required to read the saved license key.', 'ecommerce-audit-agent'));
     }
     $packed = base64_decode(substr($stored, 5), true);
-    if (false === $packed || strlen($packed) <= 16) {
+    if (false === $packed || strlen($packed) <= 28) {
         return new WP_Error('eaa_crypto_invalid', __('The saved license credential is damaged. Re-enter your license key.', 'ecommerce-audit-agent'));
     }
     $key = hash('sha256', wp_salt('auth'), true);
-    $plain = openssl_decrypt(substr($packed, 16), 'aes-256-cbc', $key, OPENSSL_RAW_DATA, substr($packed, 0, 16));
+    $plain = openssl_decrypt(
+        substr($packed, 28),
+        'aes-256-gcm',
+        $key,
+        OPENSSL_RAW_DATA,
+        substr($packed, 0, 12),
+        substr($packed, 12, 16)
+    );
     if (false === $plain || '' === $plain) {
         return new WP_Error('eaa_crypto_invalid', __('The saved license credential cannot be decrypted. Re-enter your license key.', 'ecommerce-audit-agent'));
     }
