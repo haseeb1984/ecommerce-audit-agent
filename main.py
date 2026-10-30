@@ -989,7 +989,7 @@ async def customer_portal():
 
 
 @app.post("/api/v1/account/auth/request-code", status_code=202)
-async def request_account_login_code(payload: AccountLoginRequest, response: Response, db: AsyncSession = Depends(get_async_db)):
+async def request_account_login_code(payload: AccountLoginRequest, response: Response, db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Send a short-lived sign-in code without disclosing whether an email owns an account."""
     from sqlalchemy import select, func
     email = payload.email.strip().lower()
@@ -998,13 +998,13 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    recent_count = int((await db.execute(select(func.count(AccountLoginChallenge.id)).where(
-        AccountLoginChallenge.email == email,
-        AccountLoginChallenge.created_at >= now - timedelta(hours=1),
+    recent_count = int((await db.execute(select(func.count(CustomerLoginChallenge.id)).where(
+        CustomerLoginChallenge.email == email,
+        CustomerLoginChallenge.created_at >= now - timedelta(hours=1),
     ))).scalar_one() or 0)
-    latest = (await db.execute(select(AccountLoginChallenge).where(
-        AccountLoginChallenge.email == email,
-    ).order_by(AccountLoginChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest = (await db.execute(select(CustomerLoginChallenge).where(
+        CustomerLoginChallenge.email == email,
+    ).order_by(CustomerLoginChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
@@ -1021,24 +1021,27 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
         raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
     # A newly issued code supersedes every older outstanding code for this email.
     from sqlalchemy import update
-    await db.execute(update(AccountLoginChallenge).where(
-        AccountLoginChallenge.email == email,
-        AccountLoginChallenge.consumed_at.is_(None),
+    await operational_db.execute(update(CustomerLoginChallenge).where(
+        CustomerLoginChallenge.email == email,
+        CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
     code = f"{secrets.randbelow(1000000):06d}"
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
-    challenge = AccountLoginChallenge(
-        id=challenge_id, email=email, license_id=linked.license_id, code_hash=digest,
+    linked_license = await db.scalar(select(SoftwareLicense).where(SoftwareLicense.id == linked.license_id))
+    if linked_license is None:
+        return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
+    challenge = CustomerLoginChallenge(
+        id=challenge_id, email=email, license_key=linked_license.license_key, code_hash=digest,
         expires_at=now + timedelta(minutes=10), attempts=0, created_at=now,
     )
-    db.add(challenge)
-    await db.commit()
+    operational_db.add(challenge)
+    await operational_db.commit()
     try:
         _send_account_login_code(email, code)
     except Exception as exc:
         challenge.consumed_at = datetime.now(timezone.utc)
-        await db.commit()
+        await operational_db.commit()
         logger.warning("Customer sign-in email delivery failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Unable to deliver a sign-in code right now.") from exc
     return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
