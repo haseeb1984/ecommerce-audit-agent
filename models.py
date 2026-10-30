@@ -204,3 +204,23 @@ class AccountSession(Base):
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     public_id = Column(String(64), unique=True, nullable=True, index=True)
     user_agent = Column(String(500), nullable=True)
+
+
+class AccountEmailChangeChallenge(Base):
+    """One-time proof that an authenticated customer controls a proposed new email."""
+    __tablename__ = "account_email_change_challenges"
+    __table_args__ = (
+        Index("ix_account_email_change_challenges_old_created", "old_email", "created_at"),
+        Index("ix_account_email_change_challenges_new_created", "new_email", "created_at"),
+        Index("ix_account_email_change_challenges_expires_at", "expires_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    old_email = Column(String(255), nullable=False, index=True)
+    new_email = Column(String(255), nullable=False, index=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
