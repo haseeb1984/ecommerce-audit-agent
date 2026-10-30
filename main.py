@@ -1299,42 +1299,45 @@ async def list_customer_device_sessions(
     response: Response,
     credentials=Depends(CUSTOMER_BEARER),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """List active devices for the verified email without exposing session token digests."""
+    """List active Hostinger-backed devices without exposing token digests."""
     from sqlalchemy import select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    current = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
-    ))).scalar_one_or_none()
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
+    ))
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
-    rows = (await db.execute(
-        select(AccountSession, SoftwareLicense.client_name)
-        .join(SoftwareLicense, SoftwareLicense.id == AccountSession.license_id)
-        .where(
-            AccountSession.email == current.email,
-            AccountSession.revoked_at.is_(None),
-            AccountSession.expires_at > now,
-            AccountSession.public_id.is_not(None),
-        )
-        .order_by(AccountSession.last_seen_at.desc().nullslast(), AccountSession.created_at.desc())
+    sessions = (await operational_db.execute(
+        select(CustomerSession).where(
+            CustomerSession.email == current.email,
+            CustomerSession.revoked_at.is_(None),
+            CustomerSession.expires_at > now,
+            CustomerSession.public_id.is_not(None),
+        ).order_by(CustomerSession.last_seen_at.desc().nullslast(), CustomerSession.created_at.desc())
         .limit(100)
-    )).all()
+    )).scalars().all()
+    license_keys = list({item.license_key for item in sessions})
+    licenses = (await db.execute(select(SoftwareLicense).where(
+        SoftwareLicense.license_key.in_(license_keys)
+    ))).scalars().all() if license_keys else []
+    names = {item.license_key: item.client_name for item in licenses}
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"items": [{
         "id": session.public_id,
-        "client_name": client_name,
+        "client_name": names.get(session.license_key, "Customer account"),
         "user_agent": session.user_agent or "Unknown device",
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "last_seen_at": session.last_seen_at.isoformat() if session.last_seen_at else None,
         "expires_at": session.expires_at.isoformat() if session.expires_at else None,
         "current": session.token_hash == token_hash,
-    } for session, client_name in rows]}
+    } for session in sessions]}
 
 
 @app.delete("/api/v1/account/auth/sessions/{session_id}")
@@ -1342,30 +1345,30 @@ async def revoke_customer_device_session(
     session_id: str,
     response: Response,
     credentials=Depends(CUSTOMER_BEARER),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Revoke one other active device belonging to the same verified customer email."""
     from sqlalchemy import select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    current = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
-    ))).scalar_one_or_none()
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
+    ))
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    target = (await db.execute(select(AccountSession).where(
-        AccountSession.public_id == session_id,
-        AccountSession.email == current.email,
-        AccountSession.revoked_at.is_(None),
-    ).with_for_update())).scalar_one_or_none()
+    target = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.public_id == session_id,
+        CustomerSession.email == current.email,
+        CustomerSession.revoked_at.is_(None),
+    ).with_for_update())
     if target is None:
         raise HTTPException(status_code=404, detail="Active customer device was not found.")
     if target.token_hash == token_hash:
         raise HTTPException(status_code=422, detail="Use sign out to end the current device session.")
     target.revoked_at = datetime.now(timezone.utc)
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "revoked", "session_id": target.public_id}
@@ -1374,18 +1377,18 @@ async def revoke_customer_device_session(
 @app.post("/api/v1/account/auth/logout")
 async def logout_account_session(
     response: Response,
-    credentials = Depends(CUSTOMER_BEARER),
-    db: AsyncSession = Depends(get_async_db),
+    credentials=Depends(CUSTOMER_BEARER),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Revoke the current customer session immediately."""
+    """Revoke the current Hostinger-backed customer session immediately."""
     from sqlalchemy import select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
     digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await db.execute(select(AccountSession).where(AccountSession.token_hash == digest))).scalar_one_or_none()
+    session = await operational_db.scalar(select(CustomerSession).where(CustomerSession.token_hash == digest))
     if session is not None and session.revoked_at is None:
         session.revoked_at = datetime.now(timezone.utc)
-        await db.commit()
+        await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"status": "logged_out"}
 
@@ -1394,16 +1397,16 @@ async def logout_account_session(
 async def logout_all_account_sessions(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Revoke every active browser session for the authenticated customer account."""
     from sqlalchemy import update
     now = datetime.now(timezone.utc)
-    result = await db.execute(update(AccountSession).where(
-        AccountSession.license_id == license_obj.id,
-        AccountSession.revoked_at.is_(None),
+    result = await operational_db.execute(update(CustomerSession).where(
+        CustomerSession.license_key == license_obj.license_key,
+        CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "sessions_revoked", "revoked_count": int(result.rowcount or 0)}
