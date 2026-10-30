@@ -56,11 +56,28 @@ duplicate work or duplicate usage deductions.
 3. Move account/session, website inventory, WordPress, branding, admin and activity
    persistence from PostgreSQL to Hostinger while preserving license verification.
 4. Implement persistent batch submission, 10/11 URL grouping, worker claiming,
-   retries, resume, and idempotent quota accounting on Hostinger.
-5. Move report file bytes to Hostinger private storage and retain only the required
+   retries, resume, and idempotent quota accounting on Hostinger (queue/API/worker
+   foundation is now in the branch).
+5. Run the worker in scheduled groups of up to 10; Supabase package concurrency
+   entitlements remain the effective per-package cap. A temporary concurrency
+   saturation returns jobs to the queue without consuming a retry attempt.
+6. Move report file bytes to Hostinger private storage and retain only the required
    audit-engine metadata in Supabase.
-6. Reconcile customer/admin interfaces and API response contracts with the new
+7. Reconcile customer/admin interfaces and API response contracts with the new
    operational data ownership.
 
 This document records the agreed target architecture; it does not claim that all
 migration steps or live integrations are already complete.
+
+
+## Bulk worker runtime configuration
+
+- Configure `HOSTINGER_DATABASE_URL` for the Hostinger MySQL operational database.
+- Configure `DATABASE_URL` for the Supabase PostgreSQL licensing/audit database.
+- Configure `SCAN_WORKER_TOKEN` as a long random secret. Configure the Vercel Cron
+  authorization secret to the same value so the scheduled request is authenticated.
+- Vercel Cron invokes `/internal/scan-worker/run` once per minute and requests up to
+  10 jobs per invocation. The worker's Supabase quota reservation enforces each
+  package's configured monthly allowance and maximum concurrent audits.
+- The Hostinger MySQL schema migration and the Supabase idempotency migration are
+  separate operator-applied migrations. No application-startup DDL is performed.
