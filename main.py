@@ -1778,6 +1778,42 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
             server.send_message(message)
 
 
+def _send_account_login_code(recipient: str, code: str) -> None:
+    """Send a short-lived passwordless sign-in code through the configured SMTP relay."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = _configured_smtp_port()
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+    message = EmailMessage()
+    message["Subject"] = "Your E-commerce Audit Agent sign-in code"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"Your customer account sign-in code is: {code}\\n\\n"
+        "This code expires in 10 minutes and can be used once. "
+        "If you did not request it, you can ignore this email."
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
 def _is_valid_paddle_hosted_url(value: object) -> bool:
     """Accept only credential-free HTTPS URLs on Paddle's actual hosted domain."""
     if not isinstance(value, str) or not value or value != value.strip():
