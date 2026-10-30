@@ -2660,7 +2660,10 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                         return {"status": "already_processed", "event_id": prior_renewal.event_id}
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
-                linked_license.is_active = True
+                # A successful transaction confirms payment, not a subscription
+                # lifecycle transition. In particular, it must not resume a
+                # subscription that Paddle has explicitly paused; only a verified
+                # subscription.updated active/trialing event may restore access.
                 billing_period_end = _paddle_billing_period_end(transaction)
                 if billing_period_end is not None:
                     linked_license.billing_period_ends_at = billing_period_end
