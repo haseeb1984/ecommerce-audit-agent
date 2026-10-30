@@ -3269,7 +3269,7 @@ async def test_paddle_subscription_update_after_cancellation_is_sticky(client, m
         stored = (await db.execute(select(PaymentWebhookEvent).where(
             PaymentWebhookEvent.event_id == "evt_late_plan_update"
         ))).scalar_one()
-        assert stored.status == "subscription_updated"
+        assert stored.status == "subscription_canceled"
 
 
 @pytest.mark.asyncio
