@@ -917,7 +917,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     """Send a short-lived sign-in code without disclosing whether an email owns an account."""
     from sqlalchemy import select, func
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
@@ -967,7 +967,7 @@ async def verify_account_login_code(payload: AccountLoginVerify, response: Respo
     """Consume a one-time code and issue an opaque 30-day customer session."""
     from sqlalchemy import select
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"\\d{6}", payload.code):
+    if not re.fullmatch(r"\d{6}", payload.code):
         raise HTTPException(status_code=422, detail="Sign-in code must contain six digits.")
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
     if len(auth_secret) < 32:
@@ -1795,7 +1795,7 @@ def _send_account_login_code(recipient: str, code: str) -> None:
     message["From"] = sender
     message["To"] = recipient
     message.set_content(
-        f"Your customer account sign-in code is: {code}\\n\\n"
+        f"Your customer account sign-in code is: {code}\n\n"
         "This code expires in 10 minutes and can be used once. "
         "If you did not request it, you can ignore this email."
     )
