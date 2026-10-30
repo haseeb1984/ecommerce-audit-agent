@@ -1121,7 +1121,7 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
     headers = {"Paddle-Signature": f"ts={timestamp};h1={signature}"}
     first = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
     assert first.status_code == 200 and first.json()["status"] == "provisioned"
-    assert len(sent) == 1 and sent[0][0] == "single-identity@example.com" and sent[0][2:] == ("starter", 100)
+    assert len(sent) == 1 and sent[0][0] == "buyer@example.com" and sent[0][2:] == ("starter", 100)
     duplicate = await client.post("/api/v1/billing/paddle-webhook", content=body, headers=headers)
     assert duplicate.status_code == 200 and duplicate.json()["status"] == "already_processed" and len(sent) == 1
     async with AsyncSessionLocal() as db:
