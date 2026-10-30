@@ -998,11 +998,11 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    recent_count = int((await db.execute(select(func.count(CustomerLoginChallenge.id)).where(
+    recent_count = int((await operational_db.execute(select(func.count(CustomerLoginChallenge.id)).where(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.created_at >= now - timedelta(hours=1),
     ))).scalar_one() or 0)
-    latest = (await db.execute(select(CustomerLoginChallenge).where(
+    latest = (await operational_db.execute(select(CustomerLoginChallenge).where(
         CustomerLoginChallenge.email == email,
     ).order_by(CustomerLoginChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
@@ -1058,7 +1058,7 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
     now = datetime.now(timezone.utc)
-    challenge = (await db.execute(select(CustomerLoginChallenge).where(
+    challenge = (await operational_db.execute(select(CustomerLoginChallenge).where(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.consumed_at.is_(None),
     ).order_by(CustomerLoginChallenge.created_at.desc()).limit(1).with_for_update())).scalar_one_or_none()
@@ -1245,7 +1245,7 @@ async def verify_customer_email_change(
         challenge.attempts += 1
         if challenge.attempts >= 5:
             challenge.consumed_at = now
-        await db.commit()
+        await operational_db.commit()
         raise HTTPException(status_code=401, detail="Verification code is invalid or expired.")
     # Serialize claims for the same proposed address so two different accounts
     # cannot both pass the collision check concurrently on PostgreSQL.
