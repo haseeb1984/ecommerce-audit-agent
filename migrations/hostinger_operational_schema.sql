@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS customer_websites (
   KEY ix_customer_websites_host (host)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS scan_batch_sequences (
+  license_key VARCHAR(100) NOT NULL PRIMARY KEY,
+  next_batch_number INT NOT NULL DEFAULT 1,
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS scan_batches (
   id VARCHAR(64) NOT NULL PRIMARY KEY,
   license_key VARCHAR(100) NOT NULL,
