@@ -17,7 +17,8 @@ The report renderer in `report_generator.py` produces selectable-text A4 PDFs wi
 7. A shared evidence-reference index and sampled-page list.
 8. Explicit recorded outcome totals and category distribution.
 9. A check-by-check outcome register keyed by exact `check_id`, including recorded pass / issue / warning / not-assessed / error counts, record denominator, distinct page count, method, evidence sample, and a source page where available.
-10. Coverage manifest, limitations, manual accessibility review checklist, methodology / independent verification guidance, run limits, security scope, glossary, optional professional support offer, and one final disclaimer.
+10. A page-level outcome evidence register for recorded checks, including exact check ID, sanitized tested URL, outcome, method, evidence reference, and bounded evidence text. It is capped at 500 rows in the PDF; the complete saved evidence remains available through the authenticated paginated API.
+11. Coverage manifest, limitations, manual accessibility review checklist, methodology / independent verification guidance, run limits, security scope, glossary, optional professional support offer, and one final disclaimer.
 
 ## Outcome integrity
 
@@ -43,4 +44,4 @@ The report does not claim full-site crawl coverage, complete individual-check ex
 
 ## Release and verification boundary
 
-The Phase 6 source changes are prepared on the draft implementation branch. No test suite, live audit, PDF QA job, database migration, merge, or production deployment was run as part of this implementation batch, in accordance with the current project instruction to complete source requirements before verification. Before release, the owner must authorize a controlled real-result audit, review the resulting PDF and evidence-to-page mapping, verify report ownership isolation and email delivery in the intended environment, confirm required database migrations, and explicitly approve merge/deployment.
+The Phase 6 source changes are prepared on the draft implementation branch. The customer-facing report history already supports authenticated PDF download, coverage inspection, paginated findings and paginated check outcomes; Phase 6 reuses that workflow rather than creating duplicate routes. No test suite, live audit, PDF QA job, database migration, merge, or production deployment was run as part of this implementation batch, in accordance with the current project instruction to complete source requirements before verification. Before release, the owner must authorize a controlled real-result audit, review the resulting PDF and evidence-to-page mapping, verify report ownership isolation and email delivery in the intended environment, confirm required database migrations, and explicitly approve merge/deployment.
