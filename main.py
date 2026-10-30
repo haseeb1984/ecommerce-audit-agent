@@ -53,7 +53,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
-from hostinger_database import get_hostinger_db
+from hostinger_database import get_hostinger_db, HostingerBase
 from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, WebsiteScanResult, AdminCustomerNote
 
 logger = logging.getLogger("audit_service")
@@ -183,9 +183,12 @@ def read_root():
 
 
 @app.get("/health-check")
-async def health_check(db: AsyncSession = Depends(get_async_db)):
-    """Report database connectivity separately from required application-schema readiness."""
-    required_tables = {
+async def health_check(
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Check licensing/audit PostgreSQL and SaaS operational MySQL independently."""
+    licensing_tables = {
         "software_licenses",
         "api_keys",
         "audit_leads",
@@ -195,113 +198,143 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "saas_admin_action_logs",
         "saas_operation_events",
         "payment_webhook_events",
-        "account_login_challenges",
-        "account_sessions",
-        "account_email_change_challenges",
-        "wordpress_sites",
-        "white_label_branding",
-        "saas_admin_customer_notes",
     }
     try:
-        result = await db.execute(text("SELECT 1"))
-        table_result = await db.execute(text(
+        pg_ping = await db.execute(text("SELECT 1"))
+        pg_table_result = await db.execute(text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = current_schema()"
         ))
-        existing_tables = set(table_result.scalars().all())
-        missing_tables = sorted(required_tables - existing_tables)
-        if missing_tables:
-            logger.error("Database schema readiness failed (missing_table_count=%s)", len(missing_tables))
+        pg_existing_tables = set(pg_table_result.scalars().all())
+        pg_missing_tables = sorted(licensing_tables - pg_existing_tables)
+        pg_missing_columns = {}
+        pg_missing_indexes = []
+
+        if not pg_missing_tables:
+            pg_column_result = await db.execute(text(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema()"
+            ))
+            pg_existing_columns = {
+                (row[0], row[1]) for row in pg_column_result.all()
+            }
+            pg_missing_columns = {
+                table_name: sorted(
+                    column.name
+                    for column in Base.metadata.tables[table_name].columns
+                    if (table_name, column.name) not in pg_existing_columns
+                )
+                for table_name in sorted(licensing_tables)
+            }
+            pg_missing_columns = {
+                name: columns for name, columns in pg_missing_columns.items() if columns
+            }
+
+            pg_index_result = await db.execute(text(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+            ))
+            pg_existing_indexes = set(pg_index_result.scalars().all())
+            pg_required_indexes = {
+                index.name
+                for table_name in licensing_tables
+                for index in Base.metadata.tables[table_name].indexes
+                if index.name
+            }
+            pg_required_indexes.add("uq_saas_plan_packages_paddle_price_id")
+            pg_missing_indexes = sorted(pg_required_indexes - pg_existing_indexes)
+
+        mysql_ping = await operational_db.execute(text("SELECT 1"))
+        mysql_table_result = await operational_db.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = DATABASE()"
+        ))
+        mysql_existing_tables = set(mysql_table_result.scalars().all())
+        operational_tables = set(HostingerBase.metadata.tables)
+        mysql_missing_tables = sorted(operational_tables - mysql_existing_tables)
+        mysql_missing_columns = {}
+
+        if not mysql_missing_tables:
+            mysql_column_result = await operational_db.execute(text(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = DATABASE()"
+            ))
+            mysql_existing_columns = {
+                (row[0], row[1]) for row in mysql_column_result.all()
+            }
+            mysql_missing_columns = {
+                table_name: sorted(
+                    column.name
+                    for column in HostingerBase.metadata.tables[table_name].columns
+                    if (table_name, column.name) not in mysql_existing_columns
+                )
+                for table_name in sorted(operational_tables)
+            }
+            mysql_missing_columns = {
+                name: columns for name, columns in mysql_missing_columns.items() if columns
+            }
+
+        licensing_ready = not (
+            pg_missing_tables or pg_missing_columns or pg_missing_indexes
+        )
+        operational_ready = not (
+            mysql_missing_tables or mysql_missing_columns
+        )
+        overall_ready = licensing_ready and operational_ready
+
+        if not overall_ready:
+            logger.error(
+                "Database readiness failed (licensing_missing_tables=%s, operational_missing_tables=%s)",
+                len(pg_missing_tables),
+                len(mysql_missing_tables),
+            )
             raise HTTPException(
                 status_code=503,
                 detail={
                     "status": "not_ready",
-                    "db_connected": True,
-                    "schema_ready": False,
-                    "missing_tables": missing_tables,
-                    "missing_columns": {},
+                    "licensing_database": {
+                        "engine": "postgresql",
+                        "connected": True,
+                        "schema_ready": licensing_ready,
+                        "missing_tables": pg_missing_tables,
+                        "missing_columns": pg_missing_columns,
+                        "missing_indexes": pg_missing_indexes,
+                    },
+                    "operational_database": {
+                        "engine": "mysql",
+                        "connected": True,
+                        "schema_ready": operational_ready,
+                        "missing_tables": mysql_missing_tables,
+                        "missing_columns": mysql_missing_columns,
+                    },
                 },
             )
 
-        column_result = await db.execute(text(
-            "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema()"
-        ))
-        existing_columns = {
-            (row[0], row[1]) for row in column_result.all()
-        }
-        missing_columns = {
-            table_name: sorted(
-                column.name for column in Base.metadata.tables[table_name].columns
-                if (table_name, column.name) not in existing_columns
-            )
-            for table_name in sorted(required_tables)
-        }
-        missing_columns = {
-            table_name: columns
-            for table_name, columns in missing_columns.items()
-            if columns
-        }
-        if missing_columns:
-            missing_column_count = sum(len(columns) for columns in missing_columns.values())
-            logger.error(
-                "Database schema readiness failed (missing_column_count=%s)",
-                missing_column_count,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "status": "not_ready",
-                    "db_connected": True,
-                    "schema_ready": False,
-                    "missing_tables": [],
-                    "missing_columns": missing_columns,
-                    "missing_indexes": [],
-                },
-            )
-
-        index_result = await db.execute(text(
-            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
-        ))
-        existing_indexes = set(index_result.scalars().all())
-        required_indexes = {
-            index.name
-            for table_name in required_tables
-            for index in Base.metadata.tables[table_name].indexes
-            if index.name
-        }
-        # This PostgreSQL partial unique index enforces one Paddle price per tier
-        # and is intentionally checked alongside the ORM-declared indexes.
-        required_indexes.add("uq_saas_plan_packages_paddle_price_id")
-        missing_indexes = sorted(required_indexes - existing_indexes)
-        if missing_indexes:
-            logger.error(
-                "Database schema readiness failed (missing_index_count=%s)",
-                len(missing_indexes),
-            )
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "status": "not_ready",
-                    "db_connected": True,
-                    "schema_ready": False,
-                    "missing_tables": [],
-                    "missing_columns": {},
-                    "missing_indexes": missing_indexes,
-                },
-            )
         return {
             "status": "success",
-            "db_connected": True,
-            "schema_ready": True,
-            "result": result.scalar(),
+            "licensing_database": {
+                "engine": "postgresql",
+                "connected": True,
+                "schema_ready": True,
+                "result": pg_ping.scalar(),
+            },
+            "operational_database": {
+                "engine": "mysql",
+                "connected": True,
+                "schema_ready": True,
+                "result": mysql_ping.scalar(),
+            },
         }
     except HTTPException:
         raise
     except Exception as exc:
         logger.error("Health check failed (error_type=%s)", type(exc).__name__)
-        raise HTTPException(status_code=500, detail="Database connection error")
-
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "not_ready",
+                "message": "One or more required databases are unavailable.",
+            },
+        )
 
 def _normalize_request_audit_target(domain: str) -> str:
     """Reject parameterized targets at API boundaries before reserving quota."""
