@@ -31,6 +31,7 @@ All integration endpoints require the existing license or API-key authentication
 - `GET /api/v1/account/usage` — returns the license-scoped monthly quota.
 - `POST /api/v1/comprehensive-audit?domain=...` — executes the existing licensed audit and returns a PDF.
 - `GET /api/v1/reports` and `GET /api/v1/reports/{id}/pdf` — list and download reports scoped to the authenticated license.
+- `GET /api/v1/account/billing-history` and `POST /api/v1/account/billing-portal` — show license-scoped billing lifecycle information and open the Paddle customer portal.
 
 The API enforces a maximum of ten active WordPress installations per license. Registration is serialized per license, and a unique license/hostname index prevents duplicate records. Reconnecting the same hostname reactivates its existing site record.
 
@@ -46,6 +47,7 @@ The plugin dashboard includes:
 
 - Connection status and site identifier.
 - License entitlement and plan/quota display.
+- Subscription period, recent billing-attention indicators, and a secure Paddle customer-portal handoff.
 - Store URL audit submission; the returned PDF is streamed directly to the authenticated administrator.
 - Recent saved reports with authenticated proxy downloads.
 - HTTPS API endpoint configuration for self-hosted SaaS deployments.
