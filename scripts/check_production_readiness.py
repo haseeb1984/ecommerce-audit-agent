@@ -91,6 +91,7 @@ async def main() -> int:
         print("FAIL database_url: DATABASE_URL is not configured.")
         return 2
 
+    from sqlalchemy import text
     from database import AsyncSessionLocal, Base
     # Register every mapped table before deriving the schema contract.
     import models  # noqa: F401
@@ -109,8 +110,8 @@ async def main() -> int:
 
     missing: list[str] = []
     async with AsyncSessionLocal() as db:
-        await db.execute(__import__("sqlalchemy").text("SELECT 1"))
-        rows = (await db.execute(__import__("sqlalchemy").text("""
+        await db.execute(text("SELECT 1"))
+        rows = (await db.execute(text("""
             SELECT table_name, column_name
             FROM information_schema.columns
             WHERE table_schema = current_schema()
