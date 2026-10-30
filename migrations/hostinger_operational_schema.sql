@@ -225,3 +225,44 @@ CREATE TABLE IF NOT EXISTS website_scan_results (
   KEY ix_website_scan_results_website_created (website_id, created_at),
   KEY ix_website_scan_results_job_id (job_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS admin_action_logs (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  action VARCHAR(80) NOT NULL,
+  entity_type VARCHAR(50) NOT NULL,
+  entity_id VARCHAR(255) NULL,
+  details_json LONGTEXT NOT NULL,
+  created_at DATETIME(6) NOT NULL,
+  KEY ix_admin_action_logs_created (created_at, id),
+  KEY ix_admin_action_logs_entity (entity_type, entity_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS customer_billing_events (
+  event_id VARCHAR(255) NOT NULL PRIMARY KEY,
+  license_key VARCHAR(100) NOT NULL,
+  recipient_email VARCHAR(254) NOT NULL,
+  status VARCHAR(40) NOT NULL,
+  transaction_id VARCHAR(100) NULL,
+  subscription_id VARCHAR(100) NULL,
+  paddle_customer_id VARCHAR(100) NULL,
+  created_at DATETIME(6) NOT NULL,
+  updated_at DATETIME(6) NOT NULL,
+  KEY ix_customer_billing_license_created (license_key, created_at),
+  KEY ix_customer_billing_email_created (recipient_email, created_at),
+  KEY ix_customer_billing_transaction_id (transaction_id),
+  KEY ix_customer_billing_subscription_id (subscription_id),
+  KEY ix_customer_billing_paddle_customer_id (paddle_customer_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS operational_diagnostic_events (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  event_type VARCHAR(80) NOT NULL,
+  license_key VARCHAR(100) NULL,
+  domain VARCHAR(255) NULL,
+  error_type VARCHAR(120) NULL,
+  created_at DATETIME(6) NOT NULL,
+  KEY ix_operational_diagnostic_events_license_key (license_key),
+  KEY ix_operational_diagnostic_created (created_at, id),
+  KEY ix_operational_diagnostic_type_created (event_type, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
