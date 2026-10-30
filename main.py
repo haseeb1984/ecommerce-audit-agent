@@ -2061,7 +2061,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             logger.info("Paddle subscription cancellation applied (license_id=%s)", license_obj.id)
         return {"status": "cancellation_applied" if changed else "already_canceled", "event_id": event_id}
 
-    # Reconcile verified subscription price changes without changing lifecycle state.
+    # Reconcile verified subscription price and lifecycle state from Paddle's
+    # authoritative subscription.updated snapshot.
     if event_type == "subscription.updated":
         subscription_id = str(transaction.get("id") or "").strip()[:100]
         if not subscription_id:
@@ -2092,6 +2093,14 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         )).scalar_one_or_none()
         if license_obj is None:
             raise HTTPException(status_code=503, detail="Subscription update is awaiting license reconciliation.")
+
+        provider_status = transaction.get("status")
+        if provider_status is not None and not isinstance(provider_status, str):
+            raise HTTPException(status_code=400, detail="Paddle subscription status must be a string.")
+        provider_status = (provider_status or "").strip().lower()
+        if provider_status and provider_status not in {"active", "trialing", "paused", "past_due", "canceled", "cancelled"}:
+            logger.info("Paddle subscription update has an unrecognized status (subscription_id=%s)", subscription_id)
+
         items = transaction.get("items") or []
         if not isinstance(items, list):
             raise HTTPException(status_code=400, detail="Paddle subscription items must be a JSON array.")
@@ -2108,27 +2117,60 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription customer must be a JSON object.")
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         now = datetime.now(timezone.utc)
-        if canceled is None and plan is not None:
-            license_obj.tier = plan["tier"]
-            license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
-        billing_period_end = _paddle_billing_period_end(transaction)
-        if billing_period_end is not None and canceled is None:
-            license_obj.billing_period_ends_at = billing_period_end
-        status = "subscription_updated" if plan is not None else "subscription_update_unmapped_price"
+        was_active = bool(license_obj.is_active)
+        provider_canceled = provider_status in {"canceled", "cancelled"}
+        is_canceled = canceled is not None or provider_canceled
+
+        if not is_canceled:
+            if plan is not None:
+                license_obj.tier = plan["tier"]
+                license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
+            billing_period_end = _paddle_billing_period_end(transaction)
+            if billing_period_end is not None:
+                license_obj.billing_period_ends_at = billing_period_end
+
+            if provider_status == "paused":
+                license_obj.is_active = False
+            elif provider_status in {"active", "trialing"} and linked_event.status == "subscription_paused":
+                expiry = license_obj.expires_at
+                if expiry is not None and expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                license_obj.is_active = expiry is None or expiry > now
+
+        if is_canceled:
+            event_status = "subscription_canceled"
+        elif provider_status == "paused":
+            event_status = "subscription_paused"
+        elif provider_status == "past_due":
+            # Paddle's retry/dunning policy remains authoritative; past_due alone
+            # does not revoke access while the provider retries payment.
+            event_status = "subscription_updated_past_due"
+        elif provider_status in {"active", "trialing"}:
+            event_status = "subscription_updated_active"
+        else:
+            event_status = "subscription_updated" if plan is not None else "subscription_update_unmapped_price"
+
         db.add(PaymentWebhookEvent(
-            event_id=event_id, status=status, license_id=license_obj.id,
+            event_id=event_id, status=event_status, license_id=license_obj.id,
             recipient_email=linked_event.recipient_email, subscription_id=subscription_id,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
             created_at=now, updated_at=now,
         ))
         await db.commit()
-        if plan is not None and canceled is None:
-            await _record_operation_event(db, status, license_obj.id, None, None)
-        return {
-            "status": "ignored_after_cancellation" if canceled is not None
-                else ("plan_reconciled" if plan is not None else "unmapped_price_ignored"),
-            "event_id": event_id, "license_id": license_obj.id,
-        }
+        if was_active != bool(license_obj.is_active) or (plan is not None and not is_canceled):
+            await _record_operation_event(db, event_status, license_obj.id, None, None)
+        if is_canceled:
+            return {"status": "ignored_after_cancellation" if canceled is not None else "cancellation_applied",
+                    "event_id": event_id, "license_id": license_obj.id}
+        if provider_status == "paused":
+            return {"status": "subscription_paused", "event_id": event_id, "license_id": license_obj.id}
+        if provider_status == "past_due":
+            return {"status": "subscription_past_due", "event_id": event_id, "license_id": license_obj.id}
+        if provider_status in {"active", "trialing"}:
+            return {"status": "plan_reconciled" if plan is not None else "subscription_active_unmapped_price",
+                    "event_id": event_id, "license_id": license_obj.id}
+        return {"status": "plan_reconciled" if plan is not None else "unmapped_price_ignored",
+                "event_id": event_id, "license_id": license_obj.id}
 
     if event_type != "transaction.completed":
         return {"status": "ignored", "event_id": event_id}

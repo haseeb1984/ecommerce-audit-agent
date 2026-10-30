@@ -3389,3 +3389,108 @@ async def test_paddle_subscription_update_refreshes_billing_period_end(client, m
         license_obj = (await db.execute(select(SoftwareLicense).where(
             SoftwareLicense.id == license_id))).scalar_one()
         assert license_obj.billing_period_ends_at.isoformat() == "2026-11-15T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_updated_reconciles_status_transitions_and_sticky_cancel(client, monkeypatch):
+    secret = "paddle-subscription-status-transition-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    license_id = await create_license(
+        key="subscription-status-transition-license",
+        quota=100,
+        active=True,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_subscription_status",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="status@example.com",
+            subscription_id="sub_status_transition123",
+            paddle_customer_id="ctm_status_transition123",
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        ))
+        await db.commit()
+
+    async def send(event_id, provider_status):
+        event = {
+            "event_id": event_id,
+            "event_type": "subscription.updated",
+            "data": {
+                "id": "sub_status_transition123",
+                "status": provider_status,
+                "items": [],
+            },
+        }
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(
+            secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+        ).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    paused = await send("evt_status_paused", "paused")
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["status"] == "subscription_paused"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is False
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_paused"
+        ))).scalar_one()
+        assert stored.status == "subscription_paused"
+
+    resumed = await send("evt_status_active", "active")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "subscription_active_unmapped_price"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_active"
+        ))).scalar_one()
+        assert stored.status == "subscription_updated_active"
+
+    past_due = await send("evt_status_past_due", "past_due")
+    assert past_due.status_code == 200, past_due.text
+    assert past_due.json()["status"] == "subscription_past_due"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_past_due"
+        ))).scalar_one()
+        assert stored.status == "subscription_updated_past_due"
+
+    canceled = await send("evt_status_canceled", "canceled")
+    assert canceled.status_code == 200, canceled.text
+    assert canceled.json()["status"] == "cancellation_applied"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is False
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_canceled"
+        ))).scalar_one()
+        assert stored.status == "subscription_canceled"
+
+    late_active = await send("evt_status_late_active", "active")
+    assert late_active.status_code == 200, late_active.text
+    assert late_active.json()["status"] == "ignored_after_cancellation"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is False
