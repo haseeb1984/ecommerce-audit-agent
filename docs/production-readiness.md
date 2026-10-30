@@ -24,6 +24,8 @@ The script checks required tables/columns and reports only configuration-presenc
 
 The key report-history and billing migration is `migrations/2026-10-22-audit-reports.sql`; the admin package/operations migration is `migrations/20261023_admin_packages_and_actions.sql`. Review each SQL file and confirm its prerequisites before applying it. Keep a backup and record the migration result. The admin migration expects `payment_webhook_events` to exist, so apply the audit-reports migration first on a database where it is not already present.
 
+The additive Phase 5 schema alignment is `migrations/20261101_saas_database_integrations.sql`. It provisions quota reservations, passwordless login challenges and sessions, email-change challenges, WordPress site links, support notes, and the billing-period end field/indexes expected by the current ORM models. Follow the complete ordered migration and environment setup in [Database and external integration rollout](database-integrations-rollout.md).
+
 ## Acceptance checks before calling the SaaS ready
 
 - [ ] Production schema check passes; report-history and webhook columns are present.
