@@ -3871,75 +3871,65 @@ async def test_admin_can_revoke_one_customer_device_with_audit_reason(client, mo
 
 
 @pytest.mark.asyncio
-async def test_customer_can_list_and_switch_only_email_linked_licenses(client, monkeypatch):
+async def test_customer_email_with_legacy_duplicate_licenses_is_not_ambiguous(client, monkeypatch):
     monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
     sent = []
     monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
-    first_id = await create_license(key="multi-license-first")
-    second_id = await create_license(key="multi-license-second")
-    unrelated_id = await create_license(key="multi-license-unrelated")
+    first_id = await create_license(key="legacy-duplicate-first")
+    second_id = await create_license(key="legacy-duplicate-second")
     async with AsyncSessionLocal() as db:
         db.add_all([
             PaymentWebhookEvent(
-                event_id="evt_multi_license_first",
+                event_id="evt_legacy_duplicate_first",
                 status="provisioned",
                 license_id=first_id,
-                recipient_email="multi-account@example.com",
+                recipient_email="legacy-duplicate@example.com",
             ),
             PaymentWebhookEvent(
-                event_id="evt_multi_license_second",
+                event_id="evt_legacy_duplicate_second",
                 status="provisioned",
                 license_id=second_id,
-                recipient_email="MULTI-ACCOUNT@example.com",
-            ),
-            PaymentWebhookEvent(
-                event_id="evt_multi_license_unrelated",
-                status="provisioned",
-                license_id=unrelated_id,
-                recipient_email="someone-else@example.com",
+                recipient_email="LEGACY-DUPLICATE@example.com",
             ),
         ])
         await db.commit()
 
     requested = await client.post("/api/v1/account/auth/request-code", json={
-        "email": "multi-account@example.com",
+        "email": "legacy-duplicate@example.com",
     })
     assert requested.status_code == 202
-    login = await client.post("/api/v1/account/auth/verify-code", json={
-        "email": "multi-account@example.com", "code": sent[0],
-    })
-    assert login.status_code == 200, login.text
-    token = login.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    assert requested.json()["status"] == "accepted"
+    # A "latest payment event wins" policy could sign the customer into either
+    # license. Ambiguous legacy identities must instead fail closed.
+    assert sent == []
 
-    listed = await client.get("/api/v1/account/licenses", headers=headers)
-    assert listed.status_code == 200, listed.text
-    items = listed.json()["items"]
-    assert {item["id"] for item in items} == {first_id, second_id}
-    assert sum(bool(item["selected"]) for item in items) == 1
+    headers = {"Authorization": "Bearer invalid-session"}
+    assert (await client.get("/api/v1/account/licenses", headers=headers)).status_code == 404
+    assert (await client.post(
+        "/api/v1/account/licenses/switch", headers=headers, json={"license_id": second_id},
+    )).status_code == 404
+    schema = (await client.get("/openapi.json")).json()
+    assert "/api/v1/account/licenses" not in schema["paths"]
+    assert "/api/v1/account/licenses/switch" not in schema["paths"]
 
-    switched = await client.post(
-        "/api/v1/account/licenses/switch",
-        headers=headers,
-        json={"license_id": second_id},
-    )
-    assert switched.status_code == 200, switched.text
-    assert switched.json()["account"]["license_id"] == second_id
-    profile = await client.get("/api/v1/account/profile", headers=headers)
-    assert profile.status_code == 200
-    assert profile.json()["client_name"] == "Automated Test"
 
-    forbidden = await client.post(
-        "/api/v1/account/licenses/switch",
-        headers=headers,
-        json={"license_id": unrelated_id},
-    )
-    assert forbidden.status_code == 403
+@pytest.mark.asyncio
+async def test_database_rejects_duplicate_normalized_customer_email():
+    from sqlalchemy.exc import IntegrityError
 
-    listed_again = await client.get("/api/v1/account/licenses", headers=headers)
-    assert listed_again.status_code == 200
-    assert listed_again.json()["selected_license_id"] == second_id
-
+    async with AsyncSessionLocal() as db:
+        first = SoftwareLicense(
+            license_key="unique-customer-email-first", client_name="First",
+            account_email="unique-owner@example.com",
+        )
+        second = SoftwareLicense(
+            license_key="unique-customer-email-second", client_name="Second",
+            account_email="UNIQUE-OWNER@EXAMPLE.COM",
+        )
+        db.add_all([first, second])
+        with pytest.raises(IntegrityError):
+            await db.commit()
+        await db.rollback()
 
 
 @pytest.mark.asyncio
