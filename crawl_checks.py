@@ -1817,8 +1817,14 @@ async def run_bounded_site_crawl(
         _record_static_check_outcome(
             outcome_records, check_id="security.exposure_path_probes",
             category="security_exposure", page_url=final_home,
-            findings=exposure_findings,
+            findings=[item for item in exposure_findings if item.category == "security_exposure"],
             method="bounded public GET probes for common accidentally exposed artifacts",
+        )
+        _record_static_check_outcome(
+            outcome_records, check_id="security.api_documentation_exposure",
+            category="security_api_documentation", page_url=final_home,
+            findings=[item for item in exposure_findings if item.category == "security_api_documentation"],
+            method="bounded public GET probes for common API documentation and schema endpoints",
         )
         limitations.extend(exposure_limitations)
 
@@ -2717,4 +2723,28 @@ async def run_bounded_site_crawl(
         limitations.append(
             f"{unchecked_sitemap_count} discovered sitemap URL(s) were not fetched during this audit because sitemap discovery shares the bounded crawl page budget; sitemap inclusion alone does not establish URL status, canonical consistency, or indexability."
         )
+    # The link-response category is assessed only for the bounded same-origin
+    # pages that were actually fetched. Never infer a pass when the homepage
+    # could not be fetched or the crawler produced no page denominator.
+    if outcome_records is not None:
+        broken_link_findings = [
+            item for item in findings if item.category == "broken_internal_links"
+        ]
+        if pages_checked:
+            _record_static_check_outcome(
+                outcome_records, check_id="broken_internal_links.sampled_internal_urls",
+                category="broken_internal_links", page_url=normalized,
+                findings=broken_link_findings,
+                method=f"HTTP response inspection for up to {MAX_CRAWL_PAGES - 1} sampled same-origin internal URLs",
+            )
+        else:
+            outcome_records.append(CheckOutcome(
+                check_id="broken_internal_links.sampled_internal_urls",
+                category="broken_internal_links", page_url=normalized,
+                outcome="not_assessed",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="bounded same-origin URL response inspection",
+                evidence="No page was successfully fetched; internal-link response health cannot be assessed.",
+                evidence_ref="broken_internal_links.sampled_internal_urls",
+            ))
     return findings, pages_checked, limitations
