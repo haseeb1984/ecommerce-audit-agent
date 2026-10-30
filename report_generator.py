@@ -2112,6 +2112,69 @@ def render_audit_pdf(
             body_style,
         ))
 
+    # Preserve page-level traceability for passing and non-finding checks too.
+    # This is separate from finding cards, which intentionally contain only findings.
+    story.append(Paragraph("Page-level recorded check evidence", base["Heading2"]))
+    story.append(_p(
+        "The following rows are the actual page/check records supplied by the audit runners. "
+        "They are not extrapolated to unvisited pages. Use the check ID, exact page URL, outcome, "
+        "method and evidence reference to repeat the observation.",
+        body_style,
+    ))
+    if explicit_outcomes:
+        page_outcome_rows = [[
+            _p("Check ID", small_style),
+            _p("Tested page", small_style),
+            _p("Outcome", small_style),
+            _p("Method", small_style),
+            _p("Evidence reference", small_style),
+            _p("Observed evidence", small_style),
+        ]]
+        ordered_outcomes = sorted(
+            explicit_outcomes,
+            key=lambda item: (
+                str(getattr(item, "check_id", "") or ""),
+                str(getattr(item, "page_url", "") or ""),
+            ),
+        )
+        for outcome in ordered_outcomes[:500]:
+            page_url = _safe_public_url(str(getattr(outcome, "page_url", "") or ""))
+            evidence_ref = str(getattr(outcome, "evidence_ref", "") or "")
+            page_outcome_rows.append([
+                _p(getattr(outcome, "check_id", "Not recorded"), small_style),
+                _p(page_url or "URL omitted / unavailable", small_style),
+                _p(str(getattr(outcome, "outcome", "not_assessed")).replace("_", " ").title(), small_style),
+                _p(_sanitize_report_text(getattr(outcome, "method", "Not recorded"), limit=180), small_style),
+                _p(_sanitize_report_text(evidence_ref, limit=100), small_style),
+                _p(_sanitize_report_text(getattr(outcome, "evidence", "No evidence text recorded"), limit=500), small_style),
+            ])
+        page_outcome_table = Table(
+            page_outcome_rows,
+            colWidths=[27 * mm, 47 * mm, 18 * mm, 29 * mm, 19 * mm, 34 * mm],
+            repeatRows=1, hAlign="LEFT",
+        )
+        page_outcome_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.extend([page_outcome_table, Spacer(1, 2 * mm)])
+        if len(ordered_outcomes) > 500:
+            story.append(_p(
+                f"Showing 500 of {len(ordered_outcomes)} recorded page/check outcomes. "
+                "The complete saved evidence set remains available through the authenticated, paginated report-evidence endpoint.",
+                small_style,
+            ))
+    else:
+        story.append(_p(
+            "No page-level check outcome records were supplied. No successful check or pass result is inferred.",
+            body_style,
+        ))
+
     if coverage_manifest:
         coverage_pct = coverage_manifest.get("category_signal_coverage_pct")
         execution_pct = coverage_manifest.get("category_execution_coverage_pct")
