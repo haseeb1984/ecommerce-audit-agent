@@ -106,6 +106,8 @@
 </div>
 <p class="muted">A submission can contain up to 1,000 URLs. Package entitlements and audit quota are checked by the licensing workflow during processing.</p>
 <div id="bulkScanStatus" class="status" role="status" aria-live="polite">Connect your account to submit website batches.</div>
+<h3>Saved website inventory</h3>
+<div id="websiteInventory" class="reports" aria-live="polite"><p class="muted">Connect your account to load saved websites.</p></div>
 <div id="scanBatches" class="reports" aria-live="polite"><p class="muted">No scan batches loaded.</p></div>
 <div id="scanBatchDetail" class="reports" aria-live="polite"></div>
 </section>
@@ -879,6 +881,47 @@
     catch (e) { setStatus("connectStatus", e.message, "error"); }
   });
 
+  async function loadWebsites() {
+    const container = $("websiteInventory");
+    const response = await api("/api/v1/websites?limit=500&offset=0");
+    const data = await response.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    container.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No websites have been saved for this account yet.";
+      container.append(empty);
+      return;
+    }
+    for (const site of items) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = site.host || site.url;
+      const detail = document.createElement("small");
+      detail.textContent = "Status: " + site.status + " · Added " +
+        (site.created_at ? new Date(site.created_at).toLocaleString() : "time unavailable");
+      const url = document.createElement("small"); url.textContent = site.url;
+      info.append(title, detail, url); card.append(info);
+      const view = document.createElement("button"); view.type = "button";
+      view.className = "secondary"; view.textContent = "Site scan history";
+      view.addEventListener("click", async () => {
+        const response = await api("/api/v1/websites/" + encodeURIComponent(site.id));
+        const detailData = await response.json();
+        const panel = $("scanBatchDetail"); panel.replaceChildren();
+        const heading = document.createElement("h3"); heading.textContent = "Website history · " + detailData.host;
+        panel.append(heading);
+        for (const job of (Array.isArray(detailData.scan_history) ? detailData.scan_history : [])) {
+          const row = document.createElement("p"); row.className = "muted";
+          row.textContent = job.status + " · " + new Date(job.created_at).toLocaleString() +
+            (job.last_error_code ? " · " + job.last_error_code : "");
+          panel.append(row);
+        }
+        panel.scrollIntoView({behavior:"smooth", block:"nearest"});
+      });
+      card.append(view); container.append(card);
+    }
+  }
+
   async function loadScanBatches() {
     const container = $("scanBatches");
     const response = await api("/api/v1/scan-batches?limit=100&offset=0");
@@ -906,6 +949,7 @@
       view.addEventListener("click", () => loadScanBatchDetail(batch.id));
       card.append(info, view); container.append(card);
     }
+    await loadWebsites();
     setStatus("bulkScanStatus", "Loaded " + items.length + " scan batch(es).", "success");
   }
   async function loadScanBatchDetail(batchId) {
@@ -1007,7 +1051,7 @@
     $("loadMoreReports").hidden = true;
     $("profileName").value = ""; $("profileTier").value = "—"; $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
-    $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren();
+    $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
     const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
     $("bulkUrls").value = ""; setStatus("bulkScanStatus", "Connect your account to submit website batches.");
     $("usageFill").style.width = "0%";
