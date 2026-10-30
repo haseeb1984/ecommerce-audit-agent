@@ -2355,6 +2355,7 @@ async def create_paddle_checkout(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a transaction using an active server-managed package price; the client cannot set amounts."""
+    from sqlalchemy import select, func
     tier = payload.tier.strip().lower()
     email = payload.email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
