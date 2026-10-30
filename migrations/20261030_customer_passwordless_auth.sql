@@ -29,3 +29,9 @@ CREATE INDEX IF NOT EXISTS ix_account_sessions_license_id ON account_sessions(li
 CREATE INDEX IF NOT EXISTS ix_account_sessions_license_created
     ON account_sessions(license_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_account_sessions_expires_at ON account_sessions(expires_at);
+
+-- Opaque public identifier for customer device/session management.
+ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS session_id VARCHAR(32);
+UPDATE account_sessions SET session_id = replace(gen_random_uuid()::text, '-', '') WHERE session_id IS NULL;
+ALTER TABLE account_sessions ALTER COLUMN session_id SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_account_sessions_session_id ON account_sessions(session_id);
