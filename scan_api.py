@@ -1,9 +1,7 @@
 """Customer API for durable Hostinger-backed bulk scan submissions."""
-from datetime import timezone
+import json
 from typing import Literal
 from urllib.parse import urlsplit
-from uuid import uuid4
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -11,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_license_or_api_key
 from hostinger_database import get_hostinger_db
-from hostinger_models import ScanBatch, WebsiteScanJob
+from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult
 from models import SoftwareLicense
 from plan_features import plan_features
 from scan_queue import enqueue_scan_request
@@ -175,4 +173,72 @@ async def get_scan_batch(
             }
             for job in jobs
         ],
+    }
+
+
+@router.get("/api/v1/scan-history")
+async def list_scan_history(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    rows = (await db.execute(
+        select(WebsiteScanResult)
+        .where(WebsiteScanResult.license_key == license_obj.license_key)
+        .order_by(WebsiteScanResult.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "job_id": row.job_id,
+                "website_id": row.website_id,
+                "url": row.target_url,
+                "status": row.status,
+                "overall_score": row.overall_score,
+                "finding_count": row.finding_count,
+                "created_at": row.created_at,
+                "summary": json.loads(row.summary_json or "{}"),
+            }
+            for row in rows
+        ],
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/api/v1/scan-jobs/{job_id}/result")
+async def get_scan_job_result(
+    job_id: str,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    job = await db.scalar(select(WebsiteScanJob).where(
+        WebsiteScanJob.id == job_id,
+        WebsiteScanJob.license_key == license_obj.license_key,
+    ))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scan job not found.")
+    result = await db.scalar(select(WebsiteScanResult).where(
+        WebsiteScanResult.job_id == job.id,
+        WebsiteScanResult.license_key == license_obj.license_key,
+    ))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Scan result is not available yet.")
+    return {
+        "id": result.id,
+        "job_id": result.job_id,
+        "website_id": result.website_id,
+        "url": result.target_url,
+        "status": result.status,
+        "overall_score": result.overall_score,
+        "finding_count": result.finding_count,
+        "findings": json.loads(result.findings_json or "[]"),
+        "check_outcomes": json.loads(result.check_outcomes_json or "[]"),
+        "coverage": json.loads(result.coverage_json or "{}"),
+        "summary": json.loads(result.summary_json or "{}"),
+        "created_at": result.created_at,
     }
