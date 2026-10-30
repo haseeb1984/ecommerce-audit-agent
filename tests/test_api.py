@@ -4252,3 +4252,21 @@ async def test_wordpress_link_expired_code_is_rejected_and_consumed(client):
     assert expired.status_code == 410
     replay = await client.post("/api/v1/account/wordpress-link/claim", headers=headers, json=payload)
     assert replay.status_code == 400
+
+
+
+@pytest.mark.asyncio
+async def test_starter_cannot_create_direct_api_keys(client):
+    await create_license(key="starter-no-direct-api", tier="starter")
+    headers = {"X-License-Key": "starter-no-direct-api"}
+    listing = await client.get("/api/v1/account/api-keys", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["can_create"] is False
+    assert listing.json()["can_create_reason"] == "plan_not_eligible"
+    created = await client.post("/api/v1/account/api-keys", headers=headers)
+    assert created.status_code == 403, created.text
+    async with AsyncSessionLocal() as db:
+        keys = (await db.execute(select(APIKey).join(
+            SoftwareLicense, APIKey.license_id == SoftwareLicense.id
+        ).where(SoftwareLicense.license_key == "starter-no-direct-api"))).scalars().all()
+    assert keys == []
