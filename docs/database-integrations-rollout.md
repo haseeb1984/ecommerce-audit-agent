@@ -17,7 +17,7 @@ For a fresh database, apply the core baseline first, then the feature migrations
 7. `migrations/20261031_customer_email_change.sql` — verified email-change challenges.
 8. `migrations/20261031_wordpress_sites.sql` — connected WordPress installations.
 9. `migrations/20261101_saas_database_integrations.sql`
-10. `migrations/20261102_plan_entitlements_white_label.sql` — final additive schema alignment for quota reservations, passwordless account challenges/sessions, email changes, WordPress links, support notes, billing-period end, device-session metadata, and all mapped indexes.
+10. `migrations/20261102_plan_entitlements_white_label.sql` — per-license white-label branding settings.
 
 For an existing database, compare its applied schema with each migration first and skip only migrations that are already fully applied. The scripts use `IF NOT EXISTS` where possible; the device-session migration also backfills an opaque public ID for existing sessions before making it required.
 
