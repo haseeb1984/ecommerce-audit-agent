@@ -1590,6 +1590,7 @@ async def wordpress_site_status(
             "tier": license_obj.tier,
             "is_active": bool(license_obj.is_active),
             "expires_at": expires_at.isoformat() if expires_at else None,
+            "billing_period_ends_at": license_obj.billing_period_ends_at.isoformat() if license_obj.billing_period_ends_at else None,
             "entitlement_state": "inactive" if not license_obj.is_active else ("expired" if expires_at and expires_at <= now else "active"),
         },
         "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None,
