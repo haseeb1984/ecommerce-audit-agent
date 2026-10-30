@@ -95,6 +95,20 @@
 <p id="activityPageStatus" class="muted" aria-live="polite">No activity loaded.</p>
 <div class="report-actions"><button id="refreshActivity" class="secondary" type="button">Refresh activity</button><button id="loadMoreActivity" class="secondary" type="button" hidden>Load more activity</button></div>
 </section>
+<section class="panel" aria-labelledby="bulkScanHeading">
+<h2 id="bulkScanHeading">Bulk website scanning</h2>
+<p class="muted">Submit multiple public website URLs. The system stores each URL and its scan history, groups submissions into sequential batches of 10 or 11, and displays queue progress here.</p>
+<label for="bulkUrls">Website URLs (one per line)</label>
+<textarea id="bulkUrls" rows="7" maxlength="250000" placeholder="https://store-one.example&#10;https://store-two.example&#10;https://store-three.example" style="width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;font:inherit"></textarea>
+<div class="row">
+  <div><label for="bulkBatchSize">URLs per batch</label><select id="bulkBatchSize"><option value="10">10 websites</option><option value="11">11 websites</option></select></div>
+  <div style="display:flex;align-items:end;gap:8px"><button id="submitBulkScans" type="button" disabled>Queue website scans</button><button id="refreshScanBatches" class="secondary" type="button" disabled>Refresh progress</button></div>
+</div>
+<p class="muted">A submission can contain up to 1,000 URLs. Package entitlements and audit quota are checked by the licensing workflow during processing.</p>
+<div id="bulkScanStatus" class="status" role="status" aria-live="polite">Connect your account to submit website batches.</div>
+<div id="scanBatches" class="reports" aria-live="polite"><p class="muted">No scan batches loaded.</p></div>
+<div id="scanBatchDetail" class="reports" aria-live="polite"></div>
+</section>
 <section class="panel">
 <h2>2. Run a website audit</h2>
 <form id="auditForm"><label for="target">Public website URL</label><input id="target" type="url" required maxlength="2048" placeholder="https://example.com"><p class="muted">Only public HTTP/HTTPS websites are accepted. This performs an audit only; it does not change the target website. A run consumes your license quota.</p><button id="runAudit" type="submit">Run audit and generate PDF</button></form><div id="auditStatus" class="status" role="status" aria-live="polite">Connect your credential first.</div>
@@ -142,7 +156,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("linkedLicenses").disabled = !connected || !sessionToken;
     $("linkedLicensesPanel").hidden = !connected || !sessionToken;
   }
@@ -397,8 +411,7 @@
       const card = document.createElement("article"); card.className = "report";
       const meta = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = "API key · " + String(item.key_prefix || "prefix unavailable");
-      const detail = document.createElement("small");
-      const created = item.created_at ? new Date(item.created_at) : null;
+      const detail = document.createElement("small");      const created = item.created_at ? new Date(item.created_at) : null;
       detail.textContent = "Key ID " + item.id + " · Created " + (created && !Number.isNaN(created.getTime()) ? created.toLocaleString() : "date unavailable");
       meta.append(title, detail);
       const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "secondary"; revoke.textContent = "Revoke";
@@ -512,11 +525,12 @@
       if (!response.ok) throw new Error(data.detail || "Unable to switch linked account.");
       accountSessionVersion += 1;
       clearAccountView();
-      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites()]);
+      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
       await loadAccountLicenses();
       if (sessionToken) await loadDeviceSessions().catch(() => {});
       const failed = results.filter(item => item.status === "rejected").length;
       $("runAudit").disabled = results[1].status !== "fulfilled" || results[2].status !== "fulfilled";
+      $("submitBulkScans").disabled = false; $("refreshScanBatches").disabled = false;
       renderApiKeys();
       setStatus("connectStatus", failed ? "Switched account. " + failed + " account panel(s) could not be refreshed." : "Switched to " + (data.account.client_name || "linked account") + ".", failed ? "error" : "success");
     } catch (error) {
@@ -797,8 +811,7 @@
         empty.textContent = "No saved records on this page."; $("savedEvidenceItems").append(empty);
       }
       for (const record of items) {
-        const card = document.createElement("article"); card.className = "report";
-        const body = document.createElement("div");
+        const card = document.createElement("article"); card.className = "report";        const body = document.createElement("div");
         const heading = document.createElement("strong");
         heading.textContent = String(record.title || record.check_name || record.check_id || record.category || record.outcome || "Evidence record");
         const details = document.createElement("small");
@@ -865,6 +878,89 @@
     try { await loadReports({reset:false}); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
   });
+
+  async function loadScanBatches() {
+    const container = $("scanBatches");
+    const response = await api("/api/v1/scan-batches?limit=100&offset=0");
+    const data = await response.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    container.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No bulk scan batches have been submitted for this account.";
+      container.append(empty);
+    }
+    for (const batch of items) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = "Batch " + batch.batch_number + " · " + String(batch.status || "unknown").replaceAll("_", " ");
+      const detail = document.createElement("small");
+      detail.textContent = batch.total_urls + " websites · " + batch.completed + " completed · " +
+        batch.processing + " processing · " + batch.queued + " queued · " + batch.failed + " failed";
+      const created = document.createElement("small");
+      created.textContent = "Created " + (batch.created_at ? new Date(batch.created_at).toLocaleString() : "time unavailable") +
+        " · Package " + (batch.package_tier || "unknown");
+      info.append(title, detail, created);
+      const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View URLs";
+      view.addEventListener("click", () => loadScanBatchDetail(batch.id));
+      card.append(info, view); container.append(card);
+    }
+    setStatus("bulkScanStatus", "Loaded " + items.length + " scan batch(es).", "success");
+  }
+  async function loadScanBatchDetail(batchId) {
+    const container = $("scanBatchDetail");
+    container.replaceChildren();
+    const response = await api("/api/v1/scan-batches/" + encodeURIComponent(batchId));
+    const batch = await response.json();
+    const heading = document.createElement("h3");
+    heading.textContent = "Batch " + batch.batch_number + " · " + batch.status;
+    container.append(heading);
+    for (const job of (Array.isArray(batch.jobs) ? batch.jobs : [])) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = job.url;
+      const detail = document.createElement("small");
+      detail.textContent = "Status: " + job.status + " · Attempts: " + job.attempts + "/" + job.max_attempts +
+        (job.last_error_code ? " · Last error: " + job.last_error_code : "");
+      info.append(title, detail); card.append(info); container.append(card);
+    }
+    container.scrollIntoView({behavior:"smooth", block:"nearest"});
+  }
+  async function submitBulkScans() {
+    if (!credential) { setStatus("bulkScanStatus", "Connect your license, API key, or customer account first.", "error"); return; }
+    const urls = $("bulkUrls").value.split(/\\r?\\n/).map(value => value.trim()).filter(Boolean);
+    if (!urls.length) { setStatus("bulkScanStatus", "Enter at least one website URL, one per line.", "error"); return; }
+    if (urls.length > 1000) { setStatus("bulkScanStatus", "A single submission can contain at most 1,000 URLs.", "error"); return; }
+    const button = $("submitBulkScans"); button.disabled = true;
+    try {
+      const requestId = window.crypto && typeof window.crypto.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : "bulk-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+      const response = await api("/api/v1/scan-batches", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({urls, request_id:requestId, batch_size:Number($("bulkBatchSize").value)})
+      });
+      const result = await response.json();
+      setStatus("bulkScanStatus",
+        result.new_jobs + " new website scan job(s) queued in " + result.batch_count +
+        " batch(es). Request ID: " + result.request_id +
+        (result.idempotent_replay ? " · Existing request returned without creating duplicate jobs." : ""),
+        "success");
+      await loadScanBatches();
+    } catch (error) {
+      setStatus("bulkScanStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential;
+    }
+  }
+  $("submitBulkScans").addEventListener("click", submitBulkScans);
+  $("refreshScanBatches").addEventListener("click", async () => {
+    try { await loadScanBatches(); }
+    catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
+  });
+
   function clearAccountView() {
     loadedReports = [];
     reportsTotal = 0;
@@ -882,6 +978,9 @@
     $("loadMoreReports").hidden = true;
     $("profileName").value = ""; $("profileTier").value = "—"; $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
+    $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren();
+    const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
+    $("bulkUrls").value = ""; setStatus("bulkScanStatus", "Connect your account to submit website batches.");
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
@@ -945,7 +1044,7 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites()]);
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites(), loadScanBatches()]);
       const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
@@ -954,6 +1053,8 @@
       $("requestEmailChange").disabled = !sessionToken;
       $("verifyEmailChange").disabled = true;
       $("runAudit").disabled = !auditAccess;
+      $("submitBulkScans").disabled = !auditAccess;
+      $("refreshScanBatches").disabled = !auditAccess;
       renderApiKeys();
       $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
       setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
