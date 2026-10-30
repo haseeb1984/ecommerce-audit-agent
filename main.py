@@ -4189,31 +4189,40 @@ async def admin_payment_events(
     status: str | None = Query(None, min_length=1, max_length=40),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return a bounded, filterable payment-event queue for operator triage."""
+    """Return customer billing history from Hostinger operational storage."""
     _require_admin_key(request)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    await _ensure_admin_tables(db)
+    if HostingerAsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Operational billing history is unavailable.")
     from sqlalchemy import select, func as sql_func
-
-    statement = select(PaymentWebhookEvent)
-    count_statement = select(sql_func.count(PaymentWebhookEvent.event_id))
+    statement = select(CustomerBillingEvent)
+    count_statement = select(sql_func.count(CustomerBillingEvent.event_id))
     if status:
-        statement = statement.where(PaymentWebhookEvent.status == status)
-        count_statement = count_statement.where(PaymentWebhookEvent.status == status)
-    total = int((await db.execute(count_statement)).scalar_one() or 0)
-    events = (await db.execute(
-        statement
-        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
-        .offset(offset)
-        .limit(limit)
-    )).scalars().all()
+        statement = statement.where(CustomerBillingEvent.status == status)
+        count_statement = count_statement.where(CustomerBillingEvent.status == status)
+    async with HostingerAsyncSessionLocal() as operational_db:
+        total = int((await operational_db.execute(count_statement)).scalar_one() or 0)
+        events = (await operational_db.execute(
+            statement
+            .order_by(CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc())
+            .offset(offset)
+            .limit(limit)
+        )).scalars().all()
+    license_keys = {event.license_key for event in events}
+    license_ids = {}
+    if license_keys:
+        rows = (await db.execute(
+            select(SoftwareLicense.id, SoftwareLicense.license_key)
+            .where(SoftwareLicense.license_key.in_(license_keys))
+        )).all()
+        license_ids = {key: license_id for license_id, key in rows}
     return {
         "items": [
             {
                 "event_id": event.event_id,
                 "status": event.status,
-                "license_id": event.license_id,
+                "license_id": license_ids.get(event.license_key),
                 "transaction_id": event.transaction_id,
                 "subscription_id": event.subscription_id,
                 "paddle_customer_id": event.paddle_customer_id,
@@ -4229,7 +4238,6 @@ async def admin_payment_events(
             "has_more": offset + len(events) < total,
         },
     }
-
 
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
 async def admin_reconcile_payment(event_id: str, request: Request,
