@@ -3633,13 +3633,22 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     sent = []
     monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
     license_id = await create_license(key="passwordless-logout-all-license")
+    linked_license_id = await create_license(key="passwordless-logout-all-linked-license")
     async with AsyncSessionLocal() as db:
-        db.add(PaymentWebhookEvent(
-            event_id="evt_passwordless_logout_all_seed",
-            status="provisioned",
-            license_id=license_id,
-            recipient_email="logout-all@example.com",
-        ))
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_passwordless_logout_all_seed",
+                status="provisioned",
+                license_id=license_id,
+                recipient_email="logout-all@example.com",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_passwordless_logout_all_linked_seed",
+                status="provisioned",
+                license_id=linked_license_id,
+                recipient_email="LOGOUT-ALL@example.com",
+            ),
+        ])
         await db.commit()
     await client.post("/api/v1/account/auth/request-code", json={"email": "logout-all@example.com"})
     login = await client.post("/api/v1/account/auth/verify-code", json={
@@ -3650,7 +3659,7 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     async with AsyncSessionLocal() as db:
         db.add(main.AccountSession(
             token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
-            license_id=license_id,
+            license_id=linked_license_id,
             email="logout-all@example.com",
             expires_at=datetime.now(timezone.utc) + timedelta(days=5),
         ))
