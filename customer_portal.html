@@ -886,7 +886,7 @@
     $("billingAccount").textContent = "Connect your account to load billing status.";
     $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
     apiKeyCreationAllowed = false;
-    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
+    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required."); $("wordpressSites").replaceChildren(); const wpEmpty=document.createElement("p");wpEmpty.className="muted";wpEmpty.textContent="Connect your account to view WordPress installations."; $("wordpressSites").append(wpEmpty); setStatus("wordpressSitesStatus","Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("linkedLicenses").addEventListener("change", switchAccountLicense);
@@ -941,8 +941,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
