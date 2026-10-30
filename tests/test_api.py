@@ -2132,7 +2132,7 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses()])" in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
