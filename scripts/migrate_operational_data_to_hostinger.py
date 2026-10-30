@@ -256,14 +256,14 @@ async def migrate(apply_changes: bool) -> None:
         reports["operational_diagnostic_events"] = await _copy_rows(
             source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
             lambda row: ({
-                "id": row.id,
+                "legacy_source_id": row.id,
                 "event_type": row.event_type,
                 "license_key": license_key_by_id.get(row.license_id),
                 "domain": row.domain,
                 "error_type": row.error_type,
                 "created_at": row.created_at,
             }),
-            "id",
+            "legacy_source_id",
         )
 
         # Legacy support notes were keyed only by email. Associate each note with
