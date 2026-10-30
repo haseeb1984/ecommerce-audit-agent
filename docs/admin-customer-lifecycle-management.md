@@ -16,3 +16,7 @@ Operators can append bounded internal support notes to a customer identity. Note
 
 ## Rollout
 Apply `migrations/20261031_admin_customer_lifecycle.sql` before deploying this revision. All endpoints require the configured `ADMIN_API_KEY` and return private, non-cacheable customer data.
+
+## Paddle subscription cancellation
+
+The account detail view exposes a confirmed cancellation request for linked Paddle subscriptions. The operator must re-enter the exact subscription ID and provide a reason. The default action schedules cancellation at the next billing period; the API also supports an explicitly requested immediate cancellation. The backend calls Paddle with server-side credentials, verifies the returned subscription ID, and writes an administrator action record. It does not directly mutate local license entitlements. The verified Paddle subscription webhook remains authoritative for local subscription and access state.
