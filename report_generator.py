@@ -75,6 +75,54 @@ def _format_check_outcome_summary_from_dicts(recorded_outcomes: list[dict[str, o
     )
 
 
+def _outcome_breakdown_table(recorded_outcomes: list[object], small_style: ParagraphStyle) -> Table | None:
+    """Render a compact, denominator-explicit breakdown from real outcome records only."""
+    states = ("pass", "issue", "warning", "not_assessed", "error")
+    counts = {
+        state: sum(
+            1 for item in recorded_outcomes
+            if (
+                item.get("outcome") if isinstance(item, dict)
+                else getattr(item, "outcome", None)
+            ) == state
+        )
+        for state in states
+    }
+    denominator = sum(counts.values())
+    if not denominator:
+        return None
+    tested_pages = {
+        str(item.get("page_url") or item.get("url") or "")
+        if isinstance(item, dict)
+        else str(getattr(item, "page_url", "") or "")
+        for item in recorded_outcomes
+    } - {""}
+    header = ["Recorded outcome", "Count", "Share"]
+    rows = [[_p(value, small_style) for value in header]]
+    for state in states:
+        count = counts[state]
+        rows.append([
+            _p(state.replace("_", " ").title(), small_style),
+            _p(str(count), small_style),
+            _p(f"{count / denominator * 100:.1f}%", small_style),
+        ])
+    table = Table(rows, colWidths=[76 * mm, 22 * mm, 28 * mm], repeatRows=1, hAlign="LEFT")
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    table._audit_denominator_note = (
+        f"Denominator: {denominator} explicit outcome record(s) across "
+        f"{len(tested_pages)} distinct tested page(s). Missing records are not passes."
+    )
+    return table
+
+
 def _p(value: object, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape(str(value or "Not available")), style)
 
@@ -1554,8 +1602,10 @@ def render_audit_pdf(
         # Defer the visual header until the status and result blocks are ready, so
         # a finding title never gets stranded at the bottom of a page by itself.
         category_line = _p(
+            f"Exact check / finding: {str(finding['title'])} | "
             f"Category: {str(finding['category']).replace('_', ' ').title()} | "
-            f"Status: {status.replace('_', ' ').title()}",
+            f"Status badge: {status.replace('_', ' ').title()} | "
+            f"Action priority: {severity.upper()}",
             small_style,
         )
 
@@ -1664,27 +1714,24 @@ def render_audit_pdf(
                 f" Audit sampled {len(set(result.pages_checked))} page(s) overall, "
                 "but that is not this check's denominator."
             )
-        outcome_notice = Table(
-            [[
-                Paragraph("<b>PAGE OUTCOME BREAKDOWN</b>", small_style),
-                Paragraph(outcome_text, body_style),
-            ]],
-            colWidths=[42 * mm, 132 * mm],
-            hAlign="LEFT",
-        )
-        outcome_notice.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF8E7")),
-            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#D9C38A")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
-        story.extend([
-            outcome_notice,
-            Spacer(1, 1.5 * mm),
-        ])
+        outcome_table = _outcome_breakdown_table(recorded_outcomes, small_style)
+        if outcome_table is not None:
+            story.extend([
+                Paragraph("<b>PAGE OUTCOME BREAKDOWN — THIS CHECK</b>", body_style),
+                outcome_table,
+                _p(outcome_table._audit_denominator_note, small_style),
+                Spacer(1, 1.5 * mm),
+            ])
+        else:
+            story.extend([
+                Paragraph("<b>PAGE OUTCOME BREAKDOWN — THIS CHECK</b>", body_style),
+                _p(
+                    "Unavailable — no explicit outcome records were linked to this exact check. "
+                    "The overall sampled-page count is not substituted as its denominator; no pass rate is inferred.",
+                    small_style,
+                ),
+                Spacer(1, 1.5 * mm),
+            ])
         if urls:
             page_rows = [[_p("AFFECTED PAGE", small_style), _p("EVIDENCE REF", small_style)]]
             for affected_url in urls:
@@ -1985,6 +2032,84 @@ def render_audit_pdf(
             "Outcome distribution unavailable: this run contains no explicit check outcome records. No pass rate is inferred.",
             body_style,
         ))
+    # A check-level register makes the exact recorded checks visible independently
+    # of findings. Only explicit records are listed; omitted checks are not passes.
+    grouped_checks: dict[str, list[object]] = {}
+    for outcome in explicit_outcomes:
+        check_id = str(getattr(outcome, "check_id", "") or "").strip()
+        if check_id:
+            grouped_checks.setdefault(check_id, []).append(outcome)
+    story.append(Paragraph("Check-by-check outcome register", base["Heading2"]))
+    story.append(_p(
+        "This register lists only checks that emitted explicit outcome records. "
+        "Each denominator is the number of recorded page/check outcomes for that check ID; "
+        "a checker that emitted no record is not shown as passed or completed.",
+        body_style,
+    ))
+    if grouped_checks:
+        check_rows = [[
+            _p("Exact check ID", small_style),
+            _p("Category", small_style),
+            _p("Pages", small_style),
+            _p("Outcome breakdown", small_style),
+            _p("Method / evidence sample", small_style),
+        ]]
+        for check_id, records in sorted(grouped_checks.items()):
+            counts = {
+                state: sum(1 for record in records if getattr(record, "outcome", None) == state)
+                for state in outcome_states
+            }
+            page_urls = list(dict.fromkeys(
+                str(getattr(record, "page_url", "") or "") for record in records
+                if getattr(record, "page_url", None)
+            ))
+            category_name = next(
+                (str(getattr(record, "category", "") or "") for record in records
+                 if getattr(record, "category", None)), "Uncategorized"
+            )
+            outcome_summary = " · ".join(
+                f"{state.replace('_', ' ')} {counts[state]}" for state in outcome_states
+            )
+            method_names = list(dict.fromkeys(
+                str(getattr(record, "method", "") or "") for record in records
+                if getattr(record, "method", None)
+            ))
+            evidence_samples = list(dict.fromkeys(
+                _sanitize_report_text(getattr(record, "evidence", ""), limit=220)
+                for record in records if getattr(record, "evidence", None)
+            ))
+            method_text = "; ".join(method_names[:2]) or "Not recorded"
+            if evidence_samples:
+                method_text += " — " + evidence_samples[0]
+            check_rows.append([
+                _p(check_id, small_style),
+                _p(category_name.replace("_", " ").title(), small_style),
+                _p(str(len(page_urls)), small_style),
+                _p(outcome_summary + f" (n={len(records)})", small_style),
+                _p(method_text, small_style),
+            ])
+        check_table = Table(
+            check_rows,
+            colWidths=[34 * mm, 27 * mm, 13 * mm, 57 * mm, 43 * mm],
+            repeatRows=1, hAlign="LEFT",
+        )
+        check_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF0F6")),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D5DFEA")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.extend([check_table, Spacer(1, 2 * mm)])
+    else:
+        story.append(_p(
+            "No check-level outcome records were supplied for this run. "
+            "This is unavailable evidence, not a 0% or 100% pass result.",
+            body_style,
+        ))
+
     if coverage_manifest:
         coverage_pct = coverage_manifest.get("category_signal_coverage_pct")
         execution_pct = coverage_manifest.get("category_execution_coverage_pct")
