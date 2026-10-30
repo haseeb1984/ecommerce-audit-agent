@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding
 
 logger = logging.getLogger("audit_service")
 
@@ -1827,21 +1827,31 @@ async def update_account_profile(
 async def get_account_branding(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     if not plan_features(license_obj.tier)["white_label_branding"]:
         raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
     from sqlalchemy import select
-    item = (await db.execute(select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id))).scalar_one_or_none()
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == license_obj.license_key
+    ))
     response.headers["Cache-Control"] = "no-store, private"
-    return {"brand_name": item.brand_name if item else license_obj.client_name, "logo_url": item.logo_url if item else None, "primary_color": item.primary_color if item else "#155a8a", "configured": item is not None, "updated_at": item.updated_at.isoformat() if item and item.updated_at else None}
+    return {
+        "brand_name": item.brand_name if item else license_obj.client_name,
+        "logo_url": item.logo_url if item else None,
+        "primary_color": item.primary_color if item else "#155a8a",
+        "configured": item is not None,
+        "updated_at": item.updated_at.isoformat() if item and item.updated_at else None,
+    }
 
 
 @app.put("/api/v1/account/branding")
 async def update_account_branding(
     payload: WhiteLabelBrandingUpdate,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),    db: AsyncSession = Depends(get_async_db),):
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
     if not plan_features(license_obj.tier)["white_label_branding"]:
         raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
     brand_name = payload.brand_name.strip()
@@ -1854,13 +1864,23 @@ async def update_account_branding(
         if parsed.scheme.lower() != "https" or not parsed.netloc or parsed.username or parsed.password:
             raise HTTPException(status_code=422, detail="Logo URL must be a valid HTTPS URL without embedded credentials.")
     from sqlalchemy import select
-    item = (await db.execute(select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id))).scalar_one_or_none()
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == license_obj.license_key
+    ).with_for_update())
+    now = datetime.now(timezone.utc)
     if item is None:
-        item = WhiteLabelBranding(license_id=license_obj.id, brand_name=brand_name, logo_url=logo_url, primary_color=color)
-        db.add(item)
+        item = CustomerBranding(
+            license_key=license_obj.license_key,
+            brand_name=brand_name,
+            logo_url=logo_url,
+            primary_color=color,
+            updated_at=now,
+        )
+        operational_db.add(item)
     else:
         item.brand_name, item.logo_url, item.primary_color = brand_name, logo_url, color
-    await db.commit()
+        item.updated_at = now
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"brand_name": brand_name, "logo_url": logo_url, "primary_color": color, "updated": True}
 
