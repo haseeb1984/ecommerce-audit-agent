@@ -95,7 +95,9 @@ async def migrate(apply_changes: bool) -> None:
                     (license_key, email), (email, licenses[row.license_id].client_name, row.created_at)
                 )
         billing_rows = (await source.execute(
-            select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.is_not(None))
+            select(PaymentWebhookEvent)
+            .where(PaymentWebhookEvent.license_id.is_not(None))
+            .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
         )).scalars().all()
         for row in billing_rows:
             license_key = license_key_by_id.get(row.license_id)
