@@ -10,7 +10,7 @@ Customers can list and unlink their own site connections from the SaaS portal. T
 
 A normalized, verified checkout email identifies exactly one SaaS customer account and one license. Customer sessions may exist on multiple devices, but they all remain attached to that single license; the portal does not offer license listing or switching. The checkout API requires the customer email and blocks a known existing account before creating a Paddle transaction. The declared checkout email is carried in transaction metadata and compared with Paddle’s verified customer email at webhook time. A provider-side mismatch is recorded as `checkout_email_mismatch`; a race or second transaction that reaches the webhook for an existing email is recorded as `duplicate_account_blocked`. Neither path creates or emails a second license key. Subscription lifecycle updates and renewals continue to update the existing license through its original subscription linkage.
 
-The `software_licenses.account_email` field is the canonical identity, protected by a case-insensitive unique database index. Passwordless login resolves that field; legacy payment-event lookup is allowed only when all matching events identify exactly one license. Ambiguous historical duplicates fail closed rather than selecting whichever payment event happens to be newest. The migration deliberately stops with an actionable error when it finds duplicate email-to-license mappings: operators must reconcile those records without silently discarding billing, audit, API-key, or usage history before the unique index can be installed.
+The `software_licenses.account_email` field is the canonical identity, protected by a case-insensitive unique database index. Passwordless login resolves that field; legacy payment-event lookup is allowed only when all matching events identify exactly one license. Ambiguous historical duplicates fail closed rather than selecting whichever payment event happens to be newest. The migration deliberately stops with an actionable error when it finds duplicate email-to-license mappings. Run the read-only `scripts/report_duplicate_customer_emails.sql` report first, then reconcile those records without silently discarding billing, audit, API-key, WordPress-link, or usage history before the unique index can be installed.
 
 ## Plan entitlements
 
@@ -37,7 +37,8 @@ Apply migrations in order after the core SaaS schema:
 2. 20261030_customer_passwordless_auth.sql
 3. 20261030_paddle_billing_period.sql
 4. 20261030_customer_identity_wordpress_linking.sql
-5. 20261031_single_customer_license_identity.sql
+5. Run `scripts/report_duplicate_customer_emails.sql` and reconcile any returned rows without discarding linked history.
+6. 20261031_single_customer_license_identity.sql
 
 For a new database, the core schema also includes the account-session, white-label, and WordPress identity tables. The migrations are idempotent for their create/index operations. Run python scripts/check_production_readiness.py against the intended staging schema after migration; it is read-only and does not apply schema changes.
 
