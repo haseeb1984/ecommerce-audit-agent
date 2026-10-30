@@ -121,7 +121,6 @@ async def process_one_scan(worker_id: str) -> dict:
         license_key = job.license_key
         website_id = job.website_id
         target_url = job.target_url
-        attempt = job.attempt_count
 
     reservation_id = None
     try:
@@ -131,6 +130,11 @@ async def process_one_scan(worker_id: str) -> dict:
             )
             if license_obj is None:
                 raise HTTPException(status_code=403, detail="LICENSE_NOT_FOUND")
+            expiry = license_obj.expires_at
+            if expiry is not None and expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if not license_obj.is_active or (expiry is not None and expiry <= datetime.now(timezone.utc)):
+                raise HTTPException(status_code=403, detail="LICENSE_INACTIVE_OR_EXPIRED")
             existing_lead = await licensing_db.scalar(
                 select(AuditLead).where(AuditLead.source_job_id == job_id)
             )
