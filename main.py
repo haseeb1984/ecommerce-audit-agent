@@ -1207,6 +1207,11 @@ async def verify_customer_email_change(
     await db.execute(update(PaymentWebhookEvent).where(
         func.lower(PaymentWebhookEvent.recipient_email) == old_email,
     ).values(recipient_email=challenge.new_email))
+    # Keep the linked WordPress customer identity synchronized with the verified
+    # SaaS email change in the same transaction as the billing identity records.
+    await db.execute(update(WordPressSite).where(
+        func.lower(WordPressSite.customer_email) == old_email,
+    ).values(customer_email=challenge.new_email))
     await db.execute(update(AccountLoginChallenge).where(
         AccountLoginChallenge.email == old_email,
         AccountLoginChallenge.consumed_at.is_(None),
