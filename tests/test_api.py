@@ -209,7 +209,7 @@ def test_coverage_manifest_redacts_credentials_query_and_fragment_from_all_urls(
 
 @pytest.mark.asyncio
 async def test_account_usage_reports_monthly_quota_without_exposing_license_key(client):
-    license_id = await create_license(key="usage-private-license", quota=5)
+    license_id = await create_license(key="usage-private-license", quota=5, tier="test")
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         db.add(AuditLead(
@@ -479,8 +479,8 @@ async def test_parallel_requests_with_one_slot_return_one_200_and_one_429(
 
 @pytest.mark.asyncio
 async def test_configured_concurrency_limit_rejects_extra_active_audit(client, monkeypatch):
-    license_id = await create_license(key="concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "1")
+    license_id = await create_license(key="concurrency-license", quota=10, tier="agency")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_AGENCY", "1")
     async with AsyncSessionLocal() as db:
         db.add(
             AuditQuotaReservation(
@@ -504,8 +504,8 @@ async def test_configured_concurrency_limit_rejects_extra_active_audit(client, m
 
 @pytest.mark.asyncio
 async def test_invalid_configured_concurrency_limit_fails_closed(client, monkeypatch):
-    await create_license(key="invalid-concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "not-a-number")
+    await create_license(key="invalid-concurrency-license", quota=10, tier="agency")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_AGENCY", "not-a-number")
 
     response = await client.post(
         "/api/v1/audit-lead",
@@ -2150,7 +2150,7 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadBranding(), loadWordPressLinks()])" in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
@@ -3245,7 +3245,7 @@ async def test_paddle_subscription_update_after_cancellation_is_sticky(client, m
     secret = "paddle-test-canceled-plan-update-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_canceledpro123")
-    license_id = await create_license(key="canceled-plan-update-license", quota=100, active=False)
+    license_id = await create_license(key="canceled-plan-update-license", quota=100, active=False, tier="test")
     async with AsyncSessionLocal() as db:
         db.add(PaymentWebhookEvent(
             event_id="evt_seed_canceled_plan_update",
