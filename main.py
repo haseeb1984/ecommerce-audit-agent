@@ -39,7 +39,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, WhiteLabelBranding, WordPressLinkChallenge, WordPressSiteLink
+from plan_features import plan_features
 from auth import verify_license_or_api_key, verify_customer_account, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -93,6 +94,13 @@ class ReportEmailRequest(BaseModel):
 class AccountProfileUpdate(BaseModel):
     """Customer-editable account display name; billing identity stays with the payment provider."""
     client_name: str = Field(..., min_length=1, max_length=255)
+
+
+class WhiteLabelBrandingUpdate(BaseModel):
+    """Editable customer-facing branding metadata; logo URLs are never fetched by the API."""
+    brand_name: str = Field(..., min_length=1, max_length=100)
+    logo_url: str | None = Field(default=None, max_length=2048)
+    primary_color: str = Field(default="#155a8a", min_length=7, max_length=7)
 
 
 class AccountLoginRequest(BaseModel):
@@ -154,6 +162,9 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "audit_leads",
         "audit_quota_reservations",
         "audit_reports",
+        "white_label_branding",
+        "wordpress_link_challenges",
+        "wordpress_site_links",
         "saas_plan_packages",
         "saas_admin_action_logs",
         "saas_operation_events",
@@ -281,6 +292,9 @@ async def audit_lead(
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db)
 ):
+    # Premium conversion dossier access is enforced before quota reservation/provider work.
+    if not plan_features(license_obj.tier)["conversion_dossier"]:
+        raise HTTPException(status_code=403, detail="Conversion dossier access requires an Agency, Pro, or Whitelabel plan.")
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
@@ -348,6 +362,8 @@ async def comprehensive_audit_pdf(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a phase-one evidence report as a PDF, using the existing license quota."""
+    if not plan_features(license_obj.tier)["standard_audits"]:
+        raise HTTPException(status_code=403, detail="Standard audit access is not available for this account plan.")
     try:
         target_url = _normalize_request_audit_target(domain)
     except ValueError as exc:
@@ -1297,6 +1313,271 @@ async def update_account_profile(
     return {"client_name": license_obj.client_name, "updated": True}
 
 
+class WordPressLinkClaimRequest(BaseModel):
+    token: str = Field(..., min_length=32, max_length=128)
+    site_url: str = Field(..., min_length=8, max_length=255)
+    wp_user_id: int = Field(..., ge=1)
+    wp_user_login: str = Field(..., min_length=1, max_length=60)
+    wp_user_email: str = Field(..., min_length=3, max_length=254)
+
+
+def _normalize_wordpress_site_url(value: str) -> str:
+    """Accept a canonical public HTTPS WordPress home URL; never fetch it."""
+    raw = value.strip()
+    try:
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if (parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password
+                or parsed.port not in (None, 443) or parsed.query or parsed.fragment):
+            raise ValueError
+        if host in {"localhost", "localhost.localdomain"} or "." not in host:
+            raise ValueError
+        try:
+            address = ipaddress.ip_address(host)
+            if not address.is_global:
+                raise ValueError
+        except ValueError:
+            if re.fullmatch(r"[0-9.]+", host):
+                raise ValueError
+            if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", host):
+                raise ValueError
+        path = parsed.path.rstrip("/")
+        normalized = f"https://{host}{path}/"
+        if len(normalized) > 255:
+            raise ValueError
+        return normalized
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="WordPress site URL must be a public HTTPS home URL without credentials, query, or fragment.")
+
+
+@app.post("/api/v1/account/wordpress-link/challenges")
+async def create_wordpress_link_challenge(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Issue a one-time 10-minute code; only its SHA-256 hash is persisted."""
+    from sqlalchemy import select
+    now = datetime.now(timezone.utc)
+    # Serialize challenge issuance per license so concurrent requests cannot leave
+    # multiple simultaneously redeemable codes for the same account.
+    await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_obj.id).with_for_update())
+    existing = (await db.execute(
+        select(WordPressLinkChallenge)
+        .where(
+            WordPressLinkChallenge.license_id == license_obj.id,
+            WordPressLinkChallenge.consumed_at.is_(None),
+            WordPressLinkChallenge.expires_at > now,
+        )
+        .with_for_update()
+    )).scalars().all()
+    for challenge in existing:
+        challenge.consumed_at = now
+    token = secrets.token_urlsafe(32)
+    db.add(WordPressLinkChallenge(
+        license_id=license_obj.id,
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        expires_at=now + timedelta(minutes=10),
+    ))
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"token": token, "expires_at": (now + timedelta(minutes=10)).isoformat(), "expires_in_seconds": 600}
+
+
+@app.get("/api/v1/account/wordpress-link")
+async def get_wordpress_site_links(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    from sqlalchemy import select
+    links = (await db.execute(
+        select(WordPressSiteLink)
+        .where(WordPressSiteLink.license_id == license_obj.id)
+        .order_by(WordPressSiteLink.linked_at.desc())
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"links": [
+        {
+            "id": item.id,
+            "site_url": item.site_url,
+            "wp_user_id": item.wp_user_id,
+            "wp_user_login": item.wp_user_login,
+            "wp_user_email": item.wp_user_email,
+            "linked_at": item.linked_at.isoformat() if item.linked_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
+        for item in links
+    ]}
+
+
+@app.post("/api/v1/account/wordpress-link/claim")
+async def claim_wordpress_site_link(
+    payload: WordPressLinkClaimRequest,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Redeem a license-bound, expiring code once and bind the authenticated WP site."""
+    from sqlalchemy import select
+    site_url = _normalize_wordpress_site_url(payload.site_url)
+    token_hash = hashlib.sha256(payload.token.strip().encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    challenge = (await db.execute(
+        select(WordPressLinkChallenge)
+        .where(
+            WordPressLinkChallenge.license_id == license_obj.id,
+            WordPressLinkChallenge.token_hash == token_hash,
+        )
+        .with_for_update()
+    )).scalar_one_or_none()
+    if challenge is None or challenge.consumed_at is not None:
+        raise HTTPException(status_code=400, detail="WordPress link code is invalid or has already been used.")
+    expires_at = challenge.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= now:
+        challenge.consumed_at = now
+        await db.commit()
+        raise HTTPException(status_code=410, detail="WordPress link code has expired. Generate a new code.")
+    existing = (await db.execute(
+        select(WordPressSiteLink)
+        .where(
+            WordPressSiteLink.license_id == license_obj.id,
+            WordPressSiteLink.site_url == site_url,
+        )
+        .with_for_update()
+    )).scalar_one_or_none()
+    if existing is None:
+        existing = WordPressSiteLink(
+            license_id=license_obj.id,
+            site_url=site_url,
+            wp_user_id=payload.wp_user_id,
+            wp_user_login=payload.wp_user_login.strip(),
+            wp_user_email=payload.wp_user_email.strip().lower(),
+            linked_at=now,
+            updated_at=now,
+        )
+        db.add(existing)
+    else:
+        existing.wp_user_id = payload.wp_user_id
+        existing.wp_user_login = payload.wp_user_login.strip()
+        existing.wp_user_email = payload.wp_user_email.strip().lower()
+        existing.updated_at = now
+    challenge.consumed_at = now
+    await db.commit()
+    await db.refresh(existing)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"linked": True, "site_url": existing.site_url, "wp_user_id": existing.wp_user_id, "linked_at": existing.linked_at.isoformat()}
+
+
+@app.delete("/api/v1/account/wordpress-link")
+async def unlink_wordpress_site(
+    response: Response,
+    site_url: str = Query(..., min_length=8, max_length=255),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    from sqlalchemy import delete
+    normalized = _normalize_wordpress_site_url(site_url)
+    result = await db.execute(
+        delete(WordPressSiteLink).where(
+            WordPressSiteLink.license_id == license_obj.id,
+            WordPressSiteLink.site_url == normalized,
+        )
+    )
+    await db.commit()
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+    return {"unlinked": bool(result.rowcount)}
+
+
+@app.get("/api/v1/account/branding")
+async def get_account_branding(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return white-label configuration only to plans entitled to white-label branding."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding requires a Whitelabel plan.")
+    from sqlalchemy import select
+
+    settings = (await db.execute(
+        select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id)
+    )).scalar_one_or_none()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    if settings is None:
+        return {"brand_name": license_obj.client_name, "logo_url": None, "primary_color": "#155a8a", "configured": False}
+    return {
+        "brand_name": settings.brand_name,
+        "logo_url": settings.logo_url,
+        "primary_color": settings.primary_color,
+        "configured": True,
+        "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+    }
+
+
+@app.put("/api/v1/account/branding")
+async def update_account_branding(
+    payload: WhiteLabelBrandingUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Save plan-gated branding metadata without fetching remote logo resources."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding requires a Whitelabel plan.")
+
+    brand_name = payload.brand_name.strip()
+    if not brand_name:
+        raise HTTPException(status_code=422, detail="Brand name cannot be blank.")
+    logo_url = (payload.logo_url or "").strip() or None
+    if logo_url:
+        parsed = urlsplit(logo_url)
+        if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise HTTPException(status_code=422, detail="Logo URL must be a valid HTTPS URL without embedded credentials.")
+    primary_color = payload.primary_color.strip()
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", primary_color):
+        raise HTTPException(status_code=422, detail="Primary color must be a six-digit hex color such as #155a8a.")
+
+    from sqlalchemy import select
+    settings = (await db.execute(
+        select(WhiteLabelBranding).where(WhiteLabelBranding.license_id == license_obj.id)
+    )).scalar_one_or_none()
+    if settings is None:
+        settings = WhiteLabelBranding(
+            license_id=license_obj.id,
+            brand_name=brand_name,
+            logo_url=logo_url,
+            primary_color=primary_color.lower(),
+        )
+        db.add(settings)
+    else:
+        settings.brand_name = brand_name
+        settings.logo_url = logo_url
+        settings.primary_color = primary_color.lower()
+    await db.commit()
+    await db.refresh(settings)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "brand_name": settings.brand_name,
+        "logo_url": settings.logo_url,
+        "primary_color": settings.primary_color,
+        "configured": True,
+        "updated": True,
+        "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+    }
+
+
+
+
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
@@ -1360,6 +1641,7 @@ async def get_account_usage(
     response.headers["Pragma"] = "no-cache"
     return {
         "tier": str(license_obj.tier or "starter"),
+        "features": plan_features(license_obj.tier),
         "plan_label": str(package_row["label"]) if package_row is not None else str(license_obj.tier or "starter"),
         "plan_available": bool(package_row["is_active"]) if package_row is not None else None,
         "monthly_limit": limit,
@@ -1566,12 +1848,14 @@ async def list_account_api_keys(
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     is_expired = expires_at is not None and expires_at <= now
-    if len(rows) >= 10:
-        can_create_reason = "key_limit_reached"
-    elif is_expired:
+    if is_expired:
         can_create_reason = "account_expired"
     elif not license_obj.is_active:
         can_create_reason = "account_inactive"
+    elif not plan_features(license_obj.tier)["direct_api_access"]:
+        can_create_reason = "plan_not_eligible"
+    elif len(rows) >= 10:
+        can_create_reason = "key_limit_reached"
     else:
         can_create_reason = "available"
     can_create = can_create_reason == "available"
@@ -1615,6 +1899,8 @@ async def create_account_api_key(
         raise HTTPException(status_code=402, detail="License expired. Renewal required.")
     if not license_obj.is_active:
         raise HTTPException(status_code=403, detail="License is inactive or revoked.")
+    if not plan_features(license_obj.tier)["direct_api_access"]:
+        raise HTTPException(status_code=403, detail="Direct API access is available on the Whitelabel/Enterprise plan.")
 
     # Serialize key creation per license on databases that support row locks. Without
     # this lock, simultaneous requests can both observe nine keys and create an
@@ -2078,7 +2364,13 @@ def _paddle_api_request(path: str, method: str = "GET", payload: dict | None = N
 
 def _configured_payment_plans() -> list[dict]:
     plans = []
-    for tier, label, default_quota in (("STARTER", "Starter", 100), ("PRO", "Pro", 500), ("BUSINESS", "Business", 2000)):
+    for tier, label, default_quota in (
+        ("STARTER", "Starter", 100),
+        ("PRO", "Pro", 500),
+        ("BUSINESS", "Business", 2000),
+        ("AGENCY", "Agency", 500),
+        ("WHITELABEL", "Whitelabel", 2000),
+    ):
         price_id = os.getenv(f"PADDLE_PRICE_ID_{tier}", "").strip()
         if not re.fullmatch(r"pri_[A-Za-z0-9]+", price_id): continue
         try: quota = int(os.getenv(f"LICENSE_MONTHLY_AUDITS_{tier}", str(default_quota)))
