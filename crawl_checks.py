@@ -1059,7 +1059,14 @@ def _record_static_check_outcome(
     statuses = {str(item.status or "").casefold() for item in findings}
     if any(status in {"not_tested", "not tested", "insufficient_data"} for status in statuses):
         outcome = "not_assessed"
-    elif any(status == "verified" for status in statuses):
+    elif any(
+        str(item.status or "").casefold() == "verified"
+        and str(item.severity or "").casefold() != "info"
+        for item in findings
+    ):
+        # "Verified" means the signal was observed, not necessarily that it is a defect.
+        # Informational detections (for example, valid structured data) must not inflate
+        # issue counts merely because their presence was confirmed.
         outcome = "issue"
     elif findings:
         outcome = "warning"
@@ -1985,17 +1992,28 @@ async def run_bounded_site_crawl(
 
             product_schema_findings = inspect_product_page_schema_presence(body, final_url)
             findings.extend(product_schema_findings)
-            if product_schema_findings:
-                _record_static_check_outcome(
-                    outcome_records, check_id="structured_data.product",
-                    category="structured_data", page_url=final_url,
-                    findings=product_schema_findings,
-                    method="static product-route JSON-LD presence and parseability review",
-                )
+            _record_static_check_outcome(
+                outcome_records, check_id="structured_data.product",
+                category="structured_data", page_url=final_url,
+                findings=product_schema_findings,
+                method="static product-route JSON-LD presence and parseability review",
+            )
             catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
             findings.extend(catalog_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="ecommerce.catalog_navigation",
+                category="ecommerce", page_url=final_url,
+                findings=catalog_findings,
+                method="static HTML ecommerce product/category navigation inspection",
+            )
             sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
             findings.extend(sensitive_form_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="security.sensitive_get_forms",
+                category="security_baseline", page_url=final_url,
+                findings=sensitive_form_findings,
+                method="static HTML form-method and sensitive-field heuristic",
+            )
             canonical_findings = inspect_canonical_declaration(body, final_url)
             findings.extend(canonical_findings)
             _record_static_check_outcome(
@@ -2034,6 +2052,12 @@ async def run_bounded_site_crawl(
 
             hreflang_findings = inspect_hreflang(body, final_url)
             findings.extend(hreflang_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="international_seo.hreflang",
+                category="international_seo", page_url=final_url,
+                findings=hreflang_findings,
+                method="static HTML hreflang declaration and reciprocal-reference review",
+            )
             hreflang_declared = bool(
                 re.search(r"(?is)<link\b[^>]*\bhreflang\s*=", body[:500_000])
             )
@@ -2081,6 +2105,12 @@ async def run_bounded_site_crawl(
             # Detect source-visible tags and consent signals; never infer event success or legal compliance.
             privacy_tracking_findings = inspect_privacy_tracking_signals(body, final_url)
             findings.extend(privacy_tracking_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="pixel_analytics.source_tag_and_consent_signals",
+                category="pixel_analytics", page_url=final_url,
+                findings=privacy_tracking_findings,
+                method="static HTML analytics/pixel tag and consent-interface signal inspection",
+            )
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
