@@ -3161,6 +3161,16 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
             license_key="subscription-update-license", client_name="Plan Change Buyer",
             tier="starter", max_monthly_audits=100, is_active=True,
         )
+        await main._ensure_admin_tables(db)
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES ('pro', 'Test Pro', 1000, 5, 'pri_update_pro123', TRUE)
+            ON CONFLICT (tier) DO UPDATE SET
+                paddle_price_id = EXCLUDED.paddle_price_id,
+                monthly_audit_allowance = EXCLUDED.monthly_audit_allowance,
+                is_active = TRUE
+        """))
         db.add(license_obj)
         await db.flush()
         db.add(PaymentWebhookEvent(
