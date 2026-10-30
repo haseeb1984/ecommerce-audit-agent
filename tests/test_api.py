@@ -2091,6 +2091,14 @@ async def test_admin_overview_search_and_pagination_are_bounded_and_keep_global_
     first_id = await create_license(key="admin-page-alpha", quota=5)
     await create_license(key="admin-page-beta", quota=5)
     await create_license(key="admin-page-gamma", quota=5)
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_admin_page_customer_email",
+            status="provisioned",
+            license_id=first_id,
+            recipient_email="searchable-customer@example.com",
+        ))
+        await db.commit()
     headers = {"X-Admin-Key": "test-admin-overview-page-key"}
 
     page = await client.get("/api/v1/admin/overview?limit=1&offset=0", headers=headers)
@@ -2110,7 +2118,16 @@ async def test_admin_overview_search_and_pagination_are_bounded_and_keep_global_
     search_payload = searched.json()
     assert [row["id"] for row in search_payload["clients"]] == [first_id]
     assert search_payload["client_page"]["total"] == 1
+    assert search_payload["clients"][0]["contact_email"] == "searchable-customer@example.com"
     assert search_payload["summary"]["clients_total"] >= 3
+
+    email_search = await client.get(
+        "/api/v1/admin/overview?limit=10&offset=0&search=searchable-customer%40example.com",
+        headers=headers,
+    )
+    assert email_search.status_code == 200, email_search.text
+    assert [row["id"] for row in email_search.json()["clients"]] == [first_id]
+    assert email_search.json()["clients"][0]["contact_email"] == "searchable-customer@example.com"
 
 
 @pytest.mark.asyncio
