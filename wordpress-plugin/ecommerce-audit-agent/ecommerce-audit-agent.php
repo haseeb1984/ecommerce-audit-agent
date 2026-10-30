@@ -213,7 +213,12 @@ register_activation_hook(__FILE__, function () {
     }
     $settings = eaa_wp_settings();
     if (!empty($settings['license_key'])) {
-        eaa_wp_register_site();
+        $registration = eaa_wp_register_site();
+        if (is_wp_error($registration)) {
+            $settings = eaa_wp_settings();
+            $settings['connection_error'] = $registration->get_error_message();
+            update_option(EAA_WP_OPTION, $settings, false);
+        }
     }
 });
 register_deactivation_hook(__FILE__, function () {
@@ -346,7 +351,7 @@ function eaa_wp_handle_download_report() {
     }
     $type = strtolower((string) wp_remote_retrieve_header($response, 'content-type'));
     $pdf = wp_remote_retrieve_body($response);
-    if (false === strpos($type, 'application/pdf') || 0 !== strpos($pdf, '%PDF-')) {
+    if (false === strpos($type, 'application/pdf') || 0 !== strpos($pdf, '%PDF-') || strlen($pdf) > 20 * MB_IN_BYTES) {
         wp_die(esc_html__('The report service did not return a valid PDF.', 'ecommerce-audit-agent'), 502);
     }
     nocache_headers();
