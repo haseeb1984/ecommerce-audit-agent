@@ -3634,6 +3634,7 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
     license_id = await create_license(key="passwordless-logout-all-license")
     linked_license_id = await create_license(key="passwordless-logout-all-linked-license")
+    unrelated_license_id = await create_license(key="passwordless-logout-all-unrelated-license")
     async with AsyncSessionLocal() as db:
         db.add_all([
             PaymentWebhookEvent(
@@ -3657,12 +3658,20 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]
     async with AsyncSessionLocal() as db:
-        db.add(main.AccountSession(
-            token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
-            license_id=linked_license_id,
-            email="logout-all@example.com",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
-        ))
+        db.add_all([
+            main.AccountSession(
+                token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
+                license_id=linked_license_id,
+                email="logout-all@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+            ),
+            main.AccountSession(
+                token_hash=hashlib.sha256(b"unrelated-customer-session").hexdigest(),
+                license_id=unrelated_license_id,
+                email="someone-else@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+            ),
+        ])
         await db.commit()
 
     response = await client.post(
@@ -3671,6 +3680,11 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     )
     assert response.status_code == 200, response.text
     assert response.json()["revoked_count"] == 2
+    async with AsyncSessionLocal() as db:
+        unrelated = (await db.execute(select(main.AccountSession).where(
+            main.AccountSession.token_hash == hashlib.sha256(b"unrelated-customer-session").hexdigest()
+        ))).scalar_one()
+        assert unrelated.revoked_at is None
     rejected = await client.get(
         "/api/v1/account/profile",
         headers={"Authorization": f"Bearer {token}"},
