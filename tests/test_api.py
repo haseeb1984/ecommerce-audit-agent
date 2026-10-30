@@ -4211,6 +4211,7 @@ async def test_wordpress_link_rejects_insecure_or_ambiguous_site_urls(client):
         "http://shop.example.com/",
         "https://user:pass@shop.example.com/",
         "https://shop.example.com/?token=secret",
+        "https://shop.example.com:badport/",
         "https://localhost/",
         "https://127.0.0.1/",
     ]:
@@ -4226,6 +4227,19 @@ async def test_wordpress_link_rejects_insecure_or_ambiguous_site_urls(client):
             },
         )
         assert response.status_code == 422, (site_url, response.text)
+
+    invalid_email = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers=headers,
+        json={
+            "token": token,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 1,
+            "wp_user_login": "admin",
+            "wp_user_email": "not-an-email",
+        },
+    )
+    assert invalid_email.status_code == 422
 
 
 @pytest.mark.asyncio
