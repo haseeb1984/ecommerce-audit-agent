@@ -1262,6 +1262,14 @@ async def verify_customer_email_change(
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=409, detail="That email is now linked to a different customer account.")
+    linked_license_keys = list((await db.execute(
+        select(SoftwareLicense.license_key).where(SoftwareLicense.id.in_(old_license_ids))
+    )).scalars().all()) if old_license_ids else []
+    if linked_license_keys:
+        await operational_db.execute(update(CustomerAccount).where(
+            CustomerAccount.license_key.in_(linked_license_keys),
+            CustomerAccount.email == old_email,
+        ).values(email=challenge.new_email, updated_at=now))
     await db.execute(update(PaymentWebhookEvent).where(
         func.lower(PaymentWebhookEvent.recipient_email) == old_email,
     ).values(recipient_email=challenge.new_email))
