@@ -3584,10 +3584,11 @@ async def test_customer_passwordless_login_limits_code_attempts_and_hides_unknow
         json={"email": "attempt-limit@example.com"},
     )
     assert requested.status_code == 202, requested.text
+    wrong_code = "000001" if sent[-1][1] == "000000" else "000000"
     for _ in range(5):
         wrong = await client.post(
             "/api/v1/account/auth/verify-code",
-            json={"email": "attempt-limit@example.com", "code": "000000"},
+            json={"email": "attempt-limit@example.com", "code": wrong_code},
         )
         assert wrong.status_code == 401
     correct = await client.post(
