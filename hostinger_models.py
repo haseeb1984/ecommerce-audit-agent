@@ -242,3 +242,18 @@ class WebsiteScanResult(HostingerBase):
         Index("ix_website_scan_results_license_created", "license_key", "created_at"),
         Index("ix_website_scan_results_website_created", "website_id", "created_at"),
     )
+
+
+class AdminActionLog(HostingerBase):
+    """Sanitized administrator activity; operational audit trail stored in Hostinger."""
+    __tablename__ = "admin_action_logs"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    action = Column(String(80), nullable=False)
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(String(255), nullable=True)
+    details_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    __table_args__ = (
+        Index("ix_admin_action_logs_created", "created_at", "id"),
+        Index("ix_admin_action_logs_entity", "entity_type", "entity_id", "created_at"),
+    )
