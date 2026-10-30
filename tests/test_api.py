@@ -1544,7 +1544,7 @@ async def test_paddle_checkout_rejects_untrusted_configured_checkout_url(client,
         return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-test@example.com"})
     assert response.status_code == 503
     assert response.json()["detail"] == "Paddle checkout URL configuration is invalid."
     assert called is False
@@ -1562,13 +1562,14 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
         captured.update({"path": path, "method": method, "payload": payload})
         return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-test@example.com"})
     assert response.status_code == 200 and response.json()["checkout_url"] == "https://pay.paddle.com/checkout/test"
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
     assert captured["payload"]["items"] == [{"price_id": "pri_01abc123", "quantity": 1}]
     assert captured["payload"]["custom_data"]["license_tier"] == "starter"
-    assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up"})).status_code == 422
+    assert captured["payload"]["custom_data"]["checkout_email"] == "checkout-test@example.com"
+    assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up", "email": "checkout-test@example.com"})).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -1602,8 +1603,39 @@ async def test_paddle_checkout_fails_closed_when_purchase_fulfillment_is_not_rea
         }}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-test@example.com"})
     assert response.status_code == 503
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_paddle_checkout_blocks_email_that_already_owns_a_license(client, monkeypatch):
+    license_id = await create_license(key="existing-checkout-owner")
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id,
+        ))).scalar_one()
+        license_obj.account_email = "already-customer@example.com"
+        await db.commit()
+
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_existing_customer")
+    called = False
+
+    def fake_request(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("Paddle must not be called for an existing account email")
+
+    monkeypatch.setattr(main, "_paddle_api_request", fake_request)
+    response = await client.post("/api/v1/billing/checkout", json={
+        "tier": "starter", "email": " Already-Customer@example.com ",
+    })
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
     assert called is False
 
 
@@ -1622,7 +1654,7 @@ async def test_paddle_checkout_accepts_trusted_configured_checkout_url(client, m
         return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-test@example.com"})
     assert response.status_code == 200
     assert captured["payload"]["checkout"] == {"url": "https://pay.paddle.com/checkout"}
 
@@ -1649,7 +1681,7 @@ async def test_paddle_checkout_rejects_untrusted_checkout_destinations(client, m
         return {"data": {"id": "txn_01abc123", "checkout": {"url": checkout_url}}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-test@example.com"})
     assert response.status_code == 502
     assert response.json()["detail"] == "Unable to start Paddle checkout; verify billing configuration."
 
