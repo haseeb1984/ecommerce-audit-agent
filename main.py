@@ -4647,6 +4647,13 @@ async def admin_overview(
         matching_license_ids = set((await db.execute(
             select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(matching_license_keys))
         )).scalars().all()) if matching_license_keys else set()
+        if not matching_license_ids:
+            matching_license_ids = set((await db.execute(
+                select(PaymentWebhookEvent.license_id).where(
+                    sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
+                    PaymentWebhookEvent.license_id.is_not(None),
+                ).distinct()
+            )).scalars().all())
         client_filter = or_(
             SoftwareLicense.client_name.ilike(pattern),
             SoftwareLicense.tier.ilike(pattern),
@@ -4705,7 +4712,13 @@ async def admin_overview(
     total_reservations = (await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
         AuditQuotaReservation.expires_at > now
     ))).scalar_one()
-    total_webhooks = (await operational_db.execute(select(sql_func.count(CustomerBillingEvent.event_id)))).scalar_one()
+    total_webhooks = int((await operational_db.execute(
+        select(sql_func.count(CustomerBillingEvent.event_id))
+    )).scalar_one() or 0)
+    if total_webhooks == 0:
+        total_webhooks = int((await db.execute(
+            select(sql_func.count(PaymentWebhookEvent.event_id))
+        )).scalar_one() or 0)
     monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
         AuditLead.created_at >= month_start
     ))).scalar_one()
@@ -4753,6 +4766,15 @@ async def admin_overview(
         for license_key, recipient_email in contact_email_rows:
             license_id = license_id_by_key.get(license_key)
             if license_id is not None:
+                contact_email_by_license.setdefault(license_id, recipient_email)
+        missing_contact_ids = [item.id for item in licenses if item.id not in contact_email_by_license]
+        if missing_contact_ids:
+            legacy_contacts = (await db.execute(
+                select(PaymentWebhookEvent.license_id, PaymentWebhookEvent.recipient_email)
+                .where(PaymentWebhookEvent.license_id.in_(missing_contact_ids))
+                .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
+            )).all()
+            for license_id, recipient_email in legacy_contacts:
                 contact_email_by_license.setdefault(license_id, recipient_email)
 
     client_rows = []
