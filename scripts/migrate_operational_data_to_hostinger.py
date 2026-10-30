@@ -62,7 +62,9 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
             skipped += 1
             continue
         key_value = values[key_name]
-        existing = await target.get(target_model, key_value)
+        existing = await target.scalar(
+            select(target_model).where(getattr(target_model, key_name) == key_value).limit(1)
+        )
         if existing is None:
             target.add(target_model(**values))
             copied += 1
