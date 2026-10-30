@@ -58,6 +58,29 @@ async def enqueue_scan_request(
         raise ValueError("At least one website URL is required.")
 
     now = _utcnow()
+    existing_batches = (await db.execute(
+        select(ScanBatch).where(
+            ScanBatch.license_key == license_key,
+            ScanBatch.request_id == request_id,
+        ).order_by(ScanBatch.batch_number)
+    )).scalars().all()
+    if existing_batches:
+        existing_ids = [batch.id for batch in existing_batches]
+        existing_jobs = (await db.execute(
+            select(WebsiteScanJob.id).where(WebsiteScanJob.batch_id.in_(existing_ids))
+        )).scalars().all()
+        return {
+            "request_id": request_id,
+            "batch_ids": existing_ids,
+            "job_ids": [],
+            "existing_job_ids": list(existing_jobs),
+            "submitted_urls": len(normalized_urls),
+            "new_jobs": 0,
+            "batch_size": batch_size,
+            "batch_count": len(existing_ids),
+            "idempotent_replay": True,
+        }
+
     existing_max = await db.scalar(
         select(func.max(ScanBatch.batch_number)).where(
             ScanBatch.license_key == license_key
@@ -76,6 +99,7 @@ async def enqueue_scan_request(
                 license_key=license_key,
                 requested_by=requested_by,
                 package_tier=package_tier,
+                request_id=request_id,
                 batch_number=first_batch_number + len(created_batches),
                 batch_size=batch_size,
                 total_urls=len(chunk),
@@ -102,6 +126,7 @@ async def enqueue_scan_request(
                         submitted_by=requested_by,
                         url=target_url,
                         normalized_url=target_url,
+                        normalized_url_hash=hashlib.sha256(target_url.encode("utf-8")).hexdigest(),
                         host=host,
                         status="active",
                         created_at=now,
@@ -111,15 +136,6 @@ async def enqueue_scan_request(
                     await db.flush()
 
                 idem = _stable_idempotency_key(license_key, request_id, target_url)
-                prior = await db.scalar(
-                    select(WebsiteScanJob).where(
-                        WebsiteScanJob.idempotency_key == idem
-                    )
-                )
-                if prior is not None:
-                    already_queued.append(prior.id)
-                    continue
-
                 job = WebsiteScanJob(
                     id=uuid.uuid4().hex,
                     batch_id=batch.id,
