@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense, WhiteLabelBranding, WordPressLinkChallenge, WordPressSiteLink
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
 from coverage_manifest import build_coverage_manifest
@@ -26,12 +26,13 @@ async def create_license(
     quota=10,
     active=True,
     expires_at=None,
+    tier="test",
 ):
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
             license_key=key,
             client_name="Automated Test",
-            tier="test",
+            tier=tier,
             max_monthly_audits=quota,
             is_active=active,
             expires_at=expires_at,
@@ -4011,3 +4012,243 @@ async def test_paddle_successful_transaction_does_not_resume_paused_subscription
         ))).scalar_one()
         assert license_obj.is_active is False
         assert license_obj.billing_period_ends_at.isoformat() == "2026-11-01T00:00:00+00:00"
+
+
+
+@pytest.mark.asyncio
+async def test_starter_cannot_run_conversion_dossier_and_consumes_no_quota(client, monkeypatch):
+    license_id = await create_license(key="starter-dossier-blocked", quota=5, tier="starter")
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("premium dossier provider must not run for Starter")
+    monkeypatch.setattr(main.agent, "process_lead", should_not_run)
+
+    response = await client.post(
+        "/api/v1/audit-lead", params={"domain": "shop.example"},
+        headers={"X-License-Key": "starter-dossier-blocked"},
+    )
+    assert response.status_code == 403
+    async with AsyncSessionLocal() as db:
+        reservations = (await db.execute(select(func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == license_id
+        ))).scalar_one()
+        leads = (await db.execute(select(func.count(AuditLead.id)).where(
+            AuditLead.license_id == license_id
+        ))).scalar_one()
+    assert reservations == 0
+    assert leads == 0
+
+
+@pytest.mark.asyncio
+async def test_unknown_plan_cannot_run_standard_audit_or_consume_quota(client, monkeypatch):
+    license_id = await create_license(key="unknown-plan-blocked", quota=5, tier="")
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("audit providers must not run for an unknown tier")
+
+    monkeypatch.setattr(main, "run_phase_one_checks", should_not_run)
+    response = await client.post(
+        "/api/v1/comprehensive-audit", params={"domain": "shop.example"},
+        headers={"X-License-Key": "unknown-plan-blocked"},
+    )
+    assert response.status_code == 403
+    async with AsyncSessionLocal() as db:
+        reservations = (await db.execute(select(func.count(AuditQuotaReservation.id)).where(
+            AuditQuotaReservation.license_id == license_id
+        ))).scalar_one()
+        reports = (await db.execute(select(func.count(AuditReport.id)).where(
+            AuditReport.license_id == license_id
+        ))).scalar_one()
+    assert reservations == 0
+    assert reports == 0
+
+
+@pytest.mark.asyncio
+async def test_white_label_branding_is_denied_for_starter_without_persisting(client):
+    await create_license(key="starter-branding-license", tier="starter")
+    response = await client.put(
+        "/api/v1/account/branding",
+        headers={"X-License-Key": "starter-branding-license"},
+        json={"brand_name": "Not Allowed", "logo_url": "https://example.com/logo.png", "primary_color": "#112233"},
+    )
+    assert response.status_code == 403, response.text
+    async with AsyncSessionLocal() as db:
+        from models import WhiteLabelBranding
+        assert (await db.execute(select(WhiteLabelBranding))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_white_label_branding_can_be_saved_and_read_by_eligible_license(client):
+    await create_license(key="white-label-branding-license", tier="whitelabel")
+    headers = {"X-License-Key": "white-label-branding-license"}
+    saved = await client.put(
+        "/api/v1/account/branding",
+        headers=headers,
+        json={"brand_name": "Northstar Commerce", "logo_url": "https://assets.example.com/brand.svg", "primary_color": "#AABBCC"},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["brand_name"] == "Northstar Commerce"
+    assert saved.json()["primary_color"] == "#aabbcc"
+    fetched = await client.get("/api/v1/account/branding", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["configured"] is True
+    assert fetched.json()["logo_url"] == "https://assets.example.com/brand.svg"
+
+
+@pytest.mark.asyncio
+async def test_white_label_branding_rejects_unsafe_logo_urls_and_invalid_colors(client):
+    await create_license(key="white-label-validation-license", tier="enterprise")
+    headers = {"X-License-Key": "white-label-validation-license"}
+    bad_url = await client.put(
+        "/api/v1/account/branding",
+        headers=headers,
+        json={"brand_name": "Northstar", "logo_url": "http://assets.example.com/logo.svg", "primary_color": "#112233"},
+    )
+    assert bad_url.status_code == 422, bad_url.text
+    bad_color = await client.put(
+        "/api/v1/account/branding",
+        headers=headers,
+        json={"brand_name": "Northstar", "logo_url": None, "primary_color": "red"},
+    )
+    assert bad_color.status_code == 422, bad_color.text
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_challenge_is_hashed_expiring_and_single_use(client):
+    license_id = await create_license(key="wp-link-owner-license")
+    headers = {"X-License-Key": "wp-link-owner-license"}
+    issued = await client.post("/api/v1/account/wordpress-link/challenges", headers=headers)
+    assert issued.status_code == 200, issued.text
+    payload = issued.json()
+    assert len(payload["token"]) >= 32
+    assert payload["expires_in_seconds"] == 600
+    async with AsyncSessionLocal() as db:
+        challenge = (await db.execute(
+            select(WordPressLinkChallenge).where(WordPressLinkChallenge.license_id == license_id)
+        )).scalar_one()
+        assert challenge.token_hash != payload["token"]
+        assert challenge.token_hash == hashlib.sha256(payload["token"].encode()).hexdigest()
+        assert challenge.consumed_at is None
+
+
+@pytest.mark.asyncio
+async def test_wordpress_site_link_claim_lists_and_unlinks_with_owner_credential(client):
+    await create_license(key="wp-link-claim-license")
+    headers = {"X-License-Key": "wp-link-claim-license"}
+    challenge = (await client.post(
+        "/api/v1/account/wordpress-link/challenges", headers=headers
+    )).json()["token"]
+    claim = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers=headers,
+        json={
+            "token": challenge,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 17,
+            "wp_user_login": "storeadmin",
+            "wp_user_email": "ADMIN@EXAMPLE.COM",
+        },
+    )
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["linked"] is True
+    assert claim.json()["site_url"] == "https://shop.example.com/"
+    listed = await client.get("/api/v1/account/wordpress-link", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["links"][0]["wp_user_email"] == "admin@example.com"
+    replay = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers=headers,
+        json={
+            "token": challenge,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 17,
+            "wp_user_login": "storeadmin",
+            "wp_user_email": "admin@example.com",
+        },
+    )
+    assert replay.status_code == 400
+    removed = await client.delete(
+        "/api/v1/account/wordpress-link",
+        headers=headers,
+        params={"site_url": "https://shop.example.com/"},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["unlinked"] is True
+    assert (await client.get("/api/v1/account/wordpress-link", headers=headers)).json()["links"] == []
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_challenge_cannot_be_redeemed_by_another_license(client):
+    await create_license(key="wp-link-license-a")
+    await create_license(key="wp-link-license-b")
+    token = (await client.post(
+        "/api/v1/account/wordpress-link/challenges",
+        headers={"X-License-Key": "wp-link-license-a"},
+    )).json()["token"]
+    response = await client.post(
+        "/api/v1/account/wordpress-link/claim",
+        headers={"X-License-Key": "wp-link-license-b"},
+        json={
+            "token": token,
+            "site_url": "https://shop.example.com/",
+            "wp_user_id": 1,
+            "wp_user_login": "admin",
+            "wp_user_email": "admin@example.com",
+        },
+    )
+    assert response.status_code == 400
+    links = await client.get(
+        "/api/v1/account/wordpress-link", headers={"X-License-Key": "wp-link-license-b"}
+    )
+    assert links.json()["links"] == []
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_rejects_insecure_or_ambiguous_site_urls(client):
+    await create_license(key="wp-link-invalid-url-license")
+    headers = {"X-License-Key": "wp-link-invalid-url-license"}
+    token = (await client.post("/api/v1/account/wordpress-link/challenges", headers=headers)).json()["token"]
+    for site_url in [
+        "http://shop.example.com/",
+        "https://user:pass@shop.example.com/",
+        "https://shop.example.com/?token=secret",
+        "https://localhost/",
+        "https://127.0.0.1/",
+    ]:
+        response = await client.post(
+            "/api/v1/account/wordpress-link/claim",
+            headers=headers,
+            json={
+                "token": token,
+                "site_url": site_url,
+                "wp_user_id": 1,
+                "wp_user_login": "admin",
+                "wp_user_email": "admin@example.com",
+            },
+        )
+        assert response.status_code == 422, (site_url, response.text)
+
+
+@pytest.mark.asyncio
+async def test_wordpress_link_expired_code_is_rejected_and_consumed(client):
+    license_id = await create_license(key="wp-link-expired-license")
+    headers = {"X-License-Key": "wp-link-expired-license"}
+    token = (await client.post(
+        "/api/v1/account/wordpress-link/challenges", headers=headers
+    )).json()["token"]
+    async with AsyncSessionLocal() as db:
+        challenge = (await db.execute(
+            select(WordPressLinkChallenge).where(WordPressLinkChallenge.license_id == license_id)
+        )).scalar_one()
+        challenge.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        await db.commit()
+    payload = {
+        "token": token,
+        "site_url": "https://shop.example.com/",
+        "wp_user_id": 5,
+        "wp_user_login": "admin",
+        "wp_user_email": "admin@example.com",
+    }
+    expired = await client.post("/api/v1/account/wordpress-link/claim", headers=headers, json=payload)
+    assert expired.status_code == 410
+    replay = await client.post("/api/v1/account/wordpress-link/claim", headers=headers, json=payload)
+    assert replay.status_code == 400
