@@ -186,6 +186,7 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "account_sessions",
         "account_email_change_challenges",
         "wordpress_sites",
+        "saas_admin_customer_notes",
     }
     try:
         result = await db.execute(text("SELECT 1"))
