@@ -1575,12 +1575,13 @@ async def switch_customer_account_license(
     ).with_for_update())).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    allowed = (await db.execute(select(SoftwareLicense.id).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(
-        SoftwareLicense.id == target_id,
-        func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-    ).limit(1))).scalar_one_or_none()
+    target_license_key = await db.scalar(
+        select(SoftwareLicense.license_key).where(SoftwareLicense.id == target_id)
+    )
+    allowed = await operational_db.scalar(select(CustomerBillingEvent.event_id).where(
+        CustomerBillingEvent.license_key == target_license_key,
+        func.lower(CustomerBillingEvent.recipient_email) == session.email.lower(),
+    ).limit(1)) if target_license_key else None
     if allowed is None:
         raise HTTPException(status_code=403, detail="That license is not linked to this verified customer email.")
     target = (await db.execute(select(SoftwareLicense).where(
@@ -1625,10 +1626,9 @@ async def register_wordpress_site(
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
     site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
-    owner_email = await db.scalar(select(PaymentWebhookEvent.recipient_email).where(
-        PaymentWebhookEvent.license_id == license_obj.id,
-        PaymentWebhookEvent.recipient_email.is_not(None),
-    ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))
+    owner_email = await operational_db.scalar(select(CustomerBillingEvent.recipient_email).where(
+        CustomerBillingEvent.license_key == license_obj.license_key,
+    ).order_by(CustomerBillingEvent.updated_at.desc()).limit(1))
     account = await operational_db.scalar(select(CustomerAccount).where(
         CustomerAccount.license_key == license_obj.license_key
     ).with_for_update())
@@ -4994,50 +4994,67 @@ async def admin_customer_directory(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Account-level customer directory aggregated across verified checkout identities."""
+    """Account directory aggregated from Hostinger billing identities."""
     _require_admin_key(request)
     from sqlalchemy import select, func as sql_func, distinct
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     normalized = search.strip().lower()
     query = select(
-        sql_func.lower(PaymentWebhookEvent.recipient_email).label("email"),
-        sql_func.count(distinct(PaymentWebhookEvent.license_id)).label("license_count"),
-        sql_func.max(PaymentWebhookEvent.updated_at).label("last_billing_activity"),
+        sql_func.lower(CustomerBillingEvent.recipient_email).label("email"),
+        sql_func.count(distinct(CustomerBillingEvent.license_key)).label("license_count"),
+        sql_func.max(CustomerBillingEvent.updated_at).label("last_billing_activity"),
     ).where(
-        PaymentWebhookEvent.recipient_email.is_not(None),
-        PaymentWebhookEvent.recipient_email != "",
-        PaymentWebhookEvent.license_id.is_not(None),
-    ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email))
-    count_query = select(sql_func.count(sql_func.distinct(sql_func.lower(PaymentWebhookEvent.recipient_email)))).where(
-        PaymentWebhookEvent.recipient_email.is_not(None),
-        PaymentWebhookEvent.recipient_email != "",
-        PaymentWebhookEvent.license_id.is_not(None),
+        CustomerBillingEvent.recipient_email.is_not(None),
+        CustomerBillingEvent.recipient_email != "",
+    ).group_by(sql_func.lower(CustomerBillingEvent.recipient_email))
+    count_query = select(sql_func.count(sql_func.distinct(
+        sql_func.lower(CustomerBillingEvent.recipient_email)
+    ))).where(
+        CustomerBillingEvent.recipient_email.is_not(None),
+        CustomerBillingEvent.recipient_email != "",
     )
     if normalized:
         literal = normalized.replace("%", "").replace("_", "")
-        query = query.having(sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(f"%{literal}%"))
-        count_query = count_query.where(sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(f"%{literal}%"))
-    total = int((await db.execute(count_query)).scalar_one() or 0)
-    rows = (await db.execute(query.order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc()).offset(offset).limit(limit))).all()
+        email_filter = sql_func.lower(CustomerBillingEvent.recipient_email).ilike(f"%{literal}%")
+        query = query.where(email_filter)
+        count_query = count_query.where(email_filter)
+    total = int((await operational_db.execute(count_query)).scalar_one() or 0)
+    rows = (await operational_db.execute(
+        query.order_by(sql_func.max(CustomerBillingEvent.updated_at).desc())
+        .offset(offset).limit(limit)
+    )).all()
     items = []
+    now = datetime.now(timezone.utc)
     for row in rows:
-        email = row.email
-        license_rows = (await db.execute(select(SoftwareLicense).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == email).distinct())).scalars().all()
-        now = datetime.now(timezone.utc)
-        active = sum(1 for lic in license_rows if lic.is_active and (lic.expires_at is None or (lic.expires_at.replace(tzinfo=timezone.utc) if lic.expires_at.tzinfo is None else lic.expires_at) >= now))
+        license_keys = set((await operational_db.execute(
+            select(CustomerBillingEvent.license_key).where(
+                sql_func.lower(CustomerBillingEvent.recipient_email) == row.email
+            ).distinct()
+        )).scalars().all())
+        license_rows = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
+        )).scalars().all() if license_keys else []
+        active = sum(
+            1 for lic in license_rows
+            if lic.is_active and (
+                lic.expires_at is None
+                or (lic.expires_at.replace(tzinfo=timezone.utc) if lic.expires_at.tzinfo is None else lic.expires_at) >= now
+            )
+        )
         items.append({
-            "email": email,
+            "email": row.email,
             "license_count": len(license_rows),
             "active_license_count": active,
             "inactive_license_count": len(license_rows) - active,
             "last_billing_activity": row.last_billing_activity.isoformat() if row.last_billing_activity else None,
         })
-    return {"items": items, "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(items) < total}}
-
+    return {"items": items, "page": {
+        "limit": limit, "offset": offset, "total": total,
+        "has_more": offset + len(items) < total,
+    }}
 
 @app.get("/api/v1/admin/customers/detail")
 async def admin_customer_account_detail(
@@ -5053,15 +5070,24 @@ async def admin_customer_account_detail(
     normalized = email.strip().lower()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    rows = (await db.execute(select(SoftwareLicense).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct().order_by(SoftwareLicense.created_at.desc()))).scalars().all()
+    customer_license_keys = set((await operational_db.execute(
+        select(CustomerBillingEvent.license_key).where(
+            sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
+        ).distinct()
+    )).scalars().all())
+    rows = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.license_key.in_(customer_license_keys))
+        .order_by(SoftwareLicense.created_at.desc())
+    )).scalars().all() if customer_license_keys else []
     if not rows:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
     license_keys = [item.license_key for item in rows]
     sessions = (await operational_db.execute(select(CustomerSession).where(CustomerSession.license_key.in_(license_keys)).order_by(CustomerSession.created_at.desc()).limit(200))).scalars().all()
-    payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids)).order_by(PaymentWebhookEvent.updated_at.desc()).limit(200))).scalars().all()
+    payments = (await operational_db.execute(
+        select(CustomerBillingEvent).where(CustomerBillingEvent.license_key.in_(license_keys))
+        .order_by(CustomerBillingEvent.updated_at.desc()).limit(200)
+    )).scalars().all()
     notes = (await operational_db.execute(select(AdminCustomerNote).where(
         sql_func.lower(AdminCustomerNote.customer_email) == normalized
     ).order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc()).limit(100))).scalars().all()
@@ -5088,7 +5114,7 @@ async def admin_customer_account_detail(
             "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
         } for item in sessions],
         "billing_events": [{
-            "event_id": item.event_id, "license_id": item.license_id, "status": item.status,
+            "event_id": item.event_id, "license_id": next((lic.id for lic in rows if lic.license_key == item.license_key), None), "status": item.status,
             "transaction_id": item.transaction_id, "subscription_id": item.subscription_id,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
@@ -5123,9 +5149,14 @@ async def admin_customer_account_action(
     normalized = payload.confirm_email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
         raise HTTPException(status_code=422, detail="Enter a valid customer email for confirmation.")
-    ids = list((await db.execute(select(SoftwareLicense.id).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct())).scalars().all())
+    account_license_keys = set((await operational_db.execute(
+        select(CustomerBillingEvent.license_key).where(
+            sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
+        ).distinct()
+    )).scalars().all())
+    ids = list((await db.execute(
+        select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(account_license_keys))
+    )).scalars().all()) if account_license_keys else []
     if not ids:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     now = datetime.now(timezone.utc)
