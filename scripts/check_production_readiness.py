@@ -26,6 +26,9 @@ REQUIRED_ENV_GROUPS = {
     "paddle_checkout_and_provisioning": (
         "PADDLE_API_KEY", "PADDLE_WEBHOOK_SECRET", "PADDLE_CLIENT_TOKEN",
     ),
+    "paddle_price_catalog": (
+        "PADDLE_PRICE_ID_STARTER", "PADDLE_PRICE_ID_PRO", "PADDLE_PRICE_ID_BUSINESS",
+    ),
     "smtp_delivery": ("SMTP_HOST", "SMTP_FROM"),
     "pagespeed_audits": ("GOOGLE_PAGESPEED_API_KEY", "PAGE_SPEED_API_KEY"),
     "ai_provider": ("GROQ_API_KEY",),
@@ -41,6 +44,11 @@ def _configuration_status() -> tuple[list[str], list[str]]:
     for group, names in REQUIRED_ENV_GROUPS.items():
         if group == "pagespeed_audits":
             ready = any(os.getenv(name, "").strip() for name in names)
+        elif group == "paddle_price_catalog":
+            ready = all(
+                __import__("re").fullmatch(r"pri_[A-Za-z0-9]+", os.getenv(name, "").strip())
+                for name in names
+            )
         elif group == "customer_account_auth":
             ready = len(os.getenv("ACCOUNT_AUTH_SECRET", "")) >= 32
             if not ready:
