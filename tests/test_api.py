@@ -3671,6 +3671,67 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_customer_can_list_and_revoke_individual_device_sessions(client, monkeypatch):
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
+    license_id = await create_license(key="customer-device-management-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_customer_device_management_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="device-owner@example.com",
+        ))
+        db.add(main.AccountSession(
+            token_hash=hashlib.sha256(b"unrelated-customer-device").hexdigest(),
+            license_id=license_id,
+            email="someone-else@example.com",
+            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+        ))
+        await db.commit()
+    await client.post("/api/v1/account/auth/request-code", json={"email": "device-owner@example.com"})
+    login = await client.post("/api/v1/account/auth/verify-code", json={
+        "email": "device-owner@example.com", "code": sent[0],
+    })
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    async with AsyncSessionLocal() as db:
+        second = main.AccountSession(
+            token_hash=hashlib.sha256(b"second-customer-device").hexdigest(),
+            license_id=license_id,
+            email="device-owner@example.com",
+            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+        )
+        db.add(second)
+        await db.commit()
+        second_session_id = second.session_id
+
+    headers = {"Authorization": f"Bearer {token}"}
+    listed = await client.get("/api/v1/account/auth/sessions", headers=headers)
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["total"] == 2
+    assert all("token_hash" not in item and "token" not in item for item in body["items"])
+    assert sum(1 for item in body["items"] if item["current"]) == 1
+
+    revoked = await client.delete(
+        f"/api/v1/account/auth/sessions/{second_session_id}", headers=headers,
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "revoked"
+    refreshed = await client.get("/api/v1/account/auth/sessions", headers=headers)
+    assert refreshed.status_code == 200
+    target = next(item for item in refreshed.json()["items"] if item["session_id"] == second_session_id)
+    assert target["status"] == "revoked"
+
+    hidden = await client.delete(
+        f"/api/v1/account/auth/sessions/{'0' * 32}", headers=headers,
+    )
+    assert hidden.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_admin_can_review_and_revoke_customer_browser_sessions(client, monkeypatch):
     admin_key = "test-admin-customer-session-controls"
     monkeypatch.setenv("ADMIN_API_KEY", admin_key)
