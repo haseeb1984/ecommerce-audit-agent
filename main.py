@@ -4909,7 +4909,8 @@ async def admin_report_evidence(
 
 @app.get("/api/v1/admin/clients/{license_id}/history")
 async def admin_client_history(license_id: int, request: Request, response: Response, limit: int = Query(100, ge=1, le=500),
-                              db: AsyncSession = Depends(get_async_db)):
+                              db: AsyncSession = Depends(get_async_db),
+                              operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Return a single client's audit, report, reservation and payment-provisioning history."""
     _require_admin_key(request)
     response.headers["Cache-Control"] = "no-store, private"
@@ -4924,8 +4925,10 @@ async def admin_client_history(license_id: int, request: Request, response: Resp
         .order_by(AuditReport.created_at.desc(), AuditReport.id.desc()).limit(limit))).scalars().all()
     reservations = (await db.execute(select(AuditQuotaReservation).where(AuditQuotaReservation.license_id == license_id)
         .order_by(AuditQuotaReservation.created_at.desc(), AuditQuotaReservation.id.desc()).limit(limit))).scalars().all()
-    payments = (await db.execute(select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id == license_id)
-        .order_by(PaymentWebhookEvent.created_at.desc()).limit(limit))).scalars().all()
+    payments = (await operational_db.execute(
+        select(CustomerBillingEvent).where(CustomerBillingEvent.license_key == client.license_key)
+        .order_by(CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()).limit(limit)
+    )).scalars().all()
     return {
         "client": {"id": client.id, "client_name": client.client_name, "tier": client.tier,
                    "is_active": bool(client.is_active), "monthly_limit": client.max_monthly_audits,
@@ -4940,7 +4943,7 @@ async def admin_client_history(license_id: int, request: Request, response: Resp
                           "expires_at": r.expires_at.isoformat(),
                           "status": "active" if (r.expires_at.replace(tzinfo=timezone.utc) if r.expires_at.tzinfo is None else r.expires_at) > datetime.now(timezone.utc) else "expired"}
                          for r in reservations],
-        "payments": [{"event_id": p.event_id, "license_id": p.license_id, "status": p.status, "recipient_email": p.recipient_email,
+        "payments": [{"event_id": p.event_id, "license_id": client.id, "status": p.status, "recipient_email": p.recipient_email,
                       "transaction_id": p.transaction_id, "subscription_id": p.subscription_id,
                       "created_at": p.created_at.isoformat() if p.created_at else None,
                       "updated_at": p.updated_at.isoformat() if p.updated_at else None} for p in payments],
