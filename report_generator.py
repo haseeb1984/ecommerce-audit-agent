@@ -1698,12 +1698,6 @@ def render_audit_pdf(
             outcome for outcome in getattr(result, "check_outcomes", [])
             if expected_check_id and outcome.check_id == expected_check_id
         ]
-        outcome_text = _format_check_outcome_summary(recorded_outcomes)
-        if not recorded_outcomes:
-            outcome_text += (
-                f" Audit sampled {len(set(result.pages_checked))} page(s) overall, "
-                "but that is not this check's denominator."
-            )
         outcome_table = _outcome_breakdown_table(recorded_outcomes, small_style)
         if outcome_table is not None:
             story.extend([
