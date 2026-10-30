@@ -1814,12 +1814,24 @@ async def run_bounded_site_crawl(
             client, final_home, allowed_url=lambda candidate_url: _robots_path_allowed(candidate_url, robots_rules)
         )
         findings.extend(exposure_findings)
+        _record_static_check_outcome(
+            outcome_records, check_id="security.exposure_path_probes",
+            category="security_exposure", page_url=final_home,
+            findings=exposure_findings,
+            method="bounded public GET probes for common accidentally exposed artifacts",
+        )
         limitations.extend(exposure_limitations)
 
         transport_findings, transport_limitations = await inspect_transport_security(
             client, homepage, final_home
         )
         findings.extend(transport_findings)
+        _record_static_check_outcome(
+            outcome_records, check_id="security.transport_tls_and_mixed_content",
+            category="security_transport", page_url=final_home,
+            findings=transport_findings,
+            method="public HTTPS/TLS redirect and static mixed-content inspection",
+        )
         limitations.extend(transport_limitations)
 
         title_pages: dict[str, list[str]] = defaultdict(list)
@@ -2030,7 +2042,14 @@ async def run_bounded_site_crawl(
             _record_static_check_outcome(
                 outcome_records, check_id="security_headers.header_quality",
                 category="security_headers", page_url=final_url,
-                findings=header_quality_findings, method="static HTTP response-header review",
+                findings=[item for item in header_quality_findings if item.category == "security_headers"],
+                method="static HTTP response-header and CSP/HSTS review",
+            )
+            _record_static_check_outcome(
+                outcome_records, check_id="security_cookies.cookie_attributes",
+                category="security_cookies", page_url=final_url,
+                findings=[item for item in header_quality_findings if item.category == "security_cookies"],
+                method="static Set-Cookie attribute inspection; cookie values are not retained",
             )
             standard_header_findings = inspect_standard_security_headers(page_headers, final_url)
             findings.extend(standard_header_findings)
