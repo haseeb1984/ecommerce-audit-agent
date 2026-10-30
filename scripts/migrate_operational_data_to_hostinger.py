@@ -34,6 +34,7 @@ from hostinger_models import (
     CustomerEmailChangeChallenge,
     CustomerLoginChallenge,
     CustomerSession,
+    CustomerBillingEvent,
     WordPressInstallation,
 )
 
@@ -135,6 +136,21 @@ async def migrate(apply_changes: bool) -> None:
             "already_present": account_skipped,
         }
 
+        reports["customer_billing_events"] = await _copy_rows(
+            source, target, PaymentWebhookEvent, CustomerBillingEvent,
+            lambda row: ({
+                "event_id": row.event_id,
+                "license_key": license_key_by_id.get(row.license_id),
+                "recipient_email": row.recipient_email.strip().lower()[:254],
+                "status": row.status[:40],
+                "transaction_id": row.transaction_id,
+                "subscription_id": row.subscription_id,
+                "paddle_customer_id": row.paddle_customer_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            } if license_key_by_id.get(row.license_id) else None),
+            "event_id",
+        )
         reports["customer_login_challenges"] = await _copy_rows(
             source, target, AccountLoginChallenge, CustomerLoginChallenge,
             lambda row: ({
