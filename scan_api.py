@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_license_or_api_key
 from hostinger_database import get_hostinger_db
-from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult
+from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite
 from models import SoftwareLicense
 from plan_features import plan_features
 from scan_queue import enqueue_scan_request
@@ -241,4 +241,85 @@ async def get_scan_job_result(
         "coverage": json.loads(result.coverage_json or "{}"),
         "summary": json.loads(result.summary_json or "{}"),
         "created_at": result.created_at,
+    }
+
+
+@router.get("/api/v1/websites")
+async def list_customer_websites(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """List the authenticated customer's persistent website inventory."""
+    from sqlalchemy import func
+    total = int((await db.execute(select(func.count(CustomerWebsite.id)).where(
+        CustomerWebsite.license_key == license_obj.license_key
+    ))).scalar_one() or 0)
+    websites = (await db.execute(
+        select(CustomerWebsite)
+        .where(CustomerWebsite.license_key == license_obj.license_key)
+        .order_by(CustomerWebsite.created_at.desc(), CustomerWebsite.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )).scalars().all()
+    return {
+        "items": [{
+            "id": site.id,
+            "url": site.url,
+            "host": site.host,
+            "label": site.label,
+            "status": site.status,
+            "created_at": site.created_at,
+            "updated_at": site.updated_at,
+        } for site in websites],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(websites) < total,
+        },
+    }
+
+
+@router.get("/api/v1/websites/{website_id}")
+async def get_customer_website(
+    website_id: str,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return one customer's website record and its scan-job history."""
+    website = await db.scalar(select(CustomerWebsite).where(
+        CustomerWebsite.id == website_id,
+        CustomerWebsite.license_key == license_obj.license_key,
+    ))
+    if website is None:
+        raise HTTPException(status_code=404, detail="Website not found.")
+    jobs = (await db.execute(
+        select(WebsiteScanJob)
+        .where(
+            WebsiteScanJob.website_id == website.id,
+            WebsiteScanJob.license_key == license_obj.license_key,
+        )
+        .order_by(WebsiteScanJob.created_at.desc())
+        .limit(100)
+    )).scalars().all()
+    return {
+        "id": website.id,
+        "url": website.url,
+        "host": website.host,
+        "label": website.label,
+        "status": website.status,
+        "created_at": website.created_at,
+        "updated_at": website.updated_at,
+        "scan_history": [{
+            "job_id": job.id,
+            "batch_id": job.batch_id,
+            "status": job.status,
+            "attempts": job.attempt_count,
+            "last_error_code": job.last_error_code,
+            "created_at": job.created_at,
+            "completed_at": job.completed_at,
+            "result_reference": job.result_reference,
+        } for job in jobs],
     }
