@@ -3543,7 +3543,9 @@ async def test_customer_passwordless_login_issues_and_revokes_session(client, mo
     )
     assert usage.status_code == 200, usage.text
     async with AsyncSessionLocal() as db:
-        stored_session = (await db.execute(select(main.AccountSession))).scalar_one()
+        stored_session = (await db.execute(select(main.AccountSession).where(
+            main.AccountSession.license_id == license_id
+        ))).scalar_one()
         assert stored_session.token_hash == hashlib.sha256(token.encode()).hexdigest()
         assert stored_session.token_hash != token
 
