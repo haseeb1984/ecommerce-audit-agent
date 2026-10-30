@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_async_db
-from models import SoftwareLicense, APIKey, AccountSession
+from models import SoftwareLicense, APIKey
+from hostinger_database import get_hostinger_db
+from hostinger_models import CustomerSession
 
 # Define explicit scheme_names to prevent Swagger UI schema collisions
 API_KEY_HEADER = APIKeyHeader(
@@ -31,14 +33,15 @@ async def verify_license_or_api_key(
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
     credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ) -> SoftwareLicense:
     """Authenticate a caller without holding a database lock during audit work."""
 
     if credentials is not None:
         token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-        session = (await db.execute(select(AccountSession).where(
-            AccountSession.token_hash == token_hash
+        session = (await operational_db.execute(select(CustomerSession).where(
+            CustomerSession.token_hash == token_hash
         ))).scalar_one_or_none()
         now = datetime.now(timezone.utc)
         if session is None or session.revoked_at is not None:
@@ -49,7 +52,7 @@ async def verify_license_or_api_key(
         if session_expiry <= now:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session has expired.")
         license_obj = (await db.execute(select(SoftwareLicense).where(
-            SoftwareLicense.id == session.license_id
+            SoftwareLicense.license_key == session.license_key
         ))).scalar_one_or_none()
         if license_obj is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
@@ -176,14 +179,15 @@ async def verify_customer_account(
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ) -> SoftwareLicense:
-    """Resolve a customer account using a passwordless session or legacy key."""
+    """Resolve a customer account using a Hostinger-backed session or legacy key."""
     if credentials is not None:
         if credentials.scheme.lower() != "bearer" or not credentials.credentials:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid customer session.")
         token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-        session = (await db.execute(
-            select(AccountSession).where(AccountSession.token_hash == token_hash)
+        session = (await operational_db.execute(
+            select(CustomerSession).where(CustomerSession.token_hash == token_hash)
         )).scalar_one_or_none()
         now = datetime.now(timezone.utc)
         if session is None or session.revoked_at is not None:
@@ -194,7 +198,7 @@ async def verify_customer_account(
         if expiry <= now:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session has expired. Sign in again.")
         license_obj = (await db.execute(
-            select(SoftwareLicense).where(SoftwareLicense.id == session.license_id)
+            select(SoftwareLicense).where(SoftwareLicense.license_key == session.license_key)
         )).scalar_one_or_none()
         if license_obj is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
