@@ -226,6 +226,45 @@ async def migrate(apply_changes: bool) -> None:
             "license_key",
         )
 
+        reports["customer_billing_events"] = await _copy_rows(
+            source, target, PaymentWebhookEvent, CustomerBillingEvent,
+            lambda row: ({
+                "event_id": row.event_id,
+                "license_key": license_key_by_id.get(row.license_id),
+                "recipient_email": row.recipient_email[:254],
+                "status": row.status[:40],
+                "transaction_id": row.transaction_id,
+                "subscription_id": row.subscription_id,
+                "paddle_customer_id": row.paddle_customer_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            } if license_key_by_id.get(row.license_id) else None),
+            "event_id",
+        )
+        reports["admin_action_logs"] = await _copy_rows(
+            source, target, SaaSAdminActionLog, AdminActionLog,
+            lambda row: ({
+                "id": row.id,
+                "action": row.action,
+                "entity_type": row.entity_type,
+                "entity_id": row.entity_id,
+                "details_json": row.details_json,
+                "created_at": row.created_at,
+            }),
+            "id",
+        )
+        reports["operational_diagnostic_events"] = await _copy_rows(
+            source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
+            lambda row: ({
+                "event_type": row.event_type,
+                "license_key": license_key_by_id.get(row.license_id),
+                "domain": row.domain,
+                "error_type": row.error_type,
+                "created_at": row.created_at,
+            }),
+            "id",
+        )
+
         # Legacy support notes were keyed only by email. Associate each note with
         # the most recently linked license when that mapping is unambiguous.
         billing_by_email = {}
