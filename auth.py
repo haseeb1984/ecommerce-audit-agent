@@ -81,7 +81,7 @@ async def verify_license_or_api_key(
 
     # Direct API credentials are a plan entitlement, not just a key-creation UI.
     # Existing keys must stop authorizing API audit calls after a plan downgrade.
-    if api_key and not plan_features(license_obj.tier)["direct_api_access"]:
+    if credentials is None and api_key and not plan_features(license_obj.tier)["direct_api_access"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Direct API access is not included in this account plan.",
