@@ -4269,6 +4269,7 @@ async def admin_reconcile_payment(event_id: str, request: Request,
             "transaction_id": event.transaction_id, "paddle_status": str(data.get("status") or "")[:40],
             "backfilled_identifiers": backfilled})
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event.event_id)
         return result
     except HTTPException:
         raise
@@ -4330,6 +4331,7 @@ async def admin_retry_license_email(event_id: str, request: Request,
     event.status = "email_sending"
     event.updated_at = now
     await db.commit()
+    await _sync_billing_event_to_hostinger(db, event.event_id)
     try:
         await asyncio.to_thread(
             _send_license_email, recipient, license_obj.license_key,
@@ -4339,6 +4341,7 @@ async def admin_retry_license_email(event_id: str, request: Request,
         event.status = "email_pending"
         event.updated_at = datetime.now(timezone.utc)
         await db.commit()
+        await _sync_billing_event_to_hostinger(db, event.event_id)
         logger.error("Admin license email retry failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="License email retry failed; the event remains pending.") from exc
 
@@ -4349,6 +4352,7 @@ async def admin_retry_license_email(event_id: str, request: Request,
         {"license_id": event.license_id, "delivery_status": "delivered"},
     )
     await db.commit()
+    await _sync_billing_event_to_hostinger(db, event.event_id)
     return {"status": "delivered", "event_id": event.event_id}
 
 
