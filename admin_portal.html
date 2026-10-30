@@ -59,9 +59,30 @@ async function loadClientSessions(id){
   const row=el("div",undefined,"historyitem");
   row.append(el("strong",(item.email||"Unknown email")+" · "+String(item.status||"unknown").toUpperCase()));
   row.append(el("span","Created "+date(item.created_at)+" · Last seen "+date(item.last_seen_at)+" · Expires "+date(item.expires_at)+(item.revoked_at?" · Revoked "+date(item.revoked_at):""),"small"));
+  if(item.status==="active"){
+   const revoke=el("button","Revoke this device","secondary");
+   revoke.style.marginTop="6px";
+   revoke.addEventListener("click",()=>revokeClientSession(id,item.session_id,revoke));
+   row.append(revoke);
+  }
   container.append(row);
  }
  $("refreshClientSessions").disabled=false;$("revokeClientSessions").disabled=false;
+}
+async function revokeClientSession(id,sessionId,button){
+ const reason=window.prompt("Reason for revoking this customer device:","device security review");
+ if(reason===null)return;
+ if(!reason.trim()||reason.trim().length>200){status("Reason must be 1–200 characters.","error");return}
+ if(!window.confirm("Revoke only this browser session?"))return;
+ button.disabled=true;
+ try{
+  const response=await guardedFetch("/api/v1/admin/clients/"+encodeURIComponent(id)+"/sessions/"+encodeURIComponent(sessionId),{method:"DELETE",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify({reason:reason.trim()})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.detail||"Session revocation failed ("+response.status+")");
+  await loadClientSessions(id);
+  await refreshActions();
+  status("Selected customer device session revoked.","success");
+ }catch(error){status(error.message,"error");button.disabled=false}
 }
 async function revokeClientSessions(){
  if(currentHistoryId===null){status("Open a client's history first.","error");return}
