@@ -2327,6 +2327,7 @@ def _configured_payment_plans() -> list[dict]:
 
 class PaddleCheckoutRequest(BaseModel):
     tier: str
+    email: str = Field(..., min_length=3, max_length=254)
 
 
 @app.get("/api/v1/billing/plans")
@@ -2355,6 +2356,9 @@ async def create_paddle_checkout(
 ):
     """Create a transaction using an active server-managed package price; the client cannot set amounts."""
     tier = payload.tier.strip().lower()
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid customer email address.")
     plans = await _db_payment_plans(db, active_only=True)
     plan = next((p for p in plans if p["tier"] == tier), None)
     if plan is None:
@@ -2369,8 +2373,39 @@ async def create_paddle_checkout(
     smtp_status = _smtp_configuration_status()
     if not smtp_status["configured"]:
         raise HTTPException(status_code=503, detail="License delivery is not configured.")
+    # Preflight account identity before creating a paid Paddle transaction.
+    # The webhook repeats this check because checkout details can still be changed
+    # at the payment provider and because two requests can race before provisioning.
+    await _lock_paddle_webhook_resource(db, email, "customer_email")
+    existing_account = (await db.execute(select(SoftwareLicense).where(
+        func.lower(SoftwareLicense.account_email) == email,
+    ).with_for_update())).scalar_one_or_none()
+    if existing_account is None:
+        legacy_ids = (await db.execute(
+            select(PaymentWebhookEvent.license_id).where(
+                func.lower(PaymentWebhookEvent.recipient_email) == email,
+                PaymentWebhookEvent.license_id.is_not(None),
+            ).distinct()
+        )).scalars().all()
+        if len(legacy_ids) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="This email is linked to legacy duplicate licenses. Contact support to reconcile the account before checkout.",
+            )
+        if len(legacy_ids) == 1:
+            existing_account = (await db.execute(select(SoftwareLicense).where(
+                SoftwareLicense.id == legacy_ids[0],
+            ).with_for_update())).scalar_one_or_none()
+            if existing_account is not None and not existing_account.account_email:
+                existing_account.account_email = email
+                await db.commit()
+    if existing_account is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="An account already exists for this email. Sign in and manage your existing subscription instead of purchasing another license.",
+        )
     transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
-                   "custom_data": {"license_tier": plan["tier"]}}
+                   "custom_data": {"license_tier": plan["tier"], "checkout_email": email}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
     if checkout_url:
         # Only forward configured hosted-checkout destinations on Paddle domains.
@@ -2968,6 +3003,20 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         recipient = recipient.strip().lower()
         if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
             raise HTTPException(status_code=400, detail="Completed Paddle transaction has no valid customer email.")
+        declared_checkout_email = str(custom_data.get("checkout_email") or "").strip().lower()
+        if declared_checkout_email and declared_checkout_email != recipient:
+            prior_mismatch = (await db.execute(select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.event_id == event_id,
+            ))).scalar_one_or_none()
+            if prior_mismatch is None:
+                db.add(PaymentWebhookEvent(
+                    event_id=event_id, status="checkout_email_mismatch", license_id=None,
+                    recipient_email=recipient, transaction_id=transaction_id,
+                    subscription_id=subscription_id,
+                    paddle_customer_id=customer_id[:100] or None,
+                ))
+                await db.commit()
+            return {"status": "checkout_email_mismatch", "event_id": event_id}
         # Serialize by normalized customer email, not only by transaction ID:
         # two separate checkouts for the same email must not mint two licenses.
         await _lock_paddle_webhook_resource(db, recipient, "customer_email")
