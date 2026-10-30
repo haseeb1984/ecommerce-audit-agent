@@ -1765,8 +1765,14 @@ async def customer_disconnect_wordpress_site(
 async def get_account_profile(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Return safe account profile metadata without exposing credentials or payment secrets."""
+    """Return customer profile from Hostinger and licensing status from Supabase."""
+    from sqlalchemy import select
+    profile = await operational_db.scalar(select(CustomerAccount).where(
+        CustomerAccount.license_key == license_obj.license_key,
+        CustomerAccount.status == "active",
+    ))
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     now = datetime.now(timezone.utc)
@@ -1780,10 +1786,11 @@ async def get_account_profile(
     else:
         account_status = "active" if license_obj.is_active else "inactive"
     return {
-        "client_name": license_obj.client_name,
+        "client_name": profile.display_name if profile and profile.display_name else license_obj.client_name,
+        "email": profile.email if profile else None,
         "tier": license_obj.tier,
         "account_status": account_status,
-        "created_at": license_obj.created_at.isoformat() if license_obj.created_at else None,
+        "created_at": profile.created_at.isoformat() if profile and profile.created_at else None,
         "expires_at": expires_at.isoformat() if expires_at else None,
         "billing_period_ends_at": license_obj.billing_period_ends_at.isoformat() if license_obj.billing_period_ends_at else None,
     }
@@ -1794,20 +1801,26 @@ async def update_account_profile(
     payload: AccountProfileUpdate,
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Update only the account display name; this does not change billing-provider identity."""
+    """Update the operational customer display name in Hostinger."""
+    from sqlalchemy import select
     client_name = payload.client_name.strip()
     if not client_name:
         raise HTTPException(status_code=422, detail="Account name cannot be blank.")
     if len(client_name) > 255:
         raise HTTPException(status_code=422, detail="Account name must be 255 characters or fewer.")
-    license_obj.client_name = client_name
-    await db.commit()
-    await db.refresh(license_obj)
+    profile = await operational_db.scalar(select(CustomerAccount).where(
+        CustomerAccount.license_key == license_obj.license_key,
+    ).with_for_update())
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Customer profile was not found.")
+    profile.display_name = client_name
+    profile.updated_at = datetime.now(timezone.utc)
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"client_name": license_obj.client_name, "updated": True}
+    return {"client_name": profile.display_name, "updated": True}
 
 
 @app.get("/api/v1/account/branding")
