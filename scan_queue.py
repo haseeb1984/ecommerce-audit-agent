@@ -193,22 +193,36 @@ async def claim_next_scan_job(
     now = _utcnow()
     stale_before = now - timedelta(seconds=lease_seconds)
     try:
-        # Expired worker leases return to the retryable queue without losing history.
-        await db.execute(
-            update(WebsiteScanJob)
+        # Reconcile expired leases and batch counters atomically before claiming more work.
+        expired_jobs = (await db.execute(
+            select(WebsiteScanJob)
             .where(
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_at < stale_before,
-                WebsiteScanJob.attempt_count < WebsiteScanJob.max_attempts,
             )
-            .values(
-                status="retry_wait",
-                next_attempt_at=now,
-                locked_at=None,
-                locked_by=None,
-                last_error_code="WORKER_LEASE_EXPIRED",
-            )
-        )
+            .with_for_update(skip_locked=True)
+        )).scalars().all()
+        for expired in expired_jobs:
+            batch = await db.get(ScanBatch, expired.batch_id)
+            if batch is not None:
+                batch.processing_count = max(0, batch.processing_count - 1)
+            expired.locked_at = None
+            expired.locked_by = None
+            expired.last_error_code = "WORKER_LEASE_EXPIRED"
+            if expired.attempt_count < expired.max_attempts:
+                expired.status = "retry_wait"
+                expired.next_attempt_at = now
+                if batch is not None:
+                    batch.queued_count += 1
+                    batch.status = "queued"
+            else:
+                expired.status = "failed"
+                expired.completed_at = now
+                if batch is not None:
+                    batch.failed_count += 1
+                    if batch.completed_count + batch.failed_count >= batch.total_urls:
+                        batch.status = "failed"
+                        batch.completed_at = now
         earliest_batch = (
             select(func.min(ScanBatch.batch_number))
             .where(
