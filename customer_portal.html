@@ -18,6 +18,16 @@
 <p class="muted">Choose a configured plan to pay securely through Paddle. After confirmed payment, your license key is sent to the checkout email address. If no plan is shown, checkout has not been configured on this deployment.</p>
 <div id="plans" class="reports"><p class="muted">Loading available plans…</p></div>
 </section>
+<section class="panel" aria-labelledby="emailLoginHeading">
+<h2 id="emailLoginHeading">Sign in with your email</h2>
+<p class="muted">Enter the email address used at checkout. We will send a one-time code that expires in 10 minutes. Your session stays in this page's memory only.</p>
+<div class="row">
+  <div><label for="loginEmail">Account email</label><input id="loginEmail" type="text" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com"></div>
+  <div><label for="loginCode">Six-digit sign-in code</label><input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456"></div>
+</div>
+<div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button></div>
+<div id="loginStatus" class="status" role="status" aria-live="polite">Passwordless sign-in is available for accounts with a verified checkout email.</div>
+</section>
 <section class="panel">
 <h2>1. Connect your license</h2>
 <p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
@@ -84,6 +94,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   let credential = "";
+  let sessionToken = "";
   let headerName = "X-License-Key";
   // Invalidate in-flight authenticated requests whenever the connected identity changes
   // or the user disconnects, so late responses cannot repopulate another account's view.
@@ -109,7 +120,7 @@
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
-  const authHeaders = () => ({[headerName]: credential});
+  const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
     for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
   }
@@ -748,6 +759,42 @@
     $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
+  $("requestLoginCode").addEventListener("click", async () => {
+    const email = $("loginEmail").value.trim();
+    if (!email) { setStatus("loginStatus", "Enter the email address used at checkout.", "error"); return; }
+    const button = $("requestLoginCode"); button.disabled = true;
+    try {
+      const response = await fetch("/api/v1/account/auth/request-code", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({email})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to request a sign-in code.");
+      setStatus("loginStatus", data.message || "If an account exists for this email, a sign-in code will be sent.", "success");
+    } catch (error) { setStatus("loginStatus", error.message, "error"); }
+    finally { button.disabled = false; }
+  });
+  $("verifyLoginCode").addEventListener("click", async () => {
+    const email = $("loginEmail").value.trim();
+    const code = $("loginCode").value.trim();
+    if (!email || !/^[0-9]{6}$/.test(code)) { setStatus("loginStatus", "Enter your account email and six-digit code.", "error"); return; }
+    const button = $("verifyLoginCode"); button.disabled = true;
+    try {
+      const response = await fetch("/api/v1/account/auth/verify-code", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({email, code})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "The sign-in code could not be verified.");
+      sessionToken = String(data.access_token || "");
+      if (!sessionToken) throw new Error("The server did not return a customer session.");
+      credential = "customer-session";
+      headerName = "X-License-Key";
+      $("credential").value = credential;
+      $("loginCode").value = "";
+      setStatus("loginStatus", "Email verified. Your account is signing in…", "success");
+      $("connect").click();
+    } catch (error) { sessionToken = ""; credential = ""; setStatus("loginStatus", error.message, "error"); }
+    finally { button.disabled = false; }
+  });
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
@@ -787,6 +834,10 @@
   });
   $("disconnectAccount").addEventListener("click", () => {
     accountSessionVersion += 1;
+    if (sessionToken) {
+      fetch("/api/v1/account/auth/logout", {method:"POST", headers:{Authorization:"Bearer " + sessionToken}}).catch(() => {});
+    }
+    sessionToken = "";
     credential = "";
     headerName = "X-License-Key";
     $("credential").value = "";
