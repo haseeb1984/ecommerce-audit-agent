@@ -1081,11 +1081,22 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
-    linked = (await db.execute(select(PaymentWebhookEvent).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == email,
-        PaymentWebhookEvent.license_id.is_not(None),
-    ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc()).limit(1))).scalar_one_or_none()
-    if linked is None:
+    linked = (await operational_db.execute(select(CustomerBillingEvent).where(
+        func.lower(CustomerBillingEvent.recipient_email) == email,
+    ).order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.created_at.desc()).limit(1))).scalar_one_or_none()
+    linked_license_key = linked.license_key if linked is not None else None
+    if linked_license_key is None:
+        # Compatibility fallback while existing PostgreSQL billing events are
+        # being copied to Hostinger; new billing history is mirrored operationally.
+        legacy_link = (await db.execute(select(PaymentWebhookEvent).where(
+            func.lower(PaymentWebhookEvent.recipient_email) == email,
+            PaymentWebhookEvent.license_id.is_not(None),
+        ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc()).limit(1))).scalar_one_or_none()
+        if legacy_link is not None:
+            linked_license_key = await db.scalar(
+                select(SoftwareLicense.license_key).where(SoftwareLicense.id == legacy_link.license_id)
+            )
+    if linked_license_key is None:
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
@@ -1101,7 +1112,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     code = f"{secrets.randbelow(1000000):06d}"
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
-    linked_license = await db.scalar(select(SoftwareLicense).where(SoftwareLicense.id == linked.license_id))
+    linked_license = await db.scalar(select(SoftwareLicense).where(SoftwareLicense.license_key == linked_license_key))
     if linked_license is None:
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
     challenge = CustomerLoginChallenge(
