@@ -6,6 +6,7 @@ Passwordless customers can review recent browser sessions and revoke an individu
 
 - `GET /api/v1/account/auth/sessions` returns at most 100 sessions for the authenticated verified checkout email.
 - `DELETE /api/v1/account/auth/sessions/{session_id}` revokes one session belonging to that verified email.
+- Admins can revoke one device through `DELETE /api/v1/admin/clients/{license_id}/sessions/{session_id}`; the operator reason and target session metadata are recorded in the admin action log.
 - Responses expose only a random public session identifier and safe timestamps/status. Bearer tokens and token digests are never returned.
 - A session belonging to another verified email is indistinguishable from a missing session (404).
 - Revoking the current session immediately clears the portal's in-memory credentials.
@@ -23,4 +24,4 @@ The public session identifier is not an authentication credential. All operation
 
 ## Verification
 
-PostgreSQL-backed API tests cover session listing, current-session marking, token/digest privacy, single-device revocation, and isolation from another email. CI verification is required before this phase is considered complete.
+PostgreSQL-backed API tests cover customer session listing, current-session marking, token/digest privacy, customer single-device revocation, admin single-device revocation with an audit reason, client-scope isolation, and isolation from another email. CI verification is required before this phase is considered complete.
