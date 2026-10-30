@@ -13,7 +13,7 @@
   ],
   "crons": [
     {
-      "path": "/internal/scan-worker/run?max_jobs=1",
+      "path": "/internal/scan-worker/run?max_jobs=10",
       "schedule": "* * * * *"
     }
   ]
