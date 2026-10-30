@@ -365,10 +365,31 @@ async def audit_lead(
         )
 
 
+async def verify_license_with_optional_wordpress_site(
+    request: Request,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_async_db),
+) -> SoftwareLicense:
+    """Authenticate normal SaaS clients and additionally enforce a supplied WordPress site identity."""
+    site_id = request.headers.get("X-WordPress-Site-ID", "").strip()
+    if site_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", site_id):
+            raise HTTPException(status_code=403, detail="Invalid WordPress site connection.")
+        from sqlalchemy import select
+        site = (await db.execute(select(WordPressSite.id).where(
+            WordPressSite.id == site_id,
+            WordPressSite.license_id == license_obj.id,
+            WordPressSite.status == "active",
+        ))).scalar_one_or_none()
+        if site is None:
+            raise HTTPException(status_code=403, detail="This WordPress site is disconnected or not linked to the authenticated license.")
+    return license_obj
+
+
 @app.post("/api/v1/comprehensive-audit", response_class=Response)
 async def comprehensive_audit_pdf(
     domain: str = Query(..., min_length=1, max_length=2048, description="Public website URL or domain"),
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a phase-one evidence report as a PDF, using the existing license quota."""
@@ -2155,7 +2176,7 @@ async def list_audit_reports(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0, le=10000000),
     domain: str = Query(default="", max_length=253),
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List only reports owned by the authenticated license; never expose PDF bytes here."""
@@ -2197,7 +2218,7 @@ async def list_audit_reports(
 @app.get("/api/v1/reports/{report_id}/pdf", response_class=Response)
 async def download_audit_report(
     report_id: int,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Download a stored report only when it belongs to the authenticated license."""
@@ -2225,7 +2246,7 @@ async def download_audit_report(
 async def get_audit_report_coverage(
     report_id: int,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return the run's recorded evidence manifest, scoped to the owning license."""
@@ -2256,7 +2277,7 @@ async def get_audit_report_evidence(
     kind: str = Query("findings", pattern="^(findings|check_outcomes)$"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0, le=10000000),
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return a bounded page of saved evidence, isolated to the owning license."""
