@@ -455,6 +455,7 @@ function eaa_wp_render_admin_page() {
                     <?php if (is_array($usage)) : ?>
                         <div class="eaa-stat"><?php echo esc_html((string) ($usage['used'] ?? 0)); ?> / <?php echo esc_html((string) ($usage['monthly_limit'] ?? 0)); ?></div>
                         <p><?php echo esc_html((string) ($usage['remaining'] ?? 0)); ?> <?php esc_html_e('audits remaining', 'ecommerce-audit-agent'); ?></p>
+                        <?php if (!empty($usage['features']) && is_array($usage['features'])) : ?><p><?php esc_html_e('Included features:', 'ecommerce-audit-agent'); ?> <?php echo esc_html(implode(', ', array_keys(array_filter($usage['features'])))); ?></p><?php endif; ?>
                         <p><?php esc_html_e('Plan:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) ($usage['plan_label'] ?? $usage['tier'] ?? '—')); ?> · <?php echo esc_html((string) ($usage['entitlement_state'] ?? 'unknown')); ?></p>
                     <?php else : ?><p><?php esc_html_e('Connect your license to view quota and entitlement information.', 'ecommerce-audit-agent'); ?></p><?php endif; ?>
                 </div>
