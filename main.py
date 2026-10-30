@@ -1556,7 +1556,7 @@ async def update_account_branding(
         try:
             address = ipaddress.ip_address(hostname)
         except ValueError:
-            if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}", hostname):
+            if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", hostname):
                 raise HTTPException(status_code=422, detail="Logo URL must use a valid public HTTPS hostname.")
         else:
             if not address.is_global:
