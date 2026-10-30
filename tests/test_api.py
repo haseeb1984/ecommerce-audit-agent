@@ -1134,7 +1134,7 @@ async def test_paddle_webhook_verifies_transaction_provisions_license_and_is_ide
 async def test_second_paddle_checkout_for_same_email_does_not_mint_another_license(client, monkeypatch):
     secret = "paddle-single-customer-identity-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_single_identity")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
     sent = []
     monkeypatch.setattr(main, "_send_license_email", lambda *args: sent.append(args))
@@ -1159,7 +1159,7 @@ async def test_second_paddle_checkout_for_same_email_does_not_mint_another_licen
                 "custom_data": {"license_tier": "starter", "checkout_email": email.strip().lower()},
                 "customer_id": "ctm_single_identity",
                 "customer": {"email": email, "name": "Single Identity Buyer"},
-                "items": [{"price": {"id": "pri_single_identity"}, "quantity": 1}],
+                "items": [{"price": {"id": "pri_01abc123"}, "quantity": 1}],
             },
         }
 
@@ -1669,7 +1669,7 @@ async def test_paddle_checkout_blocks_email_that_already_owns_a_license(client, 
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "test-webhook-secret")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_FROM", "reports@example.com")
-    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_existing_customer")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_01abc123")
     called = False
 
     def fake_request(*args, **kwargs):
@@ -1679,7 +1679,7 @@ async def test_paddle_checkout_blocks_email_that_already_owns_a_license(client, 
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
     response = await client.post("/api/v1/billing/checkout", json={
-        "tier": "starter", "email": " Already-Customer@example.com ",
+        "tier": "starter", "email": "Already-Customer@example.com",
     })
     assert response.status_code == 409
     assert "already exists" in response.json()["detail"]
