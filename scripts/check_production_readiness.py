@@ -17,7 +17,7 @@ REQUIRED_COLUMNS = {
     # Keep this list aligned with every mapped field used by application queries,
     # not just the minimum fields needed for a successful health-check response.
     "software_licenses": {
-        "id", "license_key", "client_name", "tier", "max_monthly_audits",
+        "id", "license_key", "client_name", "account_email", "tier", "max_monthly_audits",
         "is_active", "expires_at", "billing_period_ends_at", "created_at",
     },
     "api_keys": {"id", "license_id", "api_key_hash", "key_prefix", "created_at"},
@@ -57,6 +57,7 @@ REQUIRED_INDEXES = {
     "ix_payment_webhook_events_transaction_id",
     "ix_payment_webhook_events_subscription_id",
     "uq_account_sessions_session_id",
+    "uq_software_licenses_account_email_lower",
     "ix_account_sessions_email_created",
     "ix_wordpress_link_challenges_license_expires",
     "ix_wordpress_site_links_license_linked",
