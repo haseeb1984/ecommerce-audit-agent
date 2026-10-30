@@ -195,7 +195,6 @@ async def health_check(
         "audit_quota_reservations",
         "audit_reports",
         "saas_plan_packages",
-        "saas_operation_events",
         "payment_webhook_events",
     }
     try:
@@ -3935,6 +3934,7 @@ async def _record_operation_event(db: AsyncSession, event_type: str, license_id:
         logger.warning("Operational diagnostic event was not persisted because Hostinger is unavailable.")
         return
     try:
+        from sqlalchemy import select
         license_key = None
         if license_id is not None:
             license_key = await db.scalar(
