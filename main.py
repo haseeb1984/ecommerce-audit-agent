@@ -53,8 +53,8 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
-from hostinger_database import get_hostinger_db, HostingerBase
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote
+from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog
 
 logger = logging.getLogger("audit_service")
 
@@ -195,7 +195,6 @@ async def health_check(
         "audit_quota_reservations",
         "audit_reports",
         "saas_plan_packages",
-        "saas_admin_action_logs",
         "saas_operation_events",
         "payment_webhook_events",
     }
@@ -3733,14 +3732,23 @@ def _sanitize_admin_log_value(value, *, depth: int = 0):
 
 async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
                            entity_id: str | int | None, details: dict | None = None) -> None:
-    # Defense in depth: do not trust each caller to sanitize the audit metadata.
+    """Persist sanitized admin activity in Hostinger, not the licensing database."""
+    if HostingerAsyncSessionLocal is None:
+        logger.warning("Admin activity log was not persisted because Hostinger is unavailable.")
+        return
     safe_details = _sanitize_admin_log_value(details or {})
-    await db.execute(text("""
-        INSERT INTO saas_admin_action_logs (action, entity_type, entity_id, details_json)
-        VALUES (:action, :entity_type, :entity_id, :details_json)
-    """), {"action": action[:80], "entity_type": entity_type[:50],
-           "entity_id": str(entity_id)[:255] if entity_id is not None else None,
-           "details_json": json.dumps(safe_details, separators=(",", ":"), ensure_ascii=True)})
+    try:
+        async with HostingerAsyncSessionLocal() as operational_db:
+            operational_db.add(AdminActionLog(
+                action=action[:80],
+                entity_type=entity_type[:50],
+                entity_id=str(entity_id)[:255] if entity_id is not None else None,
+                details_json=json.dumps(safe_details, separators=(",", ":"), ensure_ascii=True),
+            ))
+            await operational_db.commit()
+    except Exception as exc:
+        # Logging must not prevent an otherwise valid license/admin transaction.
+        logger.warning("Admin activity log write failed (error_type=%s)", type(exc).__name__)
 
 
 def _safe_audit_metadata_url(value: str | None) -> str | None:    """Persist only public HTTP(S) URLs without credentials, private hosts, queries or fragments."""
@@ -4030,31 +4038,34 @@ async def admin_action_history(
     _require_admin_key(request)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    await _ensure_admin_tables(db)
-    total = int((await db.execute(text(
-        "SELECT COUNT(*) FROM saas_admin_action_logs"
-    ))).scalar_one() or 0)
-    rows = (await db.execute(text("""
-        SELECT id, action, entity_type, entity_id, details_json, created_at
-        FROM saas_admin_action_logs
-        ORDER BY created_at DESC, id DESC
-        LIMIT :limit OFFSET :offset
-    """), {"limit": limit, "offset": offset})).mappings().all()
+    if HostingerAsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Operational activity storage is unavailable.")
+    from sqlalchemy import select, func
+    async with HostingerAsyncSessionLocal() as operational_db:
+        total = int((await operational_db.execute(
+            select(func.count(AdminActionLog.id))
+        )).scalar_one() or 0)
+        rows = (await operational_db.execute(
+            select(AdminActionLog)
+            .order_by(AdminActionLog.created_at.desc(), AdminActionLog.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )).scalars().all()
     actions = []
     for row in rows:
         # Older rows may predate write-time sanitization or may have been manually
         # edited. Never let one malformed payload break the whole activity page.
         try:
-            parsed_details = json.loads(row["details_json"] or "{}")
+            parsed_details = json.loads(row.details_json or "{}")
         except (TypeError, ValueError, json.JSONDecodeError):
             parsed_details = {"_warning": "Stored activity details were invalid and have been omitted."}
         if not isinstance(parsed_details, dict):
             parsed_details = {"_warning": "Stored activity details were not an object and have been omitted."}
         safe_details = _sanitize_admin_log_value(parsed_details)
         actions.append({
-            "id": row["id"], "action": row["action"], "entity_type": row["entity_type"],
-            "entity_id": row["entity_id"], "details": safe_details,
-            "created_at": row["created_at"].isoformat() if row["created_at"] else None
+            "id": row.id, "action": row.action, "entity_type": row.entity_type,
+            "entity_id": row.entity_id, "details": safe_details,
+            "created_at": row.created_at.isoformat() if row.created_at else None
         })
     return {
         "actions": actions,
