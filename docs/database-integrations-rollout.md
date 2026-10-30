@@ -6,14 +6,19 @@ This phase completes the source-controlled PostgreSQL schema contract and the op
 
 Take a database backup and review every SQL file before applying it. The original `software_licenses`, `api_keys`, and `audit_leads` tables are prerequisites.
 
-For an installation that has not yet received these SaaS feature migrations, apply in this order:
+For a fresh database, apply the core baseline first, then the feature migrations in this order:
 
-1. `migrations/2026-10-22-audit-reports.sql` — report storage and Paddle webhook idempotency base table.
-2. `migrations/20261023_admin_packages_and_actions.sql` — plan catalogue, operation events, admin action log and billing identifiers.
-3. `migrations/20261031_admin_customer_lifecycle.sql` — append-only support notes.
-4. `migrations/20261031_customer_email_change.sql` — verified email-change challenges.
-5. `migrations/20261031_wordpress_sites.sql` — connected WordPress installations.
-6. `migrations/20261101_saas_database_integrations.sql` — final additive schema alignment for quota reservations, passwordless account challenges/sessions, all mapped feature tables, billing-period end, indexes, and support-note persistence.
+1. `migrations/2026-10-28-core-saas-schema.sql` — core license, API key, audit lead, quota, report, plan, admin log, operation event, webhook, and initial passwordless account tables.
+2. `migrations/2026-10-22-audit-reports.sql` — backward-compatible report/webhook alignment for older installations.
+3. `migrations/20261023_admin_packages_and_actions.sql` — plan catalogue, operation events, admin action log and billing identifiers.
+4. `migrations/20261030_customer_passwordless_auth.sql` — passwordless login challenges and sessions (already present in the core baseline).
+5. `migrations/20261031_customer_device_sessions.sql` — opaque public device IDs and user-agent metadata.
+6. `migrations/20261031_admin_customer_lifecycle.sql` — append-only support notes.
+7. `migrations/20261031_customer_email_change.sql` — verified email-change challenges.
+8. `migrations/20261031_wordpress_sites.sql` — connected WordPress installations.
+9. `migrations/20261101_saas_database_integrations.sql` — final additive schema alignment for quota reservations, passwordless account challenges/sessions, email changes, WordPress links, support notes, billing-period end, device-session metadata, and all mapped indexes.
+
+For an existing database, compare its applied schema with each migration first and skip only migrations that are already fully applied. The scripts use `IF NOT EXISTS` where possible; the device-session migration also backfills an opaque public ID for existing sessions before making it required.
 
 The final alignment migration is intentionally repeatable: it uses `IF NOT EXISTS`, adds the missing billing-period column without replacing existing values, and does not drop customer data. It assumes the legacy license/account tables already exist. Existing installations may already have some earlier tables; the statements are designed to leave them in place.
 
