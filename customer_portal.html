@@ -44,11 +44,27 @@
 <button id="saveProfile" type="button" disabled>Save account name</button>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
+<section class="panel" aria-labelledby="wordpressLinkHeading">
+<h2 id="wordpressLinkHeading">WordPress site connections</h2>
+<p class="muted">Generate a one-time code here, then paste it into Settings → Ecommerce Audit Bridge on the WordPress site while signed in as a trusted site administrator. Codes expire after 10 minutes and are single-use.</p>
+<div class="report-actions"><button id="generateWordPressLinkCode" type="button" disabled>Generate one-time WordPress link code</button><button id="refreshWordPressLinks" class="secondary" type="button" disabled>Refresh linked sites</button></div>
+<div id="wordpressLinkCodePanel" class="status" hidden aria-live="polite"><strong>One-time WordPress link code</strong><p id="wordpressLinkCode" style="overflow-wrap:anywhere"></p><p id="wordpressLinkExpiry" class="muted"></p><button id="copyWordPressLinkCode" class="secondary" type="button">Copy code</button><button id="hideWordPressLinkCode" class="secondary" type="button">Hide code</button></div>
+<div id="wordpressLinks" class="reports"><p class="muted">Connect your account to view linked WordPress sites.</p></div>
+<div id="wordpressLinkStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
+<div style="margin-top:16px"><h3 style="margin:0 0 8px;font-size:1rem">Included plan features</h3><div id="planFeatures" class="reports" aria-live="polite"><p class="muted">Connect your account to view included features.</p></div></div>
+<div style="margin-top:18px;border-top:1px solid #dce5ef;padding-top:16px">
+<h3 style="margin:0 0 8px;font-size:1rem">White-label branding</h3>
+<p class="muted">Configure your brand name, HTTPS logo URL, and primary color. This feature is available on Whitelabel plans; saved settings do not yet re-skin existing PDF reports.</p>
+<div class="row"><div><label for="brandName">Brand name</label><input id="brandName" type="text" maxlength="100" placeholder="Your brand name" disabled></div><div><label for="brandLogoUrl">Logo URL (HTTPS)</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.svg" disabled></div></div>
+<div class="row"><div><label for="brandPrimaryColor">Primary color</label><input id="brandPrimaryColor" type="color" value="#155a8a" disabled></div><div style="align-self:end"><button id="saveBranding" type="button" disabled>Save branding settings</button></div></div>
+<div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to manage white-label branding.</div>
+</div>
 </section>
 <section class="panel" aria-labelledby="billingHistoryHeading">
 <h2 id="billingHistoryHeading">Billing history</h2>
@@ -124,7 +140,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "generateWordPressLinkCode", "refreshWordPressLinks"]) $(id).disabled = !connected;
     $("deviceSessionsPanel").hidden = !connected || !sessionToken;
     $("refreshDeviceSessions").disabled = !connected || !sessionToken;
     $("linkedLicenses").disabled = !connected || !sessionToken;
@@ -480,6 +496,42 @@
       button.disabled = false;
     }
   }
+  let wordpressLinks = [];
+  let wordpressLinkCode = "";
+  async function loadWordPressLinks() {
+    const response = await api("/api/v1/account/wordpress-link");
+    const data = await response.json();
+    wordpressLinks = Array.isArray(data.links) ? data.links : [];
+    const container = $("wordpressLinks");
+    container.replaceChildren();
+    if (!wordpressLinks.length) {
+      const note = document.createElement("p"); note.className = "muted";
+      note.textContent = "No WordPress sites are linked to this account.";
+      container.append(note);
+      return;
+    }
+    for (const link of wordpressLinks) {
+      const card = document.createElement("article"); card.className = "report";
+      const details = document.createElement("div");
+      const site = document.createElement("strong"); site.textContent = link.site_url || "WordPress site";
+      const user = document.createElement("small"); user.textContent = "WordPress user: " + (link.wp_user_login || "—") + " · " + (link.wp_user_email || "—");
+      details.append(site, user);
+      const unlink = document.createElement("button"); unlink.type = "button"; unlink.className = "secondary"; unlink.textContent = "Unlink";
+      unlink.addEventListener("click", async () => {
+        if (!window.confirm("Unlink " + (link.site_url || "this WordPress site") + " from this SaaS account?")) return;
+        unlink.disabled = true;
+        try {
+          await api("/api/v1/account/wordpress-link?site_url=" + encodeURIComponent(link.site_url), {method:"DELETE"});
+          await loadWordPressLinks();
+          setStatus("wordpressLinkStatus", "WordPress site unlinked.", "success");
+        } catch (error) {
+          setStatus("wordpressLinkStatus", error.message || "Unable to unlink this site.", "error");
+          unlink.disabled = false;
+        }
+      });
+      card.append(details, unlink); container.append(card);
+    }
+  }
   async function loadAccountLicenses() {
     if (!sessionToken) { $("linkedLicensesPanel").hidden = true; return; }
     const response = await api("/api/v1/account/licenses");
@@ -535,6 +587,27 @@
     setStatus("profileStatus", "Account profile loaded.", "success");
     return profile;
   }
+  async function loadBranding() {
+    const controls = ["brandName", "brandLogoUrl", "brandPrimaryColor", "saveBranding"];
+    try {
+      const response = await api("/api/v1/account/branding");
+      const data = await response.json();
+      $("brandName").value = data.brand_name || "";
+      $("brandLogoUrl").value = data.logo_url || "";
+      $("brandPrimaryColor").value = /^#[0-9a-f]{6}$/i.test(data.primary_color || "") ? data.primary_color : "#155a8a";
+      controls.forEach(id => { $(id).disabled = false; });
+      setStatus("brandingStatus", data.configured ? "White-label branding settings loaded." : "White-label plan detected. Configure your branding below.", "success");
+      return true;
+    } catch (error) {
+      if (String(error.message || "").includes("403")) {
+        $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandPrimaryColor").value = "#155a8a";
+        controls.forEach(id => { $(id).disabled = true; });
+        setStatus("brandingStatus", "White-label branding is not included in this plan.", "error");
+        return false;
+      }
+      throw error;
+    }
+  }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
     const usage = await response.json();
@@ -558,6 +631,17 @@
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
     const reset = usage.period_resets_at ? new Date(usage.period_resets_at) : null;
     $("usageReset").textContent = "Period resets: " + (reset && !Number.isNaN(reset.getTime()) ? reset.toLocaleDateString() : "not available");
+    const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",direct_api_access:"Direct API access"};
+    const featureContainer = $("planFeatures");
+    featureContainer.replaceChildren();
+    const features = usage.features && typeof usage.features === "object" ? usage.features : {};
+    for (const [key, label] of Object.entries(featureLabels)) {
+      const row = document.createElement("div"); row.className = "report";
+      const name = document.createElement("strong"); name.textContent = label;
+      const state = document.createElement("span"); state.className = "muted";
+      state.textContent = features[key] === true ? "Included" : "Not included";
+      row.append(name, state); featureContainer.append(row);
+    }
     if (!usage.is_active) $("usageSummary").textContent += " · Account inactive";
     if (usage.expires_at) {
       const expiry = new Date(usage.expires_at);
@@ -845,6 +929,11 @@
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
     $("usageReset").textContent = "Period reset: —";
+    $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandPrimaryColor").value = "#155a8a";
+    ["brandName", "brandLogoUrl", "brandPrimaryColor", "saveBranding"].forEach(id => { $(id).disabled = true; });
+    setStatus("brandingStatus", "Connect your account to manage white-label branding.");
+    const featureContainer = $("planFeatures"); if (featureContainer) { featureContainer.replaceChildren(); const note = document.createElement("p"); note.className = "muted"; note.textContent = "Connect your account to view included features."; featureContainer.append(note); }
+    wordpressLinks = []; wordpressLinkCode = ""; $("wordpressLinks").replaceChildren(); const wpNote = document.createElement("p"); wpNote.className = "muted"; wpNote.textContent = "Connect your account to view linked WordPress sites."; $("wordpressLinks").append(wpNote); $("wordpressLinkCodePanel").hidden = true; $("wordpressLinkCode").textContent = ""; setStatus("wordpressLinkStatus", "Account connection required.");
     activityRows = []; activityTotal = 0; renderActivity();
     $("billingAccount").textContent = "Connect your account to load billing status.";
     $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
@@ -904,8 +993,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadBranding(), loadWordPressLinks()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "white-label branding", "WordPress site links"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -960,6 +1049,60 @@
     $("target").value = "";
     setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
     setStatus("auditStatus", "Connect your credential first.");
+  });
+  $("generateWordPressLinkCode").addEventListener("click", async () => {
+    const button = $("generateWordPressLinkCode");
+    if (!credential) { setStatus("wordpressLinkStatus", "Connect your account first.", "error"); return; }
+    button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/wordpress-link/challenges", {method:"POST"});
+      const data = await response.json();
+      if (!data.token || typeof data.token !== "string") throw new Error("The service did not return a valid one-time code.");
+      wordpressLinkCode = data.token;
+      $("wordpressLinkCode").textContent = wordpressLinkCode;
+      $("wordpressLinkExpiry").textContent = "Expires at " + new Date(data.expires_at).toLocaleString() + ". This code is shown once; generate another if it is lost.";
+      $("wordpressLinkCodePanel").hidden = false;
+      setStatus("wordpressLinkStatus", "Code generated. Paste it into the WordPress bridge settings page.", "success");
+    } catch (error) {
+      setStatus("wordpressLinkStatus", error.message || "Unable to generate a link code.", "error");
+    } finally { button.disabled = !credential; }
+  });
+  $("refreshWordPressLinks").addEventListener("click", async () => {
+    try { await loadWordPressLinks(); setStatus("wordpressLinkStatus", "Linked WordPress sites refreshed.", "success"); }
+    catch (error) { setStatus("wordpressLinkStatus", error.message || "Unable to load linked sites.", "error"); }
+  });
+  $("copyWordPressLinkCode").addEventListener("click", async () => {
+    if (!wordpressLinkCode) return;
+    try { await navigator.clipboard.writeText(wordpressLinkCode); setStatus("wordpressLinkStatus", "One-time code copied. Paste it into WordPress settings.", "success"); }
+    catch { setStatus("wordpressLinkStatus", "Clipboard access was blocked. Select and copy the code manually.", "error"); }
+  });
+  $("hideWordPressLinkCode").addEventListener("click", () => {
+    wordpressLinkCode = ""; $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodePanel").hidden = true;
+  });
+  $("saveBranding").addEventListener("click", async () => {
+    if (!credential) { setStatus("brandingStatus", "Connect your account first.", "error"); return; }
+    const payload = {
+      brand_name: $("brandName").value.trim(),
+      logo_url: $("brandLogoUrl").value.trim() || null,
+      primary_color: $("brandPrimaryColor").value
+    };
+    const button = $("saveBranding"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/branding", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      $("brandName").value = data.brand_name || payload.brand_name;
+      $("brandLogoUrl").value = data.logo_url || "";
+      $("brandPrimaryColor").value = data.primary_color || payload.primary_color;
+      setStatus("brandingStatus", "White-label branding settings saved.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message || "Unable to save branding settings.", "error");
+    } finally {
+      button.disabled = !credential || $("brandName").disabled;
+    }
   });
   $("saveProfile").addEventListener("click", async () => {
     if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
