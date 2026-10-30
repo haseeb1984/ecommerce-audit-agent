@@ -479,8 +479,8 @@ async def test_parallel_requests_with_one_slot_return_one_200_and_one_429(
 
 @pytest.mark.asyncio
 async def test_configured_concurrency_limit_rejects_extra_active_audit(client, monkeypatch):
-    license_id = await create_license(key="concurrency-license", quota=10, tier="agency")
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_AGENCY", "1")
+    license_id = await create_license(key="concurrency-license", quota=10, tier="agency_pro")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_AGENCY_PRO", "1")
     async with AsyncSessionLocal() as db:
         db.add(
             AuditQuotaReservation(
