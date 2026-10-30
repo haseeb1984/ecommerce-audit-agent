@@ -24,6 +24,7 @@ from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
     fail_or_retry_scan_job,
+    defer_scan_job,
 )
 from ecommerce_agent import UniversalEcommerceAgent
 
@@ -209,6 +210,12 @@ async def process_one_scan(worker_id: str) -> dict:
         if reservation_id is not None:
             async with AsyncSessionLocal() as licensing_db:
                 await release_audit_reservation(licensing_db, reservation_id)
+        if exc.status_code == 429 and str(exc.detail).startswith("Concurrent audit limit"):
+            async with HostingerAsyncSessionLocal() as operational_db:
+                deferred = await defer_scan_job(
+                    operational_db, job_id=job_id, worker_id=worker_id, delay_seconds=30,
+                )
+            return {"status": "deferred" if deferred else "lease_lost", "job_id": job_id, "reason": "package_concurrency"}
         error_code = "QUOTA_OR_LICENSE_BLOCKED" if exc.status_code in (402, 403, 429) else "AUDIT_REJECTED"
         async with HostingerAsyncSessionLocal() as operational_db:
             outcome = await fail_or_retry_scan_job(
@@ -233,14 +240,16 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     if max_jobs < 1 or max_jobs > 10:
         raise ValueError("max_jobs must be between 1 and 10.")
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
-    outcomes = []
-    for _ in range(max_jobs):
-        outcome = await process_one_scan(worker_id)
-        outcomes.append(outcome)
-        if outcome["status"] == "idle":
-            break
+    import asyncio
+
+    async def _run_slot(slot: int):
+        return await process_one_scan(f"{worker_id}-{slot}")
+
+    outcomes = await asyncio.gather(*(_run_slot(slot) for slot in range(max_jobs)))
+    active = [item for item in outcomes if item["status"] != "idle"]
     return {
         "worker_id": worker_id,
-        "processed": sum(1 for item in outcomes if item["status"] == "completed"),
-        "outcomes": outcomes,
+        "claimed_slots": len(active),
+        "processed": sum(1 for item in active if item["status"] == "completed"),
+        "outcomes": active,
     }
