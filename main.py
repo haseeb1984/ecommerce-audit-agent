@@ -956,12 +956,28 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
-    linked = (await db.execute(select(PaymentWebhookEvent).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == email,
-        PaymentWebhookEvent.license_id.is_not(None),
-    ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc()).limit(1))).scalar_one_or_none()
-    if linked is None:
-        return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
+    # Resolve the canonical one-email/one-license account. Legacy payment-event
+    # lookup is permitted only when every matching event points to the same license;
+    # ambiguous historical duplicates must never let "latest event wins" choose identity.
+    license_obj = (await db.execute(select(SoftwareLicense).where(
+        func.lower(SoftwareLicense.account_email) == email,
+    ).limit(1))).scalar_one_or_none()
+    if license_obj is None:
+        legacy_ids = (await db.execute(
+            select(PaymentWebhookEvent.license_id).where(
+                func.lower(PaymentWebhookEvent.recipient_email) == email,
+                PaymentWebhookEvent.license_id.is_not(None),
+            ).distinct()
+        )).scalars().all()
+        if len(legacy_ids) == 1:
+            license_obj = (await db.execute(select(SoftwareLicense).where(
+                SoftwareLicense.id == legacy_ids[0],
+            ))).scalar_one_or_none()
+            if license_obj is not None and not license_obj.account_email:
+                license_obj.account_email = email
+                await db.commit()
+        if license_obj is None:
+            return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
     if len(auth_secret) < 32:
@@ -977,7 +993,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
     challenge = AccountLoginChallenge(
-        id=challenge_id, email=email, license_id=linked.license_id, code_hash=digest,
+        id=challenge_id, email=email, license_id=license_obj.id, code_hash=digest,
         expires_at=now + timedelta(minutes=10), attempts=0, created_at=now,
     )
     db.add(challenge)
@@ -1170,98 +1186,6 @@ async def revoke_customer_device_session(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "revoked", "current_session": target.token_hash == digest}
-
-
-@app.get("/api/v1/account/licenses")
-async def list_customer_account_licenses(
-    response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
-):
-    """List every license linked to the verified checkout email on this browser session."""
-    from sqlalchemy import func, select
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Email sign-in is required to manage linked licenses.")
-    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
-    ))).scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    linked_ids = (await db.execute(
-        select(SoftwareLicense.id).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(
-            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-            SoftwareLicense.id.is_not(None),
-        ).distinct()
-    )).scalars().all()
-    licenses = (await db.execute(select(SoftwareLicense).where(
-        SoftwareLicense.id.in_(linked_ids)
-    ).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc()))).scalars().all() if linked_ids else []
-    response.headers["Cache-Control"] = "no-store, private"
-    response.headers["Pragma"] = "no-cache"
-    return {
-        "items": [{
-            "id": item.id,
-            "client_name": item.client_name,
-            "tier": item.tier,
-            "is_active": bool(item.is_active),
-            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
-            "selected": item.id == session.license_id,
-        } for item in licenses],
-        "selected_license_id": session.license_id,
-    }
-
-
-@app.post("/api/v1/account/licenses/switch")
-async def switch_customer_account_license(
-    request: Request,
-    response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
-):
-    """Switch the current browser session only to a license linked to its verified email."""
-    from sqlalchemy import func, select
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Email sign-in is required to switch linked licenses.")
-    try:
-        payload = await request.json()
-        target_id = int(payload.get("license_id"))
-    except (ValueError, TypeError, AttributeError):
-        raise HTTPException(status_code=422, detail="A valid license_id is required.")
-    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await db.execute(select(AccountSession).where(
-        AccountSession.token_hash == token_hash,
-        AccountSession.revoked_at.is_(None),
-    ).with_for_update())).scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    allowed = (await db.execute(select(SoftwareLicense.id).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(
-        SoftwareLicense.id == target_id,
-        func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-    ).limit(1))).scalar_one_or_none()
-    if allowed is None:
-        raise HTTPException(status_code=403, detail="That license is not linked to this verified customer email.")
-    target = (await db.execute(select(SoftwareLicense).where(
-        SoftwareLicense.id == target_id
-    ))).scalar_one_or_none()
-    if target is None:
-        raise HTTPException(status_code=404, detail="Linked license was not found.")
-    session.license_id = target.id
-    session.last_seen_at = datetime.now(timezone.utc)
-    await db.commit()
-    response.headers["Cache-Control"] = "no-store, private"
-    response.headers["Pragma"] = "no-cache"
-    return {"status": "switched", "account": {
-        "client_name": target.client_name, "tier": target.tier,
-        "license_id": target.id, "is_active": bool(target.is_active),
-    }}
 
 
 @app.get("/api/v1/account/profile")
@@ -2903,7 +2827,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if plan is None or not plan.get("price_id"):
         raise HTTPException(status_code=400, detail="Completed Paddle transaction does not match a configured price.")
 
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     # Resolve subscription renewals to the original account before provisioning.
     # Recurring transactions have new transaction IDs; treating each as a new purchase
     # would otherwise mint a fresh license and send duplicate credentials every month.
@@ -3041,10 +2965,56 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             except Exception as exc:
                 logger.error("Paddle customer lookup failed (error_type=%s)", type(exc).__name__)
                 raise HTTPException(status_code=502, detail="Paddle customer details could not be retrieved; webhook can retry.") from exc
+        recipient = recipient.strip().lower()
         if len(recipient) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
             raise HTTPException(status_code=400, detail="Completed Paddle transaction has no valid customer email.")
+        # Serialize by normalized customer email, not only by transaction ID:
+        # two separate checkouts for the same email must not mint two licenses.
+        await _lock_paddle_webhook_resource(db, recipient, "customer_email")
+        existing_account = (await db.execute(select(SoftwareLicense).where(
+            func.lower(SoftwareLicense.account_email) == recipient,
+        ).with_for_update())).scalar_one_or_none()
+        if existing_account is None:
+            legacy_ids = (await db.execute(
+                select(PaymentWebhookEvent.license_id).where(
+                    func.lower(PaymentWebhookEvent.recipient_email) == recipient,
+                    PaymentWebhookEvent.license_id.is_not(None),
+                ).distinct()
+            )).scalars().all()
+            if len(legacy_ids) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This email is linked to legacy duplicate licenses and requires account reconciliation before another checkout can be provisioned.",
+                )
+            if len(legacy_ids) == 1:
+                existing_account = (await db.execute(select(SoftwareLicense).where(
+                    SoftwareLicense.id == legacy_ids[0],
+                ).with_for_update())).scalar_one_or_none()
+                if existing_account is not None and not existing_account.account_email:
+                    existing_account.account_email = recipient
+        if existing_account is not None:
+            # Do not silently merge a second Paddle subscription into an existing
+            # account or issue another key. Keep a durable billing record for admin
+            # reconciliation while preserving the customer's single license identity.
+            db.add(PaymentWebhookEvent(
+                event_id=event_id,
+                status="duplicate_account_blocked",
+                license_id=existing_account.id,
+                recipient_email=recipient,
+                transaction_id=transaction_id,
+                subscription_id=subscription_id,
+                paddle_customer_id=customer_id[:100] or None,
+            ))
+            await db.commit()
+            await _write_admin_log(
+                db, "payment.duplicate_account_blocked", "client", existing_account.id,
+                {"event_id": event_id, "transaction_id": transaction_id, "subscription_id": subscription_id},
+            )
+            await db.commit()
+            return {"status": "duplicate_account_blocked", "event_id": event_id,
+                    "license_id": existing_account.id}
         license_obj = SoftwareLicense(license_key=secrets.token_urlsafe(32), client_name=(customer_name or recipient)[:255],
-            tier=plan["tier"], max_monthly_audits=plan["monthly_audit_allowance"], is_active=True,
+            account_email=recipient, tier=plan["tier"], max_monthly_audits=plan["monthly_audit_allowance"], is_active=True,
             billing_period_ends_at=_paddle_billing_period_end(transaction))
         db.add(license_obj)
         await db.flush()
