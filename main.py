@@ -3081,6 +3081,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     elif webhook_event.status == "duplicate_account_blocked":
         return {"status": "duplicate_account_blocked", "event_id": event_id,
                 "license_id": webhook_event.license_id}
+    elif webhook_event.status == "checkout_email_mismatch":
+        return {"status": "checkout_email_mismatch", "event_id": event_id}
     if not webhook_event.transaction_id:
         webhook_event.transaction_id = str(transaction.get("id") or "")[:100] or None
     if not webhook_event.subscription_id:
