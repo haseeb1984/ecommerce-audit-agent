@@ -1203,6 +1203,12 @@ async def test_paddle_webhook_does_not_provision_when_checkout_email_differs(cli
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_email_mismatch")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    async def configured_mismatch_plan(db, active_only=False):
+        return [{
+            "tier": "starter", "label": "Starter", "monthly_audit_allowance": 100,
+            "max_concurrent_audits": 1, "price_id": "pri_email_mismatch", "is_active": True,
+        }]
+    monkeypatch.setattr(main, "_db_payment_plans", configured_mismatch_plan)
     sent = []
     monkeypatch.setattr(main, "_send_license_email", lambda *args: sent.append(args))
     event = {
