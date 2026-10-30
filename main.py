@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import Base, get_async_db
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, AccountLoginChallenge, AccountSession, WhiteLabelBranding, WordPressLinkChallenge, WordPressSiteLink
-from plan_features import plan_features
+from plan_features import plan_features, SUPPORTED_PLAN_TIERS
 from auth import verify_license_or_api_key, verify_customer_account, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -3489,6 +3489,9 @@ def _validate_admin_package(payload: AdminPackageInput) -> dict:
     price_id = (payload.paddle_price_id or "").strip() or None
     if not re.fullmatch(r"[a-z0-9_-]{2,50}", tier):
         raise HTTPException(status_code=422, detail="Package tier must be 2-50 lowercase letters, numbers, underscores or hyphens.")
+    if tier not in SUPPORTED_PLAN_TIERS:
+        allowed = ", ".join(sorted(SUPPORTED_PLAN_TIERS))
+        raise HTTPException(status_code=422, detail=f"Unsupported plan tier. Choose one of: {allowed}.")
     if not label or len(label) > 100:
         raise HTTPException(status_code=422, detail="Package label must be 1-100 characters.")
     if not 1 <= payload.monthly_audit_allowance <= 10000000:
