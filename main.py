@@ -1053,6 +1053,25 @@ async def logout_account_session(
     return {"status": "logged_out"}
 
 
+@app.post("/api/v1/account/auth/logout-all")
+async def logout_all_account_sessions(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke every active browser session for the authenticated customer account."""
+    from sqlalchemy import update
+    now = datetime.now(timezone.utc)
+    result = await db.execute(update(AccountSession).where(
+        AccountSession.license_id == license_obj.id,
+        AccountSession.revoked_at.is_(None),
+    ).values(revoked_at=now))
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "sessions_revoked", "revoked_count": int(result.rowcount or 0)}
+
+
 @app.get("/api/v1/account/profile")
 async def get_account_profile(
     response: Response,
