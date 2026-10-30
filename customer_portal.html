@@ -923,9 +923,38 @@
       const detail = document.createElement("small");
       detail.textContent = "Status: " + job.status + " · Attempts: " + job.attempts + "/" + job.max_attempts +
         (job.last_error_code ? " · Last error: " + job.last_error_code : "");
-      info.append(title, detail); card.append(info); container.append(card);
+      info.append(title, detail); card.append(info);
+      if (job.status === "completed") {
+        const resultButton = document.createElement("button"); resultButton.type = "button";
+        resultButton.className = "secondary"; resultButton.textContent = "View scan results";
+        resultButton.addEventListener("click", () => loadScanJobResult(job.id));
+        card.append(resultButton);
+      }
+      container.append(card);
     }
     container.scrollIntoView({behavior:"smooth", block:"nearest"});
+  }
+  async function loadScanJobResult(jobId) {
+    const container = $("scanBatchDetail");
+    try {
+      const response = await api("/api/v1/scan-jobs/" + encodeURIComponent(jobId) + "/result");
+      const result = await response.json();
+      const heading = document.createElement("h3"); heading.textContent = "Scan results · " + result.url;
+      const summary = document.createElement("p"); summary.className = "muted";
+      summary.textContent = "Status: " + result.status + " · Findings: " + result.finding_count +
+        (result.overall_score === null ? "" : " · Score: " + result.overall_score);
+      const section = document.createElement("div"); section.className = "reports";
+      for (const finding of (Array.isArray(result.findings) ? result.findings : [])) {
+        const card = document.createElement("article"); card.className = "report";
+        const title = document.createElement("strong"); title.textContent = String(finding.title || finding.check_id || finding.category || "Finding");
+        const detail = document.createElement("small"); detail.textContent = [finding.severity, finding.status, finding.source_url].filter(Boolean).join(" · ");
+        const evidence = document.createElement("p"); evidence.className = "muted"; evidence.textContent = String(finding.evidence || finding.explanation || "");
+        card.append(title, detail, evidence); section.append(card);
+      }
+      container.replaceChildren(heading, summary, section);
+    } catch (error) {
+      setStatus("bulkScanStatus", "Unable to load scan result. " + error.message, "error");
+    }
   }
   async function submitBulkScans() {
     if (!credential) { setStatus("bulkScanStatus", "Connect your license, API key, or customer account first.", "error"); return; }
