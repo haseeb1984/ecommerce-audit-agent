@@ -285,6 +285,7 @@ class OperationalDiagnosticEvent(HostingerBase):
     license_key = Column(String(100), nullable=True, index=True)
     domain = Column(String(255), nullable=True)
     error_type = Column(String(120), nullable=True)
+    legacy_source_id = Column(BigInteger, nullable=True, unique=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     __table_args__ = (
         Index("ix_operational_diagnostic_created", "created_at", "id"),
