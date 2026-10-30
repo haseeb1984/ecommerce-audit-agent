@@ -426,7 +426,8 @@
     $("profileTier").value = profile.tier || "—";
     const created = profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "unknown";
     const expires = profile.expires_at ? new Date(profile.expires_at).toLocaleDateString() : "no expiry set";
-    $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · Expiry: " + expires;
+    const billingPeriodEnd = profile.billing_period_ends_at ? new Date(profile.billing_period_ends_at).toLocaleDateString() : "not available";
+    $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · License expiry: " + expires + " · Current billing period ends: " + billingPeriodEnd;
     setStatus("profileStatus", "Account profile loaded.", "success");
     return profile;
   }

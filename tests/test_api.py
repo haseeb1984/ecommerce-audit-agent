@@ -3307,6 +3307,9 @@ async def test_paddle_subscription_update_unlinked_license_returns_retryable_503
 @pytest.mark.asyncio
 async def test_paddle_billing_period_end_is_saved_on_purchase_and_renewal(client, monkeypatch):
     secret = "paddle-billing-period-test-secret"
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_billingperiodstarter123")
     monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
