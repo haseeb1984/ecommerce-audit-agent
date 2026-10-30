@@ -25,6 +25,7 @@ Connect a WordPress or WooCommerce store to Ecommerce Audit Agent. Manage your l
 * Site identity bound to the authenticated SaaS license; one license can connect up to ten WordPress sites.
 * WordPress and WooCommerce version metadata for support visibility.
 * Live monthly quota, plan and entitlement information.
+* Billing history, subscription period visibility, and a secure Paddle customer-portal handoff.
 * Run a comprehensive audit and stream its PDF directly to the administrator browser.
 * List and securely proxy-download saved reports belonging to the connected license.
 * Admin-only connection settings, nonce-protected actions and local admin display branding.
