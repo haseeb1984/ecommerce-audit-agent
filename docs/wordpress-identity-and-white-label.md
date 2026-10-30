@@ -25,9 +25,9 @@ Eligible accounts can save a brand name, optional HTTPS logo URL, and six-digit 
 
 Apply migrations in order after the core SaaS schema:
 
-1. 20261030_customer_passwordless_auth.sql
-2. 20261030_paddle_billing_period.sql
-3. 20261029_white_label_branding.sql
+1. 20261029_white_label_branding.sql
+2. 20261030_customer_passwordless_auth.sql
+3. 20261030_paddle_billing_period.sql
 4. 20261030_customer_identity_wordpress_linking.sql
 
 For a new database, the core schema also includes the account-session, white-label, and WordPress identity tables. The migrations are idempotent for their create/index operations. Run python scripts/check_production_readiness.py against the intended staging schema after migration; it is read-only and does not apply schema changes.
