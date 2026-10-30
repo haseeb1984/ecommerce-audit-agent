@@ -4421,7 +4421,8 @@ async def admin_customer_account_action(
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"status": payload.action + "d" if payload.action == "suspend" else payload.action + "ed", "email": normalized, "license_count": len(ids), "changed_count": changed}
+    action_status = {"suspend": "suspended", "reactivate": "reactivated", "revoke_sessions": "sessions_revoked"}[payload.action]
+    return {"status": action_status, "email": normalized, "license_count": len(ids), "changed_count": changed}
 
 
 @app.post("/api/v1/admin/customers/notes")
