@@ -4298,13 +4298,10 @@ async def admin_customer_directory(
         PaymentWebhookEvent.recipient_email != "",
         PaymentWebhookEvent.license_id.is_not(None),
     ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email))
-    count_query = select(sql_func.count()).select_from(
-        select(sql_func.lower(PaymentWebhookEvent.recipient_email))
-        .where(
-            PaymentWebhookEvent.recipient_email.is_not(None),
-            PaymentWebhookEvent.recipient_email != "",
-            PaymentWebhookEvent.license_id.is_not(None),
-        ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email)).subquery()
+    count_query = select(sql_func.count(sql_func.distinct(sql_func.lower(PaymentWebhookEvent.recipient_email)))).where(
+        PaymentWebhookEvent.recipient_email.is_not(None),
+        PaymentWebhookEvent.recipient_email != "",
+        PaymentWebhookEvent.license_id.is_not(None),
     )
     if normalized:
         literal = normalized.replace("%", "").replace("_", "")
