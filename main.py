@@ -1519,6 +1519,13 @@ async def register_wordpress_site(
         )
         db.add(existing)
     else:
+        if existing.status != "active":
+            active_count = int((await db.execute(select(sql_func.count(WordPressSite.id)).where(
+                WordPressSite.license_id == license_obj.id,
+                WordPressSite.status == "active",
+            ))).scalar_one() or 0)
+            if active_count >= 10:
+                raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
         existing.site_url = site_url
         existing.admin_email = admin_email
         existing.plugin_version = payload.plugin_version.strip()
