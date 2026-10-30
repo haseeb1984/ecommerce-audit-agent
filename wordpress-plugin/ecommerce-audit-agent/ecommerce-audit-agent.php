@@ -271,11 +271,14 @@ function eaa_wp_render_admin_page() {
     $reports = array();
     $error = isset($settings['connection_error']) ? $settings['connection_error'] : '';
     if (!empty($settings['site_id']) && '' === $error) {
+        $status_response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
+        if (!is_wp_error($status_response)) {
+            $settings['last_status'] = eaa_wp_json($status_response);
+            update_option(EAA_WP_OPTION, $settings, false);
+        }
         $usage_response = eaa_wp_api_request('/api/v1/account/usage');
         if (!is_wp_error($usage_response)) {
             $usage = eaa_wp_json($usage_response);
-        } else {
-            $error = $usage_response->get_error_message();
         }
         $report_response = eaa_wp_api_request('/api/v1/reports?limit=10&offset=0');
         if (!is_wp_error($report_response)) {
@@ -305,6 +308,7 @@ function eaa_wp_render_admin_page() {
                     <?php if ($connected) : ?>
                         <p><?php esc_html_e('Site:', 'ecommerce-audit-agent'); ?> <?php echo esc_html(home_url('/')); ?></p>
                         <p><?php esc_html_e('WordPress site ID:', 'ecommerce-audit-agent'); ?> <code><?php echo esc_html($settings['site_id']); ?></code></p>
+                        <?php if (!empty($settings['last_status']['license']['entitlement_state'])) : ?><p><?php esc_html_e('SaaS entitlement:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html($settings['last_status']['license']['entitlement_state']); ?></strong></p><?php endif; ?>
                         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                             <input type="hidden" name="action" value="eaa_disconnect_site">
                             <?php wp_nonce_field('eaa_disconnect_site'); ?>
