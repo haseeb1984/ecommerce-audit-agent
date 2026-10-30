@@ -4955,7 +4955,7 @@ async def admin_add_customer_note(
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"id": created["id"], "email": normalized, "created_at": created["created_at"].isoformat() if created["created_at"] else None}
+    return {"id": created.id, "email": normalized, "created_at": created.created_at.isoformat() if created.created_at else None}
 
 
 @app.get("/api/v1/admin/clients/{license_id}/sessions")
