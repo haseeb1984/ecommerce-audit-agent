@@ -9,10 +9,13 @@ from database import Base
 
 class SoftwareLicense(Base):
     __tablename__ = "software_licenses"
+    __table_args__ = (Index("uq_software_licenses_account_email_lower", func.lower("account_email"), unique=True),)
 
     id = Column(Integer, primary_key=True, index=True)
     license_key = Column(String(100), unique=True, nullable=False, index=True)
     client_name = Column(String(255), nullable=False)
+    # Canonical verified billing identity: one normalized email owns one SaaS license.
+    account_email = Column(String(255), nullable=True)
     tier = Column(String(50), default="starter")
     max_monthly_audits = Column(Integer, default=100)
     is_active = Column(Boolean, default=True)
