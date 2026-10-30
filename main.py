@@ -1072,6 +1072,80 @@ async def logout_all_account_sessions(
     return {"status": "sessions_revoked", "revoked_count": int(result.rowcount or 0)}
 
 
+@app.get("/api/v1/account/auth/sessions")
+async def list_customer_device_sessions(
+    response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List safe metadata for browser sessions belonging to the verified customer email."""
+    from sqlalchemy import select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Email sign-in is required to manage devices.")
+    digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == digest,
+        AccountSession.revoked_at.is_(None),
+    ))).scalar_one_or_none()
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    rows = (await db.execute(select(AccountSession).where(
+        AccountSession.email == current.email,
+    ).order_by(AccountSession.created_at.desc()).limit(100))).scalars().all()
+    now = datetime.now(timezone.utc)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "items": [{
+            "session_id": item.session_id,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
+            "status": "revoked" if item.revoked_at else (
+                "expired" if (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now
+                else "active"
+            ),
+            "current": item.token_hash == digest,
+        } for item in rows],
+        "total": len(rows),
+    }
+
+
+@app.delete("/api/v1/account/auth/sessions/{session_id}")
+async def revoke_customer_device_session(
+    session_id: str,
+    response: Response,
+    credentials=Depends(CUSTOMER_BEARER),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Revoke one browser session only when it belongs to the caller's verified email."""
+    from sqlalchemy import select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Email sign-in is required to manage devices.")
+    digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = (await db.execute(select(AccountSession).where(
+        AccountSession.token_hash == digest,
+        AccountSession.revoked_at.is_(None),
+    ))).scalar_one_or_none()
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    target = (await db.execute(select(AccountSession).where(
+        AccountSession.session_id == session_id,
+        AccountSession.email == current.email,
+    ).with_for_update())).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Customer session not found.")
+    if target.revoked_at is None:
+        target.revoked_at = datetime.now(timezone.utc)
+        await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "current_session": target.token_hash == digest}
+
+
 @app.get("/api/v1/account/licenses")
 async def list_customer_account_licenses(
     response: Response,
