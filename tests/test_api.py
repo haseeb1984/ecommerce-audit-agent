@@ -3227,7 +3227,7 @@ async def test_paddle_subscription_update_after_cancellation_is_sticky(client, m
     secret = "paddle-test-canceled-plan-update-secret"
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
     monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_canceledpro123")
-    license_id = await create_license(key="canceled-plan-update-license", quota=100)
+    license_id = await create_license(key="canceled-plan-update-license", quota=100, active=False)
     async with AsyncSessionLocal() as db:
         db.add(PaymentWebhookEvent(
             event_id="evt_seed_canceled_plan_update",
