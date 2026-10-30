@@ -116,7 +116,7 @@ async def main() -> int:
             FROM information_schema.columns
             WHERE table_schema = current_schema()
         """))).all()
-        index_rows = (await db.execute(__import__("sqlalchemy").text("""
+        index_rows = (await db.execute(text("""
             SELECT indexname
             FROM pg_indexes
             WHERE schemaname = current_schema()
