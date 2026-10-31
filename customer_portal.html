@@ -21,8 +21,14 @@
 <section class="panel">
 <h2>1. Connect your license</h2>
 <p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
-<div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
-<div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
+<div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option><option value="X-Customer-Session">Customer session</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
+<div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div>
+<hr>
+<h3>Passwordless customer sign-in</h3>
+<p class="muted">Enter the email address registered to your account. If it matches an account, a one-time token will be sent. The token expires after 10 minutes.</p>
+<div class="row"><div><label for="loginEmail">Account email</label><input id="loginEmail" type="email" maxlength="254" autocomplete="email" placeholder="name@example.com"></div><div><label for="loginToken">Sign-in token</label><input id="loginToken" type="text" maxlength="128" autocomplete="one-time-code" placeholder="Paste the emailed token"></div></div>
+<div class="report-actions"><button id="requestLogin" type="button">Email me a sign-in token</button><button id="verifyLogin" class="secondary" type="button">Verify token and sign in</button></div>
+<div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
 </section>
 <section class="panel" aria-labelledby="profileHeading">
 <h2 id="profileHeading">Account profile</h2>
@@ -871,6 +877,48 @@
     $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
+  $("requestLogin").addEventListener("click", async () => {
+    const email = $("loginEmail").value.trim();
+    if (!email) { setStatus("connectStatus", "Enter your account email address.", "error"); return; }
+    const button = $("requestLogin"); button.disabled = true;
+    try {
+      const response = await fetch("/api/v1/account/login", {
+        method: "POST", cache: "no-store",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({email})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to request a sign-in token.");
+      setStatus("connectStatus", data.message || "If an account matches, a sign-in token has been sent.", "success");
+    } catch (error) {
+      setStatus("connectStatus", error.message, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("verifyLogin").addEventListener("click", async () => {
+    const token = $("loginToken").value.trim();
+    if (!token) { setStatus("connectStatus", "Paste the one-time sign-in token from your email.", "error"); return; }
+    const button = $("verifyLogin"); button.disabled = true;
+    try {
+      const response = await fetch("/api/v1/account/login/verify", {
+        method: "POST", cache: "no-store",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Sign-in token could not be verified.");
+      $("loginToken").value = "";
+      $("authType").value = "X-Customer-Session";
+      $("credential").value = data.session_token;
+      setStatus("connectStatus", "Sign-in verified. Loading your customer account…", "success");
+      $("connect").click();
+    } catch (error) {
+      setStatus("connectStatus", error.message, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
@@ -910,7 +958,17 @@
       if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
     }
   });
-  $("disconnectAccount").addEventListener("click", () => {
+  $("disconnectAccount").addEventListener("click", async () => {
+    if (headerName === "X-Customer-Session" && credential) {
+      try {
+        await fetch("/api/v1/account/logout", {
+          method: "POST", cache: "no-store",
+          headers: {"X-Customer-Session": credential}
+        });
+      } catch (error) {
+        // Local credentials and account data are still cleared if the network is unavailable.
+      }
+    }
     accountSessionVersion += 1;
     credential = "";
     headerName = "X-License-Key";
