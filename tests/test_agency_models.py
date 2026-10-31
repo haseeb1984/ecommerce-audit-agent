@@ -5,6 +5,8 @@ from hostinger_models import (
     AgencyTeamMember,
     AgencyWorkspaceAccess,
     AgencyUsageEvent,
+    AgencyTeamLoginChallenge,
+    AgencyTeamSession,
     ScanBatch,
 )
 
@@ -74,3 +76,15 @@ def test_agency_usage_ledger_has_idempotency_and_workspace_ownership():
 def test_scan_batches_can_be_attributed_to_a_client_workspace():
     assert "workspace_id" in ScanBatch.__table__.columns
     assert ("workspace_id", "agency_client_workspaces.id") in _foreign_key_targets(ScanBatch)
+
+
+def test_agency_team_authentication_models_are_tenant_scoped():
+    assert AgencyTeamLoginChallenge.__tablename__ == "agency_team_login_challenges"
+    assert AgencyTeamSession.__tablename__ == "agency_team_sessions"
+    challenge_targets = _foreign_key_targets(AgencyTeamLoginChallenge)
+    assert ("agency_id", "agency_accounts.id") in challenge_targets
+    assert ("team_member_id", "agency_team_members.id") in challenge_targets
+    session_targets = _foreign_key_targets(AgencyTeamSession)
+    assert ("agency_id", "agency_accounts.id") in session_targets
+    assert ("team_member_id", "agency_team_members.id") in session_targets
+    assert "token_hash" in AgencyTeamSession.__table__.columns
