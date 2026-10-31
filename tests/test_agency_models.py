@@ -2,6 +2,7 @@ from hostinger_models import (
     AgencyAccount,
     AgencyClientWorkspace,
     AgencyClientWebsite,
+    AgencyWebsiteConnectChallenge,
     AgencyTeamMember,
     AgencyWorkspaceAccess,
     AgencyUsageEvent,
@@ -88,3 +89,14 @@ def test_agency_team_authentication_models_are_tenant_scoped():
     assert ("agency_id", "agency_accounts.id") in session_targets
     assert ("team_member_id", "agency_team_members.id") in session_targets
     assert "token_hash" in AgencyTeamSession.__table__.columns
+
+
+def test_agency_website_connection_credentials_are_workspace_scoped():
+    assert AgencyClientWebsite.status.default.arg == "pending"
+    assert "site_token_hash" in AgencyClientWebsite.__table__.columns
+    assert AgencyClientWebsite.site_token_hash.unique is True
+    assert AgencyWebsiteConnectChallenge.__tablename__ == "agency_website_connect_challenges"
+    targets = _foreign_key_targets(AgencyWebsiteConnectChallenge)
+    assert ("agency_id", "agency_accounts.id") in targets
+    assert ("workspace_id", "agency_client_workspaces.id") in targets
+    assert AgencyWebsiteConnectChallenge.token_hash.unique is True
