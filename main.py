@@ -2439,8 +2439,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=now,
             updated_at=now,
         ))
-        if changed:
-            await _enqueue_customer_lifecycle_sync(db, license_obj.license_key, "suspend")
+        # Reconcile the operational account even if the canonical license was
+        # already inactive; Hostinger may have missed an earlier lifecycle event.
+        await _enqueue_customer_lifecycle_sync(db, license_obj.license_key, "suspend")
         await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         if changed:
