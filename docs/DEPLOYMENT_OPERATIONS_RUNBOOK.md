@@ -121,3 +121,11 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Queue counts are aggregated from Hostinger operational tables. Failed-job details use `failed_limit` (default 25, maximum 100) and `failed_offset` query parameters; the response includes total count and `failed_jobs_has_more` so administrators can page through the entire failed-job set without an unbounded result. The display includes only job/batch IDs, mapped license ID, hostname, attempt counts, safe error code, and timestamps—not full target URLs, credentials, or customer secrets.
 - The endpoint reads scan batches/jobs from Hostinger and maps license keys to license IDs using the licensing database. Both database dependencies must be healthy for complete customer mapping; an unmapped license is shown as such rather than exposing its license key.
 - This is an operator snapshot, not a live stream. Use **Refresh diagnostics** to request a new snapshot. The panel does not retry, cancel, or otherwise mutate jobs.
+
+
+### WordPress connection health and customer recovery
+
+- The customer portal lists WordPress installations for the currently selected license only. Active installations report connection_health=healthy while their last plugin heartbeat is within seven days; an active installation with no heartbeat or a heartbeat older than seven days reports connection_health=stale.
+- Staleness is an operational signal, not proof that the site is offline or disconnected. It is calculated from the persisted last_seen_at value and does not mutate the installation status or revoke access.
+- For a stale connection, ask the customer to confirm that the Ecommerce Audit Agent plugin remains active in WordPress Admin, that the site can make outbound HTTPS requests, and that the plugin connection settings still contain the intended license. Reconnect from the plugin settings; registration for the same license and hostname refreshes the existing installation record rather than creating a duplicate.
+- Disconnected installations remain visible in account history but are not marked stale. Reconnection is subject to the existing per-license active-site limit and license authentication.
