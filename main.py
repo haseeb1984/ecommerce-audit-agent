@@ -3208,6 +3208,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
                 .limit(1)
             )).scalar_one_or_none()
+            if prior_transaction_event is not None and prior_transaction_event.subscription_id:
+                subscription_id = prior_transaction_event.subscription_id
         else:
             raise HTTPException(status_code=503, detail="Payment-failure event is awaiting transaction reconciliation.")
         duplicate = (await db.execute(
@@ -3251,7 +3253,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             recipient_email=linked_event.recipient_email,
             transaction_id=(str(transaction.get("id") or "")[:100] or None)
                 if event_type == "transaction.payment_failed" else None,
-            subscription_id=subscription_id,
+            subscription_id=subscription_id or None,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
         ))
         await db.commit()
