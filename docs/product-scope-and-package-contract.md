@@ -119,7 +119,7 @@ Still outstanding:
 - The owner can revoke a teammate; revocation also revokes that member's active sessions. Sessions can also be ended by the member.
 - Dedicated team portal is served at `/agency`; it stores the opaque team session in browser session storage and offers assigned-workspace audit batch history.
 - New operational tables are included in the additive agency migration. The migration remains unapplied in production.
-- Team member access covers assigned-workspace audit batch status/history and structured saved findings/evidence. It does not yet expose client-level quota/usage details, WordPress audit execution, or team member write operations.
+- Team member access covers assigned-workspace audit batch status/history and structured saved findings/evidence. Client-level quota/usage details are currently owner-only, and team member write operations remain outstanding.
 
 
 ### Business agency WordPress client-site connection
@@ -130,7 +130,7 @@ Still outstanding:
 - The agency owner can inspect the connected client website and revoke it from the customer portal. Revocation invalidates the site credential; the client can be reconnected using a newly generated token.
 - Agency website rows default to `pending`; a site becomes `active` only after a valid, unexpired owner-issued token is presented by the WordPress plugin.
 - This is an owner-authorized plugin connection, not a DNS challenge. The agency owner should issue the token only to the intended client site administrator.
-- Plugin-based agency audit execution and full client report/evidence access remain outstanding; the standard single-license WordPress audit flow is unchanged.
+- Agency WordPress plugin can now queue client page audits using its separate site credential, and the agency portal exposes structured findings/evidence. Agency-specific PDF export remains deferred; the standard single-license WordPress PDF flow is unchanged.
 
 
 ### Client-specific audit evidence access
@@ -156,3 +156,11 @@ Still outstanding:
 - A standard customer license can submit multiple pages only when every URL belongs to one hostname. The first accepted audit binds an otherwise-unbound license; later submissions to a different hostname are rejected.
 - If a standard license has conflicting historical host bindings, the queue fails closed rather than silently granting multi-site access.
 - Business agency submissions are handled separately: the selected workspace must have an active owner-authorized WordPress connection, and every submitted URL hostname must match that connected client website.
+
+
+### Agency WordPress plugin audit queue
+
+- The official plugin's agency-client mode now includes a client-page audit form. It submits through `POST /api/v1/integrations/wordpress/agency/sites/audits` using the dedicated site credential, never the agency owner's license key.
+- The API checks the active agency/site credential, current non-expired Business license, active client workspace, HTTPS scheme and exact connected website hostname before enqueueing.
+- Jobs are queued with the selected workspace ID and use the same Business license quota/concurrency controls as other audits. Completion records the structured result and idempotent per-client usage event.
+- The agency plugin mode reports that the job was queued and directs users to the SaaS dashboard for progress and findings; it does not generate a separate client PDF in this phase.
