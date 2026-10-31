@@ -1121,11 +1121,12 @@ async def create_customer_website(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     factory = await _ensure_hostinger_operational_schema()
+    url_hash = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
     async with factory() as operational_db:
         existing = (await operational_db.execute(
             select(CustomerWebsite).where(
                 CustomerWebsite.license_key == license_obj.license_key,
-                CustomerWebsite.canonical_url == canonical_url,
+                CustomerWebsite.url_hash == url_hash,
                 CustomerWebsite.status == "active",
             )
         )).scalar_one_or_none()
@@ -1133,11 +1134,13 @@ async def create_customer_website(
             return {"id": existing.id, "website_url": existing.canonical_url,
                     "display_name": existing.display_name, "status": existing.status,
                     "already_registered": True}
+        requested_name = (payload.display_name or "").strip()
         website = CustomerWebsite(
             id=secrets.token_hex(24),
             license_key=license_obj.license_key,
-            display_name=(payload.display_name or urlsplit(canonical_url).hostname or "Website").strip()[:120],
+            display_name=(requested_name or urlsplit(canonical_url).hostname or "Website")[:120],
             canonical_url=canonical_url,
+            url_hash=url_hash,
             status="active",
         )
         operational_db.add(website)
@@ -1148,7 +1151,7 @@ async def create_customer_website(
             existing = (await operational_db.execute(
                 select(CustomerWebsite).where(
                     CustomerWebsite.license_key == license_obj.license_key,
-                    CustomerWebsite.canonical_url == canonical_url,
+                    CustomerWebsite.url_hash == url_hash,
                 )
             )).scalar_one_or_none()
             if existing is None:
