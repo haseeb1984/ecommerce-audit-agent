@@ -129,6 +129,7 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Staleness is an operational signal, not proof that the site is offline or disconnected. It is calculated from the persisted last_seen_at value and does not mutate the installation status or revoke access.
 - For a stale connection, ask the customer to confirm that the Ecommerce Audit Agent plugin remains active in WordPress Admin, that the site can make outbound HTTPS requests, and that the plugin connection settings still contain the intended license. Reconnect from the plugin settings; registration for the same license and hostname refreshes the existing installation record rather than creating a duplicate.
 - Disconnected installations remain visible in account history but are not marked stale. Reconnection is subject to the existing per-license active-site limit and license authentication.
+- WordPress registration acquires a PostgreSQL row lock on the canonical license before reading or changing Hostinger account/installation rows. Requests for the same license therefore serialize even when the customer account is being created for the first time, preventing concurrent registrations from exceeding the 10-active-site cap. The lock is held through the Hostinger commit; registrations for different licenses remain independent.
 
 
 ### Customer lifecycle outbox ordering and retry safety
