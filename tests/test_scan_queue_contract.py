@@ -69,6 +69,8 @@ class _OutboxSession:
 
     def add(self, item):
         self.items.append(item)
+        if hasattr(item, "event_id"):
+            self.existing.add(item.event_id)
 
 
 @pytest.mark.asyncio
