@@ -97,6 +97,8 @@ async def apply_response_security_headers(request: Request, call_next):
         "/api/v1/admin/",
         "/api/v1/account/",
         "/api/v1/reports",
+        "/api/v1/websites/",
+        "/api/v1/scans/",
         "/admin",
         "/app",
     )
