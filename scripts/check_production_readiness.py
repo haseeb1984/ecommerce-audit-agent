@@ -34,6 +34,8 @@ REQUIRED_ENV_GROUPS = {
     "pagespeed_audits": ("GOOGLE_PAGESPEED_API_KEY", "PAGE_SPEED_API_KEY"),
     "ai_provider": ("GROQ_API_KEY",),
     "customer_account_auth": ("ACCOUNT_AUTH_SECRET",),
+    "hostinger_operational_database": ("HOSTINGER_DATABASE_URL",),
+    "scheduled_scan_worker": ("SCAN_WORKER_TOKEN",),
 }
 
 
@@ -145,12 +147,74 @@ async def main() -> int:
     observed_indexes = {row[0] for row in index_rows}
     missing_indexes = sorted(required_indexes - observed_indexes)
 
-    print(f"database_connectivity: PASS ({len(observed)} tables visible in current schema)")
-    print("schema_readiness: " + ("PASS" if not missing and not missing_indexes else "FAIL"))
+    print(f"postgres_connectivity: PASS ({len(observed)} tables visible in current schema)")
+    print("postgres_schema_readiness: " + ("PASS" if not missing and not missing_indexes else "FAIL"))
     for item in missing:
-        print(f"missing_schema_item: {item}")
+        print(f"postgres_missing_schema_item: {item}")
     for index_name in missing_indexes:
-        print(f"missing_schema_index: {index_name}")
+        print(f"postgres_missing_schema_index: {index_name}")
+
+    # The operational database is a separate schema owner and must be checked
+    # independently; a healthy Supabase connection does not imply Hostinger is ready.
+    hostinger_missing: list[str] = []
+    hostinger_missing_indexes: list[str] = []
+    try:
+        from sqlalchemy import UniqueConstraint
+        from hostinger_database import HostingerBase, hostinger_engine
+        import hostinger_models  # noqa: F401
+
+        if hostinger_engine is None:
+            print("hostinger_connectivity: FAIL (HOSTINGER_DATABASE_URL is not configured)")
+            hostinger_missing.append("connection:HOSTINGER_DATABASE_URL")
+        else:
+            hostinger_required_tables = set(HostingerBase.metadata.tables)
+            hostinger_required_columns = {
+                table_name: {column.name for column in table.columns}
+                for table_name, table in HostingerBase.metadata.tables.items()
+            }
+            hostinger_required_indexes = {
+                index.name
+                for table in HostingerBase.metadata.tables.values()
+                for index in table.indexes
+                if index.name
+            } | {
+                constraint.name
+                for table in HostingerBase.metadata.tables.values()
+                for constraint in table.constraints
+                if isinstance(constraint, UniqueConstraint) and constraint.name
+            }
+            async with hostinger_engine.connect() as operational_db:
+                hostinger_rows = (await operational_db.execute(text("""
+                    SELECT table_name, column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = DATABASE()
+                """))).all()
+                hostinger_index_rows = (await operational_db.execute(text("""
+                    SELECT DISTINCT index_name
+                    FROM information_schema.statistics
+                    WHERE table_schema = DATABASE()
+                """))).all()
+            hostinger_observed: dict[str, set[str]] = {}
+            for table_name, column_name in hostinger_rows:
+                hostinger_observed.setdefault(table_name, set()).add(column_name)
+            for table_name in sorted(hostinger_required_tables):
+                if table_name not in hostinger_observed:
+                    hostinger_missing.append(f"table:{table_name}")
+                    continue
+                for column in sorted(hostinger_required_columns[table_name] - hostinger_observed[table_name]):
+                    hostinger_missing.append(f"column:{table_name}.{column}")
+            hostinger_observed_indexes = {row[0] for row in hostinger_index_rows}
+            hostinger_missing_indexes = sorted(hostinger_required_indexes - hostinger_observed_indexes)
+            print(f"hostinger_connectivity: PASS ({len(hostinger_observed)} tables visible in current database)")
+            print("hostinger_schema_readiness: " + ("PASS" if not hostinger_missing and not hostinger_missing_indexes else "FAIL"))
+            for item in hostinger_missing:
+                print(f"hostinger_missing_schema_item: {item}")
+            for index_name in hostinger_missing_indexes:
+                print(f"hostinger_missing_schema_index: {index_name}")
+            await hostinger_engine.dispose()
+    except Exception as exc:
+        hostinger_missing.append(f"inspection:{type(exc).__name__}")
+        print(f"hostinger_connectivity: FAIL ({type(exc).__name__})", file=sys.stderr)
 
     failed_configuration, details = _configuration_status()
     for group in failed_configuration:
@@ -158,7 +222,7 @@ async def main() -> int:
     for detail in details:
         print(f"configuration_detail: {detail}")
 
-    return 1 if missing or missing_indexes or failed_configuration else 0
+    return 1 if missing or missing_indexes or hostinger_missing or hostinger_missing_indexes or failed_configuration else 0
 
 
 if __name__ == "__main__":
