@@ -18,6 +18,8 @@ from hostinger_models import (
     CustomerWebsite,
     ScanBatch,
     WebsiteScanJob,
+    AgencyAccount,
+    AgencyUsageEvent,
 )
 
 
@@ -373,6 +375,33 @@ async def complete_scan_job(
                 details_json=json.dumps({"batch_id": job.batch_id}),
                 created_at=now,
             ))
+        if batch is not None and batch.workspace_id:
+            agency = await db.scalar(select(AgencyAccount).where(
+                AgencyAccount.owner_license_key == job.license_key
+            ))
+            if agency is not None:
+                agency_usage_reference = f"scan-complete:{job.id}"
+                agency_usage_exists = await db.scalar(select(AgencyUsageEvent.id).where(
+                    AgencyUsageEvent.agency_id == agency.id,
+                    AgencyUsageEvent.source_reference == agency_usage_reference,
+                ))
+                if agency_usage_exists is None:
+                    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    if month_start.month == 12:
+                        period_end = month_start.replace(year=month_start.year + 1, month=1)
+                    else:
+                        period_end = month_start.replace(month=month_start.month + 1)
+                    db.add(AgencyUsageEvent(
+                        id=uuid.uuid4().hex,
+                        agency_id=agency.id,
+                        workspace_id=batch.workspace_id,
+                        event_type="audit_completed",
+                        quantity=1,
+                        period_start=month_start,
+                        period_end=period_end,
+                        source_reference=agency_usage_reference,
+                        created_at=now,
+                    ))
         await db.commit()
         return True
     except Exception:
