@@ -174,3 +174,7 @@ Still outstanding:
 - Regression tests were added for agency usage ledger idempotency, missing/revoked WordPress credentials, cross-client domain rejection, successful workspace-scoped queue submission, and admin suspension session revocation.
 - Customer portal guidance now reflects the implemented agency workflow and links team members to the separate `/agency` portal.
 - CI was observed for the latest changes, but GitHub reported a failed job with no executed steps (`steps: []`). This is runner/job initialization failure evidence, not a test assertion result; source remains unverified by CI.
+
+- Agency owners can now update and remove individual workspace grants for existing active team members from the customer portal; each selected workspace grant has its own Viewer/Analyst/Admin role.
+- Platform suspension is enforced across owner-side agency provisioning, team management, client listing, and client updates, in addition to blocking team-member sessions and WordPress site-token access. Reactivation does not silently restore previously revoked team sessions.
+- Added regression coverage for removing one workspace grant and ensuring a suspended agency cannot list its client workspaces.
