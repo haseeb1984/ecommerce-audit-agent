@@ -5098,7 +5098,7 @@ async def admin_customer_directory(
 ):
     """Account directory aggregated from Hostinger billing identities."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func, distinct, union
+    from sqlalchemy import select, func as sql_func, distinct, union, literal
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     normalized = search.strip().lower()
@@ -5118,7 +5118,7 @@ async def admin_customer_directory(
         select(
             sql_func.lower(CustomerAccount.email).label("email"),
             CustomerAccount.license_key.label("license_key"),
-            CustomerAccount.updated_at.label("activity_at"),
+            literal(None).label("activity_at"),
         ).where(
             CustomerAccount.email.is_not(None),
             CustomerAccount.email != "",
