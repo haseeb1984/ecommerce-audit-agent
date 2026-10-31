@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS scan_batches (
   processing_count INT NOT NULL DEFAULT 0,
   completed_count INT NOT NULL DEFAULT 0,
   failed_count INT NOT NULL DEFAULT 0,
+  cancelled_count INT NOT NULL DEFAULT 0,
   status VARCHAR(24) NOT NULL DEFAULT 'queued',
   available_at DATETIME(6) NOT NULL,
   started_at DATETIME(6) NULL,
