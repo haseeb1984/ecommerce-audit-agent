@@ -83,7 +83,7 @@ class CustomerEmailIdentitySyncOutbox(HostingerBase):
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    license_key = Column(String(100), nullable=True, index=True)
+    license_key = Column(String(100), nullable=True)
     old_email = Column(String(254), nullable=False, index=True)
     new_email = Column(String(254), nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)
