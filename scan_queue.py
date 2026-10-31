@@ -138,6 +138,9 @@ async def enqueue_scan_request(
                         CustomerWebsite.normalized_url == target_url,
                     )
                 )
+                if website is not None and website.status != "active":
+                    website.status = "active"
+                    website.updated_at = now
                 if website is None:
                     website = CustomerWebsite(
                         id=uuid.uuid4().hex,
