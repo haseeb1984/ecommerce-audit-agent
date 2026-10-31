@@ -78,3 +78,11 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Keep live Paddle credentials disabled until sandbox lifecycle verification is complete.
 - Do not put database URLs, provider credentials, license keys, customer tokens, or administrator keys in logs or source control.
 - Treat the final PDF/report storage and presentation refinement as a separate final product phase; this runbook does not claim that phase is complete.
+
+## WordPress connection lifecycle
+
+- A WordPress registration is scoped to the saved license credential and configured HTTPS API base. When either identity changes in plugin settings, the plugin first requests disconnection using the previous saved credential and endpoint; it does not overwrite the old identity if that retirement request fails.
+- A disconnect response of HTTP 404 is treated as already disconnected, allowing stale local site identifiers to be cleared safely. Other API failures retain the saved registration and block credential replacement until connectivity is restored.
+- Disconnecting an installation from the SaaS customer portal is reflected in the plugin on its next scheduled status sync. A 404 status response clears the stale local site identifier and asks the administrator to save settings to register again.
+- Plugin deactivation only removes its scheduled status-sync event; it does not revoke the SaaS registration. This avoids treating temporary plugin deactivation as an explicit account disconnect. Use the plugin's Disconnect action or the SaaS customer portal when the installation should be retired.
+- The SaaS customer portal disconnect is scoped to the currently selected license. It retains audit history, license records, and billing history. Reconnection is an explicit plugin settings save.
