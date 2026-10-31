@@ -320,6 +320,7 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
             )).scalar_one_or_none()
             if event is None:
                 break
+            event_id = event.id
             try:
                 # Reapplying the same recipient update is safe if PostgreSQL committed
                 # but the Hostinger acknowledgement was interrupted.
@@ -337,7 +338,7 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 await operational_db.rollback()
                 # Re-read after rollback; the row lock is released and a retry is
                 # scheduled with capped exponential backoff.
-                retry_event = await operational_db.get(CustomerEmailIdentitySyncOutbox, event.id)
+                retry_event = await operational_db.get(CustomerEmailIdentitySyncOutbox, event_id)
                 if retry_event is not None:
                     retry_event.attempts = int(retry_event.attempts or 0) + 1
                     retry_event.last_error = type(exc).__name__[:120]
@@ -347,27 +348,28 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 counts["deferred"] += 1
                 logger.warning(
                     "Customer email identity sync deferred (event_id=%s, error_type=%s)",
-                    event.id, type(exc).__name__,
+                    event_id, type(exc).__name__,
                 )
     return counts
 
 
 async def cleanup_expired_customer_auth_records(*, batch_size: int = 500) -> dict:
-    """Bounded retention cleanup for expired customer authentication records."""
+    """Bounded retention cleanup for authentication records and completed sync events."""
     if batch_size < 1 or batch_size > 2000:
         raise ValueError("batch_size must be between 1 and 2000.")
-    from datetime import timedelta
     now = datetime.now(timezone.utc)
+    outbox_retention_cutoff = now - timedelta(days=90)
     challenge_expiry_cutoff = now - timedelta(days=7)
     challenge_retention_cutoff = now - timedelta(days=30)
     session_retention_cutoff = now - timedelta(days=30)
-    counts = {"login_challenges_deleted": 0, "email_change_challenges_deleted": 0, "sessions_deleted": 0}
+    counts = {"login_challenges_deleted": 0, "email_change_challenges_deleted": 0, "sessions_deleted": 0, "email_identity_outbox_deleted": 0}
     async with HostingerAsyncSessionLocal() as operational_db:
         try:
             cleanup_targets = (
                 (CustomerLoginChallenge, CustomerLoginChallenge.id, or_(CustomerLoginChallenge.expires_at < challenge_expiry_cutoff, CustomerLoginChallenge.consumed_at < challenge_retention_cutoff), "login_challenges_deleted"),
                 (CustomerEmailChangeChallenge, CustomerEmailChangeChallenge.id, or_(CustomerEmailChangeChallenge.expires_at < challenge_expiry_cutoff, CustomerEmailChangeChallenge.consumed_at < challenge_retention_cutoff), "email_change_challenges_deleted"),
                 (CustomerSession, CustomerSession.token_hash, or_(CustomerSession.expires_at < session_retention_cutoff, CustomerSession.revoked_at < session_retention_cutoff), "sessions_deleted"),
+                (CustomerEmailIdentitySyncOutbox, CustomerEmailIdentitySyncOutbox.id, (CustomerEmailIdentitySyncOutbox.status == "completed") & (CustomerEmailIdentitySyncOutbox.processed_at < outbox_retention_cutoff), "email_identity_outbox_deleted"),
             )
             for model, key_column, condition, count_key in cleanup_targets:
                 identifiers = list((await operational_db.execute(select(key_column).where(condition).order_by(key_column).limit(batch_size))).scalars().all())
