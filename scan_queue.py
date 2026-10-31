@@ -579,6 +579,74 @@ async def cancel_scan_batch(
         raise
 
 
+async def retry_failed_scan_job(
+    db: AsyncSession,
+    *,
+    job_id: str,
+    license_key: str,
+) -> dict | None:
+    """Requeue one terminally failed job at the customer's explicit request.
+
+    A cancelled/cancel-requested batch is never reopened. The original job ID and
+    idempotency key are retained so quota consumption remains idempotent.
+    """
+    now = _utcnow()
+    try:
+        job = await db.scalar(
+            select(WebsiteScanJob)
+            .where(
+                WebsiteScanJob.id == job_id,
+                WebsiteScanJob.license_key == license_key,
+            )
+            .with_for_update()
+        )
+        if job is None:
+            await db.rollback()
+            return None
+        if job.status != "failed":
+            await db.rollback()
+            return {"job_id": job.id, "status": "not_retryable"}
+
+        batch = await db.scalar(
+            select(ScanBatch)
+            .where(
+                ScanBatch.id == job.batch_id,
+                ScanBatch.license_key == license_key,
+            )
+            .with_for_update()
+        )
+        if batch is None:
+            await db.rollback()
+            return None
+        if batch.status != "failed" or batch.cancelled_count:
+            await db.rollback()
+            return {"job_id": job.id, "status": "not_retryable"}
+
+        job.status = "retry_wait"
+        job.attempt_count = 0
+        job.next_attempt_at = now
+        job.locked_at = None
+        job.locked_by = None
+        job.last_error_code = None
+        job.result_reference = None
+        job.completed_at = None
+        batch.failed_count = max(0, int(batch.failed_count or 0) - 1)
+        batch.queued_count = int(batch.queued_count or 0) + 1
+        batch.status = "queued"
+        batch.completed_at = None
+        batch.available_at = now
+        await db.commit()
+        return {
+            "job_id": job.id,
+            "batch_id": batch.id,
+            "status": "retry_wait",
+            "next_attempt_at": job.next_attempt_at,
+        }
+    except Exception:
+        await db.rollback()
+        raise
+
+
 async def renew_scan_job_lease(
     db: AsyncSession,
     *,
