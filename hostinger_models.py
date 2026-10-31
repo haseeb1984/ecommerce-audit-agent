@@ -96,7 +96,7 @@ class CustomerWebsite(HostingerBase):
     """A customer-owned public storefront registered for repeatable scans."""
     __tablename__ = "customer_websites"
     __table_args__ = (
-        UniqueConstraint("license_key", "canonical_url", name="uq_customer_websites_license_url"),
+        UniqueConstraint("license_key", "url_hash", name="uq_customer_websites_license_url"),
         Index("ix_customer_websites_license_updated", "license_key", "updated_at"),
     )
 
@@ -104,6 +104,7 @@ class CustomerWebsite(HostingerBase):
     license_key = Column(String(100), nullable=False, index=True)
     display_name = Column(String(120), nullable=False)
     canonical_url = Column(String(2048), nullable=False)
+    url_hash = Column(String(64), nullable=False)
     status = Column(String(20), nullable=False, default="active", index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
