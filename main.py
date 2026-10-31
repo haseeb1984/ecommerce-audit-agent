@@ -2268,10 +2268,9 @@ async def register_agency_wordpress_site(
         AgencyClientWebsite.agency_id == agency.id,
         AgencyClientWebsite.site_host == host,
         AgencyClientWebsite.workspace_id != workspace.id,
-        AgencyClientWebsite.status == "active",
     ))
     if agency_host_owner is not None:
-        raise HTTPException(status_code=409, detail="This website is already connected to another client workspace in this agency.")
+        raise HTTPException(status_code=409, detail="This website is already assigned to another client workspace in this agency. Contact the agency owner before moving it.")
     active_site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
         AgencyClientWebsite.workspace_id == workspace.id,
