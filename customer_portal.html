@@ -54,6 +54,17 @@
   <div id="emailChangeStatus" class="status" role="status" aria-live="polite">Sign in with email to change your account address.</div>
 </div>
 </section>
+<section class="panel" aria-labelledby="brandingHeading">
+<h2 id="brandingHeading">White-label branding</h2>
+<p class="muted">Configure the brand identity used by supported white-label experiences. This section is available on plans that include white-label branding.</p>
+<div class="row">
+  <div><label for="brandName">Brand name</label><input id="brandName" type="text" maxlength="100" placeholder="Your agency name"></div>
+  <div><label for="brandColor">Primary brand color</label><input id="brandColor" type="color" value="#155a8a" style="width:100%;min-height:44px"></div>
+</div>
+<label for="brandLogoUrl">Logo URL (HTTPS)</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.png">
+<div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
+<div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to load white-label settings.</div>
+</section>
 <section class="panel" aria-labelledby="wordpressSitesHeading">
 <h2 id="wordpressSitesHeading">Connected WordPress sites</h2>
 <p class="muted">Install the Ecommerce Audit Agent plugin on your WordPress or WooCommerce store and connect it with this account's license. Review connected installations here and disconnect access when a site is no longer yours.</p>
@@ -162,7 +173,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("linkedLicenses").disabled = !connected || !sessionToken;
     $("linkedLicensesPanel").hidden = !connected || !sessionToken;
   }
@@ -531,7 +542,7 @@
       if (!response.ok) throw new Error(data.detail || "Unable to switch linked account.");
       accountSessionVersion += 1;
       clearAccountView();
-      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
+      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches(), loadBranding()]);
       await loadAccountLicenses();
       if (sessionToken) await loadDeviceSessions().catch(() => {});
       const failed = results.filter(item => item.status === "rejected").length;
@@ -592,6 +603,39 @@
     $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · License expiry: " + expires + " · Current billing period ends: " + billingPeriodEnd;
     setStatus("profileStatus", "Account profile loaded.", "success");
     return profile;
+  }
+  async function loadBranding() {
+    const response = await api("/api/v1/account/branding");
+    const branding = await response.json();
+    $("brandName").value = branding.brand_name || "";
+    $("brandLogoUrl").value = branding.logo_url || "";
+    $("brandColor").value = /^#[0-9a-fA-F]{6}$/.test(branding.primary_color || "") ? branding.primary_color : "#155a8a";
+    setStatus("brandingStatus", branding.configured ? "Saved white-label settings loaded." : "No custom branding saved yet. Set your brand details and save.", "success");
+    return branding;
+  }
+  async function saveBranding() {
+    if (!credential) { setStatus("brandingStatus", "Connect your account first.", "error"); return; }
+    const brandName = $("brandName").value.trim();
+    const primaryColor = $("brandColor").value;
+    const logoUrl = $("brandLogoUrl").value.trim();
+    if (!brandName) { setStatus("brandingStatus", "Enter a brand name.", "error"); return; }
+    if (logoUrl && (!/^https:\/\//i.test(logoUrl) || !/^https:\/\/[^\s]+$/i.test(logoUrl))) {
+      setStatus("brandingStatus", "Logo URL must be a valid HTTPS URL.", "error"); return;
+    }
+    const button = $("saveBranding"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/branding", {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({brand_name: brandName, logo_url: logoUrl || null, primary_color: primaryColor})
+      });
+      const saved = await response.json();
+      $("brandName").value = saved.brand_name || brandName;
+      $("brandLogoUrl").value = saved.logo_url || "";
+      $("brandColor").value = saved.primary_color || primaryColor;
+      setStatus("brandingStatus", "White-label branding saved.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message, "error");
+    } finally { button.disabled = !credential; }
   }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
@@ -1111,7 +1155,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
     const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
@@ -1180,7 +1224,7 @@
     try {
       await loadBillingHistory();
       const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites(), loadScanBatches()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites"];
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites", "white-label branding"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -1285,6 +1329,11 @@
     }
   });
 
+  $("saveBranding").addEventListener("click", saveBranding);
+  $("refreshBranding").addEventListener("click", async () => {
+    try { await loadBranding(); }
+    catch (error) { setStatus("brandingStatus", error.message, "error"); }
+  });
   $("saveProfile").addEventListener("click", async () => {
     if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
     const clientName = $("profileName").value.trim();
