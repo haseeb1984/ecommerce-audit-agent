@@ -454,3 +454,34 @@ def test_named_input_action_controls_are_not_flagged():
         item.title == "Input action controls may lack accessible names"
         for item in findings
     )
+
+
+
+def test_custom_aria_role_links_and_buttons_need_accessible_names():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<div role="button" tabindex="0"><svg></svg></div>'
+        '<span role="link" tabindex="0"></span>'
+        '</body></html>',
+        "https://shop.example/",
+    )
+    titles = {finding.title for finding in findings}
+    assert "Buttons may have no accessible name" in titles
+    assert "Links may have no accessible name" in titles
+
+
+def test_named_custom_aria_role_links_and_buttons_are_recognized():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body>'
+        '<div role="button" tabindex="0">Add to cart</div>'
+        '<span role="link" tabindex="0" aria-label="View basket"></span>'
+        '</body></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        finding.title in {
+            "Buttons may have no accessible name",
+            "Links may have no accessible name",
+        }
+        for finding in findings
+    )
