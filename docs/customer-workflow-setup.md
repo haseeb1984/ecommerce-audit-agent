@@ -20,7 +20,7 @@ Configure values in Vercel environment settings/secret manager. Never commit cre
 - AI/PageSpeed: existing provider settings required by the audit runner.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TLS_MODE`.
 - Paddle: `PADDLE_ENVIRONMENT=sandbox` for initial testing; `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, optional approved `PADDLE_CHECKOUT_URL`, and `PADDLE_PRICE_ID_<PLAN>`. Configure quotas with `LICENSE_MONTHLY_AUDITS_<PLAN>`.
-- Worker: configure `CRON_SECRET` or `SCAN_WORKER_SECRET`, then configure an external scheduler to call `GET /api/v1/internal/scan-worker` with `Authorization: Bearer <configured-value>`. Each call processes at most one queued scan and reconciles pending customer/billing outboxes.
+- Worker: configure `HOSTINGER_DATABASE_URL`, `CRON_SECRET` (or `SCAN_WORKER_SECRET`), and optionally `SCAN_WORKER_MAX_JOBS` / `SCAN_WORKER_POLL_SECONDS`. Run `python worker_service.py` as a persistent process in a managed Python runtime. If that is unavailable, an external scheduler can call `GET /api/v1/internal/scan-worker` with `Authorization: Bearer <configured-value>`; each HTTP call processes at most one queued scan.
 - Create Paddle catalog products/prices and set corresponding price IDs.
 - Create a Paddle notification destination at `https://ecommerce-audit-agent.vercel.app/api/v1/billing/paddle-webhook`, subscribe to `transaction.completed`, and store its destination secret as `PADDLE_WEBHOOK_SECRET`.
 
