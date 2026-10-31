@@ -278,6 +278,24 @@ class CustomerBillingEvent(HostingerBase):
     )
 
 
+class CustomerEmailIdentitySyncOutbox(HostingerBase):
+    """Durable delivery of verified email changes to PostgreSQL billing records."""
+    __tablename__ = "customer_email_identity_sync_outbox"
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    old_email = Column(String(254), nullable=False, index=True)
+    new_email = Column(String(254), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        Index("ix_email_identity_outbox_due", "status", "next_attempt_at", "created_at"),
+    )
+
+
 class OperationalDiagnosticEvent(HostingerBase):
     """Sanitized service diagnostics; license identifiers are external keys, not PG FKs."""
     __tablename__ = "operational_diagnostic_events"
