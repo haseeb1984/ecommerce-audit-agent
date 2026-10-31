@@ -1874,14 +1874,28 @@ async def list_account_wordpress_sites(
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"items": [{
-        "site_id": row.id, "site_url": row.site_url, "site_host": row.site_host,
-        "admin_email": row.admin_email, "wordpress_version": row.wordpress_version,
-        "woocommerce_version": row.woocommerce_version, "plugin_version": row.plugin_version,
-        "status": row.status, "created_at": row.created_at.isoformat() if row.created_at else None,
-        "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
-        "disconnected_at": row.disconnected_at.isoformat() if row.disconnected_at else None,
-    } for row in rows]}
+    now = datetime.now(timezone.utc)
+    items = []
+    for row in rows:
+        last_seen = row.last_seen_at
+        if last_seen is not None and last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        stale = bool(
+            row.status == "active"
+            and (last_seen is None or last_seen < now - timedelta(days=7))
+        )
+        items.append({
+            "site_id": row.id, "site_url": row.site_url, "site_host": row.site_host,
+            "admin_email": row.admin_email, "wordpress_version": row.wordpress_version,
+            "woocommerce_version": row.woocommerce_version, "plugin_version": row.plugin_version,
+            "status": row.status,
+            "connection_health": "stale" if stale else ("healthy" if row.status == "active" else row.status),
+            "stale_after_days": 7,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+            "disconnected_at": row.disconnected_at.isoformat() if row.disconnected_at else None,
+        })
+    return {"items": items}
 
 
 @app.post("/api/v1/account/wordpress-sites/{site_id}/disconnect")
