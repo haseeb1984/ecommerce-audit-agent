@@ -91,7 +91,7 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 
 ### Paddle failed-transaction webhook recovery
 
-- A `transaction.payment_failed` event with no `subscription_id` is linked only when the same Paddle transaction already has a canonical PostgreSQL billing event tied to a license. The handler does not infer license ownership from an email address or Paddle customer ID.
+- Both `transaction.payment_failed` and `transaction.past_due` are recorded as payment-failure attention events. Paddle can emit both for one failed renewal; transaction-ID idempotency prevents duplicate failure rows. A `transaction.payment_failed` or `transaction.past_due` event with no `subscription_id` is linked only when the same Paddle transaction already has a canonical PostgreSQL billing event tied to a license. The handler does not infer license ownership from an email address or Paddle customer ID.
 - If the transaction has not yet been linked to a license, the webhook returns a retryable `503`; allow Paddle delivery retries or reconcile the originating transaction before treating the failure as resolved.
 - A delayed failure notification is ignored when the same transaction already has a verified completion/provisioning record (`delivered`, `email_pending`, `email_sending`, or `subscription_renewed`). This prevents stale failure notifications from reopening a recovered billing issue.
 - Failure events remain billing-history/operations events and do not independently deactivate a license. Subscription cancellation and pause remain separate lifecycle transitions; Paddle subscription state and verified renewal events govern recovery.
