@@ -37,7 +37,7 @@ All integration endpoints require the existing license or API-key authentication
 - `GET /api/v1/reports` and `GET /api/v1/reports/{id}/pdf` — list and download reports scoped to the authenticated license.
 - `GET /api/v1/account/billing-history` and `POST /api/v1/account/billing-portal` — show license-scoped billing lifecycle information and open the Paddle customer portal.
 
-The API enforces a maximum of ten active WordPress installations per license. WordPress sends its registered site ID with audit and report requests; disconnected or mismatched site IDs are rejected, while normal customer-portal/API-key workflows continue to use their existing license-scoped authentication. Registration is serialized per license, and a unique license/hostname index prevents duplicate records. Reconnecting the same hostname reactivates its existing site record.
+The API allows one active WordPress installation per customer license. Disconnect the existing site before connecting a replacement website. Re-registering the same hostname refreshes the existing connection. WordPress sends its registered site ID with audit and report requests; disconnected or mismatched site IDs are rejected, while normal customer-portal/API-key workflows continue to use their existing license-scoped authentication. Registration is serialized per license, and a unique license/hostname index prevents duplicate records. Reconnecting the same hostname reactivates its existing site record.
 
 ## Identity and subscription synchronization
 
