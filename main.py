@@ -55,7 +55,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, ScanBatch
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, ScanBatch
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -133,6 +133,15 @@ class AgencyTeamInviteCreate(BaseModel):
 
 class AgencyWorkspaceAccessUpdate(BaseModel):
     role: str = Field(default="viewer", pattern="^(admin|analyst|viewer)$")
+
+
+class AgencyTeamLoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+
+
+class AgencyTeamLoginVerify(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+    code: str = Field(..., min_length=6, max_length=6)
 
 
 class AgencyInvitationAccept(BaseModel):
@@ -1956,6 +1965,200 @@ async def create_or_get_business_agency(
         "status": agency.status,
         "created_at": agency.created_at.isoformat() if agency.created_at else None,
     }
+
+
+async def require_agency_team_session(
+    credentials=Depends(CUSTOMER_BEARER),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Authenticate an accepted agency teammate without exposing the owner's license key."""
+    from sqlalchemy import select
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Agency team sign-in is required.")
+    token_hash = hashlib.sha256(credentials.credentials.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    session = await operational_db.scalar(select(AgencyTeamSession).where(
+        AgencyTeamSession.token_hash == token_hash,
+        AgencyTeamSession.revoked_at.is_(None),
+        AgencyTeamSession.expires_at > now,
+    ))
+    if session is None:
+        raise HTTPException(status_code=401, detail="Agency team session is invalid or expired.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == session.team_member_id,
+        AgencyTeamMember.agency_id == session.agency_id,
+        AgencyTeamMember.status == "active",
+    ))
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == session.agency_id,
+        AgencyAccount.status == "active",
+    ))
+    if member is None or agency is None:
+        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
+    return {"session": session, "member": member, "agency": agency}
+
+
+@app.post("/api/v1/agency/team/auth/request-code")
+async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: Response,
+                                    operational_db: AsyncSession = Depends(get_hostinger_db)):
+    """Send an OTP only to an accepted, active agency teammate; response is enumeration-safe."""
+    from sqlalchemy import select, update
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    generic = {"status": "accepted", "message": "If an active agency team account exists, a sign-in code will be sent."}
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.normalized_email == email,
+        AgencyTeamMember.status == "active",
+    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1))
+    if member is None:
+        response.headers["Cache-Control"] = "no-store, private"
+        return generic
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == member.agency_id, AgencyAccount.status == "active"
+    ))
+    if agency is None:
+        response.headers["Cache-Control"] = "no-store, private"
+        return generic
+    auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
+    if len(auth_secret) < 32:
+        raise HTTPException(status_code=503, detail="Agency team sign-in is temporarily unavailable.")
+    now = datetime.now(timezone.utc)
+    await operational_db.execute(update(AgencyTeamLoginChallenge).where(
+        AgencyTeamLoginChallenge.email == email,
+        AgencyTeamLoginChallenge.consumed_at.is_(None),
+    ).values(consumed_at=now))
+    code = f"{secrets.randbelow(1000000):06d}"
+    challenge_id = secrets.token_urlsafe(24)
+    digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
+    challenge = AgencyTeamLoginChallenge(
+        id=challenge_id, agency_id=agency.id, team_member_id=member.id, email=email,
+        code_hash=digest, expires_at=now + timedelta(minutes=10), attempts=0, created_at=now,
+    )
+    operational_db.add(challenge)
+    await operational_db.commit()
+    try:
+        await asyncio.to_thread(_send_account_login_code, email, code)
+    except Exception as exc:
+        challenge.consumed_at = datetime.now(timezone.utc)
+        await operational_db.commit()
+        logger.warning("Agency team sign-in email delivery failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Unable to deliver a sign-in code right now.") from exc
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return generic
+
+
+@app.post("/api/v1/agency/team/auth/verify-code")
+async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Request, response: Response,
+                                   operational_db: AsyncSession = Depends(get_hostinger_db)):
+    """Consume a one-time OTP and issue a 12-hour revocable team session."""
+    from sqlalchemy import select
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"\\d{6}", payload.code):
+        raise HTTPException(status_code=422, detail="Sign-in code must contain six digits.")
+    auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
+    if len(auth_secret) < 32:
+        raise HTTPException(status_code=503, detail="Agency team sign-in is temporarily unavailable.")
+    now = datetime.now(timezone.utc)
+    challenge = await operational_db.scalar(select(AgencyTeamLoginChallenge).where(
+        AgencyTeamLoginChallenge.email == email,
+        AgencyTeamLoginChallenge.consumed_at.is_(None),
+    ).order_by(AgencyTeamLoginChallenge.created_at.desc()).limit(1).with_for_update())
+    if challenge is None:
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    expiry = challenge.expires_at
+    if expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
+    if expiry <= now or challenge.attempts >= 5:
+        challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    expected = hmac.new(auth_secret.encode(), f"{challenge.id}:{email}:{payload.code}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, challenge.code_hash):
+        challenge.attempts += 1
+        if challenge.attempts >= 5: challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == challenge.team_member_id,
+        AgencyTeamMember.agency_id == challenge.agency_id,
+        AgencyTeamMember.normalized_email == email,
+        AgencyTeamMember.status == "active",
+    ))
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == challenge.agency_id, AgencyAccount.status == "active"
+    ))
+    if member is None or agency is None:
+        challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=401, detail="Agency team account is unavailable.")
+    challenge.consumed_at = now
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    operational_db.add(AgencyTeamSession(
+        token_hash=token_hash, agency_id=agency.id, team_member_id=member.id, email=email,
+        expires_at=now + timedelta(hours=12), created_at=now,
+        user_agent=(request.headers.get("user-agent") or "")[:500],
+    ))
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"access_token": raw_token, "token_type": "bearer", "expires_in": 43200,
+            "email": email, "role": member.role, "agency_id": agency.id}
+
+
+@app.get("/api/v1/agency/team/auth/me")
+async def get_agency_team_identity(response: Response, identity=Depends(require_agency_team_session)):
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"email": identity["member"].email, "role": identity["member"].role,
+            "agency_id": identity["agency"].id, "session_expires_at": identity["session"].expires_at.isoformat()}
+
+
+@app.post("/api/v1/agency/team/auth/logout")
+async def logout_agency_team_session(response: Response, identity=Depends(require_agency_team_session),
+                                     operational_db: AsyncSession = Depends(get_hostinger_db)):
+    identity["session"].revoked_at = datetime.now(timezone.utc)
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"status": "logged_out"}
+
+
+@app.get("/api/v1/agency/team/workspaces/{workspace_id}/audits")
+async def list_agency_team_workspace_audits(workspace_id: str, response: Response,
+                                            limit: int = Query(50, ge=1, le=200),
+                                            offset: int = Query(0, ge=0, le=1000000),
+                                            identity=Depends(require_agency_team_session),
+                                            operational_db: AsyncSession = Depends(get_hostinger_db)):
+    """List only audit batches in workspaces explicitly granted to the signed-in teammate."""
+    from sqlalchemy import select
+    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+        AgencyWorkspaceAccess.workspace_id == workspace_id,
+    ))
+    if grant is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == identity["agency"].id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Client workspace not found.")
+    batches = (await operational_db.execute(select(ScanBatch).where(
+        ScanBatch.workspace_id == workspace.id
+    ).order_by(ScanBatch.created_at.desc(), ScanBatch.batch_number.desc()).offset(offset).limit(limit))).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"workspace_id": workspace.id, "workspace_name": workspace.display_name, "items": [{
+        "id": item.id, "batch_number": item.batch_number, "total_urls": item.total_urls,
+        "queued": item.queued_count, "processing": item.processing_count,
+        "completed": item.completed_count, "failed": item.failed_count,
+        "cancelled": item.cancelled_count, "status": item.status,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+    } for item in batches], "limit": limit, "offset": offset}
 
 
 @app.get("/api/v1/account/agency/clients/{workspace_id}/audits")
