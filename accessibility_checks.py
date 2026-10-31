@@ -154,7 +154,10 @@ class _AccessibilityParser(HTMLParser):
                 self._active_button["has_image_alt"] = True
         if tag == "svg":
             self._inside_svg += 1
-            self._active_svg_control = self._active_link or self._active_button
+            self._active_svg_control = (
+                self._active_link or self._active_button
+                or (self._role_control_stack[-1][1] if self._role_control_stack else None)
+            )
             if self._active_svg_control is not None and values.get("aria-label", "").strip():
                 self._active_svg_control["has_svg_title"] = True
             if self._active_svg_control is not None and values.get("aria-labelledby", "").strip():
@@ -178,7 +181,7 @@ class _AccessibilityParser(HTMLParser):
             self._active_button = None
         for index in range(len(self._role_control_stack) - 1, -1, -1):
             if self._role_control_stack[index][0] == tag:
-                del self._role_control_stack[index:]
+                self._role_control_stack.pop(index)
                 break
         elif tag == "title" and self._in_svg_title:
             self._in_svg_title = False
