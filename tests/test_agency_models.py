@@ -92,11 +92,11 @@ def test_agency_team_authentication_models_are_tenant_scoped():
 
 
 def test_agency_website_connection_credentials_are_workspace_scoped():
-    assert AgencyClientWebsite.status.default.arg == "pending"
+    assert AgencyClientWebsite.__table__.columns["status"].default.arg == "pending"
     assert "site_token_hash" in AgencyClientWebsite.__table__.columns
-    assert AgencyClientWebsite.site_token_hash.unique is True
+    assert AgencyClientWebsite.__table__.columns["site_token_hash"].unique is True
     assert AgencyWebsiteConnectChallenge.__tablename__ == "agency_website_connect_challenges"
     targets = _foreign_key_targets(AgencyWebsiteConnectChallenge)
     assert ("agency_id", "agency_accounts.id") in targets
     assert ("workspace_id", "agency_client_workspaces.id") in targets
-    assert AgencyWebsiteConnectChallenge.token_hash.unique is True
+    assert AgencyWebsiteConnectChallenge.__table__.columns["token_hash"].unique is True
