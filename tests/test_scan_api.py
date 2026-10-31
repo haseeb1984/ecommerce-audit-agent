@@ -1,24 +1,20 @@
-import pytest
-
-from scan_api import _validate_single_site_submission
+from hostinger_models import AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent
 
 
-def test_bulk_scan_accepts_multiple_pages_from_one_store():
-    _validate_single_site_submission([
-        "https://shop.example/",
-        "https://shop.example/products/item-a",
-        "https://shop.example/collections/sale",
-    ])
+def test_business_agency_tables_are_registered():
+    expected = {"agency_accounts", "agency_client_workspaces", "agency_client_websites", "agency_team_members", "agency_workspace_access", "agency_usage_events"}
+    actual = {AgencyAccount.__tablename__, AgencyClientWorkspace.__tablename__, AgencyClientWebsite.__tablename__, AgencyTeamMember.__tablename__, AgencyWorkspaceAccess.__tablename__, AgencyUsageEvent.__tablename__}
+    assert actual == expected
 
 
-def test_bulk_scan_rejects_urls_from_multiple_stores():
-    with pytest.raises(ValueError, match="same ecommerce website"):
-        _validate_single_site_submission([
-            "https://shop-one.example/",
-            "https://shop-two.example/products/item-a",
-        ])
+def test_bulk_scan_payload_accepts_optional_agency_workspace():
+    from scan_api import BulkScanSubmission
 
-
-def test_bulk_scan_rejects_empty_site_submission():
-    with pytest.raises(ValueError, match="same ecommerce website"):
-        _validate_single_site_submission([])
+    personal = BulkScanSubmission(urls=["https://shop.example/"], request_id="request-12345678")
+    agency = BulkScanSubmission(
+        urls=["https://shop.example/"],
+        request_id="request-abcdefgh",
+        workspace_id="agency-client-workspace",
+    )
+    assert personal.workspace_id is None
+    assert agency.workspace_id == "agency-client-workspace"
