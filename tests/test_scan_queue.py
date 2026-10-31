@@ -1,0 +1,108 @@
+from types import SimpleNamespace
+
+import pytest
+
+from scan_queue import retry_failed_scan_job
+
+
+class FakeSession:
+    def __init__(self, *rows):
+        self.rows = list(rows)
+        self.committed = False
+        self.rolled_back = False
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+    async def commit(self):
+        self.committed = True
+
+    async def rollback(self):
+        self.rolled_back = True
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_requeues_job_and_reopens_failed_batch():
+    job = SimpleNamespace(
+        id="job-1",
+        batch_id="batch-1",
+        status="failed",
+        attempt_count=3,
+        next_attempt_at=None,
+        locked_at="old-lock",
+        locked_by="old-worker",
+        last_error_code="UPSTREAM_TIMEOUT",
+        result_reference="stale-result",
+        completed_at="completed",
+    )
+    batch = SimpleNamespace(
+        id="batch-1",
+        status="failed",
+        cancelled_count=0,
+        failed_count=1,
+        queued_count=0,
+        completed_at="completed",
+        available_at=None,
+    )
+    db = FakeSession(job, batch)
+
+    result = await retry_failed_scan_job(
+        db, job_id="job-1", license_key="license-1",
+    )
+
+    assert result["status"] == "retry_wait"
+    assert result["job_id"] == "job-1"
+    assert job.status == "retry_wait"
+    assert job.attempt_count == 0
+    assert job.locked_at is None and job.locked_by is None
+    assert job.last_error_code is None and job.result_reference is None
+    assert job.completed_at is None
+    assert job.next_attempt_at is not None
+    assert batch.status == "queued"
+    assert batch.failed_count == 0 and batch.queued_count == 1
+    assert batch.completed_at is None and batch.available_at is not None
+    assert db.committed and not db.rolled_back
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_does_not_reopen_cancelled_batch():
+    job = SimpleNamespace(id="job-2", batch_id="batch-2", status="failed")
+    batch = SimpleNamespace(
+        id="batch-2", status="cancelled", cancelled_count=1,
+        failed_count=1, queued_count=0,
+    )
+    db = FakeSession(job, batch)
+
+    result = await retry_failed_scan_job(
+        db, job_id="job-2", license_key="license-1",
+    )
+
+    assert result == {"job_id": "job-2", "status": "not_retryable"}
+    assert job.status == "failed"
+    assert batch.status == "cancelled"
+    assert db.rolled_back and not db.committed
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_rejects_non_failed_job():
+    job = SimpleNamespace(id="job-3", status="completed")
+    db = FakeSession(job)
+
+    result = await retry_failed_scan_job(
+        db, job_id="job-3", license_key="license-1",
+    )
+
+    assert result == {"job_id": "job-3", "status": "not_retryable"}
+    assert db.rolled_back and not db.committed
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_does_not_disclose_other_license_jobs():
+    db = FakeSession(None)
+
+    result = await retry_failed_scan_job(
+        db, job_id="private-job", license_key="other-license",
+    )
+
+    assert result is None
+    assert db.rolled_back and not db.committed
