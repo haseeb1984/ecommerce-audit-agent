@@ -454,16 +454,26 @@ async def defer_scan_job(
         batch = await db.scalar(
             select(ScanBatch).where(ScanBatch.id == job.batch_id).with_for_update()
         )
-        job.status = "retry_wait"
         job.attempt_count = max(0, job.attempt_count - 1)
-        job.next_attempt_at = now + timedelta(seconds=max(5, min(delay_seconds, 300)))
         job.locked_at = None
         job.locked_by = None
-        job.last_error_code = "PACKAGE_CONCURRENCY_WAIT"
         if batch is not None:
             batch.processing_count = max(0, batch.processing_count - 1)
-            batch.queued_count += 1
-            batch.status = "queued"
+        if batch is not None and batch.status == "cancel_requested":
+            job.status = "failed"
+            job.completed_at = now
+            job.last_error_code = "CANCELLED_DURING_CONCURRENCY_WAIT"
+            batch.failed_count += 1
+            if batch.completed_count + batch.failed_count + batch.cancelled_count >= batch.total_urls:
+                batch.status = "cancelled"
+                batch.completed_at = now
+        else:
+            job.status = "retry_wait"
+            job.next_attempt_at = now + timedelta(seconds=max(5, min(delay_seconds, 300)))
+            job.last_error_code = "PACKAGE_CONCURRENCY_WAIT"
+            if batch is not None:
+                batch.queued_count += 1
+                batch.status = "queued"
         await db.commit()
         return True
     except Exception:
