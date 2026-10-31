@@ -777,7 +777,7 @@
     loading.textContent = "Loading saved audit findings and evidence…"; target.append(loading);
     try {
       const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(workspaceId) +
-        "/audit-results?batch_id=" + encodeURIComponent(batchId) + "&limit=100");
+        "/audit-results?batch_id=" + encodeURIComponent(batchId) + "&limit=25");
       const data = await response.json();
       target.replaceChildren();
       const items = Array.isArray(data.items) ? data.items : [];
