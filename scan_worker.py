@@ -408,8 +408,14 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
             try:
                 # Reapplying the same recipient update is safe if PostgreSQL committed
                 # but the Hostinger acknowledgement was interrupted.
+                if not event.license_key:
+                    raise RuntimeError("EMAIL_IDENTITY_OUTBOX_LICENSE_MISSING")
                 async with AsyncSessionLocal() as licensing_db:
+                    license_id_query = select(SoftwareLicense.id).where(
+                        SoftwareLicense.license_key == event.license_key
+                    ).scalar_subquery()
                     await licensing_db.execute(update(PaymentWebhookEvent).where(
+                        PaymentWebhookEvent.license_id == license_id_query,
                         func.lower(PaymentWebhookEvent.recipient_email) == event.old_email,
                     ).values(recipient_email=event.new_email))
                     await licensing_db.commit()
