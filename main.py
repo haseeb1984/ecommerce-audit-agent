@@ -5179,6 +5179,152 @@ class AdminAPIKeyRevoke(BaseModel):
 
 
 
+@app.post("/api/v1/admin/subscriptions/{subscription_id}/reconcile")
+async def admin_reconcile_subscription(
+    subscription_id: str,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Fetch Paddle's current subscription snapshot and reconcile canonical license state."""
+    _require_admin_key(request)
+    subscription_id = subscription_id.strip()
+    if not re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id):
+        raise HTTPException(status_code=422, detail="Paddle subscription identifier is invalid.")
+    if not os.getenv("PADDLE_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="Paddle API is not configured.")
+
+    from sqlalchemy import select
+    await _lock_paddle_webhook_resource(db, subscription_id)
+    linked_event = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.subscription_id == subscription_id,
+            PaymentWebhookEvent.license_id.is_not(None),
+        )
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if linked_event is None or linked_event.license_id is None:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Subscription is not linked to a provisioned license.")
+
+    try:
+        provider = await asyncio.to_thread(
+            _paddle_api_request, f"/subscriptions/{subscription_id}"
+        )
+        data = provider.get("data") if isinstance(provider, dict) else None
+        if not isinstance(data, dict) or data.get("id") != subscription_id:
+            raise RuntimeError("Paddle returned an unexpected subscription response")
+        provider_status = data.get("status")
+        if not isinstance(provider_status, str):
+            raise RuntimeError("Paddle subscription status is missing")
+        provider_status = provider_status.strip().lower()
+        if provider_status not in {"active", "trialing", "paused", "past_due", "canceled", "cancelled"}:
+            raise RuntimeError("Paddle returned an unsupported subscription status")
+        items = data.get("items") or []
+        if not isinstance(items, list):
+            raise RuntimeError("Paddle subscription items are invalid")
+        customer = data.get("customer") or {}
+        if not isinstance(customer, dict):
+            raise RuntimeError("Paddle subscription customer is invalid")
+    except Exception as exc:
+        await db.rollback()
+        logger.warning(
+            "Admin Paddle subscription reconciliation failed (error_type=%s)",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Paddle subscription state could not be verified; local entitlement was not changed.",
+        ) from None
+
+    license_obj = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == linked_event.license_id)
+    )).scalar_one_or_none()
+    if license_obj is None:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Linked license no longer exists.")
+
+    price_ids = {
+        item.get("price", {}).get("id")
+        for item in items
+        if isinstance(item, dict)
+        and isinstance(item.get("price"), dict)
+        and isinstance(item.get("price", {}).get("id"), str)
+    }
+    plans = await _db_payment_plans(db, active_only=False)
+    plan = next(
+        (candidate for candidate in plans
+         if candidate.get("price_id") and candidate["price_id"] in price_ids),
+        None,
+    )
+    now = datetime.now(timezone.utc)
+    was_active = bool(license_obj.is_active)
+    if provider_status in {"canceled", "cancelled", "paused"}:
+        license_obj.is_active = False
+    elif provider_status in {"active", "trialing"}:
+        expiry = license_obj.expires_at
+        if expiry is not None and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        license_obj.is_active = expiry is None or expiry > now
+    # past_due follows Paddle's dunning policy: preserve current access until
+    # Paddle reports a definitive pause/cancellation or an activation.
+    if plan is not None and provider_status in {"active", "trialing", "paused", "past_due"}:
+        license_obj.tier = plan["tier"]
+        license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
+    billing_period_end = _paddle_billing_period_end(data)
+    if billing_period_end is not None:
+        license_obj.billing_period_ends_at = billing_period_end
+
+    lifecycle_status = {
+        "active": "subscription_updated_active",
+        "trialing": "subscription_updated_active",
+        "paused": "subscription_paused",
+        "past_due": "subscription_updated_past_due",
+        "canceled": "subscription_canceled",
+        "cancelled": "subscription_canceled",
+    }[provider_status]
+    customer_id = str(data.get("customer_id") or customer.get("id") or "").strip()
+    audit_event_id = f"admin_reconcile_{uuid.uuid4().hex}"
+    db.add(PaymentWebhookEvent(
+        event_id=audit_event_id,
+        status=lifecycle_status,
+        license_id=license_obj.id,
+        recipient_email=linked_event.recipient_email,
+        subscription_id=subscription_id,
+        paddle_customer_id=customer_id[:100] or linked_event.paddle_customer_id,
+        created_at=now,
+        updated_at=now,
+    ))
+    await db.commit()
+    await _sync_billing_event_to_hostinger(db, audit_event_id)
+    if was_active != bool(license_obj.is_active) or plan is not None:
+        await _record_operation_event(db, lifecycle_status, license_obj.id, None, None)
+    await _write_admin_log(db, "subscription.reconciled", "subscription", subscription_id, {
+        "provider_status": provider_status,
+        "license_id": license_obj.id,
+        "license_active": bool(license_obj.is_active),
+        "plan_mapped": bool(plan),
+        "billing_period_ends_at": billing_period_end.isoformat() if billing_period_end else None,
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "reconciled",
+        "subscription_id": subscription_id,
+        "provider_status": provider_status,
+        "license_id": license_obj.id,
+        "license_active": bool(license_obj.is_active),
+        "plan_reconciled": bool(plan),
+        "tier": license_obj.tier,
+        "monthly_audit_allowance": license_obj.max_monthly_audits,
+        "billing_period_ends_at": license_obj.billing_period_ends_at.isoformat() if license_obj.billing_period_ends_at else None,
+        "message": "License state was reconciled from the verified current Paddle subscription snapshot.",
+    }
+
+
 @app.post("/api/v1/admin/subscriptions/cancel")
 async def admin_cancel_subscription(
     payload: AdminSubscriptionCancel,
