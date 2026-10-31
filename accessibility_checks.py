@@ -44,6 +44,7 @@ class _AccessibilityParser(HTMLParser):
         self._aria_hidden_stack: list[tuple[str, bool]] = []
         self._active_link: dict[str, str | bool] | None = None
         self._active_button: dict[str, str | bool] | None = None
+        self._role_control_stack: list[tuple[str, dict[str, str | bool]]] = []
         self._active_svg_control: dict[str, str | bool] | None = None
         self._inside_svg = 0
         self._in_svg_title = False
@@ -128,6 +129,20 @@ class _AccessibilityParser(HTMLParser):
                 "svg_title": "",
             }
             self.buttons.append(self._active_button)
+        elif values.get("role", "").strip().lower() in {"button", "link"}:
+            role = values.get("role", "").strip().lower()
+            item = {
+                "text": "", "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+                "title": values.get("title", "").strip(), "has_image_alt": False,
+                "has_svg_title": bool(values.get("aria-label", "").strip()),
+                "svg_title": "",
+            }
+            if role == "button":
+                self.buttons.append(item)
+            else:
+                self.links.append(item)
+            self._role_control_stack.append((tag, item))
         if tag == "img":
             # Missing alt is a clear source-level review signal. An explicit empty
             # alt may be correct for decorative imagery, so it is not flagged here.
@@ -161,6 +176,10 @@ class _AccessibilityParser(HTMLParser):
             self._active_link = None
         elif tag == "button":
             self._active_button = None
+        for index in range(len(self._role_control_stack) - 1, -1, -1):
+            if self._role_control_stack[index][0] == tag:
+                del self._role_control_stack[index:]
+                break
         elif tag == "title" and self._in_svg_title:
             self._in_svg_title = False
             if self._active_svg_control is not None and str(self._active_svg_control.get("svg_title", "")).strip():
@@ -183,6 +202,9 @@ class _AccessibilityParser(HTMLParser):
             self._active_link["text"] = str(self._active_link["text"]) + data.strip()
         if self._active_button is not None and not self._in_svg_title:
             self._active_button["text"] = str(self._active_button["text"]) + data.strip()
+        if not self._in_svg_title:
+            for _tag, item in self._role_control_stack:
+                item["text"] = str(item["text"]) + data.strip()
 
 
 def inspect_static_accessibility_signals(html: str, page_url: str) -> list[AuditFinding]:
