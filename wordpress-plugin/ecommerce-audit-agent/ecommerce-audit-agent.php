@@ -675,6 +675,9 @@ function eaa_wp_render_admin_page() {
         <h1><?php echo esc_html($brand); ?></h1>
         <?php if ('saved' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('Settings saved and site connected.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('disconnected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('WordPress site disconnected. Your SaaS license and reports remain intact.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_connected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('This WordPress site is connected to the Business agency client workspace.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_connect_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The agency client connection could not be completed. Review the connection message and generate a fresh one-time token if needed.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+
         <?php if ('' !== $error) : ?><div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div><?php endif; ?>
         <?php if ('invalid_url' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The API URL must use HTTPS.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('branding_saved' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('White-label branding saved to your SaaS account.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
