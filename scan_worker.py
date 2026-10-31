@@ -576,14 +576,15 @@ async def ensure_scan_worker_schema() -> None:
             ))
         else:
             raise RuntimeError(f"Unsupported licensing database dialect: {dialect}")
-        async with licensing_db.get_bind().begin() as connection:
-            await connection.run_sync(
-                Base.metadata.create_all,
+        await licensing_db.run_sync(
+            lambda sync_session: Base.metadata.create_all(
+                bind=sync_session.connection(),
                 tables=[
                     CustomerLifecycleSyncOutbox.__table__,
                     BillingMirrorSyncOutbox.__table__,
                 ],
             )
+        )
         await licensing_db.commit()
     await ensure_hostinger_schema()
 
