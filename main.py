@@ -130,6 +130,27 @@ def read_root():
     return {"status": "AI Agent Commercial Engine Operational"}
 
 
+@app.get("/api/v1/internal/scan-worker", include_in_schema=False)
+async def run_internal_scan_worker(request: Request):
+    """Run one durable scan job and reconcile cross-database outboxes from a protected scheduler."""
+    configured_secret = (
+        os.getenv("SCAN_WORKER_SECRET", "").strip()
+        or os.getenv("CRON_SECRET", "").strip()
+    )
+    if not configured_secret:
+        raise HTTPException(status_code=503, detail="Scan worker authentication is not configured.")
+    authorization = request.headers.get("authorization", "")
+    supplied_secret = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    if not supplied_secret or not hmac.compare_digest(supplied_secret, configured_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    from scan_worker import process_scan_queue
+    try:
+        return await process_scan_queue(max_jobs=1)
+    except Exception as exc:
+        logger.error("Scheduled scan worker failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Scan worker execution failed; the durable job remains recoverable.") from exc
+
+
 @app.get("/health-check")
 async def health_check(db: AsyncSession = Depends(get_async_db)):
     """Report database connectivity separately from required application-schema readiness."""
@@ -143,6 +164,8 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         "saas_admin_action_logs",
         "saas_operation_events",
         "payment_webhook_events",
+        "customer_lifecycle_sync_outbox",
+        "billing_mirror_sync_outbox",
     }
     try:
         result = await db.execute(text("SELECT 1"))
