@@ -1121,7 +1121,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     operational_db.add(challenge)
     await operational_db.commit()
     try:
-        _send_account_login_code(email, code)
+        await asyncio.to_thread(_send_account_login_code, email, code)
     except Exception as exc:
         challenge.consumed_at = datetime.now(timezone.utc)
         await operational_db.commit()
@@ -1259,7 +1259,7 @@ async def request_customer_email_change(
     operational_db.add(challenge)
     await operational_db.commit()
     try:
-        _send_account_email_change_code(new_email, code)
+        await asyncio.to_thread(_send_account_email_change_code, new_email, code)
     except Exception as exc:
         challenge.consumed_at = datetime.now(timezone.utc)
         await operational_db.commit()
