@@ -1,5 +1,6 @@
 """Customer API for durable Hostinger-backed bulk scan submissions."""
 import json
+import hashlib
 from typing import Literal
 from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -148,7 +149,7 @@ async def queue_agency_wordpress_site_audit(
     raw_token = (request.headers.get("x-agency-site-token") or "").strip()
     if len(raw_token) < 32 or len(raw_token) > 200:
         raise HTTPException(status_code=401, detail="Agency site authentication is required.")
-    token_hash = __import__("hashlib").sha256(raw_token.encode("utf-8")).hexdigest()
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
     site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.site_token_hash == token_hash,
         AgencyClientWebsite.status == "active",
