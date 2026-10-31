@@ -918,7 +918,36 @@
         }
         panel.scrollIntoView({behavior:"smooth", block:"nearest"});
       });
-      card.append(view); container.append(card);
+      const label = document.createElement("input");
+      label.type = "text";
+      label.maxLength = 160;
+      label.value = site.label || "";
+      label.placeholder = "Website label";
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "secondary";
+      save.textContent = "Save label";
+      save.addEventListener("click", async () => {
+        const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({label: label.value})
+        });
+        if (!result.ok) throw new Error("Website label update failed.");
+        await loadWebsites();
+      });
+      const archive = document.createElement("button");
+      archive.type = "button";
+      archive.className = "secondary";
+      archive.textContent = "Archive";
+      archive.disabled = site.status === "archived";
+      archive.addEventListener("click", async () => {
+        const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
+        if (!result.ok) throw new Error("Website archive failed.");
+        await loadWebsites();
+      });
+      card.append(label, view, save, archive);
+      container.append(card);
     }
   }
 
