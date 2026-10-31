@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_license_or_api_key
 from hostinger_database import get_hostinger_db
-from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite
+from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite, AgencyAccount, AgencyClientWorkspace
 from models import SoftwareLicense
 from plan_features import plan_features
 from scan_queue import enqueue_scan_request, cancel_scan_batch, retry_failed_scan_job
@@ -23,6 +23,7 @@ class BulkScanSubmission(BaseModel):
     urls: list[str] = Field(..., min_length=1, max_length=1000)
     request_id: str = Field(..., min_length=8, max_length=128)
     batch_size: Literal[10, 11] = 10
+    workspace_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 class CustomerWebsiteUpdate(BaseModel):
     label: str | None = Field(default=None, max_length=160)
@@ -79,6 +80,25 @@ async def submit_scan_batches(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    workspace_id = None
+    if payload.workspace_id:
+        if not plan_features(license_obj.tier)["agency_management"]:
+            raise HTTPException(status_code=403, detail="Client workspace audits are available on the Business plan.")
+        agency = await db.scalar(select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key,
+            AgencyAccount.status == "active",
+        ))
+        if agency is None:
+            raise HTTPException(status_code=404, detail="Business agency workspace was not found.")
+        workspace = await db.scalar(select(AgencyClientWorkspace).where(
+            AgencyClientWorkspace.id == payload.workspace_id,
+            AgencyClientWorkspace.agency_id == agency.id,
+            AgencyClientWorkspace.status == "active",
+        ))
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="Client workspace was not found in this agency.")
+        workspace_id = workspace.id
+
     try:
         result = await enqueue_scan_request(
             db,
@@ -86,6 +106,7 @@ async def submit_scan_batches(
             package_tier=license_obj.tier,
             urls=normalized,
             request_id=payload.request_id,
+            workspace_id=workspace_id,
             batch_size=payload.batch_size,
         )
     except ValueError as exc:
@@ -117,6 +138,7 @@ async def list_scan_batches(
         "items": [
             {
                 "id": item.id,
+                "workspace_id": item.workspace_id,
                 "request_id": item.request_id,
                 "package_tier": item.package_tier,
                 "batch_number": item.batch_number,
