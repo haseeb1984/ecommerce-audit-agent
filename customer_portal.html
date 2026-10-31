@@ -959,16 +959,8 @@
     }
   });
   $("disconnectAccount").addEventListener("click", async () => {
-    if (headerName === "X-Customer-Session" && credential) {
-      try {
-        await fetch("/api/v1/account/logout", {
-          method: "POST", cache: "no-store",
-          headers: {"X-Customer-Session": credential}
-        });
-      } catch (error) {
-        // Local credentials and account data are still cleared if the network is unavailable.
-      }
-    }
+    const sessionToken = headerName === "X-Customer-Session" ? credential : "";
+    // Invalidate outstanding API responses and clear local credentials immediately.
     accountSessionVersion += 1;
     credential = "";
     headerName = "X-License-Key";
@@ -977,7 +969,25 @@
     clearAccountView();
     setAccountControls(false);
     $("target").value = "";
-    setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
+    let serverRevocationConfirmed = !sessionToken;
+    if (sessionToken) {
+      try {
+        const response = await fetch("/api/v1/account/logout", {
+          method: "POST", cache: "no-store",
+          headers: {"X-Customer-Session": sessionToken}
+        });
+        serverRevocationConfirmed = response.ok;
+      } catch (error) {
+        // The page is cleared even if server-side revocation cannot be confirmed.
+      }
+    }
+    setStatus(
+      "connectStatus",
+      serverRevocationConfirmed
+        ? "Disconnected. Account data cleared and customer session revoked."
+        : "Account data cleared locally, but server session revocation could not be confirmed.",
+      serverRevocationConfirmed ? "success" : "error"
+    );
     setStatus("auditStatus", "Connect your credential first.");
   });
   $("saveProfile").addEventListener("click", async () => {
