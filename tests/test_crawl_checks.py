@@ -1109,7 +1109,7 @@ async def test_crawl_expands_limited_same_origin_sitemap_index(monkeypatch):
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
     _, checked, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
 
-    assert any("at most 2 same-origin child sitemaps" in item and "deeper sitemap-index nesting" in item for item in limitations)
+    assert any("at most 2 same-origin child sitemaps" in item and "8 fetched sitemap documents" in item for item in limitations)
     assert "https://shop.example/products/0" in checked
     assert "https://shop.example/categories/0" in checked
     assert not any("outside.example" in url or "evil.xml" in url for url in requested)
@@ -2586,3 +2586,43 @@ async def test_discovery_fetches_enforce_same_origin_redirect_boundary(monkeypat
         "https://shop.example/sitemap.xml",
     ):
         assert observed[url] == "https://shop.example/"
+
+
+@pytest.mark.asyncio
+async def test_sitemap_discovery_enforces_one_global_document_fetch_budget(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    monkeypatch.setattr(crawl_checks, "MAX_SITEMAP_DOCUMENTS", 2)
+    homepage = "https://shop.example/"
+    sitemap_urls = [
+        "https://shop.example/primary.xml",
+        "https://shop.example/secondary.xml",
+        "https://shop.example/tertiary.xml",
+    ]
+    requested_sitemaps = []
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        if url == homepage:
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
+        if url == "https://shop.example/robots.txt":
+            return 200, "\\n".join(f"Sitemap: {item}" for item in sitemap_urls), {"content-type": "text/plain"}, url
+        if url == "https://shop.example/llms.txt":
+            return 404, "", {"content-type": "text/plain"}, url
+        if url in sitemap_urls:
+            requested_sitemaps.append(url)
+            return 200, (
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>https://shop.example/products/{len(requested_sitemaps)}</loc></url>'
+                '</urlset>'
+            ), {"content-type": "application/xml"}, url
+        if url.startswith("https://shop.example/products/"):
+            return 200, '<html><head><title>Item</title></head><body></body></html>', {"content-type": "text/html"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    _, _, limitations = await crawl_checks.run_bounded_site_crawl(homepage)
+
+    assert requested_sitemaps == sitemap_urls[:2]
+    assert len(requested_sitemaps) <= crawl_checks.MAX_SITEMAP_DOCUMENTS
+    assert any("global limit of 2 documents" in item for item in limitations)
