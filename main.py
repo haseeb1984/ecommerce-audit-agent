@@ -2043,10 +2043,17 @@ async def get_business_agency_usage(
         SELECT monthly_audit_allowance, max_concurrent_audits, is_active
         FROM saas_plan_packages WHERE tier=:tier
     """), {"tier": str(license_obj.tier or "starter").strip().lower()})).mappings().first()
+    package_limit = package["monthly_audit_allowance"] if package is not None else None
     monthly_limit = max(0, int(
-        package["monthly_audit_allowance"] if package is not None
-        else (license_obj.max_monthly_audits or 0)
+        package_limit if package_limit is not None else (license_obj.max_monthly_audits or 0)
     ))
+    concurrent_limit = max(0, int(
+        package["max_concurrent_audits"] if package is not None and package["max_concurrent_audits"] is not None else 0
+    ))
+    active_reservations = int((await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
+        AuditQuotaReservation.license_id == license_obj.id,
+        AuditQuotaReservation.expires_at > now,
+    ))).scalar_one() or 0)
     usage_rows = (await operational_db.execute(
         select(AgencyUsageEvent.workspace_id, sql_func.coalesce(sql_func.sum(AgencyUsageEvent.quantity), 0))
         .where(
@@ -2067,6 +2074,8 @@ async def get_business_agency_usage(
         "period_start": month_start.isoformat(),
         "period_end": next_month.isoformat(),
         "monthly_limit": monthly_limit,
+        "concurrent_limit": concurrent_limit,
+        "active_concurrent_audits": active_reservations,
         "account_used_and_pending": consumed,
         "account_remaining": max(0, monthly_limit - consumed),
         "agency_completed": sum(usage_by_workspace.values()),
