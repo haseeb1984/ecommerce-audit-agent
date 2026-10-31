@@ -9,10 +9,10 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select, update
 
 from database import AsyncSessionLocal
-from models import AuditLead, SoftwareLicense
+from models import AuditLead, PaymentWebhookEvent, SoftwareLicense
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
@@ -20,7 +20,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import CustomerEmailChangeChallenge, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
+from hostinger_models import CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -300,6 +300,58 @@ async def process_one_scan(worker_id: str) -> dict:
         await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
+async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> dict:
+    """Retry verified email changes into PostgreSQL billing records idempotently."""
+    if batch_size < 1 or batch_size > 200:
+        raise ValueError("batch_size must be between 1 and 200.")
+    now = datetime.now(timezone.utc)
+    counts = {"processed": 0, "deferred": 0}
+    async with HostingerAsyncSessionLocal() as operational_db:
+        for _ in range(batch_size):
+            event = (await operational_db.execute(
+                select(CustomerEmailIdentitySyncOutbox)
+                .where(
+                    CustomerEmailIdentitySyncOutbox.status == "pending",
+                    CustomerEmailIdentitySyncOutbox.next_attempt_at <= now,
+                )
+                .order_by(CustomerEmailIdentitySyncOutbox.created_at.asc())
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )).scalar_one_or_none()
+            if event is None:
+                break
+            try:
+                # Reapplying the same recipient update is safe if PostgreSQL committed
+                # but the Hostinger acknowledgement was interrupted.
+                async with AsyncSessionLocal() as licensing_db:
+                    await licensing_db.execute(update(PaymentWebhookEvent).where(
+                        func.lower(PaymentWebhookEvent.recipient_email) == event.old_email,
+                    ).values(recipient_email=event.new_email))
+                    await licensing_db.commit()
+                event.status = "completed"
+                event.processed_at = datetime.now(timezone.utc)
+                event.last_error = None
+                await operational_db.commit()
+                counts["processed"] += 1
+            except Exception as exc:
+                await operational_db.rollback()
+                # Re-read after rollback; the row lock is released and a retry is
+                # scheduled with capped exponential backoff.
+                retry_event = await operational_db.get(CustomerEmailIdentitySyncOutbox, event.id)
+                if retry_event is not None:
+                    retry_event.attempts = int(retry_event.attempts or 0) + 1
+                    retry_event.last_error = type(exc).__name__[:120]
+                    delay = min(3600, 30 * (2 ** min(retry_event.attempts, 7)))
+                    retry_event.next_attempt_at = datetime.now(timezone.utc) + __import__("datetime").timedelta(seconds=delay)
+                    await operational_db.commit()
+                counts["deferred"] += 1
+                logger.warning(
+                    "Customer email identity sync deferred (event_id=%s, error_type=%s)",
+                    event.id, type(exc).__name__,
+                )
+    return counts
+
+
 async def cleanup_expired_customer_auth_records(*, batch_size: int = 500) -> dict:
     """Bounded retention cleanup for expired customer authentication records."""
     if batch_size < 1 or batch_size > 2000:
@@ -334,6 +386,13 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
     import asyncio
 
+    identity_sync = {"status": "completed", "processed": 0, "deferred": 0}
+    try:
+        identity_sync.update(await reconcile_customer_email_identity_outbox())
+    except Exception as exc:
+        identity_sync = {"status": "deferred", "error_type": type(exc).__name__}
+        logger.warning("Customer email identity reconciliation failed (error_type=%s)", type(exc).__name__)
+
     cleanup = {"status": "completed"}
     try:
         cleanup.update(await cleanup_expired_customer_auth_records())
@@ -350,6 +409,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     return {
         "worker_id": worker_id,
         "authentication_cleanup": cleanup,
+        "customer_email_identity_sync": identity_sync,
         "claimed_slots": len(active),
         "processed": sum(1 for item in active if item["status"] == "completed"),
         "outcomes": active,
