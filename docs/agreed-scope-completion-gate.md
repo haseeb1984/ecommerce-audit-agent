@@ -42,3 +42,9 @@ This document tracks the already-agreed Ecommerce Audit Agent scope. It does not
 ## Release rule
 
 Do not merge or deploy solely because CI passes. First verify the agreed scope against this checklist, confirm the current PR head and generated PDF, and obtain the user's explicit approval for production promotion.
+
+### WordPress integration lifecycle follow-up
+
+- Customer WordPress installation listing is license-scoped and now exposes a non-mutating connection-health signal: active sites with no heartbeat or a heartbeat older than seven days are marked stale; recent active sites are healthy; disconnected sites remain disconnected.
+- The customer portal provides concrete recovery steps for stale plugin connections. Re-registration for the same license and hostname refreshes the existing installation record; existing license authentication and active-site limits still apply.
+- Remaining release acceptance: exercise register/re-register/disconnect/status flows against provisioned Hostinger MySQL and a real WordPress plugin installation, including suspended/expired license behavior and concurrent site-limit attempts. This change has not been runtime-tested in this implementation batch.
