@@ -111,7 +111,8 @@ async def list_scan_batches(
                 "queued": item.queued_count,
                 "processing": item.processing_count,
                 "completed": item.completed_count,
-                "failed": item.failed_count,\n                "cancelled": item.cancelled_count,
+                "failed": item.failed_count,
+                "cancelled": item.cancelled_count,
                 "status": item.status,
                 "created_at": item.created_at,
                 "started_at": item.started_at,
@@ -178,7 +179,8 @@ async def get_scan_batch(
         "queued": batch.queued_count,
         "processing": batch.processing_count,
         "completed": batch.completed_count,
-        "failed": batch.failed_count,\n        "cancelled": batch.cancelled_count,
+        "failed": batch.failed_count,
+        "cancelled": batch.cancelled_count,
         "jobs": [
             {
                 "id": job.id,
