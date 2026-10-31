@@ -56,6 +56,16 @@
 <div id="apiKeys" class="reports" aria-live="polite"><p class="muted">Connect your account to manage API keys.</p></div>
 <div id="apiKeyStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
+<section class="panel" aria-labelledby="websitesHeading">
+<h2 id="websitesHeading">Website inventory and background scans</h2>
+<p class="muted">Register public storefronts once, then queue repeatable background scans. Scan jobs continue through the worker even if you leave this page.</p>
+<form id="websiteForm">
+<div class="row"><div><label for="websiteName">Website name (optional)</label><input id="websiteName" type="text" maxlength="120" placeholder="My store"></div><div><label for="websiteUrl">Public website URL</label><input id="websiteUrl" type="url" required maxlength="2048" placeholder="https://example.com"></div></div>
+<div class="report-actions" style="margin-top:12px"><button id="addWebsite" type="submit">Register website</button><button id="refreshWebsites" class="secondary" type="button">Refresh websites and scans</button></div>
+</form>
+<div id="websiteList" class="reports" aria-live="polite"><p class="muted">Connect your account to manage websites.</p></div>
+<div id="websiteStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+</section>
 <section class="panel" aria-labelledby="activityHeading">
 <h2 id="activityHeading">Recent audit activity</h2>
 <p class="muted">See recent audit runs associated with this account. Contact details and generated outreach content are never shown in this activity list.</p>
@@ -111,7 +121,7 @@
   };
   const authHeaders = () => ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "addWebsite", "refreshWebsites"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -417,6 +427,113 @@
       if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", error.message, "error");
     } finally {
       if (operationSessionVersion === accountSessionVersion) renderApiKeys();
+    }
+  }
+  async function loadWebsiteScans(website, card) {
+    const response = await api("/api/v1/websites/" + encodeURIComponent(website.id) + "/scans?limit=10");
+    const data = await response.json();
+    const history = document.createElement("div"); history.className = "reports";
+    const heading = document.createElement("strong"); heading.textContent = "Recent scans"; history.append(heading);
+    if (!Array.isArray(data.items) || !data.items.length) {
+      const empty = document.createElement("small"); empty.textContent = "No background scans yet."; history.append(empty);
+    } else {
+      for (const job of data.items) {
+        const row = document.createElement("div"); row.className = "status";
+        const state = document.createElement("strong"); state.textContent = String(job.status || "unknown").replaceAll("_", " ");
+        const detail = document.createElement("small");
+        detail.textContent = " · " + (job.created_at ? new Date(job.created_at).toLocaleString() : "Time unavailable") +
+          " · Attempts: " + Number(job.attempts || 0) + "/" + Number(job.max_attempts || 0) +
+          (job.finding_count == null ? "" : " · Findings: " + Number(job.finding_count));
+        row.append(state, detail);
+        if (job.result_available && job.status === "completed") {
+          const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View scan findings";
+          view.addEventListener("click", async () => {
+            view.disabled = true;
+            try {
+              const resultResponse = await api("/api/v1/scans/" + encodeURIComponent(job.job_id) + "/result");
+              const result = await resultResponse.json();
+              const summary = document.createElement("p"); summary.className = "muted";
+              summary.textContent = "Completed scan · " + Number(result.finding_count || 0) + " findings · " + String(result.website_url || "");
+              const titles = document.createElement("ul");
+              for (const finding of (Array.isArray(result.findings) ? result.findings : []).slice(0, 8)) {
+                const item = document.createElement("li");
+                item.textContent = String(finding.title || finding.category || "Finding") + " · " + String(finding.severity || "unrated");
+                titles.append(item);
+              }
+              const previous = card.querySelector(".scan-result-preview");
+              if (previous) previous.remove();
+              const preview = document.createElement("div"); preview.className = "status scan-result-preview";
+              preview.append(summary, titles); card.append(preview);
+            } catch (error) {
+              setStatus("websiteStatus", error.message, "error");
+            } finally { view.disabled = false; }
+          });
+          row.append(view);
+        } else if (job.error_code) {
+          const error = document.createElement("small"); error.textContent = " · " + String(job.error_code); row.append(error);
+        }
+        history.append(row);
+      }
+    }
+    const previous = card.querySelector(".scan-history");
+    if (previous) previous.remove();
+    history.className = "reports scan-history"; card.append(history);
+  }
+  async function loadWebsites() {
+    const container = $("websiteList");
+    try {
+      const response = await api("/api/v1/websites");
+      const data = await response.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      container.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No websites registered yet. Add a public storefront above to queue your first scan.";
+        container.append(empty);
+      }
+      for (const website of items) {
+        const card = document.createElement("article"); card.className = "report";
+        const info = document.createElement("div");
+        const title = document.createElement("strong"); title.textContent = String(website.display_name || "Website");
+        const url = document.createElement("small"); url.textContent = String(website.website_url || "");
+        const last = document.createElement("small");
+        last.textContent = website.last_scan_at ? "Last scan: " + new Date(website.last_scan_at).toLocaleString() : "No completed scans yet";
+        info.append(title, url, last);
+        const actions = document.createElement("div"); actions.className = "report-actions";
+        const scan = document.createElement("button"); scan.type = "button"; scan.textContent = "Queue scan";
+        scan.addEventListener("click", async () => {
+          scan.disabled = true;
+          try {
+            const queued = await api("/api/v1/websites/" + encodeURIComponent(website.id) + "/scans", {method:"POST"});
+            const job = await queued.json();
+            setStatus("websiteStatus", "Scan queued. Job ID: " + job.job_id + ". Refresh scan history to follow progress.", "success");
+            await loadWebsiteScans(website, card);
+          } catch (error) { setStatus("websiteStatus", error.message, "error"); }
+          finally { scan.disabled = false; }
+        });
+        const history = document.createElement("button"); history.type = "button"; history.className = "secondary"; history.textContent = "Scan history";
+        history.addEventListener("click", async () => {
+          history.disabled = true;
+          try { await loadWebsiteScans(website, card); }
+          catch (error) { setStatus("websiteStatus", error.message, "error"); }
+          finally { history.disabled = false; }
+        });
+        const archive = document.createElement("button"); archive.type = "button"; archive.className = "secondary"; archive.textContent = "Archive";
+        archive.addEventListener("click", async () => {
+          if (!window.confirm("Archive this website? Existing scan history will be retained.")) return;
+          archive.disabled = true;
+          try { await api("/api/v1/websites/" + encodeURIComponent(website.id), {method:"DELETE"}); await loadWebsites(); setStatus("websiteStatus", "Website archived. Existing scan history is retained.", "success"); }
+          catch (error) { setStatus("websiteStatus", error.message, "error"); }
+          finally { archive.disabled = false; }
+        });
+        actions.append(scan, history, archive); card.append(info, actions); container.append(card);
+      }
+      setStatus("websiteStatus", "Loaded " + items.length + " registered website(s).", "success");
+    } catch (error) {
+      container.replaceChildren();
+      const message = document.createElement("p"); message.className = "muted"; message.textContent = "Website inventory is unavailable. " + error.message;
+      container.append(message); setStatus("websiteStatus", error.message, "error");
+      throw error;
     }
   }
   async function loadProfile() {
@@ -741,6 +858,7 @@
     $("usageRemaining").textContent = "Remaining: —";
     $("usageReset").textContent = "Period reset: —";
     activityRows = []; activityTotal = 0; renderActivity();
+    $("websiteList").replaceChildren(); const websiteEmpty = document.createElement("p"); websiteEmpty.className = "muted"; websiteEmpty.textContent = "Connect your account to manage websites."; $("websiteList").append(websiteEmpty); setStatus("websiteStatus", "Account connection required.");
     $("billingAccount").textContent = "Connect your account to load billing status.";
     $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
     apiKeyCreationAllowed = false;
@@ -761,8 +879,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWebsites()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "website inventory"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -834,6 +952,28 @@
   $("refreshBillingHistory").addEventListener("click", async () => {
     try { await loadBillingHistory(); }
     catch (error) { setStatus("billingStatus", error.message, "error"); }
+  });
+  $("websiteForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!credential) { setStatus("websiteStatus", "Connect your account first.", "error"); return; }
+    const button = $("addWebsite"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/websites", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({website_url:$("websiteUrl").value.trim(), display_name:$("websiteName").value.trim() || null})
+      });
+      const website = await response.json();
+      $("websiteUrl").value = ""; $("websiteName").value = "";
+      await loadWebsites();
+      setStatus("websiteStatus", website.already_registered ? "This website is already registered." : "Website registered. You can now queue background scans.", "success");
+    } catch (error) { setStatus("websiteStatus", error.message, "error"); }
+    finally { button.disabled = false; }
+  });
+  $("refreshWebsites").addEventListener("click", async () => {
+    const button = $("refreshWebsites"); button.disabled = true;
+    try { await loadWebsites(); }
+    catch (error) { setStatus("websiteStatus", error.message, "error"); }
+    finally { button.disabled = false; }
   });
   $("createApiKey").addEventListener("click", createApiKey);
   $("refreshApiKeys").addEventListener("click", async () => {
