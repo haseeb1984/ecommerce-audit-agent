@@ -1041,7 +1041,7 @@ async def request_customer_email_change(
     from hostinger_models import CustomerAccount, CustomerEmailChangeChallenge
 
     new_email = payload.email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", new_email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", new_email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     factory = await _ensure_hostinger_operational_schema()
     now = datetime.now(timezone.utc)
