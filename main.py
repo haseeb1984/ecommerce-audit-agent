@@ -2147,6 +2147,12 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
     site.status = "disconnected"
     site.disconnected_at = datetime.now(timezone.utc)
     site.site_token_hash = None
+    from sqlalchemy import update
+    await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+        AgencyWebsiteConnectChallenge.agency_id == agency.id,
+        AgencyWebsiteConnectChallenge.workspace_id == workspace_id,
+        AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+    ).values(consumed_at=datetime.now(timezone.utc)))
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"status": "disconnected", "site_id": site.id}
