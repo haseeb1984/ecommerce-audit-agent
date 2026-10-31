@@ -5211,15 +5211,7 @@ async def admin_reconcile_subscription(
 
     from sqlalchemy import select
     await _lock_paddle_webhook_resource(db, subscription_id)
-    linked_event = (await db.execute(
-        select(PaymentWebhookEvent)
-        .where(
-            PaymentWebhookEvent.subscription_id == subscription_id,
-            PaymentWebhookEvent.license_id.is_not(None),
-        )
-        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
+    linked_event = await _get_paddle_subscription_license_event(db, subscription_id)
     if linked_event is None or linked_event.license_id is None:
         await db.rollback()
         raise HTTPException(status_code=404, detail="Subscription is not linked to a provisioned license.")
@@ -5356,9 +5348,7 @@ async def admin_cancel_subscription(
     if not hmac.compare_digest(subscription_id, payload.confirm_subscription_id.strip()):
         raise HTTPException(status_code=422, detail="Subscription confirmation does not match.")
     from sqlalchemy import select
-    event = (await db.execute(select(PaymentWebhookEvent).where(
-        PaymentWebhookEvent.subscription_id == subscription_id
-    ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1))).scalar_one_or_none()
+    event = await _get_paddle_subscription_license_event(db, subscription_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Subscription is not linked to a recorded customer billing event.")
     if not os.getenv("PADDLE_API_KEY", "").strip():
