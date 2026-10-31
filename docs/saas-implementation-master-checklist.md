@@ -21,6 +21,7 @@
 | Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; re-run on latest branch head. |
 | Customer profile management | Implemented / verification pending | GET/PATCH profile endpoints exist; browser and latest CI acceptance required. |
 | Verified customer email identity change | Implemented / verification pending | Rate-limited 30-minute one-time verification, duplicate-address checks, portal controls, and license-scoped billing outbox sync are implemented; SMTP and Hostinger staging acceptance pending. |
+| Passwordless customer sign-in and session lifecycle | Implemented / verification pending | Email sign-in uses a 10-minute single-use challenge, hashed 30-day session tokens, X-Customer-Session auth across customer APIs, logout revocation, and retention cleanup; SMTP/Hostinger staging acceptance pending. |
 | Monthly quota and concurrent audit reservations | Implemented / verification pending | Reservation lifecycle exists in `quota.py`; run PostgreSQL-backed concurrency acceptance. |
 | Customer usage and audit activity | Implemented / verification pending | Usage/activity endpoints and portal meters exist; latest CI and browser QA required. |
 | Customer report history and evidence coverage | Implemented / verification pending | Scoped/paginated history and evidence endpoints exist; generated report quality is a separate final gate. |
@@ -83,3 +84,12 @@
 - Verified identity changes enqueue a Hostinger outbox projection scoped to the owning license. The worker updates only that license's PostgreSQL billing events, avoiding cross-account email changes.
 - Added additive Hostinger schema initialization and migration `migrations/20261102_hostinger_email_identity_scope.sql`.
 - Added API contract tests for unauthenticated requests and invalid input. Full CI execution is pending the current runner jobs; no test pass is claimed yet.
+
+
+## Passwordless customer session implementation batch — 2026-11-01
+
+- Added an enumeration-resistant email sign-in request: matching addresses receive a one-time token; unknown addresses receive the same public response.
+- Sign-in tokens expire after 10 minutes, are stored only as SHA-256 hashes, and are single-use. Per-account requests are capped at five per hour.
+- Successful verification creates a 30-day customer session stored by token hash. Customer API, billing, and account-management authentication now accept `X-Customer-Session` while preserving license/API-key support.
+- Added explicit logout revocation. The customer portal can request a sign-in token, verify it, load the account using the resulting session, and revoke the session when disconnecting.
+- The portal clears sign-in fields when switching accounts. Full integration acceptance against configured Hostinger MySQL and SMTP remains pending.
