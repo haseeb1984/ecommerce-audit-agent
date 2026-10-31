@@ -111,3 +111,31 @@ class WebsiteScanResult(HostingerBase):
     coverage_json = Column(Text, nullable=False)
     summary_json = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+
+class ScanJob(HostingerBase):
+    """Durable customer scan queue with owner-bound leases and bounded retries."""
+    __tablename__ = "website_scan_jobs"
+    __table_args__ = (
+        Index("ix_website_scan_jobs_due", "status", "available_at", "created_at"),
+        Index("ix_website_scan_jobs_lease", "status", "lease_expires_at"),
+        Index("ix_website_scan_jobs_license", "license_key", "created_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    website_id = Column(String(64), nullable=False, index=True)
+    target_url = Column(String(2048), nullable=False)
+    status = Column(String(24), nullable=False, default="queued", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=5)
+    available_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    lease_owner = Column(String(80), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    error_code = Column(String(120), nullable=True)
+    result_reference = Column(String(64), nullable=True)
+    quota_committed = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
