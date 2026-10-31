@@ -1913,3 +1913,6 @@ yarl==1.25.1 \
     #   storage3
     #   supabase
     #   supabase-functions
+
+# via requirements.in
+asyncmy==0.2.17
