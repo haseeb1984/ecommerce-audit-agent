@@ -5383,7 +5383,7 @@ async def admin_list_client_sessions(
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
-    rows = (await db.execute(
+    rows = (await operational_db.execute(
         select(CustomerSession).where(CustomerSession.license_key == client.license_key)
         .order_by(CustomerSession.created_at.desc()).limit(100)
     )).scalars().all()
