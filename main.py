@@ -3208,8 +3208,17 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
                 .limit(1)
             )).scalar_one_or_none()
-            if prior_transaction_event is not None and prior_transaction_event.subscription_id:
-                subscription_id = prior_transaction_event.subscription_id
+            if prior_transaction_event is not None:
+                if prior_transaction_event.status in {"delivered", "email_pending", "email_sending", "subscription_renewed"}:
+                    # A delayed failure notification for a transaction already
+                    # accepted as paid must not reopen a recovered billing alert.
+                    return {
+                        "status": "ignored_after_transaction_completion",
+                        "event_id": event_id,
+                        "prior_event_id": prior_transaction_event.event_id,
+                    }
+                if prior_transaction_event.subscription_id:
+                    subscription_id = prior_transaction_event.subscription_id
         else:
             raise HTTPException(status_code=503, detail="Payment-failure event is awaiting transaction reconciliation.")
         duplicate = (await db.execute(
