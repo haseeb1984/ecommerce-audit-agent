@@ -79,9 +79,11 @@ class CustomerEmailIdentitySyncOutbox(HostingerBase):
     __tablename__ = "customer_email_identity_sync_outbox"
     __table_args__ = (
         Index("ix_customer_email_identity_outbox_due", "status", "next_attempt_at", "created_at"),
+        Index("ix_customer_email_identity_outbox_license", "license_key"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+    license_key = Column(String(100), nullable=True, index=True)
     old_email = Column(String(254), nullable=False, index=True)
     new_email = Column(String(254), nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)
