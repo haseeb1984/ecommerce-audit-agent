@@ -728,7 +728,7 @@
       const card = document.createElement("article"); card.className = "report";
       const info = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = item.email;
-      const detail = document.createElement("small"); detail.textContent = item.role + " · " + item.status;
+      const detail = document.createElement("small"); detail.textContent = item.role + " · " + item.status + ((item.workspaces || []).length ? " · Clients: " + item.workspaces.map(workspace => workspace.workspace_name + " (" + workspace.role + ")").join(", ") : " · No client workspace assigned");
       info.append(title, detail);
       const actions = document.createElement("div"); actions.className = "report-actions";
       if (item.status !== "revoked") {
