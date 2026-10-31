@@ -120,3 +120,14 @@ Still outstanding:
 - Dedicated team portal is served at `/agency`; it stores the opaque team session in browser session storage and offers assigned-workspace audit batch history.
 - New operational tables are included in the additive agency migration. The migration remains unapplied in production.
 - Team member access currently covers assigned-workspace audit batch status/history. It does not yet expose full audit report/evidence, WordPress site connection, client-level quota/usage, or team member write operations.
+
+
+### Business agency WordPress client-site connection
+
+- The agency owner can issue a one-time 24-hour connection token for an active client workspace.
+- The official WordPress plugin has a separate agency-client connection mode. It sends the one-time token from the WordPress server to the SaaS API; it does not share the agency owner's Business license key with the client site.
+- Successful registration consumes the one-time token and returns a dedicated per-site credential. The plugin encrypts that credential in its WordPress options and uses it only for agency site status and disconnect operations.
+- The agency owner can inspect the connected client website and revoke it from the customer portal. Revocation invalidates the site credential; the client can be reconnected using a newly generated token.
+- Agency website rows default to `pending`; a site becomes `active` only after a valid, unexpired owner-issued token is presented by the WordPress plugin.
+- This is an owner-authorized plugin connection, not a DNS challenge. The agency owner should issue the token only to the intended client site administrator.
+- Plugin-based agency audit execution and full client report/evidence access remain outstanding; the standard single-license WordPress audit flow is unchanged.
