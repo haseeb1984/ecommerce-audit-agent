@@ -125,6 +125,16 @@ class ReportEmailRequest(BaseModel):
     recipient_confirmed: bool = False
 
 
+class AgencyClientWorkspaceCreate(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=160)
+    external_reference: str | None = Field(default=None, max_length=120)
+
+
+class AgencyClientWorkspaceUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    status: str | None = Field(default=None, pattern="^(active|archived)$")
+
+
 class WhiteLabelBrandingUpdate(BaseModel):
     brand_name: str = Field(..., min_length=1, max_length=100)
     logo_url: str | None = Field(default=None, max_length=2048)
@@ -1882,6 +1892,177 @@ async def update_account_profile(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"client_name": profile.display_name, "updated": True}
+
+
+@app.post("/api/v1/account/agency")
+async def create_or_get_business_agency(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Provision the single agency tenant attached to a Business license."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency management is available on the Business plan.")
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    account = await operational_db.scalar(
+        select(CustomerAccount).where(CustomerAccount.license_key == license_obj.license_key)
+        .order_by(CustomerAccount.updated_at.desc()).limit(1)
+    )
+    if account is None:
+        raise HTTPException(status_code=409, detail="Complete verified customer account sign-in before creating an agency.")
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+    )
+    if agency is None:
+        agency = AgencyAccount(
+            id=secrets.token_urlsafe(24),
+            owner_license_key=license_obj.license_key,
+            owner_email=account.email.strip().lower(),
+            status="active",
+        )
+        operational_db.add(agency)
+        try:
+            await operational_db.commit()
+        except IntegrityError:
+            await operational_db.rollback()
+            agency = await operational_db.scalar(
+                select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+            )
+            if agency is None:
+                raise HTTPException(status_code=409, detail="Agency account could not be provisioned. Please retry.")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": agency.id,
+        "owner_email": agency.owner_email,
+        "status": agency.status,
+        "created_at": agency.created_at.isoformat() if agency.created_at else None,
+    }
+
+
+@app.get("/api/v1/account/agency/clients")
+async def list_business_agency_clients(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """List only the client workspaces owned by the caller's Business agency."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency management is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+    )
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Create your agency workspace before managing clients.")
+    clients = (await operational_db.execute(
+        select(AgencyClientWorkspace).where(
+            AgencyClientWorkspace.agency_id == agency.id
+        ).order_by(AgencyClientWorkspace.created_at.desc()).limit(500)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{
+        "id": item.id,
+        "display_name": item.display_name,
+        "external_reference": item.external_reference,
+        "status": item.status,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    } for item in clients]}
+
+
+@app.post("/api/v1/account/agency/clients")
+async def create_business_agency_client(
+    payload: AgencyClientWorkspaceCreate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Create a tenant-scoped client workspace; client websites are linked separately."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+    )
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
+    display_name = payload.display_name.strip()
+    external_reference = payload.external_reference.strip() if payload.external_reference else None
+    if not display_name:
+        raise HTTPException(status_code=422, detail="Client display name cannot be blank.")
+    item = AgencyClientWorkspace(
+        id=secrets.token_urlsafe(24),
+        agency_id=agency.id,
+        display_name=display_name,
+        external_reference=external_reference or None,
+        status="active",
+    )
+    operational_db.add(item)
+    try:
+        await operational_db.commit()
+    except IntegrityError:
+        await operational_db.rollback()
+        raise HTTPException(status_code=409, detail="That external client reference is already in use in this agency.")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": item.id,
+        "display_name": item.display_name,
+        "external_reference": item.external_reference,
+        "status": item.status,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+@app.patch("/api/v1/account/agency/clients/{workspace_id}")
+async def update_business_agency_client(
+    workspace_id: str,
+    payload: AgencyClientWorkspaceUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Update or archive a client workspace without crossing agency boundaries."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+    )
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    item = await operational_db.scalar(
+        select(AgencyClientWorkspace).where(
+            AgencyClientWorkspace.id == workspace_id,
+            AgencyClientWorkspace.agency_id == agency.id,
+        ).with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Client workspace was not found in this agency.")
+    changes = payload.model_dump(exclude_unset=True)
+    if "display_name" in changes:
+        display_name = (changes["display_name"] or "").strip()
+        if not display_name:
+            raise HTTPException(status_code=422, detail="Client display name cannot be blank.")
+        item.display_name = display_name
+    if "status" in changes:
+        item.status = changes["status"]
+    item.updated_at = datetime.now(timezone.utc)
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": item.id,
+        "display_name": item.display_name,
+        "external_reference": item.external_reference,
+        "status": item.status,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
 
 
 @app.get("/api/v1/account/branding")
