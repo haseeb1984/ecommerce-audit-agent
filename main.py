@@ -5237,6 +5237,11 @@ async def admin_customer_account_detail(
             sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
         ).distinct()
     )).scalars().all())
+    customer_license_keys.update((await operational_db.execute(
+        select(CustomerAccount.license_key).where(
+            sql_func.lower(CustomerAccount.email) == normalized
+        ).distinct()
+    )).scalars().all())
     rows = (await db.execute(
         select(SoftwareLicense).where(SoftwareLicense.license_key.in_(customer_license_keys))
         .order_by(SoftwareLicense.created_at.desc())
@@ -5327,6 +5332,11 @@ async def admin_customer_account_action(
             sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
         ).distinct()
     )).scalars().all())
+    account_license_keys.update((await operational_db.execute(
+        select(CustomerAccount.license_key).where(
+            sql_func.lower(CustomerAccount.email) == normalized
+        ).distinct()
+    )).scalars().all())
     ids = list((await db.execute(
         select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(account_license_keys))
     )).scalars().all()) if account_license_keys else []
@@ -5372,15 +5382,25 @@ async def admin_add_customer_note(
     _require_admin_key(request)
     from sqlalchemy import select, func as sql_func
     normalized = email.strip().lower()
-    license_count = int((await db.execute(select(sql_func.count(SoftwareLicense.id)).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized))).scalar_one() or 0)
-    if not license_count:
+    note_license_keys = set((await operational_db.execute(
+        select(CustomerBillingEvent.license_key).where(
+            sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
+        ).distinct()
+    )).scalars().all())
+    note_license_keys.update((await operational_db.execute(
+        select(CustomerAccount.license_key).where(
+            sql_func.lower(CustomerAccount.email) == normalized
+        ).distinct()
+    )).scalars().all())
+    if not note_license_keys:
+        note_license_keys.update((await db.execute(select(SoftwareLicense.license_key).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
+        )).scalars().all())
+    if not note_license_keys:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     created = AdminCustomerNote(
-        license_key=(await db.scalar(select(SoftwareLicense.license_key).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).limit(1))),
+        license_key=sorted(note_license_keys)[0],
         customer_email=normalized,
         note=payload.note.strip(),
         created_by="admin",
