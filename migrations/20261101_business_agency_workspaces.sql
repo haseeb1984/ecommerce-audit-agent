@@ -36,9 +36,14 @@ CREATE TABLE IF NOT EXISTS agency_client_websites (
     site_url VARCHAR(2048) NOT NULL,
     site_host VARCHAR(253) NOT NULL,
     admin_email VARCHAR(254) NULL,
-    connection_type VARCHAR(24) NOT NULL DEFAULT 'manual',
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    connection_type VARCHAR(24) NOT NULL DEFAULT 'wordpress_plugin',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    site_token_hash VARCHAR(64) NULL UNIQUE,
+    plugin_version VARCHAR(30) NULL,
+    wordpress_version VARCHAR(30) NULL,
+    woocommerce_version VARCHAR(30) NULL,
     connected_at DATETIME(6) NOT NULL,
+    last_seen_at DATETIME(6) NULL,
     disconnected_at DATETIME(6) NULL,
     UNIQUE KEY uq_agency_workspace_site_host (workspace_id, site_host),
     KEY ix_agency_client_websites_agency_id (agency_id),
@@ -159,4 +164,21 @@ CREATE TABLE IF NOT EXISTS agency_team_sessions (
         REFERENCES agency_accounts(id) ON DELETE CASCADE,
     CONSTRAINT fk_agency_team_session_member FOREIGN KEY (team_member_id)
         REFERENCES agency_team_members(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS agency_website_connect_challenges (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    agency_id VARCHAR(64) NOT NULL,
+    workspace_id VARCHAR(64) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    expires_at DATETIME(6) NOT NULL,
+    consumed_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL,
+    KEY ix_agency_website_connect_challenges_agency_id (agency_id),
+    KEY ix_agency_website_connect_challenges_workspace_id (workspace_id),
+    KEY ix_agency_website_connect_challenges_expires_at (expires_at),
+    CONSTRAINT fk_agency_website_challenge_agency FOREIGN KEY (agency_id)
+        REFERENCES agency_accounts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_agency_website_challenge_workspace FOREIGN KEY (workspace_id)
+        REFERENCES agency_client_workspaces(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
