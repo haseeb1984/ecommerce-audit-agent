@@ -4,7 +4,8 @@ This runbook describes the current deployment topology and the safe order for pr
 
 ## Service boundaries
 
-- **Vercel / FastAPI**: HTTP API, customer and administrator interfaces, scheduled scan-worker invocation, and application orchestration.
+- **Vercel / FastAPI**: HTTP API, customer and administrator interfaces, and application orchestration.
+- **Hostinger / managed Python worker runtime**: persistent `worker_service.py` process that drains scan jobs and cross-database synchronization outboxes.
 - **Supabase PostgreSQL**: canonical software licenses, API keys, quota reservations, audit leads/reports, Paddle webhook events, and plan packages.
 - **Hostinger MySQL**: customer accounts and sessions, email challenges, customer website inventory, durable scan jobs/results, and operational billing/email projections.
 - **Private object storage**: intended location for generated report files and customer uploads. Configure and verify this independently before enabling any workflow that relies on private object storage.
