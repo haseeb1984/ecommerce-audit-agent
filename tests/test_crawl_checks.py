@@ -26,7 +26,7 @@ async def test_sitemap_discovered_url_status_is_recorded_without_claiming_indexi
         '</urlset>'
     )
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
         if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
@@ -54,7 +54,7 @@ async def test_sitemap_discovered_url_status_is_recorded_without_claiming_indexi
 async def test_bounded_crawl_records_additional_page_check_outcomes_without_false_applicability(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return 200, (
                 '<html><head><title>Store</title><link rel="canonical" href="/">'
@@ -99,7 +99,7 @@ async def test_product_specific_outcomes_are_recorded_only_for_product_routes(mo
         ),
     }
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url in pages:
             return pages[url]
         if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt",
@@ -147,7 +147,7 @@ async def test_crawl_resolves_relative_links_using_same_origin_base_href(monkeyp
     }
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         return pages.get(url, (404, "", {"content-type": "text/plain"}, url))
 
@@ -162,7 +162,7 @@ async def test_crawl_resolves_relative_links_using_same_origin_base_href(monkeyp
 async def test_off_origin_base_href_cannot_expand_crawl_scope(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -206,7 +206,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
     }
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         return pages.get(url, (404, "", {"content-type": "text/plain"}, url))
 
@@ -228,7 +228,7 @@ async def test_bounded_crawl_stays_same_origin_and_detects_missing_titles(monkey
 @pytest.mark.asyncio
 async def test_bounded_crawl_reports_internal_http_errors(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return 200, '<a href="/broken">Broken</a>', {"content-type": "text/html"}, url
         return 404, "", {"content-type": "text/html"}, url
@@ -245,7 +245,7 @@ async def test_bounded_crawl_reports_internal_http_errors(monkeypatch):
 async def test_crawl_flags_off_origin_canonical_and_noindex(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -275,7 +275,7 @@ async def test_crawl_flags_off_origin_canonical_and_noindex(monkeypatch):
 async def test_multiple_canonical_declarations_require_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -309,7 +309,7 @@ async def test_multiple_canonical_declarations_require_review(monkeypatch):
 async def test_malformed_canonical_is_reviewed_without_crashing(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -339,7 +339,7 @@ async def test_malformed_canonical_is_reviewed_without_crashing(monkeypatch):
 async def test_productgroup_nested_in_graph_is_detected(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -372,7 +372,7 @@ async def test_productgroup_nested_in_graph_is_detected(monkeypatch):
 async def test_product_page_detects_product_jsonld(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -404,7 +404,7 @@ async def test_product_page_detects_product_jsonld(monkeypatch):
 async def test_product_page_without_product_jsonld_requires_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -437,7 +437,7 @@ async def test_bounded_crawl_uses_same_origin_sitemap_urls(monkeypatch):
     product = "https://shop.example/products/from-sitemap"
     requests = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requests.append(url)
         if url == homepage:
             return (
@@ -482,7 +482,7 @@ async def test_bounded_crawl_uses_same_origin_sitemap_urls(monkeypatch):
 async def test_product_jsonld_reports_missing_common_properties_for_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -516,7 +516,7 @@ async def test_product_jsonld_reports_missing_common_properties_for_review(monke
 async def test_product_jsonld_rejects_nonempty_but_wrong_shaped_properties(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -551,7 +551,7 @@ async def test_product_jsonld_rejects_nonempty_but_wrong_shaped_properties(monke
 async def test_product_jsonld_with_common_properties_has_no_property_gap_finding(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -582,7 +582,7 @@ async def test_product_jsonld_with_common_properties_has_no_property_gap_finding
 async def test_category_like_page_without_h1_is_flagged_for_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -613,7 +613,7 @@ async def test_category_like_page_without_h1_is_flagged_for_review(monkeypatch):
 async def test_category_page_detects_itemlist_jsonld(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -646,7 +646,7 @@ async def test_category_page_detects_itemlist_jsonld(monkeypatch):
 async def test_internal_page_missing_viewport_is_flagged_for_manual_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -756,7 +756,7 @@ def test_hreflang_absence_is_not_assumed_to_be_a_problem():
 async def test_crawl_preserves_noindex_across_duplicate_meta_robots_tags(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -794,7 +794,7 @@ async def test_crawl_preserves_noindex_across_duplicate_meta_robots_tags(monkeyp
 async def test_crawl_detects_x_robots_tag_noindex_without_meta_robots(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -827,7 +827,7 @@ async def test_sitemap_entity_expansion_is_rejected_safely(monkeypatch):
         '<urlset><url><loc>&expansion;</loc></url></urlset>'
     )
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -850,7 +850,7 @@ async def test_crawl_deduplicates_query_variants_and_fragments(monkeypatch):
     homepage = "https://shop.example/"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, ('<html><head><title>Shop</title></head><body>'
@@ -888,7 +888,7 @@ async def test_crawl_respects_page_budget_and_homepage_link_discovery_cap(monkey
     requested = []
     links = "".join(f'<a href="/p{i}">P{i}</a>' for i in range(12))
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, f'<html><head><title>Shop</title></head><body>{links}</body></html>', {"content-type": "text/html"}, homepage
@@ -916,7 +916,7 @@ async def test_crawl_caps_sitemap_url_discovery(monkeypatch):
     ) + '</urlset>'
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -937,7 +937,7 @@ async def test_crawl_fetch_failure_is_not_reported_as_verified_broken_link(monke
     monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
     homepage = "https://shop.example/"
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body><a href="/products/one">One</a></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/sitemap.xml":
@@ -961,7 +961,7 @@ async def test_crawl_fetch_failure_is_not_reported_as_verified_broken_link(monke
 async def test_product_jsonld_malformed_block_is_reviewed_without_crashing(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -994,7 +994,7 @@ async def test_product_jsonld_malformed_block_is_reviewed_without_crashing(monke
 async def test_same_origin_canonical_is_not_flagged_as_off_origin(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1030,7 +1030,7 @@ async def test_crawl_skips_malformed_link_urls_and_accepts_default_port_same_ori
     valid = "https://shop.example/products/valid"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return (
@@ -1090,7 +1090,7 @@ async def test_crawl_expands_limited_same_origin_sitemap_index(monkeypatch):
     )
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -1125,7 +1125,7 @@ async def test_crawl_page_budget_of_one_checks_only_homepage(monkeypatch):
     monkeypatch.setattr(crawl_checks, "MAX_CRAWL_PAGES", 1)
     homepage = "https://shop.example/"
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body><a href="/product">Product</a></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/sitemap.xml":
@@ -1142,7 +1142,7 @@ async def test_crawl_page_budget_of_one_checks_only_homepage(monkeypatch):
 async def test_crawl_flags_multiple_h1_as_review_not_automatic_error(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1172,7 +1172,7 @@ async def test_crawl_flags_multiple_h1_as_review_not_automatic_error(monkeypatch
 async def test_crawl_flags_empty_alt_on_internal_page_for_contextual_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1204,7 +1204,7 @@ async def test_crawl_flags_empty_alt_on_internal_page_for_contextual_review(monk
 async def test_crawl_reports_empty_and_duplicate_meta_descriptions_separately(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1242,7 +1242,7 @@ async def test_crawl_reports_empty_and_duplicate_meta_descriptions_separately(mo
 async def test_crawl_reports_title_and_description_length_as_review_signals(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1275,7 +1275,7 @@ async def test_crawl_reports_title_and_description_length_as_review_signals(monk
 async def test_crawl_distinguishes_empty_and_duplicate_title_elements(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1307,7 +1307,7 @@ async def test_crawl_distinguishes_empty_and_duplicate_title_elements(monkeypatc
 async def test_crawl_flags_empty_h1_heading_for_contextual_review(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1482,7 +1482,7 @@ def test_canonical_page_url_does_not_preserve_userinfo_in_normalized_authority()
 async def test_bounded_crawl_runs_security_header_quality_on_sampled_html(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         return (
             200,
             '<html><head><title>Store</title></head><body><h1>Shop</h1></body></html>',
@@ -1570,7 +1570,7 @@ async def test_crawl_discovers_nonstandard_sitemap_declared_in_robots(monkeypatc
     product = "https://shop.example/products/from-declared-sitemap"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -1596,7 +1596,7 @@ async def test_crawl_ignores_cross_origin_sitemap_directive(monkeypatch):
     homepage = "https://shop.example/"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -1662,7 +1662,7 @@ async def test_crawl_reports_unavailable_robots_declared_sitemap(monkeypatch):
     homepage = "https://shop.example/"
     sitemap = "https://shop.example/catalog-index.xml"
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
@@ -1687,7 +1687,7 @@ async def test_crawl_reports_unavailable_child_sitemap_from_index(monkeypatch):
     sitemap = "https://shop.example/sitemap.xml"
     child = "https://shop.example/products-sitemap.xml"
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
@@ -1718,7 +1718,7 @@ async def test_crawl_does_not_use_robots_sitemap_redirected_off_origin(monkeypat
     external = "https://outside.example/sitemap.xml"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -1778,7 +1778,7 @@ async def test_crawl_prioritizes_noindex_on_product_landing_page(monkeypatch):
     homepage = "https://shop.example/"
     product = "https://shop.example/products/blue-shirt"
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body><a href="/products/blue-shirt">Blue shirt</a></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
@@ -1804,7 +1804,7 @@ async def test_crawl_reports_sampled_internal_page_missing_title_element(monkeyp
     homepage = "https://shop.example/"
     product = "https://shop.example/products/blue-shirt"
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store home</title></head><body><a href="/products/blue-shirt">Blue shirt</a></body></html>', {"content-type": "text/html"}, homepage
         if url in {"https://shop.example/robots.txt", "https://shop.example/sitemap.xml"}:
@@ -1829,7 +1829,7 @@ async def test_crawl_reports_sampled_internal_page_missing_title_element(monkeyp
 async def test_product_jsonld_flags_negative_price_and_malformed_currency_code(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -1953,7 +1953,7 @@ async def test_bounded_crawl_discovers_nested_same_origin_links_without_exceedin
     product = "https://shop.example/products/deep-product"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return (
@@ -2030,7 +2030,7 @@ async def test_bounded_crawl_uses_multiple_robots_declared_sitemaps(monkeypatch)
     second_sitemap = "https://shop.example/catalog-b.xml"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -2078,7 +2078,7 @@ async def test_bounded_crawl_never_fetches_off_origin_robots_sitemap(monkeypatch
     product = "https://shop.example/products/item"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -2110,7 +2110,7 @@ async def test_sitemap_index_rejects_off_origin_and_deduplicates_child_sitemaps(
     product = "https://shop.example/products/one"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -2153,7 +2153,7 @@ async def test_sitemap_index_rejects_off_origin_and_deduplicates_child_sitemaps(
 async def test_bounded_crawl_reports_homepage_http_failure(monkeypatch, status):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         return status, "response body omitted", {"content-type": "text/html"}, url
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
@@ -2174,7 +2174,7 @@ async def test_bounded_crawl_reports_homepage_http_failure(monkeypatch, status):
 async def test_bounded_crawl_reports_non_html_homepage_without_page_findings(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         return 200, '{"ok":true}', {"content-type": "application/json"}, url
 
     monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
@@ -2222,7 +2222,7 @@ async def test_bounded_crawl_discloses_sitemap_urls_not_fetched_due_to_page_budg
     homepage = "https://shop.example/"
     urls = [f"https://shop.example/products/item-{i}" for i in range(20)]
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
         if url == "https://shop.example/robots.txt":
@@ -2245,7 +2245,7 @@ async def test_bounded_crawl_discloses_sitemap_urls_not_fetched_due_to_page_budg
 async def test_llms_txt_check_records_outcome_when_optional_file_is_missing(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -2293,7 +2293,7 @@ async def test_robots_txt_records_check_outcome_for_success_and_unavailable_resp
 ):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return (
                 200,
@@ -2349,7 +2349,7 @@ async def test_sitemap_discovered_url_status_classifies_success_server_error_and
         '<url><loc>https://shop.example/products/available</loc></url></urlset>'
     )
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
         if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
@@ -2381,7 +2381,7 @@ async def test_sitemap_discovered_url_status_records_fetch_exception_as_error(mo
         '<url><loc>https://shop.example/products/unreachable</loc></url></urlset>'
     )
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         if url == "https://shop.example/":
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
         if url in {"https://shop.example/robots.txt", "https://shop.example/llms.txt"}:
@@ -2480,7 +2480,7 @@ async def test_recursive_crawl_rejects_relative_links_from_off_origin_base(monke
     unsafe_relative = "https://shop.example/products/relative-from-unsafe-base"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, (
@@ -2522,7 +2522,7 @@ async def test_crawl_expands_bounded_children_of_secondary_sitemap_indexes(monke
     nested_product = "https://shop.example/products/nested"
     requested = []
 
-    async def fake_safe_get(client, url):
+    async def fake_safe_get(client, url, allowed_origin=None):
         requested.append(url)
         if url == homepage:
             return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, homepage
@@ -2558,3 +2558,31 @@ async def test_crawl_expands_bounded_children_of_secondary_sitemap_indexes(monke
     assert nested_product in checked
     assert requested.count(child_sitemap) == 1
     assert len(checked) <= crawl_checks.MAX_CRAWL_PAGES
+
+
+@pytest.mark.asyncio
+async def test_discovery_fetches_enforce_same_origin_redirect_boundary(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    observed = {}
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        observed[url] = allowed_origin
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
+        if url in {
+            "https://shop.example/llms.txt",
+            "https://shop.example/robots.txt",
+            "https://shop.example/sitemap.xml",
+        }:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    await crawl_checks.run_bounded_site_crawl("https://shop.example/")
+
+    for url in (
+        "https://shop.example/llms.txt",
+        "https://shop.example/robots.txt",
+        "https://shop.example/sitemap.xml",
+    ):
+        assert observed[url] == "https://shop.example/"
