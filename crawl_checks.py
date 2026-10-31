@@ -1195,7 +1195,7 @@ async def run_bounded_site_crawl(
         # conventional path and report basic format cues without implying ranking value.
         llms_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "llms.txt")
         try:
-            llms_status, llms_body, llms_headers, llms_final_url = await _safe_get(client, llms_url)
+            llms_status, llms_body, llms_headers, llms_final_url = await _safe_get(client, llms_url, allowed_origin=final_home)
             if _same_origin(llms_final_url, final_home):
                 llms_findings = inspect_llms_txt(
                     llms_body, llms_status, llms_final_url,
@@ -1244,7 +1244,7 @@ async def run_bounded_site_crawl(
         robots_rules: list[tuple[str, str]] = []
         robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
         try:
-            robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
+            robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url, allowed_origin=final_home)
             if 200 <= robots_status < 300 and _same_origin(robots_final_url, final_home):
                 robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
                 robots_rules = _parse_robots_rules(robots_body, USER_AGENT)
@@ -1464,7 +1464,7 @@ async def run_bounded_site_crawl(
             ]
 
         try:
-            sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url)
+            sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url, allowed_origin=final_home)
             if 200 <= sitemap_status < 300 and _same_origin(sitemap_final_url, final_home) and (
                 "xml" in sitemap_headers.get("content-type", "").lower()
                 or sitemap_body.lstrip().startswith("<")
@@ -1524,7 +1524,7 @@ async def run_bounded_site_crawl(
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
                         try:
-                            child_status, child_body, child_headers, child_final_url = await _safe_get(client, child_sitemap_url)
+                            child_status, child_body, child_headers, child_final_url = await _safe_get(client, child_sitemap_url, allowed_origin=final_home)
                             if not _same_origin(child_final_url, final_home):
                                 findings.append(_finding(
                                     "indexing", "Child sitemap redirect left the audited origin",
@@ -1629,7 +1629,7 @@ async def run_bounded_site_crawl(
                 break
             try:
                 extra_status, extra_body, extra_headers, extra_final_url = await _safe_get(
-                    client, extra_sitemap_url
+                    client, extra_sitemap_url, allowed_origin=final_home
                 )
                 if not _same_origin(extra_final_url, final_home):
                     findings.append(_finding(
@@ -1699,7 +1699,7 @@ async def run_bounded_site_crawl(
                             break
                         try:
                             nested_status, nested_body, nested_headers, nested_final = await _safe_get(
-                                client, nested_url
+                                client, nested_url, allowed_origin=final_home
                             )
                             if not _same_origin(nested_final, final_home):
                                 continue
