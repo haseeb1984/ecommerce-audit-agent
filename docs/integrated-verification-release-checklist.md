@@ -28,10 +28,10 @@ Back up the target database and apply reviewed migrations in the order documente
 Use non-production credentials and test licenses to verify:
 
 - Starter can run standard audits but cannot run conversion dossiers, create direct API keys, or configure white-label branding.
-- Pro/Agency can run standard audits and conversion dossiers but cannot configure white-label branding or direct API access.
-- Business/Enterprise can use the full feature set and save per-license white-label settings.
+- Pro can run standard audits and conversion dossiers but cannot configure white-label branding or direct API access.
+- Business can use the full feature set and save per-license white-label settings.
 - Unknown plan tiers fail closed.
-- Customer email recovery/change, session revocation, multi-license switching, and report ownership isolation.
+- Customer email recovery/change, session revocation, one-customer/one-license identity, and report ownership isolation.
 - Admin suspension/reactivation, cancellation requests, support notes, and audit logs.
 - WordPress registration, status heartbeat, quota enforcement, audit submission, report download, disconnect, and plan-gated branding.
 - Paddle sandbox checkout/webhook reconciliation, SMTP delivery/retry, PageSpeed and Groq integrations.
