@@ -4772,13 +4772,13 @@ async def admin_overview(
         matching_license_ids = set((await db.execute(
             select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(matching_license_keys))
         )).scalars().all()) if matching_license_keys else set()
-        if not matching_license_ids:
-            matching_license_ids = set((await db.execute(
-                select(PaymentWebhookEvent.license_id).where(
-                    sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
-                    PaymentWebhookEvent.license_id.is_not(None),
-                ).distinct()
-            )).scalars().all())
+        legacy_matching_ids = (await db.execute(
+            select(PaymentWebhookEvent.license_id).where(
+                sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
+                PaymentWebhookEvent.license_id.is_not(None),
+            ).distinct()
+        )).scalars().all()
+        matching_license_ids.update(legacy_matching_ids)
         client_filter = or_(
             SoftwareLicense.client_name.ilike(pattern),
             SoftwareLicense.tier.ilike(pattern),
@@ -5302,16 +5302,16 @@ async def admin_customer_account_detail(
             sql_func.lower(CustomerAccount.email) == normalized
         ).distinct()
     )).scalars().all())
-    rows = (await db.execute(
+    rows_by_id = {item.id: item for item in (await db.execute(
         select(SoftwareLicense).where(SoftwareLicense.license_key.in_(customer_license_keys))
         .order_by(SoftwareLicense.created_at.desc())
-    )).scalars().all() if customer_license_keys else []
-    if not rows:
-        # Legacy fallback until Hostinger billing history migration is applied.
-        rows = (await db.execute(select(SoftwareLicense).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized)
-        .distinct().order_by(SoftwareLicense.created_at.desc()))).scalars().all()
+    )).scalars().all()} if customer_license_keys else {}
+    legacy_rows = (await db.execute(select(SoftwareLicense).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized)
+    .distinct().order_by(SoftwareLicense.created_at.desc()))).scalars().all()
+    rows_by_id.update({item.id: item for item in legacy_rows})
+    rows = sorted(rows_by_id.values(), key=lambda item: (item.created_at, item.id), reverse=True)
     if not rows:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
@@ -5460,11 +5460,10 @@ async def admin_add_customer_note(
             sql_func.lower(CustomerAccount.email) == normalized
         ).distinct()
     )).scalars().all())
-    if not note_license_keys:
-        note_license_keys.update((await db.execute(select(SoftwareLicense.license_key).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
-        )).scalars().all())
+    note_license_keys.update((await db.execute(select(SoftwareLicense.license_key).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
+    )).scalars().all())
     if not note_license_keys:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     created = AdminCustomerNote(
