@@ -4344,6 +4344,7 @@ async def admin_payment_events(
     # double-counting mirrored rows while still exposing partially copied rows.
     total = max(pg_count, host_count)
     license_keys = {event.license_key for event in events if hasattr(event, "license_key")}
+    event_license_ids = {event.event_id: event.license_id for event in pg_rows}
     license_ids = {}
     if license_keys:
         rows = (await db.execute(
