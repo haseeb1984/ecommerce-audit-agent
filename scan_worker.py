@@ -11,15 +11,15 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select, update
 
-from database import AsyncSessionLocal
-from models import AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox
+from database import AsyncSessionLocal, Base
+from models import (AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox)
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
-from hostinger_database import HostingerAsyncSessionLocal
+from hostinger_database import HostingerAsyncSessionLocal, ensure_hostinger_schema
 from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
@@ -552,11 +552,49 @@ async def cleanup_expired_customer_auth_records(*, batch_size: int = 500) -> dic
             raise
     return counts
 
+async def ensure_scan_worker_schema() -> None:
+    """Apply additive PostgreSQL schema upgrades required by the durable worker."""
+    from sqlalchemy import text
+
+    async with AsyncSessionLocal() as licensing_db:
+        dialect = licensing_db.get_bind().dialect.name
+        if dialect == "postgresql":
+            await licensing_db.execute(text(
+                "ALTER TABLE audit_leads ADD COLUMN IF NOT EXISTS source_job_id VARCHAR(64)"
+            ))
+            await licensing_db.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_leads_source_job_id "
+                "ON audit_leads (source_job_id) WHERE source_job_id IS NOT NULL"
+            ))
+        elif dialect == "sqlite":
+            columns = (await licensing_db.execute(text("PRAGMA table_info(audit_leads)"))).all()
+            if "source_job_id" not in {row[1] for row in columns}:
+                await licensing_db.execute(text("ALTER TABLE audit_leads ADD COLUMN source_job_id VARCHAR(64)"))
+            await licensing_db.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_leads_source_job_id "
+                "ON audit_leads (source_job_id)"
+            ))
+        else:
+            raise RuntimeError(f"Unsupported licensing database dialect: {dialect}")
+        async with licensing_db.get_bind().begin() as connection:
+            await connection.run_sync(
+                Base.metadata.create_all,
+                tables=[
+                    CustomerLifecycleSyncOutbox.__table__,
+                    BillingMirrorSyncOutbox.__table__,
+                ],
+            )
+        await licensing_db.commit()
+    await ensure_hostinger_schema()
+
+
 async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None) -> dict:
     if max_jobs < 1 or max_jobs > 10:
         raise ValueError("max_jobs must be between 1 and 10.")
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
     import asyncio
+
+    await ensure_scan_worker_schema()
 
     lifecycle_sync = {"status": "completed", "processed": 0, "deferred": 0}
     try:
