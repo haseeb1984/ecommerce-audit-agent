@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_license_or_api_key
 from hostinger_database import get_hostinger_db
-from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite, AgencyAccount, AgencyClientWorkspace
+from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite
 from models import SoftwareLicense
 from plan_features import plan_features
 from scan_queue import enqueue_scan_request, cancel_scan_batch, retry_failed_scan_job
@@ -97,6 +97,16 @@ async def submit_scan_batches(
         ))
         if workspace is None:
             raise HTTPException(status_code=404, detail="Client workspace was not found in this agency.")
+        client_site = await db.scalar(select(AgencyClientWebsite).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.workspace_id == workspace.id,
+            AgencyClientWebsite.status == "active",
+        ))
+        if client_site is None:
+            raise HTTPException(status_code=409, detail="Connect and verify this client's WordPress website before assigning audits to the workspace.")
+        submitted_host = (urlsplit(normalized[0]).hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
+        if submitted_host != client_site.site_host:
+            raise HTTPException(status_code=422, detail="Every client audit URL must belong to the WordPress website connected to the selected workspace.")
         workspace_id = workspace.id
 
     try:
