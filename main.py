@@ -4799,6 +4799,9 @@ async def admin_operations(
         .order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.event_id.desc())
         .limit(50)
     )).scalars().all()
+    billing_attention_events = await _filter_recovered_billing_attention_events(
+        billing_attention_events, db, operational_db
+    )
     stale_email_sending_count = int((await operational_db.execute(
         select(sql_func.count(CustomerBillingEvent.event_id)).where(
             CustomerBillingEvent.status == "email_sending",
