@@ -2244,6 +2244,9 @@ async def account_billing_history(
         ),
         reverse=True,
     )[:10]
+    attention_events = await _filter_recovered_billing_attention_events(
+        attention_events, db, operational_db
+    )
 
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -3056,6 +3059,57 @@ async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_
         )
         .limit(1)
     )).scalar_one_or_none()
+
+async def _filter_recovered_billing_attention_events(
+    events: list,
+    db: AsyncSession,
+    operational_db: AsyncSession,
+) -> list:
+    """Hide stale failure alerts when a later verified subscription recovery exists."""
+    failure_statuses = {"payment_failed", "subscription_past_due"}
+    recovery_statuses = {
+        "delivered", "subscription_renewed", "subscription_updated_active",
+        "subscription_resumed", "subscription_activated",
+    }
+    failures = [item for item in events if item.status in failure_statuses and item.subscription_id]
+    if not failures:
+        return events
+    subscription_ids = {item.subscription_id for item in failures}
+    from sqlalchemy import select
+    pg_recoveries = (await db.execute(
+        select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.subscription_id.in_(subscription_ids),
+            PaymentWebhookEvent.status.in_(recovery_statuses),
+        )
+    )).scalars().all()
+    host_recoveries = (await operational_db.execute(
+        select(CustomerBillingEvent).where(
+            CustomerBillingEvent.subscription_id.in_(subscription_ids),
+            CustomerBillingEvent.status.in_(recovery_statuses),
+        )
+    )).scalars().all()
+    recoveries = [*pg_recoveries, *host_recoveries]
+
+    def ordering(item):
+        stamp = item.updated_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp, item.event_id
+
+    latest_recovery = {}
+    for item in recoveries:
+        key = item.subscription_id
+        if key and (key not in latest_recovery or ordering(item) > ordering(latest_recovery[key])):
+            latest_recovery[key] = item
+    unresolved = []
+    for item in events:
+        if item.status in failure_statuses and item.subscription_id:
+            recovery = latest_recovery.get(item.subscription_id)
+            if recovery is not None and ordering(recovery) > ordering(item):
+                continue
+        unresolved.append(item)
+    return unresolved
+
 
 async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
     """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
