@@ -108,6 +108,13 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Progress is refreshed on demand through **Refresh progress** or after queue/cancel/retry actions. This portal view does not claim continuous live updates.
 
 
+### Individual admin client suspension/reactivation
+
+- `PATCH /api/v1/admin/clients/{license_id}` supports explicit `is_active` changes as part of client entitlement management. A real active-state transition is serialized by locking the canonical license row and writes a `CustomerLifecycleSyncOutbox` record in the same PostgreSQL transaction.
+- The outbox action is `suspend` or `reactivate`; the lifecycle worker mirrors the customer account status to Hostinger and revokes active browser sessions on suspension. This keeps individual client edits consistent with account-wide customer lifecycle actions.
+- Updating unrelated client fields, or submitting the already-current active state, does not enqueue redundant lifecycle work. The admin action log records the changed field names and account ID, not the license key.
+
+
 ### Admin bulk-scan queue monitoring
 
 - The admin portal's **Bulk scan queue monitoring** panel calls `GET /api/v1/admin/scan-operations` with the configured admin key. The endpoint is read-only and sets private no-store response headers.
