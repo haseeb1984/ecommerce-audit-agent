@@ -25,6 +25,8 @@ CREATE INDEX IF NOT EXISTS ix_customer_lifecycle_outbox_due
     ON customer_lifecycle_sync_outbox (status, next_attempt_at, created_at);
 CREATE INDEX IF NOT EXISTS ix_customer_lifecycle_sync_outbox_license_key
     ON customer_lifecycle_sync_outbox (license_key);
+CREATE INDEX IF NOT EXISTS ix_customer_lifecycle_sync_outbox_status
+    ON customer_lifecycle_sync_outbox (status);
 
 CREATE TABLE IF NOT EXISTS billing_mirror_sync_outbox (
     event_id VARCHAR(255) PRIMARY KEY,
@@ -38,3 +40,5 @@ CREATE TABLE IF NOT EXISTS billing_mirror_sync_outbox (
 
 CREATE INDEX IF NOT EXISTS ix_billing_mirror_outbox_due
     ON billing_mirror_sync_outbox (status, next_attempt_at, created_at);
+CREATE INDEX IF NOT EXISTS ix_billing_mirror_sync_outbox_status
+    ON billing_mirror_sync_outbox (status);
