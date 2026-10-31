@@ -33,6 +33,17 @@ from ecommerce_agent import UniversalEcommerceAgent
 logger = logging.getLogger("scan_worker")
 
 
+def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bool:
+    """Ignore stale suspend/reactivate events when canonical license state has moved on."""
+    if action == "suspend":
+        return license_is_active is False
+    if action == "reactivate":
+        return license_is_active is True
+    return action == "revoke_sessions"
+
+
+
+
 def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
@@ -324,15 +335,23 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
             license_key = event.license_key
             action = event.action
             try:
+                # Outbox retries can arrive after a newer admin transition. The
+                # canonical license row decides whether suspend/reactivate is
+                # still current, preventing an old retry from reversing state.
+                canonical_license = await licensing_db.scalar(select(SoftwareLicense).where(
+                    SoftwareLicense.license_key == license_key
+                ))
+                license_is_active = bool(canonical_license.is_active) if canonical_license is not None else None
+                action_applies = _lifecycle_action_applies(action, license_is_active)
                 async with HostingerAsyncSessionLocal() as operational_db:
-                    if action in {"suspend", "reactivate"}:
+                    if action_applies and action in {"suspend", "reactivate"}:
                         await operational_db.execute(update(CustomerAccount).where(
                             CustomerAccount.license_key == license_key
                         ).values(
                             status="suspended" if action == "suspend" else "active",
                             updated_at=datetime.now(timezone.utc),
                         ))
-                    if action in {"suspend", "revoke_sessions"}:
+                    if action_applies and action in {"suspend", "revoke_sessions"}:
                         await operational_db.execute(update(CustomerSession).where(
                             CustomerSession.license_key == license_key,
                             CustomerSession.revoked_at.is_(None),
