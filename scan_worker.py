@@ -124,6 +124,8 @@ async def process_one_scan(worker_id: str) -> dict:
         website_id = job.website_id
         target_url = job.target_url
 
+    lease_unconfirmed = asyncio.Event()
+
     async def _heartbeat():
         while True:
             await asyncio.sleep(240)
@@ -134,12 +136,17 @@ async def process_one_scan(worker_id: str) -> dict:
                     )
                 if not owned:
                     logger.warning("Scan worker lease ownership lost (job_id=%s)", job_id)
+                    lease_unconfirmed.set()
                     return
             except Exception as heartbeat_error:
+                # If ownership cannot be renewed or confirmed, stop doing billable work.
+                # The stale-lease reconciler will safely recover the job after its lease expires.
                 logger.warning(
                     "Scan worker heartbeat failed (job_id=%s, error_type=%s)",
                     job_id, type(heartbeat_error).__name__,
                 )
+                lease_unconfirmed.set()
+                return
 
     heartbeat_task = asyncio.create_task(_heartbeat())
     reservation_id = None
@@ -163,7 +170,21 @@ async def process_one_scan(worker_id: str) -> dict:
             else:
                 reserved_at = existing_lead.created_at or datetime.now(timezone.utc)
 
-        result = await _execute_audit(target_url)
+        audit_task = asyncio.create_task(_execute_audit(target_url))
+        lease_check_task = asyncio.create_task(lease_unconfirmed.wait())
+        done, _ = await asyncio.wait(
+            {audit_task, lease_check_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if lease_check_task in done and lease_unconfirmed.is_set():
+            audit_task.cancel()
+            await asyncio.gather(audit_task, return_exceptions=True)
+            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
+        lease_check_task.cancel()
+        await asyncio.gather(lease_check_task, return_exceptions=True)
+        result = audit_task.result()
+        if lease_unconfirmed.is_set():
+            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
 
         # Persist the successful quota consumption in Supabase exactly once per scan job.
         async with AsyncSessionLocal() as licensing_db:
@@ -230,6 +251,22 @@ async def process_one_scan(worker_id: str) -> dict:
             if not completed:
                 raise RuntimeError("SCAN_JOB_LEASE_LOST")
         return {"status": "completed", "job_id": job_id, "finding_count": len(result["findings"])}
+    except RuntimeError as exc:
+        if str(exc) == "SCAN_JOB_LEASE_UNCONFIRMED":
+            if reservation_id is not None:
+                async with AsyncSessionLocal() as licensing_db:
+                    await release_audit_reservation(licensing_db, reservation_id)
+            return {"status": "lease_unconfirmed", "job_id": job_id}
+        if reservation_id is not None:
+            async with AsyncSessionLocal() as licensing_db:
+                await release_audit_reservation(licensing_db, reservation_id)
+        logger.warning("Bulk scan worker failed (job_id=%s, error_type=%s)", job_id, type(exc).__name__)
+        async with HostingerAsyncSessionLocal() as operational_db:
+            outcome = await fail_or_retry_scan_job(
+                operational_db, job_id=job_id, worker_id=worker_id,
+                error_code=type(exc).__name__.upper(), retry_delay_seconds=60,
+            )
+        return {"status": outcome, "job_id": job_id, "error_code": type(exc).__name__.upper()}
     except HTTPException as exc:
         if reservation_id is not None:
             async with AsyncSessionLocal() as licensing_db:
