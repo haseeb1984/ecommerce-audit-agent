@@ -250,6 +250,7 @@ async def health_check(
         operational_tables = set(HostingerBase.metadata.tables)
         mysql_missing_tables = sorted(operational_tables - mysql_existing_tables)
         mysql_missing_columns = {}
+        mysql_missing_indexes = []
 
         if not mysql_missing_tables:
             mysql_column_result = await operational_db.execute(text(
@@ -270,12 +271,30 @@ async def health_check(
             mysql_missing_columns = {
                 name: columns for name, columns in mysql_missing_columns.items() if columns
             }
+            from sqlalchemy import UniqueConstraint
+            mysql_index_result = await operational_db.execute(text(
+                "SELECT DISTINCT index_name FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE()"
+            ))
+            mysql_existing_indexes = set(mysql_index_result.scalars().all())
+            mysql_required_indexes = {
+                index.name
+                for table in HostingerBase.metadata.tables.values()
+                for index in table.indexes
+                if index.name
+            } | {
+                constraint.name
+                for table in HostingerBase.metadata.tables.values()
+                for constraint in table.constraints
+                if isinstance(constraint, UniqueConstraint) and constraint.name
+            }
+            mysql_missing_indexes = sorted(mysql_required_indexes - mysql_existing_indexes)
 
         licensing_ready = not (
             pg_missing_tables or pg_missing_columns or pg_missing_indexes
         )
         operational_ready = not (
-            mysql_missing_tables or mysql_missing_columns
+            mysql_missing_tables or mysql_missing_columns or mysql_missing_indexes
         )
         overall_ready = licensing_ready and operational_ready
 
@@ -303,6 +322,7 @@ async def health_check(
                         "schema_ready": operational_ready,
                         "missing_tables": mysql_missing_tables,
                         "missing_columns": mysql_missing_columns,
+                        "missing_indexes": mysql_missing_indexes,
                     },
                 },
             )
