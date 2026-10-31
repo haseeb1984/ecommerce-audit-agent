@@ -95,6 +95,15 @@ class AccountProfileUpdate(BaseModel):
     client_name: str = Field(..., min_length=1, max_length=255)
 
 
+class WebsiteCreateRequest(BaseModel):
+    website_url: str = Field(..., min_length=4, max_length=2048)
+    display_name: str | None = Field(default=None, max_length=120)
+
+
+class WebsiteRenameRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=120)
+
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -1051,6 +1060,293 @@ async def get_account_usage(
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
         "expires_at": expires_at.isoformat() if expires_at else None,
+    }
+
+
+async def _ensure_hostinger_operational_schema():
+    """Initialize operational tables once per warm app instance, without blocking core billing."""
+    from hostinger_database import HostingerAsyncSessionLocal, ensure_hostinger_schema
+    if HostingerAsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Website inventory is not configured.")
+    if not getattr(app.state, "hostinger_schema_ready", False):
+        try:
+            await ensure_hostinger_schema()
+            app.state.hostinger_schema_ready = True
+        except Exception as exc:
+            logger.error("Hostinger schema initialization failed (error_type=%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Website inventory is temporarily unavailable.") from exc
+    return HostingerAsyncSessionLocal
+
+
+@app.get("/api/v1/websites")
+async def list_customer_websites(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    """List only websites registered to the authenticated license."""
+    from sqlalchemy import select
+    from hostinger_models import CustomerWebsite
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        rows = (await operational_db.execute(
+            select(CustomerWebsite)
+            .where(CustomerWebsite.license_key == license_obj.license_key,
+                   CustomerWebsite.status == "active")
+            .order_by(CustomerWebsite.updated_at.desc(), CustomerWebsite.id.asc())
+            .limit(200)
+        )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{
+        "id": row.id, "display_name": row.display_name,
+        "website_url": row.canonical_url, "status": row.status,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "last_scan_at": row.last_scan_at.isoformat() if row.last_scan_at else None,
+    } for row in rows], "limit": 200}
+
+
+@app.post("/api/v1/websites", status_code=201)
+async def create_customer_website(
+    payload: WebsiteCreateRequest,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    """Register a normalized public storefront under the authenticated license."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    from hostinger_models import CustomerWebsite
+    try:
+        canonical_url = _normalize_request_audit_target(payload.website_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        existing = (await operational_db.execute(
+            select(CustomerWebsite).where(
+                CustomerWebsite.license_key == license_obj.license_key,
+                CustomerWebsite.canonical_url == canonical_url,
+                CustomerWebsite.status == "active",
+            )
+        )).scalar_one_or_none()
+        if existing is not None:
+            return {"id": existing.id, "website_url": existing.canonical_url,
+                    "display_name": existing.display_name, "status": existing.status,
+                    "already_registered": True}
+        website = CustomerWebsite(
+            id=secrets.token_hex(24),
+            license_key=license_obj.license_key,
+            display_name=(payload.display_name or urlsplit(canonical_url).hostname or "Website").strip()[:120],
+            canonical_url=canonical_url,
+            status="active",
+        )
+        operational_db.add(website)
+        try:
+            await operational_db.commit()
+        except IntegrityError:
+            await operational_db.rollback()
+            existing = (await operational_db.execute(
+                select(CustomerWebsite).where(
+                    CustomerWebsite.license_key == license_obj.license_key,
+                    CustomerWebsite.canonical_url == canonical_url,
+                )
+            )).scalar_one_or_none()
+            if existing is None:
+                raise HTTPException(status_code=409, detail="Website could not be registered; retry the request.")
+            return {"id": existing.id, "website_url": existing.canonical_url,
+                    "display_name": existing.display_name, "status": existing.status,
+                    "already_registered": True}
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"id": website.id, "website_url": website.canonical_url,
+            "display_name": website.display_name, "status": website.status,
+            "already_registered": False}
+
+
+@app.patch("/api/v1/websites/{website_id}")
+async def rename_customer_website(
+    website_id: str,
+    payload: WebsiteRenameRequest,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    from sqlalchemy import select
+    from hostinger_models import CustomerWebsite
+    name = payload.display_name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Website name cannot be blank.")
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        website = (await operational_db.execute(
+            select(CustomerWebsite).where(
+                CustomerWebsite.id == website_id,
+                CustomerWebsite.license_key == license_obj.license_key,
+                CustomerWebsite.status == "active",
+            )
+        )).scalar_one_or_none()
+        if website is None:
+            raise HTTPException(status_code=404, detail="Website not found.")
+        website.display_name = name
+        website.updated_at = datetime.now(timezone.utc)
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"id": website.id, "display_name": website.display_name, "updated": True}
+
+
+@app.delete("/api/v1/websites/{website_id}")
+async def archive_customer_website(
+    website_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    from sqlalchemy import select, func as sql_func
+    from hostinger_models import CustomerWebsite, ScanJob
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        website = (await operational_db.execute(
+            select(CustomerWebsite).where(
+                CustomerWebsite.id == website_id,
+                CustomerWebsite.license_key == license_obj.license_key,
+                CustomerWebsite.status == "active",
+            )
+        )).scalar_one_or_none()
+        if website is None:
+            raise HTTPException(status_code=404, detail="Website not found.")
+        pending = int((await operational_db.execute(
+            select(sql_func.count(ScanJob.id)).where(
+                ScanJob.website_id == website_id,
+                ScanJob.license_key == license_obj.license_key,
+                ScanJob.status.in_(("queued", "retry", "processing")),
+            )
+        )).scalar_one() or 0)
+        if pending:
+            raise HTTPException(status_code=409, detail="Website has scans in progress; archive it after they finish.")
+        website.status = "archived"
+        website.updated_at = datetime.now(timezone.utc)
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"id": website_id, "status": "archived"}
+
+
+@app.post("/api/v1/websites/{website_id}/scans", status_code=202)
+async def enqueue_customer_website_scan(
+    website_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    """Queue one durable scan; the worker reserves quota immediately before billable execution."""
+    from sqlalchemy import select, func as sql_func
+    from hostinger_models import CustomerWebsite, ScanJob
+    expiry = license_obj.expires_at
+    if expiry is not None and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if not license_obj.is_active or (expiry is not None and expiry <= datetime.now(timezone.utc)):
+        raise HTTPException(status_code=403, detail="License is inactive or expired.")
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        website = (await operational_db.execute(
+            select(CustomerWebsite).where(
+                CustomerWebsite.id == website_id,
+                CustomerWebsite.license_key == license_obj.license_key,
+                CustomerWebsite.status == "active",
+            )
+        )).scalar_one_or_none()
+        if website is None:
+            raise HTTPException(status_code=404, detail="Website not found.")
+        pending = int((await operational_db.execute(
+            select(sql_func.count(ScanJob.id)).where(
+                ScanJob.license_key == license_obj.license_key,
+                ScanJob.status.in_(("queued", "retry", "processing")),
+            )
+        )).scalar_one() or 0)
+        if pending >= 10:
+            raise HTTPException(status_code=429, detail="This account already has 10 scans queued or processing.")
+        now = datetime.now(timezone.utc)
+        job = ScanJob(
+            id=secrets.token_hex(24),
+            license_key=license_obj.license_key,
+            website_id=website.id,
+            target_url=website.canonical_url,
+            status="queued",
+            attempts=0,
+            max_attempts=5,
+            available_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        operational_db.add(job)
+        website.updated_at = now
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"job_id": job.id, "website_id": website_id, "status": "queued",
+            "queued_at": now.isoformat(), "message": "Scan queued; poll the scan status endpoint for progress."}
+
+
+@app.get("/api/v1/scans/{job_id}")
+async def get_customer_scan_status(
+    job_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    from sqlalchemy import select
+    from hostinger_models import ScanJob
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        job = (await operational_db.execute(
+            select(ScanJob).where(
+                ScanJob.id == job_id,
+                ScanJob.license_key == license_obj.license_key,
+            )
+        )).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "job_id": job.id, "website_id": job.website_id, "status": job.status,
+        "attempts": job.attempts, "max_attempts": job.max_attempts,
+        "error_code": job.error_code, "result_available": bool(job.result_reference),
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+    }
+
+
+@app.get("/api/v1/scans/{job_id}/result")
+async def get_customer_scan_result(
+    job_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    import json
+    from sqlalchemy import select
+    from hostinger_models import WebsiteScanResult
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        result = (await operational_db.execute(
+            select(WebsiteScanResult).where(
+                WebsiteScanResult.job_id == job_id,
+                WebsiteScanResult.license_key == license_obj.license_key,
+            )
+        )).scalar_one_or_none()
+    if result is None:
+        raise HTTPException(status_code=404, detail="Completed scan result not found.")
+    try:
+        findings = json.loads(result.findings_json)
+        outcomes = json.loads(result.check_outcomes_json)
+        coverage = json.loads(result.coverage_json)
+        summary = json.loads(result.summary_json)
+    except (TypeError, ValueError) as exc:
+        logger.error("Stored scan result is unreadable (job_id=%s)", job_id)
+        raise HTTPException(status_code=503, detail="Stored scan result is temporarily unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "job_id": result.job_id, "website_id": result.website_id,
+        "website_url": result.target_url, "status": result.status,
+        "overall_score": result.overall_score, "finding_count": result.finding_count,
+        "findings": findings, "check_outcomes": outcomes,
+        "coverage": coverage, "summary": summary,
+        "created_at": result.created_at.isoformat() if result.created_at else None,
     }
 
 
