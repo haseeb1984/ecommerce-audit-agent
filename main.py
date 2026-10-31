@@ -1969,6 +1969,7 @@ async def create_or_get_business_agency(
 
 async def require_agency_team_session(
     credentials=Depends(CUSTOMER_BEARER),
+    db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Authenticate an accepted agency teammate without exposing the owner's license key."""
@@ -1995,11 +1996,17 @@ async def require_agency_team_session(
     ))
     if member is None or agency is None:
         raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
+    owner_license = await db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    ))
+    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
     return {"session": session, "member": member, "agency": agency}
 
 
 @app.post("/api/v1/agency/team/auth/request-code")
 async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: Response,
+                                    db: AsyncSession = Depends(get_async_db),
                                     operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Send an OTP only to an accepted, active agency teammate; response is enumeration-safe."""
     from sqlalchemy import select, update
@@ -2018,6 +2025,12 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
         AgencyAccount.id == member.agency_id, AgencyAccount.status == "active"
     ))
     if agency is None:
+        response.headers["Cache-Control"] = "no-store, private"
+        return generic
+    owner_license = await db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    ))
+    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
@@ -2051,6 +2064,7 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
 
 @app.post("/api/v1/agency/team/auth/verify-code")
 async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Request, response: Response,
+                                   db: AsyncSession = Depends(get_async_db),
                                    operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Consume a one-time OTP and issue a 12-hour revocable team session."""
     from sqlalchemy import select
@@ -2092,6 +2106,13 @@ async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Requ
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=401, detail="Agency team account is unavailable.")
+    owner_license = await db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    ))
+    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+        challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
     challenge.consumed_at = now
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -2122,6 +2143,26 @@ async def logout_agency_team_session(response: Response, identity=Depends(requir
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"status": "logged_out"}
+
+
+@app.get("/api/v1/agency/team/workspaces")
+async def list_agency_team_workspaces(response: Response, identity=Depends(require_agency_team_session),
+                                      operational_db: AsyncSession = Depends(get_hostinger_db)):
+    from sqlalchemy import select
+    rows = (await operational_db.execute(
+        select(AgencyClientWorkspace, AgencyWorkspaceAccess.role)
+        .join(AgencyWorkspaceAccess, AgencyWorkspaceAccess.workspace_id == AgencyClientWorkspace.id)
+        .where(
+            AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+            AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+            AgencyClientWorkspace.agency_id == identity["agency"].id,
+            AgencyClientWorkspace.status == "active",
+        ).order_by(AgencyClientWorkspace.display_name.asc()).limit(500)
+    )).all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{"id": workspace.id, "display_name": workspace.display_name, "role": role}
+                      for workspace, role in rows]}
 
 
 @app.get("/api/v1/agency/team/workspaces/{workspace_id}/audits")
@@ -2455,6 +2496,12 @@ async def revoke_business_agency_team_member(
     if member is None:
         raise HTTPException(status_code=404, detail="Team member was not found.")
     member.status = "revoked"
+    from sqlalchemy import update
+    await operational_db.execute(update(AgencyTeamSession).where(
+        AgencyTeamSession.agency_id == agency.id,
+        AgencyTeamSession.team_member_id == member.id,
+        AgencyTeamSession.revoked_at.is_(None),
+    ).values(revoked_at=datetime.now(timezone.utc)))
     member.invitation_token_hash = None
     member.invitation_expires_at = None
     await operational_db.execute(delete(AgencyWorkspaceAccess).where(
