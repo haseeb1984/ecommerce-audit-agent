@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import inspect
 
 import pytest
 from fastapi import HTTPException
