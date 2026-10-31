@@ -20,6 +20,7 @@
 | Scheduled worker execution | Partial | A bearer-protected worker endpoint processes one queued scan and reconciles outboxes. No cron schedule is configured in vercel.json; configure an approved external scheduler and verify invocation cadence/recovery. |
 | Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; re-run on latest branch head. |
 | Customer profile management | Implemented / verification pending | GET/PATCH profile endpoints exist; browser and latest CI acceptance required. |
+| Verified customer email identity change | Implemented / verification pending | Rate-limited 30-minute one-time verification, duplicate-address checks, portal controls, and license-scoped billing outbox sync are implemented; SMTP and Hostinger staging acceptance pending. |
 | Monthly quota and concurrent audit reservations | Implemented / verification pending | Reservation lifecycle exists in `quota.py`; run PostgreSQL-backed concurrency acceptance. |
 | Customer usage and audit activity | Implemented / verification pending | Usage/activity endpoints and portal meters exist; latest CI and browser QA required. |
 | Customer report history and evidence coverage | Implemented / verification pending | Scoped/paginated history and evidence endpoints exist; generated report quality is a separate final gate. |
@@ -72,3 +73,13 @@
 - Added migrations/20261101_worker_outboxes_and_scan_idempotency.sql for scan idempotency and outbox persistence.
 - Added contract/API tests, but the latest Actions jobs have no runner allocation (runner_id=0, steps=[]); no tests are claimed as executed or passed.
 - No production migration, Hostinger initialization, external scheduler setup, deployment, live payment, or live website scan was performed.
+
+
+## Customer identity implementation batch — 2026-11-01
+
+- Added authenticated email-change requests with per-account hourly throttling and a 30-minute single-use verification token.
+- Account email remains unchanged until the new address is verified; delivery failures invalidate the issued challenge and return a safe error.
+- Added duplicate-email checks across operational customer accounts and customer-portal controls for requesting and confirming the change.
+- Verified identity changes enqueue a Hostinger outbox projection scoped to the owning license. The worker updates only that license's PostgreSQL billing events, avoiding cross-account email changes.
+- Added additive Hostinger schema initialization and migration `migrations/20261102_hostinger_email_identity_scope.sql`.
+- Added API contract tests for unauthenticated requests and invalid input. Full CI execution is pending the current runner jobs; no test pass is claimed yet.
