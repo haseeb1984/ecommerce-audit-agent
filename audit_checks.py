@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, root_validator
 
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_REDIRECTS = 5
+MAX_DNS_ADDRESSES = 32
 REQUEST_TIMEOUT_SECONDS = 10.0
 USER_AGENT = "EcommerceAuditBot/1.0 (+https://junctiontools.com)"
 
@@ -227,11 +228,16 @@ class PublicOnlyResolver(aiohttp.abc.AbstractResolver):
                 raise OSError(f"Could not resolve target host: {host}") from exc
             addresses = []
             seen = set()
-            for record in records:
-                address = ipaddress.ip_address(record[4][0])
-                if address not in seen:
-                    seen.add(address)
-                    addresses.append(address)
+            try:
+                for record in records:
+                    address = ipaddress.ip_address(record[4][0])
+                    if address not in seen:
+                        seen.add(address)
+                        addresses.append(address)
+                        if len(addresses) > MAX_DNS_ADDRESSES:
+                            raise OSError("Target host returned too many DNS addresses.")
+            except (IndexError, TypeError, ValueError) as exc:
+                raise OSError("Target host returned an invalid DNS address record.") from exc
 
         if not addresses or any(not address.is_global for address in addresses):
             raise OSError("Target host resolves to a private or non-public IP address.")
