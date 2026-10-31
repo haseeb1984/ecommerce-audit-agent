@@ -178,3 +178,6 @@ Still outstanding:
 - Agency owners can now update and remove individual workspace grants for existing active team members from the customer portal; each selected workspace grant has its own Viewer/Analyst/Admin role.
 - Platform suspension is enforced across owner-side agency provisioning, team management, client listing, and client updates, in addition to blocking team-member sessions and WordPress site-token access. Reactivation does not silently restore previously revoked team sessions.
 - Added regression coverage for removing one workspace grant and ensuring a suspended agency cannot list its client workspaces.
+
+- Agency invitation acceptance now re-checks the agency's active state and current Business subscription before activating a teammate; naive MySQL expiry timestamps are normalized to UTC before comparison.
+- Owner-side workspace access grants can be individually added, role-updated, or removed. Admin suspension blocks owner management endpoints as well as team and WordPress access.
