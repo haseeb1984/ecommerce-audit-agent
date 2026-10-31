@@ -6,6 +6,7 @@ from hostinger_models import (
     CustomerBillingEvent,
     CustomerEmailIdentitySyncOutbox,
     CustomerSession,
+    CustomerWebsite,
     ScanJob,
     WebsiteScanResult,
 )
@@ -115,3 +116,18 @@ async def test_internal_worker_endpoint_requires_authentication(client, monkeypa
     )
     assert accepted.status_code == 200
     assert accepted.json()["max_jobs"] == 1
+
+
+
+def test_customer_website_model_is_license_scoped_and_mysql_index_safe():
+    columns = set(CustomerWebsite.__table__.columns.keys())
+    assert {
+        "id", "license_key", "display_name", "canonical_url",
+        "url_hash", "status", "created_at", "updated_at", "last_scan_at",
+    } <= columns
+    unique_constraints = [
+        constraint for constraint in CustomerWebsite.__table__.constraints
+        if constraint.__class__.__name__ == "UniqueConstraint"
+    ]
+    assert any(tuple(column.name for column in item.columns) == ("license_key", "url_hash")
+               for item in unique_constraints)
