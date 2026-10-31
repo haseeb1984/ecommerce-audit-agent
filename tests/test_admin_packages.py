@@ -13,8 +13,8 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "qa-plan",
-            "label": "QA Plan",
+            "tier": "starter",
+            "label": "Starter",
             "monthly_audit_allowance": 250,
             "max_concurrent_audits": 2,
             "paddle_price_id": None,
@@ -26,18 +26,18 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
 
     listed = await client.get("/api/v1/admin/packages", headers=headers)
     assert listed.status_code == 200
-    package = next(item for item in listed.json()["packages"] if item["tier"] == "qa-plan")
+    package = next(item for item in listed.json()["packages"] if item["tier"] == "starter")
     assert package["monthly_audit_allowance"] == 250
     assert package["max_concurrent_audits"] == 2
     assert package["is_active"] is True
     assert "price_id" in package
 
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-plan",
+        "/api/v1/admin/packages/starter",
         headers=headers,
         json={
-            "tier": "qa-plan",
-            "label": "QA Plan Plus",
+            "tier": "starter",
+            "label": "Starter Plus",
             "monthly_audit_allowance": 400,
             "max_concurrent_audits": 3,
             "paddle_price_id": None,
@@ -47,10 +47,10 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
     assert updated.status_code == 200, updated.text
     assert updated.json()["status"] == "updated"
 
-    deactivated = await client.delete("/api/v1/admin/packages/qa-plan", headers=headers)
+    deactivated = await client.delete("/api/v1/admin/packages/starter", headers=headers)
     assert deactivated.status_code == 200
     packages = (await client.get("/api/v1/admin/packages", headers=headers)).json()["packages"]
-    package = next(item for item in packages if item["tier"] == "qa-plan")
+    package = next(item for item in packages if item["tier"] == "starter")
     assert package["is_active"] is False
     assert package["monthly_audit_allowance"] == 400
 
@@ -91,8 +91,28 @@ async def test_legacy_malformed_paddle_price_id_fails_closed_and_uses_valid_env_
         plans = await _db_payment_plans(db, active_only=True)
 
     by_tier = {plan["tier"]: plan for plan in plans}
-    assert by_tier["legacy_bad"]["price_id"] is None
-    assert by_tier["legacy_good"]["price_id"] == "pri_ValidFallback123"
+    assert "legacy_bad" not in by_tier
+    assert "legacy_good" not in by_tier
+
+
+@pytest.mark.asyncio
+async def test_admin_rejects_package_tiers_outside_the_three_supported_packages(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
+    for tier in ("agency", "enterprise", "custom-tier"):
+        response = await client.post(
+            "/api/v1/admin/packages",
+            headers={"X-Admin-Key": "test-admin-key-only"},
+            json={
+                "tier": tier,
+                "label": tier.title(),
+                "monthly_audit_allowance": 100,
+                "max_concurrent_audits": 1,
+                "paddle_price_id": None,
+                "is_active": True,
+            },
+        )
+        assert response.status_code == 422
+        assert "Starter, Pro, and Business" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -150,8 +170,8 @@ async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "support-tier",
-            "label": "Support Tier",
+            "tier": "pro",
+            "label": "Pro",
             "monthly_audit_allowance": 321,
             "max_concurrent_audits": 2,
             "paddle_price_id": None,
@@ -176,12 +196,12 @@ async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_
     response = await client.patch(
         f"/api/v1/admin/clients/{license_id}",
         headers=headers,
-        json={"client_name": "Updated QA Client", "tier": "support-tier", "is_active": False},
+        json={"client_name": "Updated QA Client", "tier": "pro", "is_active": False},
     )
     assert response.status_code == 200, response.text
     updated_client = response.json()["client"]
     assert updated_client["client_name"] == "Updated QA Client"
-    assert updated_client["tier"] == "support-tier"
+    assert updated_client["tier"] == "pro"
     assert updated_client["monthly_limit"] == 321
     assert updated_client["is_active"] is False
     assert "qa-license-marker" not in response.text
@@ -208,8 +228,8 @@ async def test_admin_packages_reject_duplicate_paddle_price_mapping(client, monk
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "paddle-plan-a",
-            "label": "Paddle Plan A",
+            "tier": "starter",
+            "label": "Starter",
             "monthly_audit_allowance": 100,
             "max_concurrent_audits": 1,
             "paddle_price_id": "pri_TestPrice123",
@@ -222,8 +242,8 @@ async def test_admin_packages_reject_duplicate_paddle_price_mapping(client, monk
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "paddle-plan-b",
-            "label": "Paddle Plan B",
+            "tier": "pro",
+            "label": "Pro",
             "monthly_audit_allowance": 500,
             "max_concurrent_audits": 2,
             "paddle_price_id": "pri_TestPrice123",
@@ -377,8 +397,8 @@ async def test_package_allowance_update_only_changes_inherited_customer_quotas(c
         "/api/v1/admin/packages",
         headers=headers,
         json={
-            "tier": "qa-quota-propagation",
-            "label": "Quota Propagation",
+            "tier": "starter",
+            "label": "Starter",
             "monthly_audit_allowance": 250,
             "max_concurrent_audits": 2,
             "paddle_price_id": None,
@@ -391,14 +411,14 @@ async def test_package_allowance_update_only_changes_inherited_customer_quotas(c
         inherited = SoftwareLicense(
             license_key="quota-inherited-license",
             client_name="Inherited quota",
-            tier="qa-quota-propagation",
+            tier="starter",
             max_monthly_audits=250,
             is_active=True,
         )
         overridden = SoftwareLicense(
             license_key="quota-overridden-license",
             client_name="Overridden quota",
-            tier="qa-quota-propagation",
+            tier="starter",
             max_monthly_audits=999,
             is_active=True,
         )
@@ -407,11 +427,11 @@ async def test_package_allowance_update_only_changes_inherited_customer_quotas(c
         inherited_id, overridden_id = inherited.id, overridden.id
 
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-quota-propagation",
+        "/api/v1/admin/packages/starter",
         headers=headers,
         json={
-            "tier": "qa-quota-propagation",
-            "label": "Quota Propagation Plus",
+            "tier": "starter",
+            "label": "Starter Plus",
             "monthly_audit_allowance": 400,
             "max_concurrent_audits": 3,
             "paddle_price_id": None,
