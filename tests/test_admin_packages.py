@@ -1,8 +1,14 @@
 import pytest
 
 
+def _clear_package_price_env(monkeypatch):
+    for tier in ("STARTER", "PRO", "BUSINESS"):
+        monkeypatch.delenv(f"PADDLE_PRICE_ID_{tier}", raising=False)
+
+
 @pytest.mark.asyncio
 async def test_admin_package_crud_and_action_audit(client, monkeypatch):
+    _clear_package_price_env(monkeypatch)
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
     headers = {"X-Admin-Key": "test-admin-key-only"}
 
@@ -160,6 +166,7 @@ async def test_payment_reconciliation_requires_recorded_transaction_id(client, m
 
 @pytest.mark.asyncio
 async def test_admin_client_update_syncs_package_limit_and_keeps_license_secret_private(client, monkeypatch):
+    _clear_package_price_env(monkeypatch)
     from database import AsyncSessionLocal
     from models import SoftwareLicense
 
@@ -222,6 +229,7 @@ async def test_admin_routes_fail_closed_when_admin_key_is_unconfigured(client, m
 
 @pytest.mark.asyncio
 async def test_admin_packages_reject_duplicate_paddle_price_mapping(client, monkeypatch):
+    _clear_package_price_env(monkeypatch)
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
     headers = {"X-Admin-Key": "test-admin-key-only"}
     first = await client.post(
@@ -386,6 +394,7 @@ async def test_plan_bootstrap_uses_product_concurrency_defaults_without_override
 
 @pytest.mark.asyncio
 async def test_package_allowance_update_only_changes_inherited_customer_quotas(client, monkeypatch):
+    _clear_package_price_env(monkeypatch)
     from database import AsyncSessionLocal
     from models import SoftwareLicense
     from sqlalchemy import select
