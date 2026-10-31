@@ -6,7 +6,7 @@ This runbook describes the current deployment topology and the safe order for pr
 
 - **Vercel / FastAPI**: HTTP API, customer and administrator interfaces, scheduled scan-worker invocation, and application orchestration.
 - **Supabase PostgreSQL**: canonical software licenses, API keys, quota reservations, audit leads/reports, Paddle webhook events, and plan packages.
-- **Hostinger MySQL**: customer accounts and sessions, email challenges, website inventory, WordPress installations, scan batches/jobs/results, customer usage/activity, billing mirrors, administrator notes/actions, and operational diagnostics.
+- **Hostinger MySQL**: customer accounts and sessions, email challenges, customer website inventory, durable scan jobs/results, and operational billing/email projections.
 - **Private object storage**: intended location for generated report files and customer uploads. Configure and verify this independently before enabling any workflow that relies on private object storage.
 
 Do not move customer operational tables back into Supabase. The stable cross-database reference is the license key; there are intentionally no cross-database foreign keys.
@@ -36,17 +36,18 @@ Configure secrets in the Vercel project environment settings (and in the local s
 - `PADDLE_PRICE_ID_STARTER`, `PADDLE_PRICE_ID_PRO`, `PADDLE_PRICE_ID_BUSINESS` and the corresponding `LICENSE_MONTHLY_AUDITS_*` / `LICENSE_MAX_CONCURRENT_AUDITS_*` values used to bootstrap package records.
 - `ADMIN_API_KEY`: long random administrator secret.
 - `CRON_SECRET` or `SCAN_WORKER_SECRET`: long random value used to protect `GET /api/v1/internal/scan-worker`. The endpoint accepts `Authorization: Bearer <configured-value>`.
+- `SCAN_WORKER_MAX_JOBS` (1–10, default 1) and `SCAN_WORKER_POLL_SECONDS` (1–300, default 5) tune the long-running `worker_service.py` process.
 
 ## Safe environment preparation order
 
 1. Create separate Supabase PostgreSQL and Hostinger MySQL databases. Enable TLS and restrict credentials to the application.
 2. Take restorable backups and verify that restore access is available before schema changes.
 3. Apply the PostgreSQL licensing/audit schema migrations from the repository to Supabase.
-4. The Hostinger operational tables registered in `hostinger_models.py` are created by the worker's schema initializer on first authenticated invocation. Confirm `HOSTINGER_DATABASE_URL` and TLS settings before triggering it; take a backup before any first-time schema creation.
+4. The Hostinger operational tables registered in `hostinger_models.py` are created by the schema initializer on the first website API or worker invocation. Confirm `HOSTINGER_DATABASE_URL` and TLS settings before triggering it; take a backup before any first-time schema creation.
 5. Configure the environment variables above in Vercel. Use Paddle sandbox credentials until billing has been deliberately validated.
 6. Deploy only to a non-production preview environment after explicit release approval.
 7. Call `/health-check` to verify the PostgreSQL application schema. The current endpoint does not yet report Hostinger readiness; invoke the protected worker endpoint once in staging and inspect its response/logs to confirm Hostinger schema initialization.
-8. Configure an approved external scheduler to call `GET /api/v1/internal/scan-worker` at the required cadence with `Authorization: Bearer <CRON_SECRET>` (or `SCAN_WORKER_SECRET`). No cron schedule is currently configured in `vercel.json`; each invocation claims at most one scan job and also reconciles pending cross-database outboxes.
+8. Prefer running `python worker_service.py` as a persistent process in a managed Python runtime with the same environment variables and database access as the API. It polls durable jobs, reconciles outboxes, and shuts down on SIGTERM/SIGINT. If a persistent worker is not available, configure an approved external scheduler to call `GET /api/v1/internal/scan-worker` with `Authorization: Bearer <CRON_SECRET>` (or `SCAN_WORKER_SECRET`). No cron schedule is currently configured in `vercel.json`; each HTTP invocation claims at most one scan job.
 9. Configure outbound SMTP and verify deliverability using controlled test accounts.
 10. Configure Paddle webhook delivery to the deployed `/api/v1/billing/paddle-webhook` endpoint and verify the webhook secret and sandbox event flow before enabling live billing.
 11. Confirm the WordPress plugin ZIP endpoint serves the expected package and that a staging WordPress/WooCommerce site can register, report status, and disconnect.
@@ -64,7 +65,8 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 ## Operational endpoints and ownership
 
 - `/health-check`: PostgreSQL licensing/audit schema readiness. Hostinger readiness is initialized by the protected worker and is not yet included in this health response.
-- `/api/v1/internal/scan-worker`: authenticated scheduled worker; protect with `CRON_SECRET` or `SCAN_WORKER_SECRET`.
+- `worker_service.py`: persistent worker process for Hostinger/managed Python runtimes.
+- `/api/v1/internal/scan-worker`: authenticated one-job scheduler fallback; protect with `CRON_SECRET` or `SCAN_WORKER_SECRET`.
 - `/api/v1/admin/operations`: administrator-only operational and billing diagnostics.
 - `/api/v1/admin/billing/reconcile`: bounded mirror reconciliation from canonical PostgreSQL payment events into Hostinger.
 - `/api/v1/billing/paddle-webhook`: canonical billing lifecycle event intake.
