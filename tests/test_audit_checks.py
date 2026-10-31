@@ -1376,3 +1376,15 @@ async def test_public_resolver_deduplicates_dns_addresses_before_returning(monke
     monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
     resolved = await audit_checks.PublicOnlyResolver().resolve("shop.example", 443)
     assert [item["host"] for item in resolved] == ["8.8.8.8"]
+
+
+def test_sitemap_seed_extraction_rejects_unsafe_xml_entity_declarations():
+    xml = (
+        '<!DOCTYPE urlset [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+        '<urlset><url><loc>&xxe;</loc></url></urlset>'
+    )
+    urls, limitations = audit_checks.extract_same_origin_sitemap_urls(
+        xml, "https://shop.example/sitemap.xml", "https://shop.example/"
+    )
+    assert urls == []
+    assert any("unsafe XML constructs" in item for item in limitations)
