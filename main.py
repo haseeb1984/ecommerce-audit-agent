@@ -4296,7 +4296,7 @@ async def admin_payment_events(
     response.headers["Pragma"] = "no-cache"
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational billing history is unavailable.")
-    from sqlalchemy import select, func as sql_func
+    from sqlalchemy import select
 
     pg_statement = select(PaymentWebhookEvent)
     host_statement = select(CustomerBillingEvent)
@@ -4341,9 +4341,6 @@ async def admin_payment_events(
         ),
         reverse=True,
     )[offset:offset + limit]
-    # Both stores contain the same webhook stream during migration; max avoids
-    # double-counting mirrored rows while still exposing partially copied rows.
-    total = max(pg_count, host_count)
     license_keys = {event.license_key for event in events if hasattr(event, "license_key")}
     event_license_ids = {event.event_id: event.license_id for event in pg_rows}
     license_ids = {}
