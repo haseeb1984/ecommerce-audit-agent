@@ -1,0 +1,67 @@
+# Ecommerce Audit Agent — Product Scope and Package Contract
+
+This document is the implementation baseline for the SaaS product and its public marketing/pricing journey.
+
+## Canonical packages
+
+Only these three package IDs are supported: `starter`, `pro`, and `business`.
+
+| Capability | Starter | Pro | Business |
+|---|---:|---:|---:|
+| Standard ecommerce audits | Yes | Yes | Yes |
+| Monthly audit allowance | 100 | 500 | 2,000 |
+| Concurrent audits | 1 | 3 | 10 |
+| Conversion Dossier | No | Yes | Yes |
+| White-label branding | No | Yes | Yes |
+| Agency / multiple-client management | No | No | Yes |
+| Direct API access | No | No | Yes |
+
+Package catalogue pricing and Paddle price IDs remain operator-managed; this document does not invent prices.
+
+## White-label scope (Pro and Business)
+
+- Customer-configurable brand name, logo, and primary color.
+- Branding applied to customer-facing SaaS surfaces and eligible customer deliverables.
+- Branding settings are isolated to the owning customer/workspace.
+- Branding entitlement must be enforced by backend APIs, not only hidden in the UI.
+- PDF/report branding polish remains part of the final reporting phase, after core SaaS implementation.
+
+## Agency scope (Business only)
+
+- A Business agency account can manage multiple client workspaces.
+- Each client workspace owns its own ecommerce website connection, audit history, usage, and settings.
+- Agency dashboard provides client-level inventory and audit management.
+- Team member invitations and role-based permissions are scoped to the agency and assigned client workspaces.
+- Strict tenant isolation is mandatory: a team member or client must never read or mutate another workspace's data without an explicit grant.
+- Agency branding is inherited from the Business agency's white-label settings, with client-specific report context kept distinct.
+- Agency entitlements and limits must be enforced in backend APIs and billing/usage accounting.
+- Starter and Pro remain individual customer plans; their one-license/one-website model is not broadened by agency capabilities.
+
+## Individual customer and WordPress constraints
+
+- An individual customer account is tied to one verified customer email and one license.
+- One active WordPress site is allowed per individual license. Replacing it requires disconnecting the existing site first.
+- A bulk scan may contain multiple pages, but every URL must belong to the same ecommerce website.
+- Multiple devices/sessions for the same customer account are allowed; multiple-license switching is not part of the individual account model.
+- Business agency client workspaces are a separately entitled capability and must not be implemented as unrestricted multi-license switching.
+
+## Architecture baseline
+
+- Hostinger MySQL stores operational SaaS/customer data.
+- Supabase PostgreSQL stores licensing and audit-engine records.
+- Backend APIs are the authorization boundary for package features and tenant ownership.
+- Customer portal, admin portal, marketing pricing, checkout, and backend entitlements must use one consistent package contract.
+- WordPress integration remains the official plugin under `wordpress-plugin/ecommerce-audit-agent/`; do not resurrect the superseded legacy bridge path.
+
+## Marketing and purchase journey requirements
+
+The public marketing website must show all three packages with their prices, audit allowances, concurrency limits, and included capabilities. It must explain Pro white-label benefits and Business agency capabilities clearly enough for a buyer to choose an appropriate package. Each package must have a purchase call-to-action connected to the existing checkout/subscription flow. Package catalogue values shown publicly must come from the operator-managed catalogue where supported; feature eligibility must come from the canonical entitlement contract. Never advertise a capability that backend enforcement does not provide.
+
+## Delivery order
+
+1. Complete core SaaS account, customer, admin, billing, audit, WordPress, and agency workflows.
+2. Complete public marketing/pricing and package purchase journey.
+3. Run integrated tests, fix defects, and verify deployment readiness.
+4. Refine PDF/report presentation and perform the final audit last.
+
+Do not merge to `main`, deploy, or run production migrations without explicit approval.
