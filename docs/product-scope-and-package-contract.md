@@ -87,3 +87,21 @@ Not yet complete:
 - Actual end-to-end tests and runtime verification.
 
 The Hostinger migration is a repository artifact only. It has not been run against production. Apply it only through the approved deployment/migration process after review and backup.
+
+
+### Agency team and client audit attribution batch
+
+Additional Business-plan functionality now present on the feature branch:
+- Owner-managed team invitation API with 48-hour single-use email token, SMTP delivery, invitation acceptance and revocation.
+- Agency role selection (`admin`, `analyst`, `viewer`) and optional client-workspace access grants.
+- `PUBLIC_APP_URL` is required to generate HTTPS invitation links; SMTP must also be configured.
+- Bulk scan submissions accept an optional `workspace_id`; the API verifies that it belongs to the authenticated Business license's active agency before queueing.
+- Durable `scan_batches.workspace_id` stores client attribution; batch idempotency includes the workspace so a request ID cannot be replayed against another client.
+- The owner continues to submit scans under the one Business license, so existing licensing quota/concurrency enforcement remains the shared agency allowance. Per-client usage ledger aggregation is not yet connected.
+- Customer portal now allows selecting a client workspace for bulk scans and choosing workspace scope when inviting team members.
+
+Still outstanding:
+- Team-member passwordless login/session issuance and enforcement of workspace grants on all customer APIs. Invitation acceptance alone does not grant a usable dashboard session yet.
+- Verified WordPress connection per agency client workspace and agency plugin flow.
+- Client-specific audit result views and usage aggregation from actual completed jobs.
+- Runtime validation of the migration, API routes, browser interactions, and email flow.
