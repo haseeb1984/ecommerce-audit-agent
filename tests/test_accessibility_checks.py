@@ -422,3 +422,35 @@ def test_manual_wcag_review_checklist_is_explicit_and_not_a_conformance_claim():
     assert checklist.verification_steps == list(MANUAL_WCAG_REVIEW_CHECKLIST)
     assert "cannot establish WCAG conformance" in checklist.explanation
     assert checklist.standard_references == ["https://www.w3.org/TR/WCAG22/"]
+
+
+def test_unnamed_input_action_controls_are_flagged():
+    html = (
+        '<html lang="en"><body>'
+        '<input type="button">'
+        '<input type="submit" value="">'
+        '<input type="reset" aria-label="">'
+        '</body></html>'
+    )
+    findings = inspect_static_accessibility_signals(html, "https://shop.example/")
+    finding = next(
+        item for item in findings
+        if item.title == "Input action controls may lack accessible names"
+    )
+    assert finding.status == "manual_review_required"
+    assert "3 input action control(s)" in finding.evidence
+
+
+def test_named_input_action_controls_are_not_flagged():
+    html = (
+        '<html lang="en"><body>'
+        '<input type="button" value="Apply coupon">'
+        '<input type="submit" aria-label="Place order">'
+        '<input type="reset" title="Clear form">'
+        '</body></html>'
+    )
+    findings = inspect_static_accessibility_signals(html, "https://shop.example/")
+    assert not any(
+        item.title == "Input action controls may lack accessible names"
+        for item in findings
+    )
