@@ -2045,6 +2045,34 @@ async def get_agency_client_website(workspace_id: str, response: Response,
             "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None}
 
 
+@app.post("/api/v1/account/agency/clients/{workspace_id}/website/disconnect")
+async def disconnect_agency_client_website(workspace_id: str, response: Response,
+                                            license_obj: SoftwareLicense = Depends(verify_customer_account),
+                                            operational_db: AsyncSession = Depends(get_hostinger_db)):
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency website management is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace_id,
+        AgencyClientWebsite.status == "active",
+    ).with_for_update())
+    if site is None:
+        raise HTTPException(status_code=404, detail="Active client website connection not found.")
+    site.status = "disconnected"
+    site.disconnected_at = datetime.now(timezone.utc)
+    site.site_token_hash = None
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"status": "disconnected", "site_id": site.id}
+
+
 @app.post("/api/v1/account/agency/clients/{workspace_id}/website-connection-token")
 async def create_agency_website_connection_token(
     workspace_id: str,
