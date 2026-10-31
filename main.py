@@ -1305,6 +1305,30 @@ async def enqueue_customer_website_scan(
         )).scalar_one_or_none()
         if website is None:
             raise HTTPException(status_code=404, detail="Website not found.")
+        # Make repeated clicks/retries idempotent while a scan for this website
+        # is already active. This prevents duplicate quota reservations and
+        # duplicate worker load from browser retries or double submissions.
+        active_job = (await operational_db.execute(
+            select(ScanJob)
+            .where(
+                ScanJob.license_key == license_obj.license_key,
+                ScanJob.website_id == website.id,
+                ScanJob.status.in_(("queued", "retry", "processing")),
+            )
+            .order_by(ScanJob.created_at.desc(), ScanJob.id.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if active_job is not None:
+            response.headers["Cache-Control"] = "no-store, private"
+            response.headers["Pragma"] = "no-cache"
+            return {
+                "job_id": active_job.id,
+                "website_id": website_id,
+                "status": active_job.status,
+                "queued_at": active_job.created_at.isoformat() if active_job.created_at else None,
+                "already_queued": True,
+                "message": "An active scan already exists for this website; returning its job.",
+            }
         pending = int((await operational_db.execute(
             select(sql_func.count(ScanJob.id)).where(
                 ScanJob.license_key == license_obj.license_key,
