@@ -54,7 +54,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, OperationalDiagnosticEvent
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent
 
 logger = logging.getLogger("audit_service")
 
@@ -1361,9 +1361,19 @@ async def verify_customer_email_change(
             CustomerAccount.license_key.in_(linked_license_keys),
             CustomerAccount.email == old_email,
         ).values(email=challenge.new_email, updated_at=now))
-    await db.execute(update(PaymentWebhookEvent).where(
-        func.lower(PaymentWebhookEvent.recipient_email) == old_email,
-    ).values(recipient_email=challenge.new_email))
+    # PostgreSQL is a separate transaction boundary. Persist a durable outbox
+    # record in the same Hostinger transaction as the verified account/email changes;
+    # the scheduled worker applies the billing identity update idempotently.
+    operational_db.add(CustomerEmailIdentitySyncOutbox(
+        id=challenge.id,
+        license_key=current.license_key,
+        old_email=old_email,
+        new_email=challenge.new_email,
+        status="pending",
+        attempts=0,
+        next_attempt_at=now,
+        created_at=now,
+    ))
     await operational_db.execute(update(CustomerBillingEvent).where(
         func.lower(CustomerBillingEvent.recipient_email) == old_email,
     ).values(recipient_email=challenge.new_email))
@@ -1385,6 +1395,8 @@ async def verify_customer_email_change(
     current.last_seen_at = now
     challenge.consumed_at = now
     await operational_db.commit()
+    # Release the PostgreSQL advisory lock after the durable Hostinger outbox
+    # record exists. The worker owns the eventual PostgreSQL billing mirror update.
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -1392,7 +1404,8 @@ async def verify_customer_email_change(
         "status": "email_updated",
         "email": challenge.new_email,
         "sessions_revoked": True,
-        "message": "Your verified account email has been updated. Other device sessions were signed out.",
+        "billing_identity_sync": "pending",
+        "message": "Your verified account email has been updated. Other device sessions were signed out; billing identity synchronization is queued.",
     }
 
 
