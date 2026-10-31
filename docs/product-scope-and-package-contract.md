@@ -65,3 +65,25 @@ The public marketing website must show all three packages with their prices, aud
 4. Refine PDF/report presentation and perform the final audit last.
 
 Do not merge to `main`, deploy, or run production migrations without explicit approval.
+
+
+## Agency foundation implementation notes
+
+The Business agency foundation is being implemented in Hostinger MySQL, separate from Supabase licensing/audit records.
+
+Current branch additions:
+- `AgencyAccount`, `AgencyClientWorkspace`, `AgencyClientWebsite`, `AgencyTeamMember`, `AgencyWorkspaceAccess`, and `AgencyUsageEvent` operational models.
+- Additive migration: `migrations/20261101_business_agency_workspaces.sql`.
+- Business-only agency provisioning and client workspace list/create/update APIs under `/api/v1/account/agency`.
+- Read-only admin inventory at `/api/v1/admin/agencies`.
+- Customer portal client workspace controls and admin portal agency inventory.
+- Public marketing and pricing entry point at `/` and `/pricing`, using the active package catalogue and the existing Paddle checkout endpoint.
+
+Not yet complete:
+- Agency workspace website ownership verification and official WordPress plugin connection.
+- Agency team invitation acceptance, authentication, and workspace-scoped authorization.
+- Client-specific audit execution/history and shared Business quota/concurrency enforcement.
+- Agency-aware branded deliverables and full admin lifecycle controls.
+- Actual end-to-end tests and runtime verification.
+
+The Hostinger migration is a repository artifact only. It has not been run against production. Apply it only through the approved deployment/migration process after review and backup.
