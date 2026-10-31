@@ -2,6 +2,7 @@
 
 import pytest
 import inspect
+from types import SimpleNamespace
 from hostinger_models import (
     CustomerAccount,
     CustomerBillingEvent,
@@ -66,8 +67,8 @@ class _OutboxSession:
         self.items = []
         self.existing = set()
 
-    async def get(self, model, key):
-        return object() if key in self.existing else None
+    async def execute(self, statement):
+        return SimpleNamespace(rowcount=1 if self.existing else 0)
 
     def add(self, item):
         self.items.append(item)
