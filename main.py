@@ -2935,9 +2935,10 @@ async def invite_business_agency_team_member(
 async def accept_business_agency_invitation(
     payload: AgencyInvitationAccept,
     response: Response,
+    db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Accept an invitation only with its unexpired, single-use emailed token."""
+    """Accept an invitation only with its unexpired, single-use emailed token and active Business agency."""
     from sqlalchemy import select
     token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
     member = await operational_db.scalar(select(AgencyTeamMember).where(
@@ -2945,8 +2946,20 @@ async def accept_business_agency_invitation(
         AgencyTeamMember.status == "invited",
     ).with_for_update())
     now = datetime.now(timezone.utc)
-    if member is None or member.invitation_expires_at is None or member.invitation_expires_at <= now:
+    expires = member.invitation_expires_at if member is not None else None
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if member is None or expires is None or expires <= now:
         raise HTTPException(status_code=400, detail="Invitation is invalid, expired, or already used.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == member.agency_id,
+        AgencyAccount.status == "active",
+    ))
+    owner_license = await db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    )) if agency is not None else None
+    if agency is None or not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="The agency Business subscription is inactive; contact the agency owner.")
     member.status = "active"
     member.accepted_at = now
     member.invitation_token_hash = None
