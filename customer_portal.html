@@ -127,6 +127,7 @@
 <p class="muted">Submit multiple public website URLs. The system stores each URL and its scan history, groups submissions into sequential batches of 10 or 11, and displays queue progress here.</p>
 <label for="bulkUrls">Website URLs (one per line)</label>
 <textarea id="bulkUrls" rows="7" maxlength="250000" placeholder="https://store-one.example&#10;https://store-two.example&#10;https://store-three.example" style="width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;font:inherit"></textarea>
+<div id="agencyAuditWorkspaceField" hidden><label for="agencyAuditWorkspace">Assign audit batch to client workspace</label><select id="agencyAuditWorkspace"><option value="">Personal account (not assigned to a client)</option></select></div>
 <div class="row">
   <div><label for="bulkBatchSize">URLs per batch</label><select id="bulkBatchSize"><option value="10">10 websites</option><option value="11">11 websites</option></select></div>
   <div style="display:flex;align-items:end;gap:8px"><button id="submitBulkScans" type="button" disabled>Queue website scans</button><button id="refreshScanBatches" class="secondary" type="button" disabled>Refresh progress</button></div>
@@ -642,6 +643,22 @@
     const response = await api("/api/v1/account/agency/clients");
     const data = await response.json();
     await loadAgencyTeam();
+    const workspaceSelect = $("agencyAuditWorkspace");
+    const selectedWorkspace = workspaceSelect.value;
+    workspaceSelect.replaceChildren();
+    const personalOption = document.createElement("option");
+    personalOption.value = "";
+    personalOption.textContent = "Personal account (not assigned to a client)";
+    workspaceSelect.append(personalOption);
+    for (const workspace of (Array.isArray(data.items) ? data.items : [])) {
+      if (workspace.status !== "active") continue;
+      const option = document.createElement("option");
+      option.value = workspace.id;
+      option.textContent = workspace.display_name;
+      workspaceSelect.append(option);
+    }
+    workspaceSelect.value = selectedWorkspace;
+    $("agencyAuditWorkspaceField").hidden = false;
     const container = $("agencyClients");
     container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
@@ -1019,6 +1036,8 @@
   });
   $("closeEvidence").addEventListener("click", () => {
     $("savedEvidence").hidden = true;
+    $("agencyAuditWorkspaceField").hidden = true;
+    $("agencyAuditWorkspace").replaceChildren(Object.assign(document.createElement("option"), {value:"", textContent:"Personal account (not assigned to a client)"}));
     activeEvidenceReportId = null;
     $("savedEvidenceItems").replaceChildren();
   });
@@ -1257,7 +1276,11 @@
       const response = await api("/api/v1/scan-batches", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({urls, request_id:requestId, batch_size:Number($("bulkBatchSize").value)})
+        body:JSON.stringify({
+          urls, request_id:requestId, batch_size:Number($("bulkBatchSize").value),
+          ...($("agencyAuditWorkspaceField").hidden || !$("agencyAuditWorkspace").value
+            ? {} : {workspace_id:$("agencyAuditWorkspace").value})
+        })
       });
       const result = await response.json();
       setStatus("bulkScanStatus",
