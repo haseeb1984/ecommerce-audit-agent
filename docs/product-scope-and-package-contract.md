@@ -131,3 +131,12 @@ Still outstanding:
 - Agency website rows default to `pending`; a site becomes `active` only after a valid, unexpired owner-issued token is presented by the WordPress plugin.
 - This is an owner-authorized plugin connection, not a DNS challenge. The agency owner should issue the token only to the intended client site administrator.
 - Plugin-based agency audit execution and full client report/evidence access remain outstanding; the standard single-license WordPress audit flow is unchanged.
+
+
+### Client-specific audit evidence access
+
+- Business agency owners can retrieve saved structured audit results for one client workspace, including score, findings, check outcomes, coverage and summary JSON.
+- Accepted agency teammates can retrieve the same structured evidence only for workspaces explicitly granted to their team identity.
+- Both result APIs are workspace-tenant scoped, private/no-store, paginated (maximum 25 result records per request), and do not expose PDF generation/download as part of this implementation batch.
+- Agency bulk scan submissions now require an active connected WordPress website for the selected client workspace and reject URLs whose hostname does not match that registered website.
+- This closes the gap between a client workspace and its website identity; client audit PDF/report export remains deliberately deferred until the rest of the SaaS product is complete.
