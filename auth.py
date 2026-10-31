@@ -211,6 +211,8 @@ async def verify_customer_account(
         )).scalar_one_or_none()
         if license_obj is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
+        if not license_obj.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
         return license_obj
 
     # Backward compatibility for existing license-key and API-key customers.
@@ -225,4 +227,6 @@ async def verify_customer_account(
     license_obj = (await db.execute(stmt)).scalar_one_or_none()
     if license_obj is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid account credentials.")
+    if not license_obj.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
     return license_obj
