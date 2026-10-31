@@ -2,6 +2,7 @@
 import json
 import hashlib
 from typing import Literal
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -167,8 +168,12 @@ async def queue_agency_wordpress_site_audit(
     owner_license = await licensing_db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     )) if agency else None
-    if agency is None or workspace is None or owner_license is None or not owner_license.is_active:
-        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
+    owner_expiry = owner_license.expires_at if owner_license is not None else None
+    if owner_expiry is not None and owner_expiry.tzinfo is None:
+        owner_expiry = owner_expiry.replace(tzinfo=timezone.utc)
+    if (agency is None or workspace is None or owner_license is None or not owner_license.is_active
+            or (owner_expiry is not None and owner_expiry <= datetime.now(timezone.utc))):
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive or expired.")
     entitlements = plan_features(owner_license.tier)
     if not entitlements["agency_management"] or not entitlements["standard_audits"]:
         raise HTTPException(status_code=403, detail="The agency Business package does not include website audits.")
