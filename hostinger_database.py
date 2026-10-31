@@ -4,6 +4,7 @@ Supabase/PostgreSQL remains isolated in database.py for licensing and audit-engi
 records. This module deliberately owns a separate SQLAlchemy metadata registry.
 """
 import os
+import ssl
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -33,8 +34,11 @@ if HOSTINGER_DATABASE_URL:
             "HOSTINGER_DATABASE_URL must use an async MySQL driver "
             "(mysql+asyncmy:// or mysql+aiomysql://)."
         )
+    hostinger_ssl_enabled = os.getenv("HOSTINGER_DB_SSL", "true").strip().lower() not in {"0", "false", "no"}
+    hostinger_connect_args = {"ssl": ssl.create_default_context()} if hostinger_ssl_enabled else {}
     hostinger_engine = create_async_engine(
         HOSTINGER_DATABASE_URL,
+        connect_args=hostinger_connect_args,
         pool_pre_ping=True,
         pool_recycle=int(os.getenv("HOSTINGER_DB_POOL_RECYCLE", "1800")),
         pool_size=int(os.getenv("HOSTINGER_DB_POOL_SIZE", "5")),
