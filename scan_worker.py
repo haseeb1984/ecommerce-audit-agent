@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select, update
@@ -342,7 +342,7 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                     retry_event.attempts = int(retry_event.attempts or 0) + 1
                     retry_event.last_error = type(exc).__name__[:120]
                     delay = min(3600, 30 * (2 ** min(retry_event.attempts, 7)))
-                    retry_event.next_attempt_at = datetime.now(timezone.utc) + __import__("datetime").timedelta(seconds=delay)
+                    retry_event.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
                     await operational_db.commit()
                 counts["deferred"] += 1
                 logger.warning(
