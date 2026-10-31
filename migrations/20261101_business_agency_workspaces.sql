@@ -118,3 +118,45 @@ ALTER TABLE scan_batches
     ADD CONSTRAINT fk_scan_batches_agency_workspace
         FOREIGN KEY (workspace_id) REFERENCES agency_client_workspaces(id)
         ON DELETE SET NULL;
+
+-- Independent passwordless login and revocable sessions for accepted agency teammates.
+CREATE TABLE IF NOT EXISTS agency_team_login_challenges (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    agency_id VARCHAR(64) NOT NULL,
+    team_member_id VARCHAR(64) NOT NULL,
+    email VARCHAR(254) NOT NULL,
+    code_hash VARCHAR(64) NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    consumed_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL,
+    KEY ix_agency_team_login_challenges_agency_id (agency_id),
+    KEY ix_agency_team_login_challenges_team_member_id (team_member_id),
+    KEY ix_agency_team_login_challenges_email (email),
+    KEY ix_agency_team_login_challenges_expires_at (expires_at),
+    KEY ix_agency_team_login_email_active (email, consumed_at),
+    CONSTRAINT fk_agency_team_login_challenge_agency FOREIGN KEY (agency_id)
+        REFERENCES agency_accounts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_agency_team_login_challenge_member FOREIGN KEY (team_member_id)
+        REFERENCES agency_team_members(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS agency_team_sessions (
+    token_hash VARCHAR(64) NOT NULL PRIMARY KEY,
+    agency_id VARCHAR(64) NOT NULL,
+    team_member_id VARCHAR(64) NOT NULL,
+    email VARCHAR(254) NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    revoked_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL,
+    last_seen_at DATETIME(6) NULL,
+    user_agent VARCHAR(500) NULL,
+    KEY ix_agency_team_sessions_agency_id (agency_id),
+    KEY ix_agency_team_sessions_team_member_id (team_member_id),
+    KEY ix_agency_team_sessions_email (email),
+    KEY ix_agency_team_sessions_expires_at (expires_at),
+    CONSTRAINT fk_agency_team_session_agency FOREIGN KEY (agency_id)
+        REFERENCES agency_accounts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_agency_team_session_member FOREIGN KEY (team_member_id)
+        REFERENCES agency_team_members(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
