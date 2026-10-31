@@ -1,15 +1,17 @@
-"""Canonical SaaS plan entitlements. Unknown tiers fail closed."""
+"""Canonical SaaS package entitlements. Unknown tiers fail closed."""
 from typing import Any
 
 
 def plan_features(tier: Any) -> dict[str, bool]:
+    """Return the single canonical feature contract for Starter, Pro, and Business."""
     normalized = "starter" if tier is None else str(tier).strip().lower().replace("-", "_").replace(" ", "_")
-    standard = normalized in {"starter", "pro", "business"}
-    dossier = normalized in {"pro", "business"}
-    white_label = normalized == "business"
+    known = normalized in {"starter", "pro", "business"}
+    pro_or_business = normalized in {"pro", "business"}
+    business = normalized == "business"
     return {
-        "standard_audits": standard,
-        "conversion_dossier": dossier,
-        "white_label_branding": white_label,
-        "direct_api_access": white_label,
+        "standard_audits": known,
+        "conversion_dossier": pro_or_business,
+        "white_label_branding": pro_or_business,
+        "agency_management": business,
+        "direct_api_access": business,
     }
