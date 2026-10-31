@@ -1154,6 +1154,7 @@ async def confirm_customer_email_change(
             account.email = new_email
             account.updated_at = now
             operational_db.add(CustomerEmailIdentitySyncOutbox(
+                license_key=challenge.license_key,
                 old_email=old_email,
                 new_email=new_email,
                 status="pending",
