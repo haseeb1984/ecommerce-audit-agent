@@ -1962,6 +1962,8 @@ async def create_or_get_business_agency(
     agency = await operational_db.scalar(
         select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
     )
+    if agency is not None and agency.status != "active":
+        raise HTTPException(status_code=403, detail="This Business agency has been suspended by the platform administrator.")
     if agency is None:
         agency = AgencyAccount(
             id=secrets.token_urlsafe(24),
@@ -2802,8 +2804,8 @@ async def list_business_agency_team(
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
     ))
-    if agency is None:
-        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     members = (await operational_db.execute(select(AgencyTeamMember).where(
         AgencyTeamMember.agency_id == agency.id
     ).order_by(AgencyTeamMember.created_at.desc()).limit(500))).scalars().all()
@@ -2972,8 +2974,8 @@ async def set_business_agency_team_workspace_access(
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
     ))
-    if agency is None:
-        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.id == member_id, AgencyTeamMember.agency_id == agency.id,
         AgencyTeamMember.status == "active",
@@ -3052,8 +3054,8 @@ async def revoke_business_agency_team_member(
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
     ))
-    if agency is None:
-        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.id == member_id, AgencyTeamMember.agency_id == agency.id,
     ).with_for_update())
@@ -3091,8 +3093,8 @@ async def list_business_agency_clients(
     agency = await operational_db.scalar(
         select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
     )
-    if agency is None:
-        raise HTTPException(status_code=404, detail="Create your agency workspace before managing clients.")
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="An active agency workspace is required before managing clients.")
     clients = (await operational_db.execute(
         select(AgencyClientWorkspace).where(
             AgencyClientWorkspace.agency_id == agency.id
@@ -3170,8 +3172,8 @@ async def update_business_agency_client(
     agency = await operational_db.scalar(
         select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
     )
-    if agency is None:
-        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     item = await operational_db.scalar(
         select(AgencyClientWorkspace).where(
             AgencyClientWorkspace.id == workspace_id,
