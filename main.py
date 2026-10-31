@@ -1631,6 +1631,11 @@ async def switch_customer_account_license(
     ))).scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail="Linked license was not found.")
+    target_expiry = target.expires_at
+    if target_expiry is not None and target_expiry.tzinfo is None:
+        target_expiry = target_expiry.replace(tzinfo=timezone.utc)
+    if not target.is_active or (target_expiry is not None and target_expiry <= datetime.now(timezone.utc)):
+        raise HTTPException(status_code=403, detail="That linked license is inactive or expired and cannot be selected.")
     session.license_key = target.license_key
     session.last_seen_at = datetime.now(timezone.utc)
     await operational_db.commit()
