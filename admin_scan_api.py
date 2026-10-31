@@ -3,7 +3,7 @@ import hmac
 import os
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,8 @@ def _require_scan_admin(request: Request) -> None:
 async def admin_scan_operations(
     request: Request,
     response: Response,
+    failed_limit: int = Query(25, ge=1, le=100),
+    failed_offset: int = Query(0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -47,11 +49,15 @@ async def admin_scan_operations(
         select(func.count(ScanBatch.id))
     )).scalar_one() or 0)
 
+    failed_query = select(WebsiteScanJob).where(WebsiteScanJob.status == "failed")
+    failed_total = int((await operational_db.execute(
+        select(func.count(WebsiteScanJob.id)).where(WebsiteScanJob.status == "failed")
+    )).scalar_one() or 0)
     failed = (await operational_db.execute(
-        select(WebsiteScanJob)
-        .where(WebsiteScanJob.status == "failed")
-        .order_by(WebsiteScanJob.completed_at.desc(), WebsiteScanJob.created_at.desc())
-        .limit(50)
+        failed_query
+        .order_by(WebsiteScanJob.completed_at.desc(), WebsiteScanJob.created_at.desc(), WebsiteScanJob.id.desc())
+        .offset(failed_offset)
+        .limit(failed_limit)
     )).scalars().all()
     license_keys = {job.license_key for job in failed}
     license_ids = {}
@@ -84,5 +90,5 @@ async def admin_scan_operations(
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         } for job in failed],
-        "failed_jobs_limit": 50,
+        "failed_jobs_total": failed_total,\n        "failed_jobs_limit": failed_limit,\n        "failed_jobs_offset": failed_offset,\n        "failed_jobs_has_more": failed_offset + len(failed) < failed_total,
     }
