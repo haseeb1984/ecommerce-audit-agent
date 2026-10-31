@@ -2017,7 +2017,7 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     """Send an OTP only to an accepted, active agency teammate; response is enumeration-safe."""
     from sqlalchemy import select, update
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     generic = {"status": "accepted", "message": "If an active agency team account exists, a sign-in code will be sent."}
     member = await operational_db.scalar(select(AgencyTeamMember).where(
@@ -2043,6 +2043,16 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Agency team sign-in is temporarily unavailable.")
     now = datetime.now(timezone.utc)
+    recent = await operational_db.scalar(select(AgencyTeamLoginChallenge).where(
+        AgencyTeamLoginChallenge.email == email,
+    ).order_by(AgencyTeamLoginChallenge.created_at.desc()).limit(1))
+    if recent is not None:
+        recent_created = recent.created_at
+        if recent_created.tzinfo is None:
+            recent_created = recent_created.replace(tzinfo=timezone.utc)
+        if recent_created > now - timedelta(seconds=60):
+            response.headers["Cache-Control"] = "no-store, private"
+            return generic
     await operational_db.execute(update(AgencyTeamLoginChallenge).where(
         AgencyTeamLoginChallenge.email == email,
         AgencyTeamLoginChallenge.consumed_at.is_(None),
@@ -2075,7 +2085,7 @@ async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Requ
     """Consume a one-time OTP and issue a 12-hour revocable team session."""
     from sqlalchemy import select
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"\\d{6}", payload.code):
+    if not re.fullmatch(r"\d{6}", payload.code):
         raise HTTPException(status_code=422, detail="Sign-in code must contain six digits.")
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
     if len(auth_secret) < 32:
