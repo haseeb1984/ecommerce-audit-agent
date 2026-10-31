@@ -538,3 +538,28 @@ async def cancel_scan_batch(
     except Exception:
         await db.rollback()
         raise
+
+
+async def renew_scan_job_lease(
+    db: AsyncSession,
+    *,
+    job_id: str,
+    worker_id: str,
+) -> bool:
+    """Extend an active worker lease only while the caller still owns the job."""
+    now = _utcnow()
+    try:
+        result = await db.execute(
+            update(WebsiteScanJob)
+            .where(
+                WebsiteScanJob.id == job_id,
+                WebsiteScanJob.status == "processing",
+                WebsiteScanJob.locked_by == worker_id[:128],
+            )
+            .values(locked_at=now)
+        )
+        await db.commit()
+        return bool(result.rowcount)
+    except Exception:
+        await db.rollback()
+        raise
