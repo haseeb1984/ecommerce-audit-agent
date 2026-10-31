@@ -5261,11 +5261,16 @@ async def admin_customer_account_detail(
         select(CustomerBillingEvent).where(CustomerBillingEvent.license_key.in_(license_keys))
         .order_by(CustomerBillingEvent.updated_at.desc()).limit(200)
     )).scalars().all()
-    if not payments:
-        payments = (await db.execute(
-            select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids))
-            .order_by(PaymentWebhookEvent.updated_at.desc()).limit(200)
-        )).scalars().all()
+    # Keep the operational mirror and legacy PostgreSQL source visible together
+    # during gradual migration; a partially migrated customer must not lose history.
+    legacy_payments = (await db.execute(
+        select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids))
+        .order_by(PaymentWebhookEvent.updated_at.desc()).limit(200)
+    )).scalars().all()
+    known_event_ids = {item.event_id for item in payments}
+    payments.extend(item for item in legacy_payments if item.event_id not in known_event_ids)
+    payments.sort(key=lambda item: item.updated_at or item.created_at, reverse=True)
+    payments = payments[:200]
     notes = (await operational_db.execute(select(AdminCustomerNote).where(
         sql_func.lower(AdminCustomerNote.customer_email) == normalized
     ).order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc()).limit(100))).scalars().all()
