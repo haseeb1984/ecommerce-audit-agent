@@ -3020,6 +3020,34 @@ def _apply_paddle_billing_period(license_obj: SoftwareLicense, payload: dict, *,
             license_obj.expires_at = period_end
     return period_end
 
+async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_id: str) -> PaymentWebhookEvent | None:
+    """Resolve one canonical license link and fail closed if legacy rows conflict."""
+    linked_events = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.subscription_id == subscription_id,
+            PaymentWebhookEvent.license_id.is_not(None),
+        )
+        .order_by(
+            PaymentWebhookEvent.updated_at.desc(),
+            PaymentWebhookEvent.created_at.desc(),
+            PaymentWebhookEvent.event_id.desc(),
+        )
+    )).scalars().all()
+    license_ids = {item.license_id for item in linked_events if item.license_id is not None}
+    if len(license_ids) > 1:
+        subscription_fingerprint = hashlib.sha256(subscription_id.encode()).hexdigest()[:12]
+        logger.error(
+            "Paddle subscription has conflicting license links (subscription_hash=%s, license_count=%s)",
+            subscription_fingerprint,
+            len(license_ids),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Paddle subscription is linked to multiple licenses and requires administrator reconciliation.",
+        )
+    return linked_events[0] if linked_events else None
+
 
 async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
     """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
@@ -3124,15 +3152,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             )).scalar_one_or_none()
             if prior_failure is not None:
                 return {"status": "already_processed", "event_id": prior_failure.event_id}
-        linked_event = (await db.execute(
-            select(PaymentWebhookEvent)
-            .where(
-                PaymentWebhookEvent.subscription_id == subscription_id,
-                PaymentWebhookEvent.license_id.is_not(None),
-            )
-            .order_by(PaymentWebhookEvent.updated_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
+        linked_event = await _get_paddle_subscription_license_event(db, subscription_id)
         if linked_event is None:
             # Do not acknowledge an unlinked event permanently; Paddle may retry after
             # the original purchase event is reconciled and the subscription is linked.
@@ -3184,15 +3204,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         )).scalar_one_or_none()
         if canceled is not None:
             return {"status": "ignored_after_cancellation", "event_id": event_id}
-        linked_event = (await db.execute(
-            select(PaymentWebhookEvent)
-            .where(
-                PaymentWebhookEvent.subscription_id == subscription_id,
-                PaymentWebhookEvent.license_id.is_not(None),
-            )
-            .order_by(PaymentWebhookEvent.updated_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
+        linked_event = await _get_paddle_subscription_license_event(db, subscription_id)
         if linked_event is None or linked_event.license_id is None:
             raise HTTPException(status_code=503, detail="Subscription lifecycle event is awaiting license reconciliation.")
         license_obj = (await db.execute(
@@ -3247,15 +3259,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         )).scalar_one_or_none()
         if duplicate_cancellation is not None:
             return {"status": "already_canceled", "event_id": event_id}
-        linked_event = (await db.execute(
-            select(PaymentWebhookEvent)
-            .where(
-                PaymentWebhookEvent.subscription_id == subscription_id,
-                PaymentWebhookEvent.license_id.is_not(None),
-            )
-            .order_by(PaymentWebhookEvent.updated_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
+        linked_event = await _get_paddle_subscription_license_event(db, subscription_id)
         if linked_event is None or linked_event.license_id is None:
             logger.warning("Paddle cancellation cannot yet be linked (event_id=%s)", event_id[:80])
             raise HTTPException(status_code=503, detail="Subscription cancellation is awaiting license reconciliation.")
@@ -3307,12 +3311,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 PaymentWebhookEvent.status == "subscription_canceled",
             ).limit(1)
         )).scalar_one_or_none()
-        linked_event = (await db.execute(
-            select(PaymentWebhookEvent).where(
-                PaymentWebhookEvent.subscription_id == subscription_id,
-                PaymentWebhookEvent.license_id.is_not(None),
-            ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()).limit(1)
-        )).scalar_one_or_none()
+        linked_event = await _get_paddle_subscription_license_event(db, subscription_id)
         if linked_event is None or linked_event.license_id is None:
             raise HTTPException(status_code=503, detail="Subscription update is awaiting license reconciliation.")
         license_obj = (await db.execute(
@@ -3448,12 +3447,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # Use the same subscription-scoped lock as cancellation so lifecycle state
         # transitions are serialized in PostgreSQL.
         await _lock_paddle_webhook_resource(db, subscription_id)
-        linked_subscription_event = (await db.execute(
-            select(PaymentWebhookEvent)
-            .where(PaymentWebhookEvent.subscription_id == subscription_id)
-            .order_by(PaymentWebhookEvent.updated_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
+        linked_subscription_event = await _get_paddle_subscription_license_event(db, subscription_id)
         # Cancellation is sticky across later payment-failure/past-due events.
         # Checking only the newest event would let a later failure record hide the
         # cancellation and make a delayed transaction.completed event reactivate access.
