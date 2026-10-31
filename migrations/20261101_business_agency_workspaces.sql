@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS agency_client_websites (
     last_seen_at DATETIME(6) NULL,
     disconnected_at DATETIME(6) NULL,
     UNIQUE KEY uq_agency_workspace_site_host (workspace_id, site_host),
+    UNIQUE KEY uq_agency_site_host (agency_id, site_host),
     KEY ix_agency_client_websites_agency_id (agency_id),
     KEY ix_agency_client_websites_workspace_id (workspace_id),
     KEY ix_agency_client_site_tenant_workspace (agency_id, workspace_id, status),
