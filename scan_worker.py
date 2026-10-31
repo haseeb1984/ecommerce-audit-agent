@@ -357,6 +357,19 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                     "Customer lifecycle sync deferred (event_id=%s, error_type=%s)",
                     event_id, type(exc).__name__,
                 )
+        # Keep the outbox bounded without deleting pending or retryable actions.
+        retention_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        expired_ids = list((await licensing_db.execute(
+            select(CustomerLifecycleSyncOutbox.id).where(
+                CustomerLifecycleSyncOutbox.status == "completed",
+                CustomerLifecycleSyncOutbox.processed_at < retention_cutoff,
+            ).order_by(CustomerLifecycleSyncOutbox.processed_at.asc()).limit(500)
+        )).scalars().all())
+        if expired_ids:
+            await licensing_db.execute(delete(CustomerLifecycleSyncOutbox).where(
+                CustomerLifecycleSyncOutbox.id.in_(expired_ids)
+            ))
+            await licensing_db.commit()
     return counts
 
 
