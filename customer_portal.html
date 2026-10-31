@@ -691,6 +691,11 @@
       info.append(title, detail);
       const actions = document.createElement("div");
       actions.className = "report-actions";
+      const auditHistory = document.createElement("button");
+      auditHistory.type = "button"; auditHistory.className = "secondary"; auditHistory.textContent = "View audit history";
+      const auditHistoryPanel = document.createElement("div"); auditHistoryPanel.className = "reports";
+      auditHistory.addEventListener("click", () => loadAgencyClientAudits(item.id, auditHistoryPanel));
+      actions.append(auditHistory);
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "secondary";
@@ -708,11 +713,38 @@
         } finally { toggle.disabled = false; }
       });
       actions.append(toggle);
-      card.append(info, actions);
+      card.append(info, actions, auditHistoryPanel);
       container.append(card);
     }
     setStatus("agencyStatus", "Agency workspace ready · " + items.length + " client workspace(s).", "success");
     return agency;
+  }
+  async function loadAgencyClientAudits(workspaceId, target) {
+    target.replaceChildren();
+    const loading = document.createElement("p"); loading.className = "muted";
+    loading.textContent = "Loading client audit history…"; target.append(loading);
+    try {
+      const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(workspaceId) + "/audits?limit=100");
+      const data = await response.json();
+      target.replaceChildren();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No audit batches have been assigned to this client yet."; target.append(empty); return;
+      }
+      for (const item of items) {
+        const row = document.createElement("div"); row.className = "report";
+        const label = document.createElement("strong");
+        label.textContent = "Batch " + item.batch_number + " · " + item.status;
+        const detail = document.createElement("small");
+        detail.textContent = item.total_urls + " URLs · " + item.completed + " completed · " + item.failed + " failed · " + (item.created_at || "");
+        row.append(label, detail); target.append(row);
+      }
+    } catch (error) {
+      target.replaceChildren();
+      const message = document.createElement("p"); message.className = "status error";
+      message.textContent = error.message; target.append(message);
+    }
   }
   async function loadAgencyTeam() {
     const response = await api("/api/v1/account/agency/team");
