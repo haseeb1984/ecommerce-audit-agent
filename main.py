@@ -3003,6 +3003,23 @@ def _paddle_billing_period_end(payload: dict) -> datetime | None:
         return parsed.astimezone(timezone.utc)
     return None
 
+def _apply_paddle_billing_period(license_obj: SoftwareLicense, payload: dict, *, extend_expiry: bool = False) -> datetime | None:
+    """Persist Paddle's current period and optionally extend a finite license expiry."""
+    period_end = _paddle_billing_period_end(payload)
+    if period_end is None:
+        return None
+    license_obj.billing_period_ends_at = period_end
+    # A NULL expires_at represents a perpetual/manual non-expiring license.
+    # For finite subscription licenses, a verified paid/active period must extend
+    # the entitlement boundary rather than leaving an already-expired date in place.
+    if extend_expiry and license_obj.expires_at is not None:
+        current_expiry = license_obj.expires_at
+        if current_expiry.tzinfo is None:
+            current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+        if period_end > current_expiry:
+            license_obj.expires_at = period_end
+    return period_end
+
 
 async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
     """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
@@ -3339,9 +3356,10 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             if plan is not None:
                 license_obj.tier = plan["tier"]
                 license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
-            billing_period_end = _paddle_billing_period_end(transaction)
-            if billing_period_end is not None:
-                license_obj.billing_period_ends_at = billing_period_end
+            billing_period_end = _apply_paddle_billing_period(
+                license_obj, transaction,
+                extend_expiry=provider_status in {"active", "trialing"},
+            )
 
             if provider_status == "paused":
                 license_obj.is_active = False
@@ -3501,10 +3519,13 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                         return {"status": "already_processed", "event_id": prior_renewal.event_id}
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
-                linked_license.is_active = True
-                billing_period_end = _paddle_billing_period_end(transaction)
-                if billing_period_end is not None:
-                    linked_license.billing_period_ends_at = billing_period_end
+                billing_period_end = _apply_paddle_billing_period(
+                    linked_license, transaction, extend_expiry=True
+                )
+                expiry = linked_license.expires_at
+                if expiry is not None and expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                linked_license.is_active = expiry is None or expiry > datetime.now(timezone.utc)
                 renewal_customer_id = str(
                     transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
@@ -5273,9 +5294,10 @@ async def admin_reconcile_subscription(
     if plan is not None and provider_status in {"active", "trialing", "paused", "past_due"}:
         license_obj.tier = plan["tier"]
         license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
-    billing_period_end = _paddle_billing_period_end(data)
-    if billing_period_end is not None:
-        license_obj.billing_period_ends_at = billing_period_end
+    billing_period_end = _apply_paddle_billing_period(
+        license_obj, data,
+        extend_expiry=provider_status in {"active", "trialing"},
+    )
 
     lifecycle_status = {
         "active": "subscription_updated_active",
