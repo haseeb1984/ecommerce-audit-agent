@@ -495,6 +495,28 @@ async def cancel_scan_batch(
     """
     now = _utcnow()
     try:
+        # Match the worker's lock order (job first, then batch) to avoid
+        # deadlocks when a cancellation races with a claim or completion.
+        batch = await db.scalar(
+            select(ScanBatch).where(
+                ScanBatch.id == batch_id,
+                ScanBatch.license_key == license_key,
+            )
+        )
+        if batch is None:
+            await db.rollback()
+            return None
+
+        pending = (await db.execute(
+            select(WebsiteScanJob).where(
+                WebsiteScanJob.batch_id == batch_id,
+                WebsiteScanJob.license_key == license_key,
+                WebsiteScanJob.status.in_(("queued", "retry_wait")),
+            ).order_by(WebsiteScanJob.created_at, WebsiteScanJob.id)
+            .with_for_update()
+        )).scalars().all()
+
+        # Re-read and lock the batch only after pending job locks are held.
         batch = await db.scalar(
             select(ScanBatch).where(
                 ScanBatch.id == batch_id,
@@ -512,14 +534,6 @@ async def cancel_scan_batch(
                 "cancelled_jobs": 0,
                 "in_flight_jobs": 0,
             }
-
-        pending = (await db.execute(
-            select(WebsiteScanJob).where(
-                WebsiteScanJob.batch_id == batch.id,
-                WebsiteScanJob.license_key == license_key,
-                WebsiteScanJob.status.in_(("queued", "retry_wait")),
-            ).with_for_update()
-        )).scalars().all()
         for job in pending:
             job.status = "cancelled"
             job.completed_at = now
