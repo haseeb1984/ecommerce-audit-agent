@@ -60,6 +60,30 @@ app = FastAPI(
 agent = UniversalEcommerceAgent()
 
 
+async def _enqueue_billing_mirror_sync(db: AsyncSession, event_id: str) -> None:
+    """Write a retryable Hostinger projection request in the canonical event transaction."""
+    if not event_id:
+        return
+    existing = await db.get(BillingMirrorSyncOutbox, event_id)
+    if existing is None:
+        db.add(BillingMirrorSyncOutbox(event_id=event_id, status="pending", attempts=0))
+
+
+async def _enqueue_customer_lifecycle_sync(
+    db: AsyncSession, license_key: str, action: str
+) -> None:
+    """Persist account/session lifecycle projection alongside the canonical entitlement update."""
+    if action not in {"suspend", "reactivate", "revoke_sessions"}:
+        raise ValueError("Unsupported customer lifecycle sync action.")
+    db.add(CustomerLifecycleSyncOutbox(
+        license_key=license_key,
+        action=action,
+        status="pending",
+        attempts=0,
+        next_attempt_at=datetime.now(timezone.utc),
+    ))
+
+
 @app.middleware("http")
 async def apply_response_security_headers(request: Request, call_next):
     """Apply baseline browser protections and prevent caching authenticated/private responses."""
