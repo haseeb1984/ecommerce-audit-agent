@@ -148,3 +148,11 @@ Still outstanding:
 - The event is attributed to the agency, client workspace, current calendar-month quota period and job reference; retries cannot double-count the same completed job.
 - `GET /api/v1/account/agency/usage` returns the operator-managed monthly allowance, account-wide consumed/pending quota, remaining allowance, concurrent audit limit/current active reservations, and completed audit counts by client workspace.
 - The agency dashboard displays this shared usage summary. Personal and agency audits continue to consume the same Business license quota and concurrency limit; no separate client quota is created.
+
+
+### Standard-license single-site enforcement
+
+- Bulk scan enqueue now checks existing Hostinger customer website bindings and active WordPress registrations while holding the per-license batch sequence lock.
+- A standard customer license can submit multiple pages only when every URL belongs to one hostname. The first accepted audit binds an otherwise-unbound license; later submissions to a different hostname are rejected.
+- If a standard license has conflicting historical host bindings, the queue fails closed rather than silently granting multi-site access.
+- Business agency submissions are handled separately: the selected workspace must have an active owner-authorized WordPress connection, and every submitted URL hostname must match that connected client website.
