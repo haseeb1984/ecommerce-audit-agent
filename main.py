@@ -5286,7 +5286,7 @@ async def admin_reconcile_subscription(
         "cancelled": "subscription_canceled",
     }[provider_status]
     customer_id = str(data.get("customer_id") or customer.get("id") or "").strip()
-    audit_event_id = f"admin_reconcile_{uuid.uuid4().hex}"
+    audit_event_id = f"admin_reconcile_{secrets.token_hex(16)}"
     db.add(PaymentWebhookEvent(
         event_id=audit_event_id,
         status=lifecycle_status,
