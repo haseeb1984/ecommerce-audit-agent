@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agency Team Portal | Ecommerce Audit Agent</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#172b42;background:#f3f6fa}
+*{box-sizing:border-box}body{margin:0}.wrap{max-width:960px;margin:48px auto;padding:0 20px}
+header{margin-bottom:24px}h1{margin:0 0 8px;font-size:30px}p{color:#607187;line-height:1.55}
+.panel{background:#fff;border:1px solid #dce5ef;border-radius:14px;padding:24px;margin:16px 0;box-shadow:0 6px 22px #17324d0a}
+label{display:block;font-weight:650;margin:12px 0 6px}input{width:100%;max-width:420px;padding:12px;border:1px solid #b9c9da;border-radius:8px;font:inherit}
+button{border:0;border-radius:8px;padding:11px 16px;background:#155a8a;color:#fff;font-weight:650;cursor:pointer;margin:12px 8px 0 0}
+button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cursor:not-allowed}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.workspace{border:1px solid #e0e8f0;border-radius:10px;padding:16px;margin:12px 0}.workspace h3{margin:0 0 4px}
+.batch{padding:10px 0;border-top:1px solid #e8edf3}.muted{font-size:13px;color:#6b7c90}.status{margin-top:12px;min-height:22px;color:#155a8a}.hidden{display:none}
+</style>
+</head>
+<body><main class="wrap">
+<header><h1>Agency team portal</h1><p>Sign in with the email address your agency owner invited. You will only see client workspaces assigned to your account.</p></header>
+<section class="panel" id="loginPanel">
+<h2>Team member sign-in</h2>
+<form id="requestForm"><label for="email">Invited email</label><input id="email" type="email" autocomplete="email" maxlength="254" required><button type="submit">Email me a sign-in code</button></form>
+<form id="verifyForm" class="hidden"><label for="code">Six-digit sign-in code</label><input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required><button type="submit">Sign in</button></form>
+<p class="status" id="loginStatus" role="status" aria-live="polite"></p>
+</section>
+<section class="panel hidden" id="workspacePanel">
+<div class="row"><div><h2>Your client workspaces</h2><p id="identity" class="muted"></p></div><button id="logout" class="secondary">Sign out</button></div>
+<div id="workspaces"><p class="muted">Loading assigned workspaces…</p></div>
+<p class="status" id="workspaceStatus" role="status" aria-live="polite"></p>
+</section>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const tokenKey = "eaa_agency_team_session";
+  let token = sessionStorage.getItem(tokenKey) || "";
+  async function api(path, options = {}) {
+    const response = await fetch(path, { ...options, cache:"no-store", headers:{
+      ...(options.headers || {}), ...(token ? {Authorization:"Bearer " + token} : {})
+    }});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "The request could not be completed.");
+    return data;
+  }
+  function showSignedOut() {
+    token = ""; sessionStorage.removeItem(tokenKey);
+    $("loginPanel").classList.remove("hidden"); $("workspacePanel").classList.add("hidden");
+    $("verifyForm").classList.add("hidden");
+  }
+  async function loadWorkspaces() {
+    const data = await api("/api/v1/agency/team/workspaces");
+    $("workspaces").replaceChildren();
+    if (!data.items || !data.items.length) {
+      const p=document.createElement("p");p.className="muted";p.textContent="No active client workspaces have been assigned to you."; $("workspaces").append(p);return;
+    }
+    for (const item of data.items) {
+      const card=document.createElement("article");card.className="workspace";
+      const heading=document.createElement("h3");heading.textContent=item.display_name;
+      const role=document.createElement("p");role.className="muted";role.textContent="Your workspace role: "+item.role;
+      const button=document.createElement("button");button.type="button";button.textContent="View audit history";
+      const history=document.createElement("div");
+      button.addEventListener("click",async()=>{
+        button.disabled=true;history.replaceChildren();
+        try {
+          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audits?limit=100");
+          if (!result.items.length) {const empty=document.createElement("p");empty.className="muted";empty.textContent="No audit batches are available yet.";history.append(empty);}
+          for(const batch of result.items){
+            const row=document.createElement("div");row.className="batch";
+            const title=document.createElement("strong");title.textContent="Batch "+batch.batch_number+" · "+batch.status;
+            const detail=document.createElement("p");detail.className="muted";detail.textContent=batch.total_urls+" URLs · "+batch.completed+" completed · "+batch.failed+" failed · "+(batch.created_at||"");
+            row.append(title,detail);history.append(row);
+          }
+        } catch(error){const p=document.createElement("p");p.className="status";p.textContent=error.message;history.append(p);}
+        finally{button.disabled=false;}
+      });
+      card.append(heading,role,button,history);$("workspaces").append(card);
+    }
+  }
+  async function showSignedIn() {
+    $("loginPanel").classList.add("hidden");$("workspacePanel").classList.remove("hidden");
+    try {
+      const me=await api("/api/v1/agency/team/auth/me");
+      $("identity").textContent=me.email+" · "+me.role;
+      await loadWorkspaces();
+    } catch(error){$("workspaceStatus").textContent=error.message;showSignedOut();}
+  }
+  $("requestForm").addEventListener("submit",async event=>{
+    event.preventDefault();$("loginStatus").textContent="Sending code…";
+    try {await api("/api/v1/agency/team/auth/request-code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value.trim()})});$("verifyForm").classList.remove("hidden");$("loginStatus").textContent="If this email belongs to an accepted agency team member, a code has been sent.";}
+    catch(error){$("loginStatus").textContent=error.message;}
+  });
+  $("verifyForm").addEventListener("submit",async event=>{
+    event.preventDefault();$("loginStatus").textContent="Verifying code…";
+    try {const result=await api("/api/v1/agency/team/auth/verify-code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value.trim(),code:$("code").value.trim()})});token=result.access_token;sessionStorage.setItem(tokenKey,token);await showSignedIn();}
+    catch(error){$("loginStatus").textContent=error.message;}
+  });
+  $("logout").addEventListener("click",async()=>{try{await api("/api/v1/agency/team/auth/logout");}catch(_){}showSignedOut();});
+  if(token)showSignedIn();
+})();
+</script>
+</body></html>
