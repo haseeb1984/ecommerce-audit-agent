@@ -3007,6 +3007,38 @@ async def set_business_agency_team_workspace_access(
     return {"status": "updated", "member_id": member.id, "workspace_id": workspace.id, "role": access.role}
 
 
+@app.delete("/api/v1/account/agency/team/{member_id}/workspaces/{workspace_id}")
+async def remove_business_agency_team_workspace_access(
+    member_id: str,
+    workspace_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Remove one explicit client workspace grant without revoking the whole team account."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
+    access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == agency.id,
+        AgencyWorkspaceAccess.team_member_id == member_id,
+        AgencyWorkspaceAccess.workspace_id == workspace_id,
+    ).with_for_update())
+    if access is None:
+        raise HTTPException(status_code=404, detail="Workspace access grant was not found.")
+    await operational_db.delete(access)
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "removed", "member_id": member_id, "workspace_id": workspace_id}
+
+
 @app.delete("/api/v1/account/agency/team/{member_id}")
 async def revoke_business_agency_team_member(
     member_id: str,
