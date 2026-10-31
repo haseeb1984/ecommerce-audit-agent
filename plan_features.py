@@ -4,9 +4,9 @@ from typing import Any
 
 def plan_features(tier: Any) -> dict[str, bool]:
     normalized = "starter" if tier is None else str(tier).strip().lower().replace("-", "_").replace(" ", "_")
-    standard = normalized in {"starter", "agency", "pro", "agency_pro", "business", "whitelabel", "white_label", "enterprise"}
-    dossier = normalized in {"agency", "pro", "agency_pro", "business", "whitelabel", "white_label", "enterprise"}
-    white_label = normalized in {"business", "whitelabel", "white_label", "enterprise"}
+    standard = normalized in {"starter", "pro", "business"}
+    dossier = normalized in {"pro", "business"}
+    white_label = normalized == "business"
     return {
         "standard_audits": standard,
         "conversion_dossier": dossier,
