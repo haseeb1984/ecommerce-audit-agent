@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scan_queue import retry_failed_scan_job
+from scan_queue import retry_failed_scan_job, _validate_standard_license_site_binding
 
 
 class FakeSession:
@@ -106,3 +106,41 @@ async def test_retry_failed_scan_job_does_not_disclose_other_license_jobs():
 
     assert result is None
     assert db.rolled_back and not db.committed
+
+
+def test_standard_license_can_scan_multiple_pages_on_one_site():
+    _validate_standard_license_site_binding(
+        registered_hosts=["shop.example"],
+        submitted_urls=["https://shop.example/", "https://shop.example/products/item"],
+    )
+
+
+def test_standard_license_first_scan_binds_one_website():
+    _validate_standard_license_site_binding(
+        registered_hosts=[],
+        submitted_urls=["https://shop.example/", "https://shop.example/about"],
+    )
+
+
+def test_standard_license_cannot_switch_to_a_second_website():
+    with pytest.raises(ValueError, match="already bound"):
+        _validate_standard_license_site_binding(
+            registered_hosts=["shop.example"],
+            submitted_urls=["https://other.example/"],
+        )
+
+
+def test_standard_license_rejects_multiple_websites_in_one_submission():
+    with pytest.raises(ValueError, match="one ecommerce website"):
+        _validate_standard_license_site_binding(
+            registered_hosts=[],
+            submitted_urls=["https://shop.example/", "https://other.example/"],
+        )
+
+
+def test_standard_license_fails_closed_on_conflicting_historical_site_bindings():
+    with pytest.raises(ValueError, match="multiple historical"):
+        _validate_standard_license_site_binding(
+            registered_hosts=["shop.example", "other.example"],
+            submitted_urls=["https://shop.example/"],
+        )
