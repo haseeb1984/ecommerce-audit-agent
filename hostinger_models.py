@@ -349,14 +349,31 @@ class AgencyClientWebsite(HostingerBase):
     site_url = Column(String(2048), nullable=False)
     site_host = Column(String(253), nullable=False)
     admin_email = Column(String(254), nullable=True)
-    connection_type = Column(String(24), nullable=False, default="manual")
-    status = Column(String(20), nullable=False, default="active", index=True)
+    connection_type = Column(String(24), nullable=False, default="wordpress_plugin")
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    site_token_hash = Column(String(64), nullable=True, unique=True)
+    plugin_version = Column(String(30), nullable=True)
+    wordpress_version = Column(String(30), nullable=True)
+    woocommerce_version = Column(String(30), nullable=True)
     connected_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
     disconnected_at = Column(DateTime(timezone=True), nullable=True)
     __table_args__ = (
         UniqueConstraint("workspace_id", "site_host", name="uq_agency_workspace_site_host"),
         Index("ix_agency_client_site_tenant_workspace", "agency_id", "workspace_id", "status"),
     )
+
+
+class AgencyWebsiteConnectChallenge(HostingerBase):
+    """One-time owner-issued proof token used to authorize a client WordPress site."""
+    __tablename__ = "agency_website_connect_challenges"
+    id = Column(String(64), primary_key=True)
+    agency_id = Column(String(64), ForeignKey("agency_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(String(64), ForeignKey("agency_client_workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class AgencyTeamLoginChallenge(HostingerBase):
