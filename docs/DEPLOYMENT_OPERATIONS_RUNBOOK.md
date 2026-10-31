@@ -129,3 +129,10 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Staleness is an operational signal, not proof that the site is offline or disconnected. It is calculated from the persisted last_seen_at value and does not mutate the installation status or revoke access.
 - For a stale connection, ask the customer to confirm that the Ecommerce Audit Agent plugin remains active in WordPress Admin, that the site can make outbound HTTPS requests, and that the plugin connection settings still contain the intended license. Reconnect from the plugin settings; registration for the same license and hostname refreshes the existing installation record rather than creating a duplicate.
 - Disconnected installations remain visible in account history but are not marked stale. Reconnection is subject to the existing per-license active-site limit and license authentication.
+
+
+### Customer lifecycle outbox ordering and retry safety
+
+- Lifecycle outbox events are durable PostgreSQL records mirrored into Hostinger by the scan worker. Before applying a suspend/reactivate retry, the worker re-reads the canonical SoftwareLicense state in PostgreSQL. A delayed suspend is ignored if the license is currently active; a delayed reactivate is ignored if the license is currently inactive.
+- This protects Hostinger customer-account state and session revocation from an older retry arriving after a newer admin transition. Explicit revoke_sessions actions remain independent of current entitlement and continue to revoke active sessions.
+- A skipped stale transition is acknowledged as processed; operators should diagnose current entitlement from the canonical licensing database rather than replaying old lifecycle actions manually.
