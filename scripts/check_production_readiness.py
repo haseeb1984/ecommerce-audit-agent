@@ -92,6 +92,9 @@ def _configuration_status() -> tuple[list[str], list[str]]:
     if os.getenv("DATABASE_SSL", "true").strip().lower() in {"0", "false", "no"}:
         details.append("DATABASE_SSL is disabled; production database TLS verification is expected")
         failed.append("database_tls")
+    if os.getenv("HOSTINGER_DB_SSL", "true").strip().lower() in {"0", "false", "no"}:
+        details.append("HOSTINGER_DB_SSL is disabled; production Hostinger MySQL TLS verification is expected")
+        failed.append("hostinger_database_tls")
 
     return failed, details
 
