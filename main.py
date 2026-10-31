@@ -55,7 +55,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, ScanBatch
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -2008,6 +2008,222 @@ async def require_agency_team_session(
     if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
     return {"session": session, "member": member, "agency": agency}
+
+
+@app.post("/api/v1/account/agency/clients/{workspace_id}/website-connection-token")
+async def create_agency_website_connection_token(
+    workspace_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Issue a short-lived, single-use token for an owner-authorized client WordPress site."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency website connections are available on the Business plan.")
+    from sqlalchemy import select, update
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace not found.")
+    existing_site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.status == "active",
+    ))
+    if existing_site is not None:
+        raise HTTPException(status_code=409, detail="This client already has an active WordPress connection. Disconnect it before replacing the site.")
+    now = datetime.now(timezone.utc)
+    await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+        AgencyWebsiteConnectChallenge.agency_id == agency.id,
+        AgencyWebsiteConnectChallenge.workspace_id == workspace.id,
+        AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+    ).values(consumed_at=now))
+    raw_token = secrets.token_urlsafe(36)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    challenge = AgencyWebsiteConnectChallenge(
+        id=secrets.token_urlsafe(24), agency_id=agency.id, workspace_id=workspace.id,
+        token_hash=token_hash, expires_at=now + timedelta(hours=24), created_at=now,
+    )
+    operational_db.add(challenge)
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"workspace_id": workspace.id, "workspace_name": workspace.display_name,
+            "connection_token": raw_token, "expires_at": challenge.expires_at.isoformat(),
+            "instructions": "Paste this one-time token into the Ecommerce Audit Agent WordPress plugin on the client's site. It can be used once within 24 hours."}
+
+
+@app.post("/api/v1/integrations/wordpress/agency/sites/register", status_code=201)
+async def register_agency_wordpress_site(
+    payload: WordPressSiteRegister,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Consume an owner-issued workspace token and establish a separate client-site credential."""
+    from sqlalchemy import select
+    raw_token = (request.headers.get("x-agency-connect-token") or "").strip()
+    if len(raw_token) < 32 or len(raw_token) > 200:
+        raise HTTPException(status_code=401, detail="A valid agency client connection token is required.")
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    challenge = await operational_db.scalar(select(AgencyWebsiteConnectChallenge).where(
+        AgencyWebsiteConnectChallenge.token_hash == token_hash,
+        AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+    ).with_for_update())
+    now = datetime.now(timezone.utc)
+    if challenge is None:
+        raise HTTPException(status_code=401, detail="Agency connection token is invalid or already used.")
+    expires = challenge.expires_at
+    if expires.tzinfo is None: expires = expires.replace(tzinfo=timezone.utc)
+    if expires <= now:
+        challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=401, detail="Agency connection token has expired.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == challenge.agency_id, AgencyAccount.status == "active"
+    ))
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == challenge.workspace_id,
+        AgencyClientWorkspace.agency_id == challenge.agency_id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if agency is None or workspace is None:
+        challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=409, detail="Agency or client workspace is no longer active.")
+    owner_license = await db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    ))
+    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+        challenge.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
+    raw_url = payload.site_url.strip()
+    try:
+        parsed = urlsplit(raw_url)
+        host = (parsed.hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
+    except (ValueError, UnicodeError):
+        raise HTTPException(status_code=422, detail="WordPress site URL is invalid.")
+    if parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise HTTPException(status_code=422, detail="WordPress site URL must be HTTPS without credentials, query, or fragment.")
+    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    admin_email = payload.admin_email.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
+        raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
+    site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
+    active_site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.status == "active",
+    ).with_for_update())
+    if active_site is not None:
+        raise HTTPException(status_code=409, detail="This client workspace already has an active website connection.")
+    existing = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.site_host == host,
+    ).with_for_update())
+    site_token = secrets.token_urlsafe(40)
+    site_token_hash = hashlib.sha256(site_token.encode("utf-8")).hexdigest()
+    if existing is None:
+        existing = AgencyClientWebsite(
+            id=secrets.token_urlsafe(24), agency_id=agency.id, workspace_id=workspace.id,
+            site_url=site_url, site_host=host, admin_email=admin_email,
+            connection_type="wordpress_plugin", status="active",
+            site_token_hash=site_token_hash, plugin_version=payload.plugin_version.strip(),
+            wordpress_version=payload.wordpress_version.strip() or None,
+            woocommerce_version=payload.woocommerce_version.strip() or None,
+            connected_at=now, last_seen_at=now,
+        )
+        operational_db.add(existing)
+    else:
+        existing.agency_id = agency.id
+        existing.site_url = site_url
+        existing.admin_email = admin_email
+        existing.connection_type = "wordpress_plugin"
+        existing.status = "active"
+        existing.site_token_hash = site_token_hash
+        existing.plugin_version = payload.plugin_version.strip()
+        existing.wordpress_version = payload.wordpress_version.strip() or None
+        existing.woocommerce_version = payload.woocommerce_version.strip() or None
+        existing.connected_at = now
+        existing.last_seen_at = now
+        existing.disconnected_at = None
+    challenge.consumed_at = now
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"site_id": existing.id, "workspace_id": workspace.id,
+            "workspace_name": workspace.display_name, "site_url": existing.site_url,
+            "agency_site_token": site_token, "connected_at": now.isoformat(),
+            "message": "Client WordPress site connected. Store the returned site credential securely; it is shown only once."}
+
+
+@app.get("/api/v1/integrations/wordpress/agency/sites/status")
+async def get_agency_wordpress_site_status(request: Request, response: Response,
+                                           db: AsyncSession = Depends(get_async_db),
+                                           operational_db: AsyncSession = Depends(get_hostinger_db)):
+    from sqlalchemy import select
+    raw_token = (request.headers.get("x-agency-site-token") or "").strip()
+    if len(raw_token) < 32 or len(raw_token) > 200:
+        raise HTTPException(status_code=401, detail="Agency site authentication is required.")
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ))
+    if site is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == site.agency_id, AgencyAccount.status == "active"
+    ))
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == site.workspace_id, AgencyClientWorkspace.status == "active"
+    ))
+    owner_license = await db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    )) if agency else None
+    if agency is None or workspace is None or owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
+    site.last_seen_at = datetime.now(timezone.utc)
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "connected", "site_id": site.id, "site_url": site.site_url,
+            "workspace_id": workspace.id, "workspace_name": workspace.display_name,
+            "agency_entitlement": "active", "last_seen_at": site.last_seen_at.isoformat()}
+
+
+@app.post("/api/v1/integrations/wordpress/agency/sites/disconnect")
+async def disconnect_agency_wordpress_site(request: Request, response: Response,
+                                           operational_db: AsyncSession = Depends(get_hostinger_db)):
+    from sqlalchemy import select
+    raw_token = (request.headers.get("x-agency-site-token") or "").strip()
+    if len(raw_token) < 32 or len(raw_token) > 200:
+        raise HTTPException(status_code=401, detail="Agency site authentication is required.")
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ).with_for_update())
+    if site is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection not found.")
+    site.status = "disconnected"
+    site.disconnected_at = datetime.now(timezone.utc)
+    site.site_token_hash = None
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"status": "disconnected", "site_id": site.id}
 
 
 @app.post("/api/v1/agency/team/auth/request-code")
