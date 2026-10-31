@@ -61,8 +61,9 @@
 
 ## Latest known verification snapshot
 
-- CI run [40791577713](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40791577713) passed on commit `d9430c2949d7ec80eadada868a65f847a3ea708a`, reporting **661 passed** and 55 warnings. This run includes the expanded required-column/index readiness checks and their tests.
-- Documentation-only checklist/gap-matrix commits followed that code commit. Staging database/schema verification, provider sandbox journeys, browser QA, and production readiness remain unverified.
+- CI run [41246301729](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/41246301729) ran on code commit `c6e0826c707e39a85edbd84935dde6c6cf8c4fed`; the **Run tests** step passed with **701 passed** and 55 warnings.
+- Dependency hash verification, development dependency installation, and vulnerability audit also passed on that run. Downstream live-site/PDF smoke steps are separate CI checks, not evidence of deployed SaaS readiness.
+- Hostinger staging schema, SMTP inbox delivery, Paddle sandbox lifecycle, external worker scheduling, browser acceptance outside CI, and production readiness remain unverified.
 
 
 ## Latest repository implementation batch — 2026-11-01
@@ -72,7 +73,7 @@
 - Added a protected /api/v1/internal/scan-worker entrypoint. It processes at most one scan per invocation and reconciles lifecycle/billing/email outboxes.
 - Paddle billing/lifecycle events and admin suspend/reactivate actions now create PostgreSQL outbox records for retryable Hostinger projection.
 - Added migrations/20261101_worker_outboxes_and_scan_idempotency.sql for scan idempotency and outbox persistence.
-- Added contract/API tests, but the latest Actions jobs have no runner allocation (runner_id=0, steps=[]); no tests are claimed as executed or passed.
+- Added contract/API tests. Public-repository Actions runners are now allocating normally; the latest code test step passed with 701 tests.
 - No production migration, Hostinger initialization, external scheduler setup, deployment, live payment, or live website scan was performed.
 
 
@@ -83,7 +84,7 @@
 - Added duplicate-email checks across operational customer accounts and customer-portal controls for requesting and confirming the change.
 - Verified identity changes enqueue a Hostinger outbox projection scoped to the owning license. The worker updates only that license's PostgreSQL billing events, avoiding cross-account email changes.
 - Added additive Hostinger schema initialization and migration `migrations/20261102_hostinger_email_identity_scope.sql`.
-- Added API contract tests for unauthenticated requests and invalid input. Full CI execution is pending the current runner jobs; no test pass is claimed yet.
+- Added API contract tests for unauthenticated requests and invalid input. The subsequent session-auth test run passed; real SMTP and Hostinger integration acceptance remains pending.
 
 
 ## Passwordless customer session implementation batch — 2026-11-01
