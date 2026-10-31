@@ -4351,7 +4351,6 @@ async def admin_payment_events(
             .where(SoftwareLicense.license_key.in_(license_keys))
         )).all()
         license_ids = {key: license_id for license_id, key in rows}
-    event_license_ids = {event.id: event.license_id for event in events if hasattr(event, "license_id")}
     return {
         "items": [
             {
