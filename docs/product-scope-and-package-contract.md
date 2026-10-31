@@ -105,3 +105,7 @@ Still outstanding:
 - Verified WordPress connection per agency client workspace and agency plugin flow.
 - Client-specific audit result views and usage aggregation from actual completed jobs.
 - Runtime validation of the migration, API routes, browser interactions, and email flow.
+
+- Client workspace selector is now available on the bulk-scan form; submissions carry a workspace ID only when the Business owner selects an active client.
+- Scan batches store optional `workspace_id`; personal submissions remain unassigned. The owner can view client-specific batch status/history at `GET /api/v1/account/agency/clients/{workspace_id}/audits`.
+- Client audit history currently shows batch/job counts and status, not the complete saved audit report/evidence detail.
