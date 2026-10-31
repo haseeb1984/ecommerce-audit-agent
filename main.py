@@ -4340,6 +4340,46 @@ def _validate_admin_package(payload: AdminPackageInput) -> dict:
             "paddle_price_id": price_id, "is_active": payload.is_active}
 
 
+@app.get("/api/v1/admin/agencies")
+async def admin_list_business_agencies(
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Read-only admin inventory of Business agency tenants and their client/team counts."""
+    _require_admin_key(request)
+    from sqlalchemy import func, select
+    agencies = (await operational_db.execute(
+        select(AgencyAccount).order_by(AgencyAccount.created_at.desc()).limit(500)
+    )).scalars().all()
+    agency_ids = [item.id for item in agencies]
+    client_counts = {}
+    team_counts = {}
+    if agency_ids:
+        client_rows = (await operational_db.execute(
+            select(AgencyClientWorkspace.agency_id, func.count(AgencyClientWorkspace.id))
+            .where(AgencyClientWorkspace.agency_id.in_(agency_ids))
+            .group_by(AgencyClientWorkspace.agency_id)
+        )).all()
+        team_rows = (await operational_db.execute(
+            select(AgencyTeamMember.agency_id, func.count(AgencyTeamMember.id))
+            .where(AgencyTeamMember.agency_id.in_(agency_ids))
+            .group_by(AgencyTeamMember.agency_id)
+        )).all()
+        client_counts = {agency_id: int(count) for agency_id, count in client_rows}
+        team_counts = {agency_id: int(count) for agency_id, count in team_rows}
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{
+        "id": item.id,
+        "owner_email": item.owner_email,
+        "status": item.status,
+        "client_count": client_counts.get(item.id, 0),
+        "team_member_count": team_counts.get(item.id, 0),
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    } for item in agencies]}
+
+
 @app.get("/api/v1/admin/packages")
 async def admin_list_packages(request: Request, db: AsyncSession = Depends(get_async_db)):
     _require_admin_key(request)
