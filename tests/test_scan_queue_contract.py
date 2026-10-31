@@ -1,6 +1,7 @@
 """Contract checks for the durable Hostinger scan worker schema."""
 
 import pytest
+import inspect
 from hostinger_models import (
     CustomerAccount,
     CustomerBillingEvent,
@@ -131,3 +132,8 @@ def test_customer_website_model_is_license_scoped_and_mysql_index_safe():
     ]
     assert any(tuple(column.name for column in item.columns) == ("license_key", "url_hash")
                for item in unique_constraints)
+
+
+
+def test_scan_failure_transition_supports_non_retryable_entitlement_errors():
+    assert "retryable" in inspect.signature(fail_or_retry_scan_job).parameters
