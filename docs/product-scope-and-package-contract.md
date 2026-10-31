@@ -164,3 +164,13 @@ Still outstanding:
 - The API checks the active agency/site credential, current non-expired Business license, active client workspace, HTTPS scheme and exact connected website hostname before enqueueing.
 - Jobs are queued with the selected workspace ID and use the same Business license quota/concurrency controls as other audits. Completion records the structured result and idempotent per-client usage event.
 - The agency plugin mode reports that the job was queued and directs users to the SaaS dashboard for progress and findings; it does not generate a separate client PDF in this phase.
+
+
+### Agency admin lifecycle and integration verification
+
+- The admin agency inventory now includes suspend/reactivate controls.
+- Suspending an agency revokes all active agency team sessions and consumes outstanding team login challenges. Reactivation restores agency eligibility but teammates must authenticate again.
+- The WordPress agency audit submission endpoint is registered in `scan_api.py` and is included through the application router. It authenticates the per-site credential, checks the Business subscription, restricts every submitted URL to the connected client hostname over HTTPS, and queues the batch under the owner license and client workspace.
+- Regression tests were added for agency usage ledger idempotency, missing/revoked WordPress credentials, cross-client domain rejection, successful workspace-scoped queue submission, and admin suspension session revocation.
+- Customer portal guidance now reflects the implemented agency workflow and links team members to the separate `/agency` portal.
+- CI was observed for the latest changes, but GitHub reported a failed job with no executed steps (`steps: []`). This is runner/job initialization failure evidence, not a test assertion result; source remains unverified by CI.
