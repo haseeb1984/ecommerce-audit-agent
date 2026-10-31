@@ -59,3 +59,22 @@ def test_scan_operations_route_has_stable_pagination_metadata_contract():
     assert '"failed_jobs_has_more"' in source
     assert ".offset(failed_offset)" in source
     assert ".limit(failed_limit)" in source
+
+
+def test_admin_client_status_updates_enqueue_durable_lifecycle_sync():
+    from main import admin_update_client
+
+    source = inspect.getsource(admin_update_client)
+    assert ".with_for_update()" in source
+    assert "CustomerLifecycleSyncOutbox(" in source
+    assert 'action="reactivate" if bool(client.is_active) else "suspend"' in source
+    assert 'if "is_active" in changes and bool(client.is_active) != previous_active:' in source
+
+
+def test_admin_client_non_status_updates_do_not_enqueue_lifecycle_sync():
+    from main import admin_update_client
+
+    source = inspect.getsource(admin_update_client)
+    condition = 'if "is_active" in changes and bool(client.is_active) != previous_active:'
+    assert condition in source
+    assert source.index(condition) < source.index('await _write_admin_log(db, "client.updated"')
