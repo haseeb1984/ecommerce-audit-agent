@@ -82,8 +82,13 @@ async def enqueue_scan_request(
             ).order_by(ScanBatch.batch_number)
         )).scalars().all()
         if existing_batches:
-            if any(batch.request_hash != request_hash for batch in existing_batches):
-                raise ValueError("This request ID has already been used for a different URL list.")
+            if any(
+                batch.request_hash != request_hash or batch.batch_size != batch_size
+                for batch in existing_batches
+            ):
+                raise ValueError(
+                    "This request ID has already been used for a different URL list or batch size."
+                )
             existing_ids = [batch.id for batch in existing_batches]
             existing_jobs = (await db.execute(
                 select(WebsiteScanJob.id).where(WebsiteScanJob.batch_id.in_(existing_ids))
