@@ -281,21 +281,21 @@ async function refreshPaymentEvents(offset=0){
  }
 }
 async function refreshPackages(){
- const d=await api("/api/v1/admin/packages"),body=$("packages");body.replaceChildren();
+ const d=await api("/api/v1/admin/packages"),body=$("packages");body.replaceChildren();$("addPackage").disabled=d.packages.length>=3;$("addPackage").title=d.packages.length>=3?"Starter, Pro, and Business are already configured.":"Add one of the three supported packages.";
  if(!d.packages.length){const tr=el("tr"),td=el("td","No packages configured.","empty");td.colSpan=6;tr.append(td);body.append(tr);return}
  for(const p of d.packages){const tr=el("tr"),actions=el("td"),edit=el("button","Edit","secondary"),toggle=el("button",p.is_active?"Deactivate":"Activate","secondary");
  edit.addEventListener("click",()=>editPackage(p));toggle.addEventListener("click",()=>togglePackage(p));actions.append(edit,document.createTextNode(" "),toggle);
  tr.append(el("td",p.label+" ("+p.tier+")"),el("td",p.monthly_audit_allowance),el("td",p.max_concurrent_audits),el("td",p.price_id?"Configured":"Missing"),el("td",p.is_active?"Active":"Inactive"),actions);body.append(tr)}
 }
 function packagePayload(p){
- const tier=window.prompt("Stable package tier ID:",p?p.tier:"");if(tier===null)return null;
+ const tier=p?p.tier:window.prompt("Package tier (Starter, Pro, or Business):","");if(tier===null)return null;
  const label=window.prompt("Display name:",p?p.label:"");if(label===null)return null;
  const a=window.prompt("Monthly audit allowance:",String(p?p.monthly_audit_allowance:100));if(a===null)return null;
  const c=window.prompt("Concurrent audit limit:",String(p?p.max_concurrent_audits:1));if(c===null)return null;
  const price=window.prompt("Paddle price ID (pri_...), blank disables checkout:",p?(p.price_id||""):"");if(price===null)return null;
  const allowance=Number(a),concurrency=Number(c);
  const normalizedTier=tier.trim().toLowerCase(),normalizedLabel=label.trim(),normalizedPrice=price.trim();
- if(!/^[a-z0-9_-]{2,50}$/.test(normalizedTier)){status("Package tier must be 2–50 lowercase letters, numbers, underscores or hyphens.","error");return null}
+ if(!["starter","pro","business"].includes(normalizedTier)){status("Only Starter, Pro, and Business packages are supported.","error");return null}
  if(!normalizedLabel||normalizedLabel.length>100){status("Package display name must be 1–100 characters.","error");return null}
  if(!Number.isInteger(allowance)||allowance<1||allowance>10000000||!Number.isInteger(concurrency)||concurrency<1||concurrency>10000){status("Monthly and concurrent limits must be within the supported positive whole-number ranges.","error");return null}
  if(normalizedPrice&&!/^pri_[A-Za-z0-9]+$/.test(normalizedPrice)){status("Paddle price ID must use the expected pri_ identifier format.","error");return null}
