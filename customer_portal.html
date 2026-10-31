@@ -77,6 +77,7 @@
 <p class="muted">Invite team members by email and assign an agency role. Invitations expire after 48 hours.</p>
 <div class="row"><div><label for="agencyTeamEmail">Team member email</label><input id="agencyTeamEmail" type="email" maxlength="254" placeholder="teammate@example.com"></div>
 <div><label for="agencyTeamRole">Agency role</label><select id="agencyTeamRole"><option value="analyst">Analyst</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select></div></div>
+<label for="agencyTeamWorkspaces">Client workspaces this member can be assigned to (optional)</label><select id="agencyTeamWorkspaces" multiple size="4" style="width:100%;padding:10px;border:1px solid #b8c7d8;border-radius:8px"></select>
 <div class="report-actions" style="margin-top:12px"><button id="inviteAgencyTeam" type="button" disabled>Send invitation</button><button id="refreshAgencyTeam" class="secondary" type="button" disabled>Refresh team</button></div>
 <div id="agencyTeam" class="reports" aria-live="polite"><p class="muted">No team members loaded.</p></div>
 <div id="agencyStatus" class="status" role="status" aria-live="polite">Business plan required.</div>
@@ -658,6 +659,17 @@
       workspaceSelect.append(option);
     }
     workspaceSelect.value = selectedWorkspace;
+    const teamWorkspaceSelect = $("agencyTeamWorkspaces");
+    const selectedTeamWorkspaces = new Set(Array.from(teamWorkspaceSelect.selectedOptions).map(option => option.value));
+    teamWorkspaceSelect.replaceChildren();
+    for (const workspace of (Array.isArray(data.items) ? data.items : [])) {
+      if (workspace.status !== "active") continue;
+      const option = document.createElement("option");
+      option.value = workspace.id;
+      option.textContent = workspace.display_name;
+      option.selected = selectedTeamWorkspaces.has(workspace.id);
+      teamWorkspaceSelect.append(option);
+    }
     $("agencyAuditWorkspaceField").hidden = false;
     const container = $("agencyClients");
     container.replaceChildren();
@@ -741,7 +753,10 @@
     try {
       const response = await api("/api/v1/account/agency/team/invitations", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({email, role, workspace_ids:[]})
+        body:JSON.stringify({
+          email, role,
+          workspace_ids:Array.from($("agencyTeamWorkspaces").selectedOptions).map(option => option.value).filter(Boolean)
+        })
       });
       $("agencyTeamEmail").value = "";
       await loadAgencyTeam();
