@@ -257,6 +257,32 @@ function eaa_wp_handle_save_settings() {
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'invalid_url'), admin_url('admin.php')));
         exit;
     }
+
+    // A site registration belongs to both the saved license and API endpoint.
+    // Retire the old remote registration before replacing either credential so
+    // license changes cannot leave orphaned active WordPress installations.
+    $old_license = '' !== $stored_license ? eaa_wp_decrypt_license($stored_license) : '';
+    if (is_wp_error($old_license)) {
+        $settings['connection_error'] = $old_license->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'connection_failed'), admin_url('admin.php')));
+        exit;
+    }
+    $old_api_base = isset($settings['api_base']) ? untrailingslashit((string) $settings['api_base']) : EAA_WP_DEFAULT_API;
+    $new_api_base = untrailingslashit($api_base);
+    $registration_identity_changed = !hash_equals((string) $old_license, (string) $license)
+        || !hash_equals($old_api_base, $new_api_base);
+    if (!empty($settings['site_id']) && $registration_identity_changed) {
+        $disconnect = eaa_wp_disconnect_site();
+        if (is_wp_error($disconnect)) {
+            $settings = eaa_wp_settings();
+            $settings['connection_error'] = __('The previous WordPress connection could not be retired. Settings were not changed; retry after restoring API connectivity.', 'ecommerce-audit-agent');
+            update_option(EAA_WP_OPTION, $settings, false);
+            wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'disconnect_failed'), admin_url('admin.php')));
+            exit;
+        }
+        $settings = eaa_wp_settings();
+    }
     if ('' !== trim($license_input)) {
         $encrypted_license = eaa_wp_encrypt_license($license);
         if (is_wp_error($encrypted_license)) {
