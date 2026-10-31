@@ -54,7 +54,7 @@
   <div id="emailChangeStatus" class="status" role="status" aria-live="polite">Sign in with email to change your account address.</div>
 </div>
 </section>
-<section class="panel" aria-labelledby="brandingHeading">
+<section class="panel" id="brandingPanel" aria-labelledby="brandingHeading" hidden>
 <h2 id="brandingHeading">White-label branding</h2>
 <p class="muted">Configure the brand identity used by supported white-label experiences. This section is available on plans that include white-label branding.</p>
 <div class="row">
@@ -658,6 +658,9 @@
     $("usageFill").style.width = percent + "%";
     $("usageBar").setAttribute("aria-valuenow", String(Math.round(percent)));
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
+    const brandingEnabled = usage.features && usage.features.white_label_branding === true;
+    $("brandingPanel").hidden = !brandingEnabled;
+    if (!brandingEnabled) setStatus("brandingStatus", "White-label branding is not included in this plan.");
     const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",direct_api_access:"Direct API access"};
     const enabledFeatures = Object.entries(usage.features || {}).filter(([, enabled]) => enabled === true).map(([key]) => featureLabels[key] || key);
     $("planFeatures").textContent = enabledFeatures.length ? enabledFeatures.join(" · ") : "No premium features are enabled for this plan.";
@@ -1155,7 +1158,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
     const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
@@ -1223,8 +1226,17 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites(), loadScanBatches(), loadBranding()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites", "scan batches", "white-label branding"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites(), loadScanBatches()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites", "scan batches"];
+      const brandingEnabled = results[1].status === "fulfilled" && results[1].value.features && results[1].value.features.white_label_branding === true;
+      $("brandingPanel").hidden = !brandingEnabled;
+      if (brandingEnabled) {
+        const brandingResult = await Promise.allSettled([loadBranding()]);
+        if (brandingResult[0].status === "rejected") names.push("white-label branding");
+        results.push(brandingResult[0]);
+      } else {
+        setStatus("brandingStatus", "White-label branding is not included in this plan.");
+      }
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
