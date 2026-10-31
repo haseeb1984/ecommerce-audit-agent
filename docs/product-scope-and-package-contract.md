@@ -97,7 +97,7 @@ Additional Business-plan functionality now present on the feature branch:
 - `PUBLIC_APP_URL` is required to generate HTTPS invitation links; SMTP must also be configured.
 - Bulk scan submissions accept an optional `workspace_id`; the API verifies that it belongs to the authenticated Business license's active agency before queueing.
 - Durable `scan_batches.workspace_id` stores client attribution; batch idempotency includes the workspace so a request ID cannot be replayed against another client.
-- The owner continues to submit scans under the one Business license, so existing licensing quota/concurrency enforcement remains the shared agency allowance. Per-client usage ledger aggregation is not yet connected.
+- The owner continues to submit scans under the one Business license, so existing licensing quota/concurrency enforcement remains the shared agency allowance. Completed client-attributed jobs are recorded in the agency usage ledger and aggregated per workspace.
 - Customer portal now allows selecting a client workspace for bulk scans and choosing workspace scope when inviting team members.
 
 Still outstanding:
@@ -119,7 +119,7 @@ Still outstanding:
 - The owner can revoke a teammate; revocation also revokes that member's active sessions. Sessions can also be ended by the member.
 - Dedicated team portal is served at `/agency`; it stores the opaque team session in browser session storage and offers assigned-workspace audit batch history.
 - New operational tables are included in the additive agency migration. The migration remains unapplied in production.
-- Team member access currently covers assigned-workspace audit batch status/history. It does not yet expose full audit report/evidence, WordPress site connection, client-level quota/usage, or team member write operations.
+- Team member access covers assigned-workspace audit batch status/history and structured saved findings/evidence. It does not yet expose client-level quota/usage details, WordPress audit execution, or team member write operations.
 
 
 ### Business agency WordPress client-site connection
@@ -140,3 +140,11 @@ Still outstanding:
 - Both result APIs are workspace-tenant scoped, private/no-store, paginated (maximum 25 result records per request), and do not expose PDF generation/download as part of this implementation batch.
 - Agency bulk scan submissions now require an active connected WordPress website for the selected client workspace and reject URLs whose hostname does not match that registered website.
 - This closes the gap between a client workspace and its website identity; client audit PDF/report export remains deliberately deferred until the rest of the SaaS product is complete.
+
+
+### Business agency shared usage and quota reporting
+
+- A successful client-attributed scan completion now creates an idempotent `AgencyUsageEvent` in the same Hostinger transaction as the completed job and existing customer usage event.
+- The event is attributed to the agency, client workspace, current calendar-month quota period and job reference; retries cannot double-count the same completed job.
+- `GET /api/v1/account/agency/usage` returns the operator-managed monthly allowance, account-wide consumed/pending quota, remaining allowance, concurrent audit limit/current active reservations, and completed audit counts by client workspace.
+- The agency dashboard displays this shared usage summary. Personal and agency audits continue to consume the same Business license quota and concurrency limit; no separate client quota is created.
