@@ -28,11 +28,6 @@ class CustomerWebsiteUpdate(BaseModel):
     label: str | None = Field(default=None, max_length=160)
 
 
-
-class CustomerWebsiteUpdate(BaseModel):
-    label: str | None = Field(default=None, max_length=160)
-
-
 def _normalize_bulk_target(value: str) -> str:
     raw = value.strip()
     if not raw or "?" in raw or "#" in raw:
