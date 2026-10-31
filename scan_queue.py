@@ -132,7 +132,14 @@ async def enqueue_scan_request(
 
         if workspace_id is None:
             registered_hosts = (await db.execute(
-                select(CustomerWebsite.host).where(CustomerWebsite.license_key == license_key)
+                select(CustomerWebsite.host).join(
+                    WebsiteScanJob, WebsiteScanJob.website_id == CustomerWebsite.id
+                ).join(
+                    ScanBatch, ScanBatch.id == WebsiteScanJob.batch_id
+                ).where(
+                    CustomerWebsite.license_key == license_key,
+                    ScanBatch.workspace_id.is_(None),
+                ).distinct()
             )).scalars().all()
             registered_hosts.extend((await db.execute(
                 select(WordPressInstallation.site_host).where(
