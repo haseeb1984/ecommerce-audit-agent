@@ -64,6 +64,17 @@
 <div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
 <div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to load white-label settings.</div>
 </section>
+<section class="panel" id="agencyPanel" aria-labelledby="agencyHeading" hidden>
+<h2 id="agencyHeading">Agency client workspaces</h2>
+<p class="muted">Business plan agency workspace. Each client is kept in a separate workspace; website connection, audit history, team access and client-level reporting are being connected in subsequent implementation batches.</p>
+<div class="row">
+  <div><label for="agencyClientName">Client / workspace name</label><input id="agencyClientName" type="text" maxlength="160" placeholder="Client company name"></div>
+  <div><label for="agencyClientReference">Your client reference (optional)</label><input id="agencyClientReference" type="text" maxlength="120" placeholder="CRM reference"></div>
+</div>
+<div class="report-actions" style="margin-top:12px"><button id="createAgencyClient" type="button" disabled>Add client workspace</button><button id="refreshAgencyClients" class="secondary" type="button" disabled>Refresh clients</button></div>
+<div id="agencyClients" class="reports" aria-live="polite"><p class="muted">Connect a Business account to manage agency clients.</p></div>
+<div id="agencyStatus" class="status" role="status" aria-live="polite">Business plan required.</div>
+</section>
 <section class="panel" aria-labelledby="wordpressSitesHeading">
 <h2 id="wordpressSitesHeading">Connected WordPress sites</h2>
 <p class="muted">Install the Ecommerce Audit Agent plugin on your WordPress or WooCommerce store and connect it with this account's license. Review connected installations here and disconnect access when a site is no longer yours.</p>
@@ -172,7 +183,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -597,6 +608,73 @@
       setStatus("brandingStatus", error.message, "error");
     } finally { button.disabled = !credential; }
   }
+  async function loadAgencyDashboard() {
+    const provision = await api("/api/v1/account/agency", {method: "POST"});
+    const agency = await provision.json();
+    const response = await api("/api/v1/account/agency/clients");
+    const data = await response.json();
+    const container = $("agencyClients");
+    container.replaceChildren();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No client workspaces yet. Add your first client above.";
+      container.append(empty);
+    }
+    for (const item of items) {
+      const card = document.createElement("article");
+      card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = item.display_name;
+      const detail = document.createElement("small");
+      detail.textContent = "Status: " + item.status + (item.external_reference ? " · Reference: " + item.external_reference : "");
+      info.append(title, detail);
+      const actions = document.createElement("div");
+      actions.className = "report-actions";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "secondary";
+      toggle.textContent = item.status === "active" ? "Archive client" : "Reactivate client";
+      toggle.addEventListener("click", async () => {
+        toggle.disabled = true;
+        try {
+          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
+            method: "PATCH", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({status: item.status === "active" ? "archived" : "active"})
+          });
+          await loadAgencyDashboard();
+        } catch (error) {
+          setStatus("agencyStatus", error.message, "error");
+        } finally { toggle.disabled = false; }
+      });
+      actions.append(toggle);
+      card.append(info, actions);
+      container.append(card);
+    }
+    setStatus("agencyStatus", "Agency workspace ready · " + items.length + " client workspace(s).", "success");
+    return agency;
+  }
+  async function createAgencyClient() {
+    const name = $("agencyClientName").value.trim();
+    const reference = $("agencyClientReference").value.trim();
+    if (!name) { setStatus("agencyStatus", "Enter a client or workspace name.", "error"); return; }
+    const button = $("createAgencyClient");
+    button.disabled = true;
+    try {
+      await api("/api/v1/account/agency/clients", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({display_name: name, external_reference: reference || null})
+      });
+      $("agencyClientName").value = "";
+      $("agencyClientReference").value = "";
+      await loadAgencyDashboard();
+      setStatus("agencyStatus", "Client workspace created.", "success");
+    } catch (error) {
+      setStatus("agencyStatus", error.message, "error");
+    } finally { button.disabled = !credential; }
+  }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
     const usage = await response.json();
@@ -621,7 +699,7 @@
     const brandingEnabled = usage.features && usage.features.white_label_branding === true;
     $("brandingPanel").hidden = !brandingEnabled;
     if (!brandingEnabled) setStatus("brandingStatus", "White-label branding is not included in this plan.");
-    const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",direct_api_access:"Direct API access"};
+    const agencyEnabled = usage.features && usage.features.agency_management === true;\n    $("agencyPanel").hidden = !agencyEnabled;\n    const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",agency_management:"Agency / multiple-client management",direct_api_access:"Direct API access"};
     const enabledFeatures = Object.entries(usage.features || {}).filter(([, enabled]) => enabled === true).map(([key]) => featureLabels[key] || key);
     $("planFeatures").textContent = enabledFeatures.length ? enabledFeatures.join(" · ") : "No premium features are enabled for this plan.";
     const reset = usage.period_resets_at ? new Date(usage.period_resets_at) : null;
@@ -1221,6 +1299,15 @@
       } else {
         setStatus("brandingStatus", "White-label branding is not included in this plan.");
       }
+      const agencyEnabled = results[1].status === "fulfilled" && results[1].value.features && results[1].value.features.agency_management === true;
+      $("agencyPanel").hidden = !agencyEnabled;
+      if (agencyEnabled) {
+        const agencyResult = await Promise.allSettled([loadAgencyDashboard()]);
+        if (agencyResult[0].status === "rejected") names.push("agency client management");
+        results.push(agencyResult[0]);
+      } else {
+        setStatus("agencyStatus", "Agency client management is available on the Business plan.");
+      }
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -1325,6 +1412,11 @@
     }
   });
 
+  $("createAgencyClient").addEventListener("click", createAgencyClient);
+  $("refreshAgencyClients").addEventListener("click", async () => {
+    try { await loadAgencyDashboard(); }
+    catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
   $("saveBranding").addEventListener("click", saveBranding);
   $("refreshBranding").addEventListener("click", async () => {
     try { await loadBranding(); }
