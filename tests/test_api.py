@@ -3261,3 +3261,36 @@ async def test_customer_session_header_authenticates_license(monkeypatch):
         db=FakeLicensingSession(),
     )
     assert license_obj.license_key == "session-license"
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked,expired", [(True, False), (False, True)])
+async def test_customer_session_auth_rejects_revoked_or_expired_tokens(monkeypatch, revoked, expired):
+    import auth
+    import hostinger_database
+    from datetime import timedelta
+
+    session_token = "invalid-session-token-for-unit-test"
+    session_row = SimpleNamespace(
+        token_hash=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
+        license_key="session-license",
+        expires_at=(
+            datetime.now(timezone.utc) - timedelta(minutes=1)
+            if expired else datetime.now(timezone.utc) + timedelta(days=1)
+        ),
+        revoked_at=datetime.now(timezone.utc) if revoked else None,
+    )
+
+    class FakeOperationalSession:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def scalar(self, statement):
+            return session_row
+
+    monkeypatch.setattr(hostinger_database, "HostingerAsyncSessionLocal", FakeOperationalSession)
+    with pytest.raises(HTTPException) as raised:
+        await auth._customer_session_license_key(session_token)
+    assert raised.value.status_code == 401
