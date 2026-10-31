@@ -4266,27 +4266,61 @@ async def admin_payment_events(
     status: str | None = Query(None, min_length=1, max_length=40),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return customer billing history from Hostinger operational storage."""
+    """Merge operational and canonical billing events so partial migration never hides history."""
     _require_admin_key(request)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational billing history is unavailable.")
     from sqlalchemy import select, func as sql_func
-    statement = select(CustomerBillingEvent)
-    count_statement = select(sql_func.count(CustomerBillingEvent.event_id))
+
+    pg_statement = select(PaymentWebhookEvent)
+    host_statement = select(CustomerBillingEvent)
     if status:
-        statement = statement.where(CustomerBillingEvent.status == status)
-        count_statement = count_statement.where(CustomerBillingEvent.status == status)
+        pg_statement = pg_statement.where(PaymentWebhookEvent.status == status)
+        host_statement = host_statement.where(CustomerBillingEvent.status == status)
+    pg_count = int((await db.execute(
+        select(sql_func.count(PaymentWebhookEvent.event_id)).where(
+            PaymentWebhookEvent.status == status if status else True
+        )
+    )).scalar_one() or 0)
     async with HostingerAsyncSessionLocal() as operational_db:
-        total = int((await operational_db.execute(count_statement)).scalar_one() or 0)
-        events = (await operational_db.execute(
-            statement
-            .order_by(CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc())
-            .offset(offset)
-            .limit(limit)
+        host_count_statement = select(sql_func.count(CustomerBillingEvent.event_id))
+        if status:
+            host_count_statement = host_count_statement.where(CustomerBillingEvent.status == status)
+        host_count = int((await operational_db.execute(host_count_statement)).scalar_one() or 0)
+        candidate_limit = offset + limit
+        host_rows = (await operational_db.execute(
+            host_statement.order_by(
+                CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()
+            ).limit(candidate_limit)
         )).scalars().all()
-    license_keys = {event.license_key for event in events}
+    pg_rows = (await db.execute(
+        pg_statement.order_by(
+            PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()
+        ).limit(candidate_limit)
+    )).scalars().all()
+
+    # PostgreSQL is the canonical webhook/entitlement record; Hostinger is its
+    # operational mirror. Prefer canonical values for duplicate event IDs.
+    merged = {}
+    for item in host_rows:
+        merged[item.event_id] = item
+    for item in pg_rows:
+        merged[item.event_id] = item
+    events = sorted(
+        merged.values(),
+        key=lambda item: (
+            item.created_at.replace(tzinfo=timezone.utc) if item.created_at and item.created_at.tzinfo is None
+            else item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            item.event_id,
+        ),
+        reverse=True,
+    )[offset:offset + limit]
+    # Both stores contain the same webhook stream during migration; max avoids
+    # double-counting mirrored rows while still exposing partially copied rows.
+    total = max(pg_count, host_count)
+    license_keys = {event.license_key for event in events if hasattr(event, "license_key")}
     license_ids = {}
     if license_keys:
         rows = (await db.execute(
@@ -4294,12 +4328,16 @@ async def admin_payment_events(
             .where(SoftwareLicense.license_key.in_(license_keys))
         )).all()
         license_ids = {key: license_id for license_id, key in rows}
+    event_license_ids = {event.id: event.license_id for event in events if hasattr(event, "license_id")}
     return {
         "items": [
             {
                 "event_id": event.event_id,
                 "status": event.status,
-                "license_id": license_ids.get(event.license_key),
+                "license_id": (
+                    event_license_ids.get(event.event_id)
+                    or license_ids.get(getattr(event, "license_key", None))
+                ),
                 "transaction_id": event.transaction_id,
                 "subscription_id": event.subscription_id,
                 "paddle_customer_id": event.paddle_customer_id,
@@ -4309,9 +4347,7 @@ async def admin_payment_events(
             for event in events
         ],
         "page": {
-            "limit": limit,
-            "offset": offset,
-            "total": total,
+            "limit": limit, "offset": offset, "total": total,
             "has_more": offset + len(events) < total,
         },
     }
