@@ -229,6 +229,28 @@
     }
     return response;
   }
+  async function acceptAgencyInvitationFromLink() {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("agency_invitation");
+    if (!token) return;
+    params.delete("agency_invitation");
+    const remaining = params.toString();
+    window.history.replaceState({}, document.title, window.location.pathname + (remaining ? "?" + remaining : "") + window.location.hash);
+    const status = $("loginStatus");
+    status.textContent = "Verifying your agency invitation…";
+    try {
+      const response = await fetch("/api/v1/account/agency/team/invitations/accept", {
+        method:"POST", cache:"no-store", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({token})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "This invitation is invalid or has expired.");
+      status.textContent = "Agency invitation accepted for " + data.email + ". Team-member sign-in is not enabled yet; the agency owner can now see your accepted invitation.";
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+  acceptAgencyInvitationFromLink();
   async function loadPlans() {
     const container = $("plans");
     try {
