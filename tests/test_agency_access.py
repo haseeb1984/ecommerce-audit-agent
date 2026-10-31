@@ -84,3 +84,47 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
     assert all(item.revoked_at is not None for item in sessions)
     assert all(item.consumed_at is not None for item in challenges)
     assert agency.updated_at is not None and db.committed
+
+
+class AgencyWorkspaceGrantSession:
+    def __init__(self, agency, access):
+        self.rows = [agency, access]
+        self.deleted = []
+        self.committed = False
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+    async def delete(self, value):
+        self.deleted.append(value)
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_owner_can_remove_one_team_workspace_grant_without_revoking_member(monkeypatch):
+    import main
+    from main import remove_business_agency_team_workspace_access
+
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
+    grant = SimpleNamespace(
+        id="grant-1", agency_id="agency-1",
+        team_member_id="member-1", workspace_id="workspace-1",
+    )
+    db = AgencyWorkspaceGrantSession(agency, grant)
+    license_obj = SimpleNamespace(license_key="business-license", tier="business")
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await remove_business_agency_team_workspace_access(
+        "member-1", "workspace-1", Response(),
+        license_obj=license_obj, operational_db=db,
+    )
+
+    assert result == {
+        "status": "removed",
+        "member_id": "member-1",
+        "workspace_id": "workspace-1",
+    }
+    assert db.deleted == [grant]
+    assert db.committed
