@@ -2123,16 +2123,17 @@ async def account_billing_history(
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Merge Hostinger billing mirrors with canonical webhook rows for complete customer history."""
-    from sqlalchemy import select, func as sql_func
+    from sqlalchemy import select
 
     pg_filter = PaymentWebhookEvent.license_id == license_obj.id
     host_filter = CustomerBillingEvent.license_key == license_obj.license_key
-    pg_count = int((await db.execute(
-        select(sql_func.count(PaymentWebhookEvent.event_id)).where(pg_filter)
-    )).scalar_one() or 0)
-    host_count = int((await operational_db.execute(
-        select(sql_func.count(CustomerBillingEvent.event_id)).where(host_filter)
-    )).scalar_one() or 0)
+    pg_ids = set((await db.execute(
+        select(PaymentWebhookEvent.event_id).where(pg_filter)
+    )).scalars().all())
+    host_ids = set((await operational_db.execute(
+        select(CustomerBillingEvent.event_id).where(host_filter)
+    )).scalars().all())
+    total = len(pg_ids | host_ids)
 
     candidate_limit = offset + limit
     pg_rows = (await db.execute(
