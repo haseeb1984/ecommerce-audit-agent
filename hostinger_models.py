@@ -103,6 +103,7 @@ class ScanBatch(HostingerBase):
     processing_count = Column(Integer, nullable=False, default=0)
     completed_count = Column(Integer, nullable=False, default=0)
     failed_count = Column(Integer, nullable=False, default=0)
+    cancelled_count = Column(Integer, nullable=False, default=0)
     status = Column(String(24), nullable=False, default="queued", index=True)
     available_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
