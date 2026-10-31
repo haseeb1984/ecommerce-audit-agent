@@ -68,7 +68,31 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
             const row=document.createElement("div");row.className="batch";
             const title=document.createElement("strong");title.textContent="Batch "+batch.batch_number+" · "+batch.status;
             const detail=document.createElement("p");detail.className="muted";detail.textContent=batch.total_urls+" URLs · "+batch.completed+" completed · "+batch.failed+" failed · "+(batch.created_at||"");
-            row.append(title,detail);history.append(row);
+            const view=document.createElement("button");view.type="button";view.className="secondary";view.textContent="View saved findings";
+            const evidence=document.createElement("div");
+            view.addEventListener("click",async()=>{
+              view.disabled=true;evidence.replaceChildren();
+              try {
+                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=100");
+                if(!saved.items.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="No saved audit results are available yet.";evidence.append(empty);}
+                for(const audit of saved.items){
+                  const resultCard=document.createElement("div");resultCard.className="batch";
+                  const resultTitle=document.createElement("strong");resultTitle.textContent=audit.url+" · "+audit.status;resultCard.append(resultTitle);
+                  if(audit.result){
+                    const score=document.createElement("p");score.className="muted";score.textContent="Score: "+(audit.result.overall_score??"N/A")+" · Findings: "+audit.result.finding_count;resultCard.append(score);
+                    for(const finding of (Array.isArray(audit.result.findings)?audit.result.findings:[])){
+                      const disclosure=document.createElement("details");
+                      const summary=document.createElement("summary");summary.textContent=finding.title||finding.name||finding.check_id||"Audit finding";
+                      const pre=document.createElement("pre");pre.style.whiteSpace="pre-wrap";pre.textContent=JSON.stringify(finding,null,2);
+                      disclosure.append(summary,pre);resultCard.append(disclosure);
+                    }
+                  }else{const pending=document.createElement("p");pending.className="muted";pending.textContent="No saved result for this URL yet.";resultCard.append(pending);}
+                  evidence.append(resultCard);
+                }
+              }catch(error){const message=document.createElement("p");message.className="status";message.textContent=error.message;evidence.append(message);}
+              finally{view.disabled=false;}
+            });
+            row.append(title,detail,view,evidence);history.append(row);
           }
         } catch(error){const p=document.createElement("p");p.className="status";p.textContent=error.message;history.append(p);}
         finally{button.disabled=false;}
