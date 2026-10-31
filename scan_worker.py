@@ -20,7 +20,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from hostinger_database import HostingerAsyncSessionLocal, ensure_hostinger_schema
-from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
+from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, CustomerWebsite, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -240,6 +240,10 @@ async def process_one_scan(worker_id: str) -> dict:
                 stored.check_outcomes_json = _json(result["check_outcomes"])
                 stored.coverage_json = _json(result["coverage"])
                 stored.summary_json = _json(result["summary"])
+            website = await operational_db.get(CustomerWebsite, website_id)
+            if website is not None and website.license_key == license_key:
+                website.last_scan_at = datetime.now(timezone.utc)
+                website.updated_at = website.last_scan_at
             await operational_db.commit()
             completed = await complete_scan_job(
                 operational_db,
