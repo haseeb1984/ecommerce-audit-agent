@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select, update
 
 from database import AsyncSessionLocal
-from models import AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense
+from models import AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
@@ -20,7 +20,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
+from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -426,6 +426,103 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
     return counts
 
 
+async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
+    """Retry canonical PostgreSQL billing events into Hostinger with bounded backoff."""
+    if batch_size < 1 or batch_size > 200:
+        raise ValueError("batch_size must be between 1 and 200.")
+    now = datetime.now(timezone.utc)
+    counts = {"processed": 0, "deferred": 0, "discarded": 0}
+    async with AsyncSessionLocal() as licensing_db:
+        for _ in range(batch_size):
+            item = (await licensing_db.execute(
+                select(BillingMirrorSyncOutbox)
+                .where(
+                    BillingMirrorSyncOutbox.status == "pending",
+                    BillingMirrorSyncOutbox.next_attempt_at <= now,
+                )
+                .order_by(BillingMirrorSyncOutbox.created_at.asc())
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )).scalar_one_or_none()
+            if item is None:
+                break
+            event_id = item.event_id
+            try:
+                event = (await licensing_db.execute(
+                    select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+                )).scalar_one_or_none()
+                if event is None or event.license_id is None:
+                    await licensing_db.delete(item)
+                    await licensing_db.commit()
+                    counts["discarded"] += 1
+                    continue
+                license_key = await licensing_db.scalar(
+                    select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
+                )
+                if not license_key:
+                    raise RuntimeError("LicenseReferenceUnavailable")
+                if HostingerAsyncSessionLocal is None:
+                    raise RuntimeError("HostingerUnavailable")
+                async with HostingerAsyncSessionLocal() as operational_db:
+                    stored = await operational_db.get(CustomerBillingEvent, event_id)
+                    if stored is None:
+                        operational_db.add(CustomerBillingEvent(
+                            event_id=event_id,
+                            license_key=license_key,
+                            recipient_email=(event.recipient_email or "")[:254],
+                            status=(event.status or "unknown")[:40],
+                            transaction_id=event.transaction_id,
+                            subscription_id=event.subscription_id,
+                            paddle_customer_id=event.paddle_customer_id,
+                            created_at=event.created_at,
+                            updated_at=event.updated_at,
+                        ))
+                    else:
+                        stored.license_key = license_key
+                        stored.recipient_email = (event.recipient_email or "")[:254]
+                        stored.status = (event.status or "unknown")[:40]
+                        stored.transaction_id = event.transaction_id
+                        stored.subscription_id = event.subscription_id
+                        stored.paddle_customer_id = event.paddle_customer_id
+                        stored.updated_at = event.updated_at
+                    await operational_db.commit()
+                await licensing_db.delete(item)
+                await licensing_db.commit()
+                counts["processed"] += 1
+            except Exception as exc:
+                await licensing_db.rollback()
+                retry = await licensing_db.get(BillingMirrorSyncOutbox, event_id)
+                if retry is not None:
+                    retry.attempts = int(retry.attempts or 0) + 1
+                    retry.last_error = type(exc).__name__[:120]
+                    delay = min(3600, 30 * (2 ** min(retry.attempts, 7)))
+                    retry.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    await licensing_db.commit()
+                counts["deferred"] += 1
+                logger.warning(
+                    "Billing mirror retry deferred (event_id_hash=%s, error_type=%s)",
+                    __import__("hashlib").sha256(event_id.encode()).hexdigest()[:12],
+                    type(exc).__name__,
+                )
+        # Bound completed-record retention independently of pending delivery.
+        cutoff = now - timedelta(days=90)
+        expired_ids = list((await licensing_db.execute(
+            select(BillingMirrorSyncOutbox.event_id)
+            .where(
+                BillingMirrorSyncOutbox.status == "completed",
+                BillingMirrorSyncOutbox.processed_at < cutoff,
+            )
+            .order_by(BillingMirrorSyncOutbox.processed_at.asc())
+            .limit(500)
+        )).scalars().all())
+        if expired_ids:
+            await licensing_db.execute(
+                delete(BillingMirrorSyncOutbox).where(BillingMirrorSyncOutbox.event_id.in_(expired_ids))
+            )
+            await licensing_db.commit()
+    return counts
+
+
 async def cleanup_expired_customer_auth_records(*, batch_size: int = 500) -> dict:
     """Bounded retention cleanup for authentication records and completed sync events."""
     if batch_size < 1 or batch_size > 2000:
@@ -475,6 +572,13 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
         identity_sync = {"status": "deferred", "error_type": type(exc).__name__}
         logger.warning("Customer email identity reconciliation failed (error_type=%s)", type(exc).__name__)
 
+    billing_mirror_sync = {"status": "completed", "processed": 0, "deferred": 0, "discarded": 0}
+    try:
+        billing_mirror_sync.update(await reconcile_billing_mirror_outbox())
+    except Exception as exc:
+        billing_mirror_sync = {"status": "deferred", "error_type": type(exc).__name__}
+        logger.warning("Billing mirror reconciliation failed (error_type=%s)", type(exc).__name__)
+
     cleanup = {"status": "completed"}
     try:
         cleanup.update(await cleanup_expired_customer_auth_records())
@@ -493,6 +597,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
         "authentication_cleanup": cleanup,
         "customer_email_identity_sync": identity_sync,
         "customer_lifecycle_sync": lifecycle_sync,
+        "billing_mirror_sync": billing_mirror_sync,
         "claimed_slots": len(active),
         "processed": sum(1 for item in active if item["status"] == "completed"),
         "outcomes": active,
