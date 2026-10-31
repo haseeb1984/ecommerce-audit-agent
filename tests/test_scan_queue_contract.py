@@ -137,3 +137,14 @@ def test_customer_website_model_is_license_scoped_and_mysql_index_safe():
 
 def test_scan_failure_transition_supports_non_retryable_entitlement_errors():
     assert "retryable" in inspect.signature(fail_or_retry_scan_job).parameters
+
+
+
+def test_persistent_worker_configuration_is_bounded(monkeypatch):
+    from worker_service import _bounded_int
+
+    monkeypatch.setenv("SCAN_WORKER_POLL_SECONDS", "12")
+    assert _bounded_int("SCAN_WORKER_POLL_SECONDS", 5, 1, 300) == 12
+    monkeypatch.setenv("SCAN_WORKER_POLL_SECONDS", "0")
+    with pytest.raises(RuntimeError):
+        _bounded_int("SCAN_WORKER_POLL_SECONDS", 5, 1, 300)
