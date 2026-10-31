@@ -101,7 +101,7 @@ Additional Business-plan functionality now present on the feature branch:
 - Customer portal now allows selecting a client workspace for bulk scans and choosing workspace scope when inviting team members.
 
 Still outstanding:
-- Team-member passwordless login/session issuance and enforcement of workspace grants on all customer APIs. Invitation acceptance alone does not grant a usable dashboard session yet.
+- Full audit report/evidence access, verified WordPress client-site connections, usage aggregation, and team member write actions remain outstanding.
 - Verified WordPress connection per agency client workspace and agency plugin flow.
 - Client-specific audit result views and usage aggregation from actual completed jobs.
 - Runtime validation of the migration, API routes, browser interactions, and email flow.
