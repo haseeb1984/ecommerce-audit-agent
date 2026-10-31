@@ -5293,7 +5293,7 @@ async def admin_customer_account_detail(
             "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
         } for item in sessions],
         "billing_events": [{
-            "event_id": item.event_id, "license_id": next((lic.id for lic in rows if lic.license_key == item.license_key), None), "status": item.status,
+            "event_id": item.event_id, "license_id": next((lic.id for lic in rows if lic.license_key == getattr(item, "license_key", None)), getattr(item, "license_id", None)), "status": item.status,
             "transaction_id": item.transaction_id, "subscription_id": item.subscription_id,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
