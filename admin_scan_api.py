@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from database import get_async_db
 from hostinger_database import get_hostinger_db
 from hostinger_models import ScanBatch, WebsiteScanJob
 from models import SoftwareLicense
@@ -29,23 +30,24 @@ def _require_scan_admin(request: Request) -> None:
 async def admin_scan_operations(
     request: Request,
     response: Response,
-    db: AsyncSession = Depends(get_hostinger_db),
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return bounded queue counts and failed-job references; never mutate queue state."""
     _require_scan_admin(request)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
 
-    status_rows = (await db.execute(
+    status_rows = (await operational_db.execute(
         select(WebsiteScanJob.status, func.count(WebsiteScanJob.id))
         .group_by(WebsiteScanJob.status)
     )).all()
     counts = {str(status): int(count or 0) for status, count in status_rows}
-    batch_total = int((await db.execute(
+    batch_total = int((await operational_db.execute(
         select(func.count(ScanBatch.id))
     )).scalar_one() or 0)
 
-    failed = (await db.execute(
+    failed = (await operational_db.execute(
         select(WebsiteScanJob)
         .where(WebsiteScanJob.status == "failed")
         .order_by(WebsiteScanJob.completed_at.desc(), WebsiteScanJob.created_at.desc())
