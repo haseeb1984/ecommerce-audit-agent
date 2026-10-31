@@ -21,6 +21,7 @@ from hostinger_models import (
     WebsiteScanJob,
     AgencyAccount,
     AgencyUsageEvent,
+    WordPressInstallation,
 )
 
 
@@ -133,6 +134,12 @@ async def enqueue_scan_request(
             registered_hosts = (await db.execute(
                 select(CustomerWebsite.host).where(CustomerWebsite.license_key == license_key)
             )).scalars().all()
+            registered_hosts.extend((await db.execute(
+                select(WordPressInstallation.site_host).where(
+                    WordPressInstallation.license_key == license_key,
+                    WordPressInstallation.status == "active",
+                )
+            )).scalars().all())
             _validate_standard_license_site_binding(registered_hosts, normalized_urls)
 
         # Allocate the contiguous range only after the locked replay check.
