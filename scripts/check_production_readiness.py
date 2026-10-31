@@ -45,7 +45,12 @@ def _configuration_status() -> tuple[list[str], list[str]]:
     details: list[str] = []
 
     for group, names in REQUIRED_ENV_GROUPS.items():
-        if group == "pagespeed_audits":
+        if group == "scheduled_scan_worker":
+            ready = bool(
+                os.getenv("CRON_SECRET", "").strip()
+                or os.getenv("SCAN_WORKER_TOKEN", "").strip()
+            )
+        elif group == "pagespeed_audits":
             ready = any(os.getenv(name, "").strip() for name in names)
         elif group == "paddle_price_catalog":
             ready = all(
