@@ -550,8 +550,9 @@
       await loadAccountLicenses();
       if (sessionToken) await loadDeviceSessions().catch(() => {});
       const failed = results.filter(item => item.status === "rejected").length;
-      $("runAudit").disabled = results[1].status !== "fulfilled" || results[2].status !== "fulfilled";
-      $("submitBulkScans").disabled = false; $("refreshScanBatches").disabled = false;
+      const auditAccess = results[1].status === "fulfilled" && results[2].status === "fulfilled";
+      $("runAudit").disabled = !auditAccess;
+      $("submitBulkScans").disabled = !auditAccess; $("refreshScanBatches").disabled = !auditAccess;
       renderApiKeys();
       setStatus("connectStatus", failed ? "Switched account. " + failed + " account panel(s) could not be refreshed." : "Switched to " + (data.account.client_name || "linked account") + ".", failed ? "error" : "success");
     } catch (error) {
