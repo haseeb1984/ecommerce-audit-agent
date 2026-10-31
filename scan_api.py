@@ -25,6 +25,10 @@ class BulkScanSubmission(BaseModel):
     batch_size: Literal[10, 11] = 10
 
 
+class CustomerWebsiteUpdate(BaseModel):
+    label: str | None = Field(default=None, max_length=160)
+
+
 def _normalize_bulk_target(value: str) -> str:
     raw = value.strip()
     if not raw or "?" in raw or "#" in raw:
@@ -304,6 +308,56 @@ async def list_customer_websites(
             "has_more": offset + len(websites) < total,
         },
     }
+
+
+@router.patch("/api/v1/websites/{website_id}")
+async def update_customer_website(
+    website_id: str,
+    payload: CustomerWebsiteUpdate,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Update customer-controlled website metadata without changing its URL identity."""
+    changes = payload.dict(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="Provide a website label to update.")
+    website = await db.scalar(select(CustomerWebsite).where(
+        CustomerWebsite.id == website_id,
+        CustomerWebsite.license_key == license_obj.license_key,
+    ).with_for_update())
+    if website is None:
+        raise HTTPException(status_code=404, detail="Website not found.")
+    if "label" in changes:
+        label = changes["label"]
+        website.label = label.strip() or None if isinstance(label, str) else None
+    await db.commit()
+    await db.refresh(website)
+    return {
+        "id": website.id,
+        "url": website.url,
+        "host": website.host,
+        "label": website.label,
+        "status": website.status,
+        "updated_at": website.updated_at,
+    }
+
+
+@router.delete("/api/v1/websites/{website_id}")
+async def archive_customer_website(
+    website_id: str,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Archive a website from inventory while preserving its audit and scan history."""
+    website = await db.scalar(select(CustomerWebsite).where(
+        CustomerWebsite.id == website_id,
+        CustomerWebsite.license_key == license_obj.license_key,
+    ).with_for_update())
+    if website is None:
+        raise HTTPException(status_code=404, detail="Website not found.")
+    website.status = "archived"
+    await db.commit()
+    return {"id": website.id, "status": website.status, "message": "Website archived; scan history is preserved."}
 
 
 @router.get("/api/v1/websites/{website_id}")
