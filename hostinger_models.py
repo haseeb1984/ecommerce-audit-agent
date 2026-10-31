@@ -310,3 +310,102 @@ class OperationalDiagnosticEvent(HostingerBase):
         Index("ix_operational_diagnostic_created", "created_at", "id"),
         Index("ix_operational_diagnostic_type_created", "event_type", "created_at"),
     )
+
+
+class AgencyAccount(HostingerBase):
+    """Business-plan agency tenant; one agency owner per Business license."""
+    __tablename__ = "agency_accounts"
+    id = Column(String(64), primary_key=True)
+    owner_license_key = Column(String(100), nullable=False, unique=True, index=True)
+    owner_email = Column(String(254), nullable=False, index=True)
+    status = Column(String(24), nullable=False, default="active", index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class AgencyClientWorkspace(HostingerBase):
+    """Isolated client workspace owned by exactly one agency tenant."""
+    __tablename__ = "agency_client_workspaces"
+    id = Column(String(64), primary_key=True)
+    agency_id = Column(String(64), ForeignKey("agency_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    display_name = Column(String(160), nullable=False)
+    external_reference = Column(String(120), nullable=True)
+    status = Column(String(24), nullable=False, default="active", index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    __table_args__ = (
+        UniqueConstraint("agency_id", "external_reference", name="uq_agency_workspace_external_ref"),
+        Index("ix_agency_workspace_tenant_status", "agency_id", "status", "created_at"),
+    )
+
+
+class AgencyClientWebsite(HostingerBase):
+    """A client's store connection; each workspace has at most one active store."""
+    __tablename__ = "agency_client_websites"
+    id = Column(String(64), primary_key=True)
+    agency_id = Column(String(64), ForeignKey("agency_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(String(64), ForeignKey("agency_client_workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    site_url = Column(String(2048), nullable=False)
+    site_host = Column(String(253), nullable=False)
+    admin_email = Column(String(254), nullable=True)
+    connection_type = Column(String(24), nullable=False, default="manual")
+    status = Column(String(20), nullable=False, default="active", index=True)
+    connected_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    disconnected_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "site_host", name="uq_agency_workspace_site_host"),
+        Index("ix_agency_client_site_tenant_workspace", "agency_id", "workspace_id", "status"),
+    )
+
+
+class AgencyTeamMember(HostingerBase):
+    """Agency-level user invitation and role; workspace grants are separate."""
+    __tablename__ = "agency_team_members"
+    id = Column(String(64), primary_key=True)
+    agency_id = Column(String(64), ForeignKey("agency_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(254), nullable=False)
+    normalized_email = Column(String(254), nullable=False)
+    role = Column(String(24), nullable=False, default="analyst")
+    status = Column(String(24), nullable=False, default="invited", index=True)
+    invited_by = Column(String(254), nullable=False)
+    invitation_token_hash = Column(String(64), nullable=True, unique=True)
+    invitation_expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("agency_id", "normalized_email", name="uq_agency_team_normalized_email"),
+        Index("ix_agency_team_tenant_status", "agency_id", "status"),
+    )
+
+
+class AgencyWorkspaceAccess(HostingerBase):
+    """Explicit per-workspace authorization for an agency team member."""
+    __tablename__ = "agency_workspace_access"
+    id = Column(String(64), primary_key=True)
+    agency_id = Column(String(64), ForeignKey("agency_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(String(64), ForeignKey("agency_client_workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    team_member_id = Column(String(64), ForeignKey("agency_team_members.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(24), nullable=False, default="viewer")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "team_member_id", name="uq_agency_workspace_member"),
+        Index("ix_agency_workspace_access_tenant", "agency_id", "workspace_id"),
+    )
+
+
+class AgencyUsageEvent(HostingerBase):
+    """Tenant/workspace usage ledger for Business shared monthly audit accounting."""
+    __tablename__ = "agency_usage_events"
+    id = Column(String(64), primary_key=True)
+    agency_id = Column(String(64), ForeignKey("agency_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    workspace_id = Column(String(64), ForeignKey("agency_client_workspaces.id", ondelete="CASCADE"), nullable=True, index=True)
+    event_type = Column(String(40), nullable=False)
+    quantity = Column(Integer, nullable=False, default=1)
+    period_start = Column(DateTime(timezone=True), nullable=False, index=True)
+    period_end = Column(DateTime(timezone=True), nullable=False)
+    source_reference = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    __table_args__ = (
+        Index("ix_agency_usage_tenant_period", "agency_id", "period_start", "event_type"),
+        UniqueConstraint("agency_id", "source_reference", name="uq_agency_usage_source_reference"),
+    )
