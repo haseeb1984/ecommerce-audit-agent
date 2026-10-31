@@ -66,6 +66,7 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - `/health-check`: independent readiness of PostgreSQL licensing/audit schema and Hostinger operational schema.
 - `/internal/scan-worker/run`: internal scheduled worker; Vercel Cron uses `CRON_SECRET` bearer authentication, with `SCAN_WORKER_TOKEN` retained for controlled manual invocations.
 - `/api/v1/admin/operations`: administrator-only operational and billing diagnostics.
+- Admin customer suspension/reactivation updates canonical PostgreSQL license state first, then synchronizes Hostinger customer-account status; suspension also revokes all browser sessions. Customer portal authentication and passwordless sign-in reject inactive licenses, so a Hostinger synchronization failure cannot restore access while PostgreSQL remains suspended.
 - `/api/v1/admin/billing/reconcile`: bounded mirror reconciliation from canonical PostgreSQL payment events into Hostinger.
 - Verified customer email changes are committed to Hostinger with a durable outbox entry; the scheduled worker then updates matching canonical PostgreSQL billing-event email addresses. A pending outbox item is retried automatically with backoff until acknowledged.
 - `/api/v1/billing/paddle-webhook`: canonical billing lifecycle event intake.
