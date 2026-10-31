@@ -3022,19 +3022,14 @@ def _apply_paddle_billing_period(license_obj: SoftwareLicense, payload: dict, *,
 
 async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_id: str) -> PaymentWebhookEvent | None:
     """Resolve one canonical license link and fail closed if legacy rows conflict."""
-    linked_events = (await db.execute(
-        select(PaymentWebhookEvent)
+    license_ids = set((await db.execute(
+        select(PaymentWebhookEvent.license_id)
         .where(
             PaymentWebhookEvent.subscription_id == subscription_id,
             PaymentWebhookEvent.license_id.is_not(None),
         )
-        .order_by(
-            PaymentWebhookEvent.updated_at.desc(),
-            PaymentWebhookEvent.created_at.desc(),
-            PaymentWebhookEvent.event_id.desc(),
-        )
-    )).scalars().all()
-    license_ids = {item.license_id for item in linked_events if item.license_id is not None}
+        .distinct()
+    )).scalars().all())
     if len(license_ids) > 1:
         subscription_fingerprint = hashlib.sha256(subscription_id.encode()).hexdigest()[:12]
         logger.error(
@@ -3046,8 +3041,21 @@ async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_
             status_code=409,
             detail="Paddle subscription is linked to multiple licenses and requires administrator reconciliation.",
         )
-    return linked_events[0] if linked_events else None
-
+    if not license_ids:
+        return None
+    return (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.subscription_id == subscription_id,
+            PaymentWebhookEvent.license_id.is_not(None),
+        )
+        .order_by(
+            PaymentWebhookEvent.updated_at.desc(),
+            PaymentWebhookEvent.created_at.desc(),
+            PaymentWebhookEvent.event_id.desc(),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
 
 async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
     """Serialize Paddle lifecycle work on PostgreSQL while supporting SQLite test/dev databases."""
