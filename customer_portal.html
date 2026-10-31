@@ -247,7 +247,7 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "This invitation is invalid or has expired.");
-      status.textContent = "Agency invitation accepted for " + data.email + ". Team-member sign-in is not enabled yet; the agency owner can now see your accepted invitation.";
+      status.textContent = "Agency invitation accepted for " + data.email + ". Your team account is active. Sign in to your assigned client workspaces at /agency.";
     } catch (error) {
       status.textContent = error.message;
     }
