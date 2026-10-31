@@ -542,7 +542,11 @@
       if (!response.ok) throw new Error(data.detail || "Unable to switch linked account.");
       accountSessionVersion += 1;
       clearAccountView();
-      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches(), loadBranding()]);
+      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
+      const brandingEnabled = results[2].status === "fulfilled" && results[2].value.features && results[2].value.features.white_label_branding === true;
+      $("brandingPanel").hidden = !brandingEnabled;
+      if (brandingEnabled) results.push((await Promise.allSettled([loadBranding()]))[0]);
+      else setStatus("brandingStatus", "White-label branding is not included in this plan.");
       await loadAccountLicenses();
       if (sessionToken) await loadDeviceSessions().catch(() => {});
       const failed = results.filter(item => item.status === "rejected").length;
