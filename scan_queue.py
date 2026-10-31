@@ -9,6 +9,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
+from urllib.parse import urlsplit
 
 from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,24 @@ from hostinger_models import (
 
 def _utcnow():
     return datetime.now(timezone.utc)
+
+
+def _validate_standard_license_site_binding(registered_hosts: Iterable[str], submitted_urls: Iterable[str]) -> None:
+    """Keep ordinary customer licenses bound to one store; agency workspaces are exempt."""
+    existing = {str(host).strip().lower().rstrip(".") for host in registered_hosts if host}
+    submitted = set()
+    for value in submitted_urls:
+        parsed = urlsplit(str(value))
+        host = parsed.hostname
+        if not host:
+            raise ValueError("Every audit URL must include a valid website hostname.")
+        submitted.add(host.encode("idna").decode("ascii").lower().rstrip("."))
+    if len(submitted) != 1:
+        raise ValueError("A standard customer license can audit pages from one ecommerce website only.")
+    if len(existing) > 1:
+        raise ValueError("This standard customer license has multiple historical website bindings. Contact support before submitting more audits.")
+    if existing and not submitted.issubset(existing):
+        raise ValueError("This standard customer license is already bound to a different ecommerce website.")
 
 
 def _stable_idempotency_key(license_key: str, request_id: str, normalized_url: str) -> str:
@@ -109,6 +128,12 @@ async def enqueue_scan_request(
                 "batch_count": len(existing_ids),
                 "idempotent_replay": True,
             }
+
+        if workspace_id is None:
+            registered_hosts = (await db.execute(
+                select(CustomerWebsite.host).where(CustomerWebsite.license_key == license_key)
+            )).scalars().all()
+            _validate_standard_license_site_binding(registered_hosts, normalized_urls)
 
         # Allocate the contiguous range only after the locked replay check.
         first_batch_number = int(sequence)
