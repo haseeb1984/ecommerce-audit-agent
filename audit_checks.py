@@ -13,7 +13,8 @@ import hashlib
 import json
 import re
 import socket
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from html.parser import HTMLParser
 from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -1970,8 +1971,8 @@ def extract_same_origin_sitemap_urls(xml_body: str, sitemap_url: str, origin_url
     limitations: list[str] = []
     try:
         root = ET.fromstring(xml_body)
-    except (ET.ParseError, ValueError):
-        return [], ["Sitemap URL discovery was skipped because the sitemap XML could not be parsed."]
+    except (ET.ParseError, ValueError, DefusedXmlException):
+        return [], ["Sitemap URL discovery was skipped because the sitemap XML was invalid or contained unsafe XML constructs."]
     root_name = root.tag.rsplit("}", 1)[-1].lower()
     if root_name == "sitemapindex":
         return [], ["Sitemap URL discovery found a sitemap index; nested sitemap files are not followed in this bounded crawl."]
