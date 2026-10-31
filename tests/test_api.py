@@ -2132,7 +2132,7 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWebsites()])" in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
@@ -3167,7 +3167,8 @@ async def test_customer_website_registration_rejects_parameterized_targets_befor
 
 
 @pytest.mark.asyncio
-async def test_admin_scan_queue_requires_operator_authentication(client):
+async def test_admin_scan_queue_requires_operator_authentication(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "configured-admin-auth-test")
     response = await client.get("/api/v1/admin/scan-jobs")
     assert response.status_code == 401
     retry = await client.post("/api/v1/admin/scan-jobs/not-a-job/retry")
