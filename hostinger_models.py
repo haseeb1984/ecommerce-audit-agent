@@ -95,6 +95,7 @@ class ScanBatch(HostingerBase):
     requested_by = Column(String(254), nullable=True)
     package_tier = Column(String(50), nullable=False)
     request_id = Column(String(128), nullable=False)
+    workspace_id = Column(String(64), ForeignKey("agency_client_workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
     request_hash = Column(String(64), nullable=False)
     batch_number = Column(Integer, nullable=False)
     batch_size = Column(Integer, nullable=False, default=10)
