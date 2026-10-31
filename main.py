@@ -61,6 +61,18 @@ logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
 
 
+def _license_is_current(license_obj) -> bool:
+    """Return true only for an active, non-expired licensing record."""
+    if license_obj is None or not bool(license_obj.is_active):
+        return False
+    expires_at = license_obj.expires_at
+    if expires_at is None:
+        return True
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > datetime.now(timezone.utc)
+
+
 def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool) -> None:
     """Enforce one active store per license while allowing same-site refreshes."""
     if active_count >= MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE and not existing_is_active:
@@ -2005,7 +2017,7 @@ async def require_agency_team_session(
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     ))
-    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+    if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
     return {"session": session, "member": member, "agency": agency}
 
@@ -2252,7 +2264,7 @@ async def register_agency_wordpress_site(
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     ))
-    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+    if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
@@ -2348,7 +2360,7 @@ async def get_agency_wordpress_site_status(request: Request, response: Response,
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     )) if agency else None
-    if agency is None or workspace is None or owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+    if agency is None or workspace is None or not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
     site.last_seen_at = datetime.now(timezone.utc)
     await operational_db.commit()
@@ -2407,7 +2419,7 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     ))
-    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+    if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
@@ -2496,7 +2508,7 @@ async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Requ
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     ))
-    if owner_license is None or not owner_license.is_active or not plan_features(owner_license.tier)["agency_management"]:
+    if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
