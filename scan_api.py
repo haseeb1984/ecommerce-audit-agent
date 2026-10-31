@@ -2,13 +2,14 @@
 import json
 from typing import Literal
 from urllib.parse import urlsplit
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_license_or_api_key
 from hostinger_database import get_hostinger_db
+from database import get_async_db
 from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite
 from models import SoftwareLicense
 from plan_features import plan_features
@@ -17,6 +18,11 @@ from ecommerce_agent import UniversalEcommerceAgent
 
 router = APIRouter()
 _url_normalizer = UniversalEcommerceAgent()
+
+
+class AgencyWordPressAuditRequest(BaseModel):
+    urls: list[str] = Field(..., min_length=1, max_length=1000)
+    request_id: str = Field(..., min_length=8, max_length=128)
 
 
 class BulkScanSubmission(BaseModel):
@@ -128,6 +134,84 @@ async def submit_scan_batches(
         "message": "Website URLs have been added to the persistent scan queue.",
         **result,
     }
+
+
+@router.post("/api/v1/integrations/wordpress/agency/sites/audits", status_code=202)
+async def queue_agency_wordpress_site_audit(
+    payload: AgencyWordPressAuditRequest,
+    request: Request,
+    response: Response,
+    licensing_db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Queue scans using the connected agency site credential, never the owner's key at WordPress."""
+    raw_token = (request.headers.get("x-agency-site-token") or "").strip()
+    if len(raw_token) < 32 or len(raw_token) > 200:
+        raise HTTPException(status_code=401, detail="Agency site authentication is required.")
+    token_hash = __import__("hashlib").sha256(raw_token.encode("utf-8")).hexdigest()
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ))
+    if site is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == site.agency_id, AgencyAccount.status == "active"
+    ))
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == site.workspace_id,
+        AgencyClientWorkspace.agency_id == site.agency_id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    owner_license = await licensing_db.scalar(select(SoftwareLicense).where(
+        SoftwareLicense.license_key == agency.owner_license_key
+    )) if agency else None
+    if agency is None or workspace is None or owner_license is None or not owner_license.is_active:
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
+    entitlements = plan_features(owner_license.tier)
+    if not entitlements["agency_management"] or not entitlements["standard_audits"]:
+        raise HTTPException(status_code=403, detail="The agency Business package does not include website audits.")
+    normalized = []
+    invalid_indexes = []
+    for index, raw_url in enumerate(payload.urls):
+        try:
+            target = _normalize_bulk_target(raw_url)
+            parsed = urlsplit(target)
+            host = (parsed.hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
+            if parsed.scheme.lower() != "https" or host != site.site_host:
+                raise ValueError("Audit URLs must use HTTPS and belong to this connected client website.")
+            normalized.append(target)
+        except (ValueError, TypeError, UnicodeError):
+            invalid_indexes.append(index)
+    if invalid_indexes:
+        raise HTTPException(status_code=422, detail={
+            "message": "One or more URLs do not belong to the connected client website.",
+            "invalid_url_indexes": invalid_indexes[:100],
+            "invalid_count": len(invalid_indexes),
+        })
+    try:
+        _validate_single_site_submission(normalized)
+        result = await enqueue_scan_request(
+            operational_db,
+            license_key=owner_license.license_key,
+            package_tier=owner_license.tier,
+            urls=normalized,
+            request_id=payload.request_id,
+            requested_by=site.admin_email,
+            workspace_id=workspace.id,
+            batch_size=10,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Agency scan queue is temporarily unavailable.") from exc
+    site.last_seen_at = _utcnow()
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "accepted", "workspace_id": workspace.id, "workspace_name": workspace.display_name,
+            "site_id": site.id, "message": "Client website audit URLs have been queued under the shared Business allowance.",
+            **result}
 
 
 @router.get("/api/v1/scan-batches")
