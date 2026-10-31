@@ -3802,3 +3802,39 @@ async def test_customer_can_list_and_switch_only_email_linked_licenses(client, m
     listed_again = await client.get("/api/v1/account/licenses", headers=headers)
     assert listed_again.status_code == 200
     assert listed_again.json()["selected_license_id"] == second_id
+
+
+@pytest.mark.parametrize("viewport", [
+    "width=device-width, initial-scale=",
+    "width=device-width, initial-scale=abc",
+    "width=device-width, initial-scale=0",
+    "width=device-width, initial-scale=11",
+    "width=device-width, initial-scale=nan",
+    "width=device-width, initial-scale=inf",
+])
+def test_mobile_viewport_flags_invalid_initial_scale(viewport):
+    from mobile_ux_checks import inspect_mobile_viewport
+
+    findings = inspect_mobile_viewport(
+        f'<html><head><meta name="viewport" content="{viewport}"></head></html>',
+        "https://shop.example/",
+    )
+    assert any(
+        finding.title == "Viewport initial-scale value needs review"
+        and finding.status == "manual_review_required"
+        for finding in findings
+    )
+
+
+@pytest.mark.parametrize("scale", ["0.1", "1", "2.5", "10"])
+def test_mobile_viewport_accepts_valid_initial_scale(scale):
+    from mobile_ux_checks import inspect_mobile_viewport
+
+    findings = inspect_mobile_viewport(
+        f'<html><head><meta name="viewport" content="width=device-width, initial-scale={scale}"></head></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        finding.title == "Viewport initial-scale value needs review"
+        for finding in findings
+    )
