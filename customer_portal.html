@@ -30,6 +30,11 @@
 <div class="row"><div><label for="profileName">Account name</label><input id="profileName" type="text" maxlength="255" autocomplete="organization" placeholder="Your business or account name"></div><div><label for="profileTier">Current plan</label><input id="profileTier" type="text" readonly aria-readonly="true" value="—"></div></div>
 <p id="profileMeta" class="muted">Connect your account to view profile details.</p>
 <button id="saveProfile" type="button" disabled>Save account name</button>
+<hr>
+<h3>Email address</h3>
+<p class="muted">Changing your account email requires a one-time verification token sent to the new address. Billing history is synchronized after verification.</p>
+<div class="row"><div><label for="emailChangeAddress">New email address</label><input id="emailChangeAddress" type="email" maxlength="254" autocomplete="email" placeholder="name@example.com"></div><div><label for="emailChangeToken">Verification token</label><input id="emailChangeToken" type="text" maxlength="128" autocomplete="one-time-code" placeholder="Paste the token from your email"></div></div>
+<div class="report-actions"><button id="requestEmailChange" type="button" disabled>Send verification token</button><button id="confirmEmailChange" class="secondary" type="button" disabled>Verify and update email</button></div>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
 <section class="panel" aria-labelledby="usageHeading">
@@ -121,7 +126,7 @@
   };
   const authHeaders = () => ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "addWebsite", "refreshWebsites"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "requestEmailChange", "confirmEmailChange", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "addWebsite", "refreshWebsites"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -851,7 +856,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; $("emailChangeAddress").value = ""; $("emailChangeToken").value = ""; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
@@ -931,6 +936,42 @@
       const data = await response.json();
       $("profileName").value = data.client_name || clientName;
       setStatus("profileStatus", "Account name saved.", "success");
+    } catch (error) {
+      setStatus("profileStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential;
+    }
+  });
+  $("requestEmailChange").addEventListener("click", async () => {
+    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
+    const email = $("emailChangeAddress").value.trim();
+    if (!email) { setStatus("profileStatus", "Enter the new email address first.", "error"); return; }
+    const button = $("requestEmailChange"); button.disabled = true;
+    try {
+      await api("/api/v1/account/email-change", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({email})
+      });
+      setStatus("profileStatus", "Verification token sent to the new email address. Your account email is unchanged until verification.", "success");
+    } catch (error) {
+      setStatus("profileStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential;
+    }
+  });
+  $("confirmEmailChange").addEventListener("click", async () => {
+    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
+    const token = $("emailChangeToken").value.trim();
+    if (!token) { setStatus("profileStatus", "Paste the verification token from your email.", "error"); return; }
+    const button = $("confirmEmailChange"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/email-change/confirm", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token})
+      });
+      const data = await response.json();
+      $("emailChangeToken").value = "";
+      setStatus("profileStatus", "Email updated to " + data.email + ". Billing identity synchronization is " + data.billing_sync + ".", "success");
     } catch (error) {
       setStatus("profileStatus", error.message, "error");
     } finally {
