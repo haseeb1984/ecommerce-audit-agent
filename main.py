@@ -2213,8 +2213,8 @@ async def account_billing_history(
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in attention_events],
         "page": {
-            "limit": limit, "offset": offset, "total": max(pg_count, host_count),
-            "has_more": offset + len(events) < max(pg_count, host_count),
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": offset + len(events) < total,
         },
     }
 
