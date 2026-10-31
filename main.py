@@ -43,7 +43,7 @@ from database import Base, get_async_db
 from scan_api import router as scan_router
 from scan_worker_api import router as scan_worker_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -5463,6 +5463,16 @@ async def admin_customer_account_action(
         result = await db.execute(update(SoftwareLicense).where(
             SoftwareLicense.id.in_(ids)
         ).values(is_active=active))
+        for license_key in license_keys:
+            db.add(CustomerLifecycleSyncOutbox(
+                id=secrets.token_urlsafe(24),
+                license_key=license_key,
+                action=payload.action,
+                status="pending",
+                attempts=0,
+                next_attempt_at=now,
+                created_at=now,
+            ))
         await db.commit()
         changed = int(result.rowcount or 0)
         await operational_db.execute(update(CustomerAccount).where(
@@ -5476,6 +5486,17 @@ async def admin_customer_account_action(
             changed += int(session_result.rowcount or 0)
         await operational_db.commit()
     else:
+        for license_key in license_keys:
+            db.add(CustomerLifecycleSyncOutbox(
+                id=secrets.token_urlsafe(24),
+                license_key=license_key,
+                action="revoke_sessions",
+                status="pending",
+                attempts=0,
+                next_attempt_at=now,
+                created_at=now,
+            ))
+        await db.commit()
         result = await operational_db.execute(update(CustomerSession).where(
             CustomerSession.license_key.in_(license_keys), CustomerSession.revoked_at.is_(None)
         ).values(revoked_at=now))
