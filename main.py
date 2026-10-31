@@ -137,6 +137,10 @@ class ReportEmailRequest(BaseModel):
     recipient_confirmed: bool = False
 
 
+class AdminAgencyStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(active|suspended)$")
+
+
 class AgencyTeamInviteCreate(BaseModel):
     email: str = Field(..., min_length=3, max_length=254)
     role: str = Field(default="analyst", pattern="^(admin|analyst|viewer)$")
@@ -5521,6 +5525,49 @@ async def admin_list_business_agencies(
         "team_member_count": team_counts.get(item.id, 0),
         "created_at": item.created_at.isoformat() if item.created_at else None,
     } for item in agencies]}
+
+
+@app.patch("/api/v1/admin/agencies/{agency_id}")
+async def admin_update_business_agency(
+    agency_id: str,
+    payload: AdminAgencyStatusUpdate,
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Suspend or reactivate a Business agency; suspension revokes all team sessions."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.id == agency_id).with_for_update()
+    )
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Business agency account was not found.")
+    now = datetime.now(timezone.utc)
+    agency.status = payload.status
+    if payload.status == "suspended":
+        sessions = (await operational_db.execute(select(AgencyTeamSession).where(
+            AgencyTeamSession.agency_id == agency.id,
+            AgencyTeamSession.revoked_at.is_(None),
+        ))).scalars().all()
+        for session in sessions:
+            session.revoked_at = now
+        challenges = (await operational_db.execute(select(AgencyTeamLoginChallenge).where(
+            AgencyTeamLoginChallenge.agency_id == agency.id,
+            AgencyTeamLoginChallenge.consumed_at.is_(None),
+        ))).scalars().all()
+        for challenge in challenges:
+            challenge.consumed_at = now
+    agency.updated_at = now
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": agency.id,
+        "status": agency.status,
+        "team_sessions_revoked": payload.status == "suspended",
+        "updated_at": now.isoformat(),
+    }
 
 
 @app.get("/api/v1/admin/packages")
