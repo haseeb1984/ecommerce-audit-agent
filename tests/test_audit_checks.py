@@ -1337,3 +1337,42 @@ def test_page_parser_bounds_retained_anchor_details_but_counts_all_links():
     assert len(parser.link_attributes) == 500
     assert parser.link_hrefs[0] == '/product/0'
     assert parser.link_hrefs[-1] == '/product/499'
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_excessive_dns_address_fanout(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, family, type):
+            return [
+                (2, 1, 6, "", (f"8.8.{index // 250}.{index % 250 + 1}", port))
+                for index in range(audit_checks.MAX_DNS_ADDRESSES + 1)
+            ]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="too many DNS addresses"):
+        await audit_checks.PublicOnlyResolver().resolve("shop.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_malformed_dns_address_records(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, family, type):
+            return [(2, 1, 6, "", ("not-an-ip-address", port))]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match="invalid DNS address record"):
+        await audit_checks.PublicOnlyResolver().resolve("shop.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_deduplicates_dns_addresses_before_returning(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, family, type):
+            return [
+                (2, 1, 6, "", ("8.8.8.8", port)),
+                (2, 1, 6, "", ("8.8.8.8", port)),
+            ]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    resolved = await audit_checks.PublicOnlyResolver().resolve("shop.example", 443)
+    assert [item["host"] for item in resolved] == ["8.8.8.8"]
