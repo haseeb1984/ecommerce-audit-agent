@@ -2215,6 +2215,9 @@ async def account_billing_history(
 
     attention_statuses = (
         "payment_failed", "subscription_past_due", "subscription_canceled",
+        "subscription_paused", "subscription_resumed", "subscription_activated",
+        "subscription_updated_active", "subscription_updated_paused",
+        "subscription_updated_past_due", "subscription_updated_canceled",
         "email_pending", "email_sending",
     )
     pg_attention = (await db.execute(
