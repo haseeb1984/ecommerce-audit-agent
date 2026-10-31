@@ -4096,15 +4096,14 @@ async def _record_operation_event(db: AsyncSession, event_type: str, license_id:
 async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[dict]:
     await _ensure_admin_tables(db)
     query = "SELECT tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active FROM saas_plan_packages WHERE LOWER(tier) IN ('starter', 'pro', 'business')"
-    if active_only:
-        query += " AND is_active = TRUE"
     query += " ORDER BY monthly_audit_allowance ASC, tier ASC"
     rows = (await db.execute(text(query))).mappings().all()
     if not rows:
-        # Preserve environment-configured plans for installations that have not
-        # populated the operator catalogue yet. Once any catalogue rows exist,
-        # the database remains authoritative and disabled tiers are not revived.
+        # Preserve environment-configured plans only before any canonical package
+        # rows have been created. Existing inactive rows remain authoritative.
         return _configured_payment_plans()
+    if active_only:
+        rows = [row for row in rows if bool(row["is_active"])]
     plans = []
     for row in rows:
         tier = str(row["tier"] or "").strip().lower()
