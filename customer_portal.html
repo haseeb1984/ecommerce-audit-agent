@@ -859,6 +859,7 @@
     $("usageReset").textContent = "Period reset: —";
     activityRows = []; activityTotal = 0; renderActivity();
     $("websiteList").replaceChildren(); const websiteEmpty = document.createElement("p"); websiteEmpty.className = "muted"; websiteEmpty.textContent = "Connect your account to manage websites."; $("websiteList").append(websiteEmpty); setStatus("websiteStatus", "Account connection required.");
+    $("websiteName").value = ""; $("websiteUrl").value = "";
     $("billingAccount").textContent = "Connect your account to load billing status.";
     $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
     apiKeyCreationAllowed = false;
@@ -888,6 +889,8 @@
       $("runAudit").disabled = !auditAccess;
       renderApiKeys();
       $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
+      $("addWebsite").disabled = results[5].status !== "fulfilled";
+      $("refreshWebsites").disabled = results[5].status !== "fulfilled";
       setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
       setStatus("connectStatus", unavailable.length ? "Connected for billing. Unavailable features: " + unavailable.join(", ") + ". Credential input cleared." : "Connected. Report history, quota, API keys, and billing history are loaded. Credential input cleared.", unavailable.length ? "error" : "success");
     } catch (e) {
