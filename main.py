@@ -1904,6 +1904,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             subscription_id=subscription_id,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
         ))
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         await _record_operation_event(db, status, linked_event.license_id, None, None)
         return {"status": status, "event_id": event_id, "license_id": linked_event.license_id}
@@ -1977,6 +1978,12 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=now,
             updated_at=now,
         ))
+        if was_active != bool(license_obj.is_active):
+            await _enqueue_customer_lifecycle_sync(
+                db, license_obj.license_key,
+                "suspend" if not license_obj.is_active else "reactivate",
+            )
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         if was_active != bool(license_obj.is_active):
             await _record_operation_event(db, lifecycle_status, license_obj.id, None, None)
@@ -2031,6 +2038,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=now,
             updated_at=now,
         ))
+        if changed:
+            await _enqueue_customer_lifecycle_sync(db, license_obj.license_key, "suspend")
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         if changed:
             await _record_operation_event(db, "subscription_canceled", license_obj.id, None, None)
@@ -2127,6 +2137,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 subscription_id=subscription_id,
                 paddle_customer_id=(customer_id[:100] or cancellation_event.paddle_customer_id),
             ))
+            await _enqueue_billing_mirror_sync(db, event_id)
             await db.commit()
             return {"status": "subscription_canceled", "event_id": event_id,
                     "license_id": cancellation_event.license_id}
@@ -2164,6 +2175,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                     paddle_customer_id=(renewal_customer_id[:100] or linked_subscription_event.paddle_customer_id),
                 )
                 db.add(renewal_event)
+                await _enqueue_billing_mirror_sync(db, event_id)
+                if not linked_license.is_active:
+                    await _enqueue_customer_lifecycle_sync(db, linked_license.license_key, "reactivate")
                 await db.commit()
                 await _record_operation_event(db, "subscription_renewed", linked_license.id, None, None)
                 return {"status": "subscription_renewed", "event_id": event_id, "license_id": linked_license.id}
@@ -2215,6 +2229,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             paddle_customer_id=customer_id[:100] or None,
         )
         db.add(webhook_event)
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
     elif webhook_event.status == "delivered":
         return {"status": "already_processed", "event_id": event_id}
@@ -3671,10 +3686,16 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
         if "max_monthly_audits" not in changes:
             changes["max_monthly_audits"] = int(package["monthly_audit_allowance"])
     allowed = {"client_name", "tier", "max_monthly_audits", "is_active", "expires_at"}
+    previous_active_state = bool(client.is_active)
     for key, value in changes.items():
         if key not in allowed:
             raise HTTPException(status_code=422, detail="Unsupported client update field.")
         setattr(client, key, value)
+    if "is_active" in changes and previous_active_state != bool(client.is_active):
+        await _enqueue_customer_lifecycle_sync(
+            db, client.license_key,
+            "reactivate" if client.is_active else "suspend",
+        )
     await _write_admin_log(db, "client.updated", "client", client.id, {
         "fields": sorted(changes),
         "tier": client.tier,
