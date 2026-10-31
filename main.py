@@ -2122,50 +2122,70 @@ async def account_billing_history(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Return customer billing history from Hostinger, with legacy PostgreSQL fallback."""
+    """Merge Hostinger billing mirrors with canonical webhook rows for complete customer history."""
     from sqlalchemy import select, func as sql_func
 
-    ownership_filter = CustomerBillingEvent.license_key == license_obj.license_key
-    total = int((await operational_db.execute(
-        select(sql_func.count(CustomerBillingEvent.event_id)).where(ownership_filter)
+    pg_filter = PaymentWebhookEvent.license_id == license_obj.id
+    host_filter = CustomerBillingEvent.license_key == license_obj.license_key
+    pg_count = int((await db.execute(
+        select(sql_func.count(PaymentWebhookEvent.event_id)).where(pg_filter)
     )).scalar_one() or 0)
-    events = (await operational_db.execute(
-        select(CustomerBillingEvent)
-        .where(ownership_filter)
-        .order_by(CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc())
-        .offset(offset)
-        .limit(limit)
+    host_count = int((await operational_db.execute(
+        select(sql_func.count(CustomerBillingEvent.event_id)).where(host_filter)
+    )).scalar_one() or 0)
+
+    candidate_limit = offset + limit
+    pg_rows = (await db.execute(
+        select(PaymentWebhookEvent).where(pg_filter)
+        .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(candidate_limit)
     )).scalars().all()
+    host_rows = (await operational_db.execute(
+        select(CustomerBillingEvent).where(host_filter)
+        .order_by(CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc())
+        .limit(candidate_limit)
+    )).scalars().all()
+
+    # Prefer the canonical webhook event when both stores contain the same ID.
+    merged = {item.event_id: item for item in host_rows}
+    merged.update({item.event_id: item for item in pg_rows})
+    events = sorted(
+        merged.values(),
+        key=lambda item: (
+            item.created_at.replace(tzinfo=timezone.utc) if item.created_at and item.created_at.tzinfo is None
+            else item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            item.event_id,
+        ),
+        reverse=True,
+    )[offset:offset + limit]
+
     attention_statuses = (
         "payment_failed", "subscription_past_due", "subscription_canceled",
         "email_pending", "email_sending",
     )
-    attention_events = (await operational_db.execute(
-        select(CustomerBillingEvent)
-        .where(ownership_filter, CustomerBillingEvent.status.in_(attention_statuses))
-        .order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.event_id.desc())
+    pg_attention = (await db.execute(
+        select(PaymentWebhookEvent).where(
+            pg_filter, PaymentWebhookEvent.status.in_(attention_statuses)
+        ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
         .limit(10)
     )).scalars().all()
-
-    # Existing accounts remain readable until the one-time Hostinger data copy
-    # has been applied. New webhook events are mirrored after their PG commit.
-    if total == 0:
-        legacy_filter = PaymentWebhookEvent.license_id == license_obj.id
-        total = int((await db.execute(
-            select(sql_func.count(PaymentWebhookEvent.event_id)).where(legacy_filter)
-        )).scalar_one() or 0)
-        events = (await db.execute(
-            select(PaymentWebhookEvent)
-            .where(legacy_filter)
-            .order_by(PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc())
-            .offset(offset).limit(limit)
-        )).scalars().all()
-        attention_events = (await db.execute(
-            select(PaymentWebhookEvent)
-            .where(legacy_filter, PaymentWebhookEvent.status.in_(attention_statuses))
-            .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
-            .limit(10)
-        )).scalars().all()
+    host_attention = (await operational_db.execute(
+        select(CustomerBillingEvent).where(
+            host_filter, CustomerBillingEvent.status.in_(attention_statuses)
+        ).order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.event_id.desc())
+        .limit(10)
+    )).scalars().all()
+    attention = {item.event_id: item for item in host_attention}
+    attention.update({item.event_id: item for item in pg_attention})
+    attention_events = sorted(
+        attention.values(),
+        key=lambda item: (
+            item.updated_at.replace(tzinfo=timezone.utc) if item.updated_at and item.updated_at.tzinfo is None
+            else item.updated_at or datetime.min.replace(tzinfo=timezone.utc),
+            item.event_id,
+        ),
+        reverse=True,
+    )[:10]
 
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -2191,7 +2211,10 @@ async def account_billing_history(
             "subscription_id": item.subscription_id,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in attention_events],
-        "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(events) < total},
+        "page": {
+            "limit": limit, "offset": offset, "total": max(pg_count, host_count),
+            "has_more": offset + len(events) < max(pg_count, host_count),
+        },
     }
 
 @app.post("/api/v1/account/billing-portal")
