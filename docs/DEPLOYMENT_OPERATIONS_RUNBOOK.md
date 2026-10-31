@@ -19,6 +19,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 - `DATABASE_URL`: Supabase PostgreSQL connection URL using the async SQLAlchemy driver.
 - `DATABASE_SSL=true`: require TLS for PostgreSQL.
 - `HOSTINGER_DATABASE_URL`: Hostinger MySQL connection URL using `mysql+asyncmy` and TLS.
+- `HOSTINGER_DB_SSL=true`: enables certificate-verified TLS for Hostinger MySQL (disable only for isolated local development).
 - `HOSTINGER_DB_POOL_SIZE`, `HOSTINGER_DB_MAX_OVERFLOW`, `HOSTINGER_DB_POOL_RECYCLE`, `HOSTINGER_DB_POOL_TIMEOUT`: optional pool tuning.
 
 ### Audit providers
@@ -34,7 +35,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 - Optional `PADDLE_CHECKOUT_URL`.
 - `PADDLE_PRICE_ID_STARTER`, `PADDLE_PRICE_ID_PRO`, `PADDLE_PRICE_ID_BUSINESS` and the corresponding `LICENSE_MONTHLY_AUDITS_*` / `LICENSE_MAX_CONCURRENT_AUDITS_*` values used to bootstrap package records.
 - `ADMIN_API_KEY`: long random administrator secret.
-- `SCAN_WORKER_TOKEN`: long random internal worker secret. The scheduled worker endpoint must receive the same value through the configured deployment secret.
+- `CRON_SECRET`: long random Vercel Cron secret. Vercel sends it automatically as `Authorization: Bearer <CRON_SECRET>` on scheduled requests. `SCAN_WORKER_TOKEN` is also accepted for controlled non-Vercel worker invocations.
 
 ## Safe environment preparation order
 
@@ -45,7 +46,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 5. Configure the environment variables above in Vercel. Use Paddle sandbox credentials until billing has been deliberately validated.
 6. Deploy only to a non-production preview environment after explicit release approval.
 7. Call `/health-check`. A successful response must report both PostgreSQL and MySQL as connected and schema-ready. Resolve every missing table, column, or required index before routing customer traffic.
-8. Verify the scheduled worker configuration in `vercel.json` and confirm the worker token is configured. The cron schedule is once per minute and requests at most ten jobs per invocation; package concurrency remains governed by the license entitlement.
+8. Verify the scheduled worker configuration in `vercel.json` and set `CRON_SECRET` in Vercel project environment variables. Vercel adds its bearer authorization header automatically. The cron schedule is once per minute and requests at most ten jobs per invocation; package concurrency remains governed by the license entitlement.
 9. Configure outbound SMTP and verify deliverability using controlled test accounts.
 10. Configure Paddle webhook delivery to the deployed `/api/v1/billing/paddle-webhook` endpoint and verify the webhook secret and sandbox event flow before enabling live billing.
 11. Confirm the WordPress plugin ZIP endpoint serves the expected package and that a staging WordPress/WooCommerce site can register, report status, and disconnect.
