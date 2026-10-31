@@ -1892,7 +1892,7 @@ async def run_bounded_site_crawl(
                 if url == _canonical_page_url(final_home):
                     page_status, body, page_headers, final_url = status, homepage, headers, final_home
                 else:
-                    page_status, body, page_headers, final_url = await _safe_get(client, url)
+                    page_status, body, page_headers, final_url = await _safe_get(client, url, allowed_origin=final_home)
             except Exception as exc:
                 findings.append(_finding(
                     "crawl", "Internal page could not be checked", "not_tested", "info",
