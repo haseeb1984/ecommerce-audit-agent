@@ -11,7 +11,7 @@
 <section class="panel">
 <div class="row" style="justify-content:space-between">
 <div><h2>Background scan queue</h2><p class="muted">Inspect customer website scans and retry terminal failures after the blocking issue has been resolved.</p></div>
-<div><label for="scanJobStatus">Job status</label><select id="scanJobStatus"><option value="all">All jobs</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="retry">Retry scheduled</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div>
+<div><label for="scanJobStatus">Job status</label><select id="scanJobStatus" disabled><option value="all">All jobs</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="retry">Retry scheduled</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div>
 <button id="scanJobsRefresh" class="secondary" disabled>Refresh queue</button>
 </div>
 <div class="row" style="justify-content:flex-end;margin:10px 0"><span id="scanJobsPageInfo" class="muted">Connect to load scan jobs.</span><button id="scanJobsPrev" class="secondary" disabled>Previous</button><button id="scanJobsNext" class="secondary" disabled>Next</button></div>
