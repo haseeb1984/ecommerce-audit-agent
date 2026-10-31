@@ -18,7 +18,7 @@ Connect a WordPress or WooCommerce store to Ecommerce Audit Agent. Manage your l
 4. For a standard Starter or Pro customer account, enter the SaaS license key issued to your customer account. The API base defaults to the hosted Ecommerce Audit Agent service and must use HTTPS.
 5. For a Business agency client workspace, generate a one-time WordPress connection token in the SaaS customer portal, then paste it into the plugin's **Connect this site to a Business agency client** section. Do not use the agency owner's license key on a client site.
 6. Save and connect. The plugin registers the WordPress installation either to the standard license or to the selected agency client workspace using a separate site credential.
-7. Standard license connections can run a store audit or download saved reports. Agency client connections currently show connection status; agency audit execution is managed through the SaaS dashboard while the plugin-specific agency audit workflow is completed.
+7. Standard license connections can run a store audit or download saved reports. Agency client connections can queue page audits under the shared Business allowance; audit progress and structured findings are available in the SaaS agency dashboard. The agency plugin mode does not issue PDF downloads.
 
 == Features ==
 
