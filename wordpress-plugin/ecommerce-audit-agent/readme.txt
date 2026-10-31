@@ -15,13 +15,15 @@ Connect a WordPress or WooCommerce store to Ecommerce Audit Agent. Manage your l
 1. Download the plugin ZIP from the SaaS customer portal or `/wordpress-plugin.zip` on your Ecommerce Audit Agent deployment.
 2. In WordPress, open Plugins > Add New > Upload Plugin, upload the ZIP, install, and activate it.
 3. Open **Ecommerce Audit** in the WordPress administrator menu.
-4. Enter the SaaS license key issued to your customer account. The API base defaults to the hosted Ecommerce Audit Agent service and must use HTTPS.
-5. Save and connect. The plugin registers this WordPress installation against the license.
-6. Run a store audit or download one of the saved reports.
+4. For a standard Starter or Pro customer account, enter the SaaS license key issued to your customer account. The API base defaults to the hosted Ecommerce Audit Agent service and must use HTTPS.
+5. For a Business agency client workspace, generate a one-time WordPress connection token in the SaaS customer portal, then paste it into the plugin's **Connect this site to a Business agency client** section. Do not use the agency owner's license key on a client site.
+6. Save and connect. The plugin registers the WordPress installation either to the standard license or to the selected agency client workspace using a separate site credential.
+7. Standard license connections can run a store audit or download saved reports. Agency client connections currently show connection status; agency audit execution is managed through the SaaS dashboard while the plugin-specific agency audit workflow is completed.
 
 == Features ==
 
-* License-authenticated site registration and connection status.
+* License-authenticated standard site registration and separate one-time-token agency client site registration.
+* Agency client sites use independent, encrypted site credentials and can be revoked by the agency owner.
 * Site-bound audit and report authorization, with a twice-daily entitlement heartbeat.
 * Site identity bound to the authenticated SaaS license; one customer license connects one active WordPress website.
 * WordPress and WooCommerce version metadata for support visibility.
