@@ -40,7 +40,6 @@
 <p class="muted">Update the display name shown in your account. Subscription billing identity and payment details remain managed by Paddle.</p>
 <div class="row"><div><label for="profileName">Account name</label><input id="profileName" type="text" maxlength="255" autocomplete="organization" placeholder="Your business or account name"></div><div><label for="profileTier">Current plan</label><input id="profileTier" type="text" readonly aria-readonly="true" value="—"></div></div>
 <p id="profileMeta" class="muted">Connect your account to view profile details.</p>
-<div id="linkedLicensesPanel" hidden><label for="linkedLicenses">Linked licenses for this email</label><select id="linkedLicenses" disabled><option value="">Loading linked licenses…</option></select><p class="muted">Switching changes the active license for this browser session only.</p></div>
 <button id="saveProfile" type="button" disabled>Save account name</button>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 <div class="emailbox" style="margin-top:16px">
@@ -174,8 +173,6 @@
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
     for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
-    $("linkedLicenses").disabled = !connected || !sessionToken;
-    $("linkedLicensesPanel").hidden = !connected || !sessionToken;
   }
   setAccountControls(false);
   loadPlans();
@@ -510,60 +507,6 @@
     if (!(data.items || []).length) { const note=document.createElement("p"); note.className="muted"; note.textContent="No active devices found."; container.append(note); }
   }
 
-  async function loadAccountLicenses() {
-    if (!sessionToken) { $("linkedLicensesPanel").hidden = true; return; }
-    const response = await api("/api/v1/account/licenses");
-    const data = await response.json();
-    const select = $("linkedLicenses");
-    select.replaceChildren();
-    for (const item of (Array.isArray(data.items) ? data.items : [])) {
-      const option = document.createElement("option");
-      option.value = String(item.id);
-      const expired = Boolean(item.expired);
-      const inactive = !Boolean(item.is_active);
-      option.textContent = (item.client_name || "Account") + " · " + (item.tier || "plan") +
-        (expired ? " · expired" : (inactive ? " · inactive" : ""));
-      option.disabled = item.selectable === false || expired || inactive;
-      option.selected = Boolean(item.selected);
-      select.append(option);
-    }
-    $("linkedLicensesPanel").hidden = false;
-    select.disabled = data.items.length < 2;
-    if (!data.items.length) {
-      const option = document.createElement("option"); option.value = ""; option.textContent = "No linked licenses found"; select.append(option);
-    }
-  }
-  async function switchAccountLicense() {
-    const targetId = Number($("linkedLicenses").value);
-    if (!sessionToken || !Number.isInteger(targetId) || targetId <= 0) return;
-    const select = $("linkedLicenses"); select.disabled = true;
-    try {
-      const response = await api("/api/v1/account/licenses/switch", {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({license_id: targetId})
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Unable to switch linked account.");
-      accountSessionVersion += 1;
-      clearAccountView();
-      const results = await Promise.allSettled([loadBillingHistory(), loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
-      const brandingEnabled = results[2].status === "fulfilled" && results[2].value.features && results[2].value.features.white_label_branding === true;
-      $("brandingPanel").hidden = !brandingEnabled;
-      if (brandingEnabled) results.push((await Promise.allSettled([loadBranding()]))[0]);
-      else setStatus("brandingStatus", "White-label branding is not included in this plan.");
-      await loadAccountLicenses();
-      if (sessionToken) await loadDeviceSessions().catch(() => {});
-      const failed = results.filter(item => item.status === "rejected").length;
-      const auditAccess = results[1].status === "fulfilled" && results[2].status === "fulfilled";
-      $("runAudit").disabled = !auditAccess;
-      $("submitBulkScans").disabled = !auditAccess; $("refreshScanBatches").disabled = !auditAccess;
-      renderApiKeys();
-      setStatus("connectStatus", failed ? "Switched account. " + failed + " account panel(s) could not be refreshed." : "Switched to " + (data.account.client_name || "linked account") + ".", failed ? "error" : "success");
-    } catch (error) {
-      setStatus("profileStatus", error.message, "error");
-      await loadAccountLicenses().catch(() => {});
-    } finally { select.disabled = false; }
-  }
   async function loadWordPressSites() {
     const container = $("wordpressSites");
     const response = await api("/api/v1/account/wordpress-sites");
@@ -1200,7 +1143,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("linkedLicenses").replaceChildren(); $("linkedLicensesPanel").hidden = true; $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
     const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
@@ -1216,7 +1159,6 @@
     $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required."); $("wordpressSites").replaceChildren(); const wpEmpty=document.createElement("p");wpEmpty.className="muted";wpEmpty.textContent="Connect your account to view WordPress installations."; $("wordpressSites").append(wpEmpty); setStatus("wordpressSitesStatus","Account connection required.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
-  $("linkedLicenses").addEventListener("change", switchAccountLicense);
   $("requestLoginCode").addEventListener("click", async () => {
     const email = $("loginEmail").value.trim();
     if (!email) { setStatus("loginStatus", "Enter the email address used at checkout.", "error"); return; }
@@ -1268,8 +1210,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses(), loadWordPressSites(), loadScanBatches()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "linked licenses", "WordPress sites", "scan batches"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "WordPress sites", "scan batches"];
       const brandingEnabled = results[1].status === "fulfilled" && results[1].value.features && results[1].value.features.white_label_branding === true;
       $("brandingPanel").hidden = !brandingEnabled;
       if (brandingEnabled) {
@@ -1374,7 +1316,7 @@
       $("newAccountEmail").value = "";
       $("emailChangeCode").value = "";
       accountSessionVersion += 1;
-      await Promise.allSettled([loadAccountLicenses(), loadDeviceSessions()]);
+      await Promise.allSettled([loadDeviceSessions()]);
       setStatus("emailChangeStatus", data.message || "Your account email has been updated.", "success");
       setStatus("loginStatus", "Account email updated. Use the new email for future sign-ins.", "success");
     } catch (error) {
