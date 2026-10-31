@@ -40,6 +40,13 @@ def _normalize_bulk_target(value: str) -> str:
     return _url_normalizer._normalize_audit_target(raw)
 
 
+def _validate_single_site_submission(urls: list[str]) -> None:
+    """Require every page in one customer's bulk request to belong to one store."""
+    hosts = {urlsplit(url).hostname.lower() for url in urls if urlsplit(url).hostname}
+    if len(hosts) != 1:
+        raise ValueError("All URLs in one scan submission must belong to the same ecommerce website.")
+
+
 @router.post("/api/v1/scan-batches", status_code=202)
 async def submit_scan_batches(
     payload: BulkScanSubmission,
@@ -67,6 +74,10 @@ async def submit_scan_batches(
                 "invalid_count": len(invalid),
             },
         )
+    try:
+        _validate_single_site_submission(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
         result = await enqueue_scan_request(
