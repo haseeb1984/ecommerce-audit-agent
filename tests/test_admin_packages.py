@@ -75,6 +75,37 @@ async def test_admin_package_crud_and_action_audit(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_deactivated_canonical_package_is_not_revived_by_env_fallback(client, monkeypatch):
+    _clear_package_price_env(monkeypatch)
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-only")
+    created = await client.post(
+        "/api/v1/admin/packages",
+        headers={"X-Admin-Key": "test-admin-key-only"},
+        json={
+            "tier": "starter",
+            "label": "Starter",
+            "monthly_audit_allowance": 100,
+            "max_concurrent_audits": 1,
+            "paddle_price_id": None,
+            "is_active": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+    deactivated = await client.delete(
+        "/api/v1/admin/packages/starter",
+        headers={"X-Admin-Key": "test-admin-key-only"},
+    )
+    assert deactivated.status_code == 200
+
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_EnvFallback123")
+    from database import AsyncSessionLocal
+    from main import _db_payment_plans
+    async with AsyncSessionLocal() as db:
+        active = await _db_payment_plans(db, active_only=True)
+    assert not any(item["tier"] == "starter" for item in active)
+
+
+@pytest.mark.asyncio
 async def test_legacy_malformed_paddle_price_id_fails_closed_and_uses_valid_env_fallback(client, monkeypatch):
     from database import AsyncSessionLocal
     from main import _db_payment_plans
