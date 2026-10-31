@@ -102,7 +102,7 @@ Additional Business-plan functionality now present on the feature branch:
 
 Still outstanding:
 - Full audit report/evidence access, verified WordPress client-site connections, usage aggregation, and team member write actions remain outstanding.
-- Verified WordPress connection per agency client workspace and agency plugin flow.
+- Agency WordPress connection has an initial owner-issued token/plugin registration and revocation flow; agency plugin audit execution and full client report access remain outstanding.
 - Client-specific audit result views and usage aggregation from actual completed jobs.
 - Runtime validation of the migration, API routes, browser interactions, and email flow.
 
