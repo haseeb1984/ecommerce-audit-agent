@@ -1310,6 +1310,48 @@ async def enqueue_customer_website_scan(
             "queued_at": now.isoformat(), "message": "Scan queued; poll the scan status endpoint for progress."}
 
 
+@app.get("/api/v1/websites/{website_id}/scans")
+async def list_customer_website_scans(
+    website_id: str,
+    response: Response,
+    limit: int = Query(default=20, ge=1, le=100),
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+):
+    """List recent scan jobs and result availability for one owned website."""
+    from sqlalchemy import select
+    from hostinger_models import CustomerWebsite, ScanJob, WebsiteScanResult
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        website_exists = await operational_db.scalar(
+            select(CustomerWebsite.id).where(
+                CustomerWebsite.id == website_id,
+                CustomerWebsite.license_key == license_obj.license_key,
+            )
+        )
+        if website_exists is None:
+            raise HTTPException(status_code=404, detail="Website not found.")
+        rows = (await operational_db.execute(
+            select(ScanJob, WebsiteScanResult.finding_count)
+            .outerjoin(WebsiteScanResult, WebsiteScanResult.id == ScanJob.result_reference)
+            .where(
+                ScanJob.website_id == website_id,
+                ScanJob.license_key == license_obj.license_key,
+            )
+            .order_by(ScanJob.created_at.desc(), ScanJob.id.desc())
+            .limit(limit)
+        )).all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"website_id": website_id, "items": [{
+        "job_id": job.id, "status": job.status, "attempts": job.attempts,
+        "max_attempts": job.max_attempts, "error_code": job.error_code,
+        "finding_count": finding_count,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "result_available": bool(job.result_reference),
+    } for job, finding_count in rows], "limit": limit}
+
+
 @app.get("/api/v1/scans/{job_id}")
 async def get_customer_scan_status(
     job_id: str,
