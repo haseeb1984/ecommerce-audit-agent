@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from scan_queue import retry_failed_scan_job, _validate_standard_license_site_binding
+from scan_queue import complete_scan_job, retry_failed_scan_job, _validate_standard_license_site_binding
+from hostinger_models import AgencyUsageEvent
 
 
 class FakeSession:
@@ -10,6 +11,10 @@ class FakeSession:
         self.rows = list(rows)
         self.committed = False
         self.rolled_back = False
+        self.added = []
+
+    def add(self, value):
+        self.added.append(value)
 
     async def scalar(self, _statement):
         return self.rows.pop(0)
@@ -144,3 +149,63 @@ def test_standard_license_fails_closed_on_conflicting_historical_site_bindings()
             registered_hosts=["shop.example", "other.example"],
             submitted_urls=["https://shop.example/"],
         )
+
+
+@pytest.mark.asyncio
+async def test_complete_scan_job_records_workspace_usage_once():
+    job = SimpleNamespace(
+        id="job-agency-1", batch_id="batch-agency-1", status="processing",
+        locked_by="worker-1", locked_at="locked", license_key="business-license",
+        result_reference=None, completed_at=None, quota_consumed=False,
+    )
+    batch = SimpleNamespace(
+        id="batch-agency-1", workspace_id="client-workspace-1",
+        status="processing", processing_count=1, completed_count=0,
+        failed_count=0, cancelled_count=0, total_urls=1,
+        completed_at=None, package_tier="business",
+    )
+    agency = SimpleNamespace(id="agency-1")
+    db = FakeSession(job, batch, None, agency, None)
+
+    completed = await complete_scan_job(
+        db, job_id=job.id, worker_id="worker-1",
+        result_reference="saved-result-1", quota_committed=True,
+    )
+
+    assert completed is True
+    assert job.status == "completed" and job.quota_consumed is True
+    assert batch.completed_count == 1 and batch.status == "completed"
+    events = [item for item in db.added if isinstance(item, AgencyUsageEvent)]
+    assert len(events) == 1
+    assert events[0].agency_id == "agency-1"
+    assert events[0].workspace_id == "client-workspace-1"
+    assert events[0].event_type == "audit_completed"
+    assert events[0].quantity == 1
+    assert events[0].source_reference == "scan-complete:job-agency-1"
+    assert db.committed
+
+
+@pytest.mark.asyncio
+async def test_complete_scan_job_does_not_create_duplicate_agency_usage_event():
+    job = SimpleNamespace(
+        id="job-agency-2", batch_id="batch-agency-2", status="processing",
+        locked_by="worker-1", locked_at="locked", license_key="business-license",
+        result_reference=None, completed_at=None, quota_consumed=False,
+    )
+    batch = SimpleNamespace(
+        id="batch-agency-2", workspace_id="client-workspace-1",
+        status="processing", processing_count=1, completed_count=0,
+        failed_count=0, cancelled_count=0, total_urls=1,
+        completed_at=None, package_tier="business",
+    )
+    agency = SimpleNamespace(id="agency-1")
+    db = FakeSession(job, batch, None, agency, "existing-usage-event")
+
+    completed = await complete_scan_job(
+        db, job_id=job.id, worker_id="worker-1",
+        result_reference="saved-result-2", quota_committed=True,
+    )
+
+    assert completed is True
+    assert not any(isinstance(item, AgencyUsageEvent) for item in db.added)
+    assert db.committed
