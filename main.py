@@ -1301,7 +1301,7 @@ async def verify_customer_email_change(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Atomically move the verified customer email and revoke every other device session."""
+    """Move the verified customer email and queue durable cross-database billing synchronization."""
     from sqlalchemy import select, update, func
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
