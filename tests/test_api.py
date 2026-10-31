@@ -3204,3 +3204,60 @@ async def test_customer_email_change_confirmation_rejects_short_token(client):
         json={"token": "too-short"},
     )
     assert response.status_code == 422
+
+
+
+@pytest.mark.asyncio
+async def test_customer_portal_exposes_passwordless_sign_in_and_session_logout(client):
+    response = await client.get("/app")
+    assert response.status_code == 200
+    assert 'value="X-Customer-Session"' in response.text
+    assert 'id="loginEmail"' in response.text
+    assert 'id="loginToken"' in response.text
+    assert 'id="requestLogin"' in response.text
+    assert 'id="verifyLogin"' in response.text
+    assert '/api/v1/account/logout' in response.text
+
+
+@pytest.mark.asyncio
+async def test_customer_session_header_authenticates_license(monkeypatch):
+    import auth
+    import hostinger_database
+    from datetime import timedelta
+
+    session_token = "session-token-for-unit-test"
+    session_row = SimpleNamespace(
+        token_hash=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
+        license_key="session-license",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        revoked_at=None,
+    )
+
+    class FakeOperationalSession:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def scalar(self, statement):
+            return session_row
+
+    class FakeLicensingResult:
+        def scalar_one_or_none(self):
+            return SimpleNamespace(
+                license_key="session-license",
+                is_active=True,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            )
+
+    class FakeLicensingSession:
+        async def execute(self, statement):
+            return FakeLicensingResult()
+
+    monkeypatch.setattr(hostinger_database, "HostingerAsyncSessionLocal", FakeOperationalSession)
+    license_obj = await auth.verify_license_or_api_key(
+        api_key=None,
+        license_key=None,
+        customer_session=session_token,
+        db=FakeLicensingSession(),
+    )
+    assert license_obj.license_key == "session-license"
