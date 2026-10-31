@@ -508,7 +508,7 @@ async def cancel_scan_batch(
                 WebsiteScanJob.batch_id == batch.id,
                 WebsiteScanJob.license_key == license_key,
                 WebsiteScanJob.status.in_(("queued", "retry_wait")),
-            ).with_for_update(skip_locked=True)
+            ).with_for_update()
         )).scalars().all()
         for job in pending:
             job.status = "cancelled"
