@@ -286,6 +286,7 @@ async def process_one_scan(worker_id: str) -> dict:
             outcome = await fail_or_retry_scan_job(
                 operational_db, job_id=job_id, worker_id=worker_id,
                 error_code=error_code, retry_delay_seconds=300,
+                retryable=False,
             )
         return {"status": outcome, "job_id": job_id, "error_code": error_code}
     except Exception as exc:
