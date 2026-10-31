@@ -46,6 +46,7 @@ MAX_CRAWL_PAGES = 12
 MAX_LINKS_FROM_HOME = 100
 MAX_URLS_FROM_SITEMAP = 100
 MAX_CHILD_SITEMAPS = 3
+MAX_SITEMAP_DOCUMENTS = 8
 
 PRODUCT_DETAIL_PATH = re.compile(r"(?:^|/)(?:products?|items?)(?:/|$)", re.I)
 
@@ -1109,7 +1110,7 @@ async def run_bounded_site_crawl(
     limitations = [
         f"Same-origin crawl is capped at {MAX_CRAWL_PAGES} URLs and follows discovered HTML links only while page budget remains; it does not crawl the whole site.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        f"Sitemap discovery considers at most {MAX_CHILD_SITEMAPS} same-origin Sitemap directives from robots.txt (falling back to /sitemap.xml when none are usable) and at most {MAX_URLS_FROM_SITEMAP} page URLs. The primary sitemap index expands one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps; additional declared sitemap files are inspected within the same bounded discovery budget, but child indexes referenced by those additional files and deeper sitemap-index nesting are not fully expanded.",
+        f"Sitemap discovery considers at most {MAX_CHILD_SITEMAPS} same-origin Sitemap directives from robots.txt (falling back to /sitemap.xml when none are usable), at most {MAX_SITEMAP_DOCUMENTS} fetched sitemap documents across all discovery paths, and at most {MAX_URLS_FROM_SITEMAP} page URLs. The primary sitemap index expands one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps; additional declared sitemap files are inspected within the same bounded discovery budget, but child indexes referenced by those additional files and deeper sitemap-index nesting are not fully expanded.",
     ]
 
     async with aiohttp.ClientSession(
@@ -1394,6 +1395,7 @@ async def run_bounded_site_crawl(
         # index is expanded only one level, with a strict child-sitemap and URL cap.
         # Every child sitemap must remain on the audited origin before it is fetched.
         sitemap_urls: list[str] = []
+        sitemap_documents_fetched = 0
         conventional_sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
 
         def _same_origin_http_url(value: str, base: str) -> bool:
@@ -1464,6 +1466,7 @@ async def run_bounded_site_crawl(
             ]
 
         try:
+            sitemap_documents_fetched += 1
             sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url, allowed_origin=final_home)
             if 200 <= sitemap_status < 300 and _same_origin(sitemap_final_url, final_home) and (
                 "xml" in sitemap_headers.get("content-type", "").lower()
@@ -1523,7 +1526,11 @@ async def run_bounded_site_crawl(
                     for child_sitemap_url in child_sitemaps:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
+                        if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
+                            limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
+                            break
                         try:
+                            sitemap_documents_fetched += 1
                             child_status, child_body, child_headers, child_final_url = await _safe_get(client, child_sitemap_url, allowed_origin=final_home)
                             if not _same_origin(child_final_url, final_home):
                                 findings.append(_finding(
@@ -1627,7 +1634,11 @@ async def run_bounded_site_crawl(
         for extra_sitemap_url in additional_sitemaps:
             if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                 break
+            if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
+                limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
+                break
             try:
+                sitemap_documents_fetched += 1
                 extra_status, extra_body, extra_headers, extra_final_url = await _safe_get(
                     client, extra_sitemap_url, allowed_origin=final_home
                 )
@@ -1697,7 +1708,11 @@ async def run_bounded_site_crawl(
                     for nested_url in nested_children:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
+                        if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
+                            limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
+                            break
                         try:
+                            sitemap_documents_fetched += 1
                             nested_status, nested_body, nested_headers, nested_final = await _safe_get(
                                 client, nested_url, allowed_origin=final_home
                             )
