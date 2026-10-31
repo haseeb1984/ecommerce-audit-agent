@@ -200,9 +200,11 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
-@app.get("/")
-def read_root():
-    return {"status": "AI Agent Commercial Engine Operational"}
+@app.get("/", include_in_schema=False)
+@app.get("/pricing", include_in_schema=False)
+async def public_marketing_site():
+    """Serve the public marketing, package comparison, and purchase entry point."""
+    return FileResponse(Path(__file__).resolve().parent / "marketing.html")
 
 
 @app.get("/health-check")
