@@ -16,10 +16,11 @@ Billing provider: **Paddle Billing**. Stripe is not part of the intended checkou
 
 Configure values in Vercel environment settings/secret manager. Never commit credentials or print them to logs.
 
-- Database: `DATABASE_URL`, `DATABASE_SSL` and required trusted CA.
+- Database: `DATABASE_URL`, `DATABASE_SSL` and required trusted CA; `HOSTINGER_DATABASE_URL` using `mysql+asyncmy` and `HOSTINGER_DB_SSL` for operational customer/scan data.
 - AI/PageSpeed: existing provider settings required by the audit runner.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TLS_MODE`.
 - Paddle: `PADDLE_ENVIRONMENT=sandbox` for initial testing; `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, optional approved `PADDLE_CHECKOUT_URL`, and `PADDLE_PRICE_ID_<PLAN>`. Configure quotas with `LICENSE_MONTHLY_AUDITS_<PLAN>`.
+- Worker: configure `CRON_SECRET` or `SCAN_WORKER_SECRET`, then configure an external scheduler to call `GET /api/v1/internal/scan-worker` with `Authorization: Bearer <configured-value>`. Each call processes at most one queued scan and reconciles pending customer/billing outboxes.
 - Create Paddle catalog products/prices and set corresponding price IDs.
 - Create a Paddle notification destination at `https://ecommerce-audit-agent.vercel.app/api/v1/billing/paddle-webhook`, subscribe to `transaction.completed`, and store its destination secret as `PADDLE_WEBHOOK_SECRET`.
 
@@ -27,7 +28,7 @@ Checkout remains unavailable until Paddle API key, webhook secret, SMTP host/sen
 
 ## Database migration
 
-Apply `migrations/2026-10-22-audit-reports.sql` once to the intended PostgreSQL database using the established deployment approval process. It creates `audit_reports` and `payment_webhook_events`. Test schema creation alone does not prove the production migration was applied.
+Apply the PostgreSQL migrations in chronological order using the established deployment approval process. This includes `migrations/20261101_worker_outboxes_and_scan_idempotency.sql`, which adds scan-job idempotency and the customer-lifecycle/billing mirror outboxes. The Hostinger operational models are initialized by the protected worker on first invocation. Test schema creation alone does not prove production migrations or Hostinger initialization were applied.
 
 ## Coverage semantics
 
@@ -35,7 +36,8 @@ The API's `category_signal_coverage_pct` is the percentage of required audit cat
 
 ## Go-live acceptance checklist
 
-- [ ] Configure Paddle sandbox API key, price IDs, webhook destination secret, and SMTP settings in deployment secrets.
+- [ ] Configure Paddle sandbox API key, price IDs, webhook destination secret, SMTP settings, Hostinger MySQL connection, and worker scheduler authentication in deployment secrets.
+- [ ] Apply the PostgreSQL worker/outbox migration and invoke the protected worker once in staging to initialize Hostinger operational tables.
 - [ ] Confirm `/api/v1/billing/plans` lists configured plans and the portal starts Paddle Checkout.
 - [ ] Complete one sandbox purchase with a controlled test email and verify one license email.
 - [ ] Replay the same signed Paddle event and verify no duplicate license is created.
