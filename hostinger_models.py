@@ -6,7 +6,7 @@ These tables hold customer-facing operational state and retryable projections.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, DateTime, Index, Integer, String, Text,
+    BigInteger, Boolean, Column, DateTime, Index, Integer, String, Text, UniqueConstraint,
 )
 from hostinger_database import HostingerBase
 
@@ -90,6 +90,24 @@ class CustomerEmailIdentitySyncOutbox(HostingerBase):
     last_error = Column(String(120), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     processed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class CustomerWebsite(HostingerBase):
+    """A customer-owned public storefront registered for repeatable scans."""
+    __tablename__ = "customer_websites"
+    __table_args__ = (
+        UniqueConstraint("license_key", "canonical_url", name="uq_customer_websites_license_url"),
+        Index("ix_customer_websites_license_updated", "license_key", "updated_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    display_name = Column(String(120), nullable=False)
+    canonical_url = Column(String(2048), nullable=False)
+    status = Column(String(20), nullable=False, default="active", index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_scan_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class WebsiteScanResult(HostingerBase):
