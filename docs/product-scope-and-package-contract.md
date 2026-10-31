@@ -109,3 +109,14 @@ Still outstanding:
 - Client workspace selector is now available on the bulk-scan form; submissions carry a workspace ID only when the Business owner selects an active client.
 - Scan batches store optional `workspace_id`; personal submissions remain unassigned. The owner can view client-specific batch status/history at `GET /api/v1/account/agency/clients/{workspace_id}/audits`.
 - Client audit history currently shows batch/job counts and status, not the complete saved audit report/evidence detail.
+
+
+### Agency team authentication and least-privilege portal
+
+- Accepted agency teammates can request a 6-digit email OTP and receive an independent 12-hour opaque bearer session; the owner license key is never issued to a team member.
+- Team login checks that the agency is active and its owner still has an active Business entitlement.
+- Team members can list only active client workspaces explicitly granted to them and read batch status/history only inside those workspaces.
+- The owner can revoke a teammate; revocation also revokes that member's active sessions. Sessions can also be ended by the member.
+- Dedicated team portal is served at `/agency`; it stores the opaque team session in browser session storage and offers assigned-workspace audit batch history.
+- New operational tables are included in the additive agency migration. The migration remains unapplied in production.
+- Team member access currently covers assigned-workspace audit batch status/history. It does not yet expose full audit report/evidence, WordPress site connection, client-level quota/usage, or team member write operations.
