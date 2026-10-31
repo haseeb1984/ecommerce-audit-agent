@@ -43,7 +43,7 @@ from database import Base, get_async_db
 from scan_api import router as scan_router
 from scan_worker_api import router as scan_worker_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
-from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox
+from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -3880,10 +3880,7 @@ async def _billing_license_ids_for_email(
 
 
 async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> bool:
-    """Mirror a committed billing event to Hostinger without moving entitlement authority."""
-    if HostingerAsyncSessionLocal is None:
-        logger.warning("Billing history mirror skipped because Hostinger is unavailable.")
-        return False
+    """Mirror a committed billing event and durably queue failed cross-database delivery."""
     from sqlalchemy import select
     try:
         event = (await db.execute(
@@ -3896,34 +3893,69 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
         )
         if not license_key:
             return False
-        async with HostingerAsyncSessionLocal() as operational_db:
-            stored = await operational_db.get(CustomerBillingEvent, event.event_id)
-            if stored is None:
-                stored = CustomerBillingEvent(
-                    event_id=event.event_id,
-                    license_key=license_key,
-                    recipient_email=event.recipient_email[:254],
-                    status=event.status[:40],
-                    transaction_id=event.transaction_id,
-                    subscription_id=event.subscription_id,
-                    paddle_customer_id=event.paddle_customer_id,
-                    created_at=event.created_at,
-                    updated_at=event.updated_at,
-                )
-                operational_db.add(stored)
+
+        mirror_error = None
+        if HostingerAsyncSessionLocal is None:
+            mirror_error = "HostingerUnavailable"
+        else:
+            try:
+                async with HostingerAsyncSessionLocal() as operational_db:
+                    stored = await operational_db.get(CustomerBillingEvent, event.event_id)
+                    if stored is None:
+                        operational_db.add(CustomerBillingEvent(
+                            event_id=event.event_id,
+                            license_key=license_key,
+                            recipient_email=(event.recipient_email or "")[:254],
+                            status=(event.status or "unknown")[:40],
+                            transaction_id=event.transaction_id,
+                            subscription_id=event.subscription_id,
+                            paddle_customer_id=event.paddle_customer_id,
+                            created_at=event.created_at,
+                            updated_at=event.updated_at,
+                        ))
+                    else:
+                        stored.license_key = license_key
+                        stored.recipient_email = (event.recipient_email or "")[:254]
+                        stored.status = (event.status or "unknown")[:40]
+                        stored.transaction_id = event.transaction_id
+                        stored.subscription_id = event.subscription_id
+                        stored.paddle_customer_id = event.paddle_customer_id
+                        stored.updated_at = event.updated_at
+                    await operational_db.commit()
+            except Exception as exc:
+                mirror_error = type(exc).__name__
+
+        pending = await db.get(BillingMirrorSyncOutbox, event_id)
+        if mirror_error:
+            if pending is None:
+                db.add(BillingMirrorSyncOutbox(
+                    event_id=event_id,
+                    status="pending",
+                    attempts=0,
+                    next_attempt_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+                    last_error=mirror_error[:120],
+                ))
             else:
-                stored.license_key = license_key
-                stored.recipient_email = event.recipient_email[:254]
-                stored.status = event.status[:40]
-                stored.transaction_id = event.transaction_id
-                stored.subscription_id = event.subscription_id
-                stored.paddle_customer_id = event.paddle_customer_id
-                stored.updated_at = event.updated_at
-            await operational_db.commit()
+                pending.status = "pending"
+                pending.last_error = mirror_error[:120]
+                pending.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+                pending.processed_at = None
+            await db.commit()
+            logger.warning(
+                "Billing history mirror deferred (error_type=%s, event_id_hash=%s)",
+                mirror_error,
+                hashlib.sha256(event_id.encode()).hexdigest()[:12],
+            )
+            return False
+
+        if pending is not None:
+            await db.delete(pending)
+            await db.commit()
         return True
     except Exception as exc:
+        await db.rollback()
         logger.warning(
-            "Billing history mirror failed (error_type=%s, event_id_hash=%s)",
+            "Billing history mirror bookkeeping failed (error_type=%s, event_id_hash=%s)",
             type(exc).__name__,
             hashlib.sha256(event_id.encode()).hexdigest()[:12],
         )
