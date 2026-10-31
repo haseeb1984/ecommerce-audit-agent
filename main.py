@@ -55,7 +55,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -2448,6 +2448,67 @@ async def logout_agency_team_session(response: Response, identity=Depends(requir
     return {"status": "logged_out"}
 
 
+@app.get("/api/v1/agency/team/workspaces/{workspace_id}/audit-results")
+async def list_agency_team_workspace_audit_results(
+    workspace_id: str,
+    response: Response,
+    batch_id: str | None = Query(default=None, min_length=1, max_length=64),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=1000000),
+    identity=Depends(require_agency_team_session),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return structured audit evidence only within a teammate's explicitly granted workspace."""
+    from sqlalchemy import select
+    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+        AgencyWorkspaceAccess.workspace_id == workspace_id,
+    ))
+    if grant is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == identity["agency"].id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace not found.")
+    statement = select(WebsiteScanJob, WebsiteScanResult).join(
+        ScanBatch, ScanBatch.id == WebsiteScanJob.batch_id
+    ).outerjoin(WebsiteScanResult, WebsiteScanResult.job_id == WebsiteScanJob.id).where(
+        ScanBatch.license_key == identity["agency"].owner_license_key,
+        ScanBatch.workspace_id == workspace.id,
+    )
+    if batch_id:
+        statement = statement.where(ScanBatch.id == batch_id)
+    rows = (await operational_db.execute(
+        statement.order_by(WebsiteScanJob.created_at.desc()).offset(offset).limit(limit)
+    )).all()
+    def decoded(raw, fallback):
+        try:
+            return json.loads(raw) if raw else fallback
+        except (TypeError, ValueError):
+            return fallback
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"workspace_id": workspace.id, "workspace_name": workspace.display_name, "items": [{
+        "job_id": job.id, "batch_id": job.batch_id, "url": job.target_url,
+        "status": job.status, "attempt_count": job.attempt_count,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "result": ({
+            "status": result.status, "overall_score": result.overall_score,
+            "finding_count": result.finding_count,
+            "findings": decoded(result.findings_json, [])[:200],
+            "check_outcomes": decoded(result.check_outcomes_json, [])[:300],
+            "coverage": decoded(result.coverage_json, {}),
+            "summary": decoded(result.summary_json, {}),
+            "created_at": result.created_at.isoformat() if result.created_at else None,
+        } if result is not None else None),
+    } for job, result in rows], "limit": limit, "offset": offset}
+
+
 @app.get("/api/v1/agency/team/workspaces")
 async def list_agency_team_workspaces(response: Response, identity=Depends(require_agency_team_session),
                                       operational_db: AsyncSession = Depends(get_hostinger_db)):
@@ -2503,6 +2564,68 @@ async def list_agency_team_workspace_audits(workspace_id: str, response: Respons
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "completed_at": item.completed_at.isoformat() if item.completed_at else None,
     } for item in batches], "limit": limit, "offset": offset}
+
+
+@app.get("/api/v1/account/agency/clients/{workspace_id}/audit-results")
+async def list_business_agency_client_audit_results(
+    workspace_id: str,
+    response: Response,
+    batch_id: str | None = Query(default=None, min_length=1, max_length=64),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=1000000),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return saved structured audit findings/evidence for one owner's client workspace."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency client audit results are available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Business agency workspace was not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace was not found.")
+    statement = select(WebsiteScanJob, WebsiteScanResult).join(
+        ScanBatch, ScanBatch.id == WebsiteScanJob.batch_id
+    ).outerjoin(WebsiteScanResult, WebsiteScanResult.job_id == WebsiteScanJob.id).where(
+        ScanBatch.license_key == license_obj.license_key,
+        ScanBatch.workspace_id == workspace.id,
+    )
+    if batch_id:
+        statement = statement.where(ScanBatch.id == batch_id)
+    rows = (await operational_db.execute(
+        statement.order_by(WebsiteScanJob.created_at.desc()).offset(offset).limit(limit)
+    )).all()
+    def decoded(raw, fallback):
+        try:
+            return json.loads(raw) if raw else fallback
+        except (TypeError, ValueError):
+            return fallback
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"workspace_id": workspace.id, "workspace_name": workspace.display_name, "items": [{
+        "job_id": job.id, "batch_id": job.batch_id, "url": job.target_url,
+        "status": job.status, "attempt_count": job.attempt_count,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "result": ({
+            "status": result.status, "overall_score": result.overall_score,
+            "finding_count": result.finding_count,
+            "findings": decoded(result.findings_json, [])[:200],
+            "check_outcomes": decoded(result.check_outcomes_json, [])[:300],
+            "coverage": decoded(result.coverage_json, {}),
+            "summary": decoded(result.summary_json, {}),
+            "created_at": result.created_at.isoformat() if result.created_at else None,
+        } if result is not None else None),
+    } for job, result in rows], "limit": limit, "offset": offset}
 
 
 @app.get("/api/v1/account/agency/clients/{workspace_id}/audits")
