@@ -73,7 +73,7 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
             view.addEventListener("click",async()=>{
               view.disabled=true;evidence.replaceChildren();
               try {
-                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=100");
+                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25");
                 if(!saved.items.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="No saved audit results are available yet.";evidence.append(empty);}
                 for(const audit of saved.items){
                   const resultCard=document.createElement("div");resultCard.className="batch";
