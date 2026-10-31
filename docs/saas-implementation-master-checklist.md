@@ -15,7 +15,7 @@
 
 | Requirement area | Current status | Evidence / remaining gate |
 |---|---|---|
-| Customer website inventory and background scans | Implemented / verification pending | License-scoped website CRUD/archive, durable scan enqueue/status/history/result APIs, and customer portal controls now use Hostinger operational storage. Hostinger connection/schema initialization and a protected external scheduler are required; staging end-to-end acceptance is pending. |
+| Customer website inventory and background scans | Implemented / verification pending | License-scoped website CRUD/archive, durable scan enqueue/status/history/result APIs, customer portal controls, and admin queue inspection/failed-job retry now use Hostinger operational storage. Hostinger connection/schema initialization and a protected external scheduler are required; staging end-to-end acceptance is pending. |
 | Cross-database customer lifecycle and billing synchronization | Implemented / verification pending | Canonical Paddle/admin events now enqueue PostgreSQL outbox records; the worker retries projections into Hostinger. Apply the new PostgreSQL migration and verify retry/idempotency against staging databases. |
 | Scheduled worker execution | Partial | A bearer-protected worker endpoint processes one queued scan and reconciles outboxes. No cron schedule is configured in vercel.json; configure an approved external scheduler and verify invocation cadence/recovery. |
 | Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; re-run on latest branch head. |
