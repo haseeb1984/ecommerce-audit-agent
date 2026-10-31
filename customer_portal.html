@@ -580,8 +580,16 @@
       const info = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = site.site_url || site.site_host || "WordPress site";
       const meta = document.createElement("small");
-      meta.textContent = "Status: " + (site.status || "unknown") + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
-      info.append(title, meta); card.append(info);
+      const health = site.connection_health || site.status || "unknown";
+      meta.textContent = "Status: " + health + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
+      info.append(title, meta);
+      if (health === "stale") {
+        const recovery = document.createElement("small");
+        recovery.className = "muted";
+        recovery.textContent = "No plugin heartbeat received for over " + (site.stale_after_days || 7) + " days. Open WordPress Admin → Plugins, confirm the Ecommerce Audit Agent plugin is active, then use its connection settings to reconnect with this license.";
+        info.append(recovery);
+      }
+      card.append(info);
       if (site.status === "active") {
         const button = document.createElement("button"); button.className = "secondary"; button.type = "button"; button.textContent = "Disconnect site";
         button.addEventListener("click", async () => {
