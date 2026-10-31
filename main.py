@@ -97,7 +97,7 @@ async def apply_response_security_headers(request: Request, call_next):
         "/api/v1/admin/",
         "/api/v1/account/",
         "/api/v1/reports",
-        "/api/v1/websites/",
+        "/api/v1/websites",
         "/api/v1/scans/",
         "/admin",
         "/app",
@@ -1095,12 +1095,18 @@ async def _ensure_hostinger_operational_schema():
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Website inventory is not configured.")
     if not getattr(app.state, "hostinger_schema_ready", False):
-        try:
-            await ensure_hostinger_schema()
-            app.state.hostinger_schema_ready = True
-        except Exception as exc:
-            logger.error("Hostinger schema initialization failed (error_type=%s)", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Website inventory is temporarily unavailable.") from exc
+        lock = getattr(app.state, "hostinger_schema_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            app.state.hostinger_schema_lock = lock
+        async with lock:
+            if not getattr(app.state, "hostinger_schema_ready", False):
+                try:
+                    await ensure_hostinger_schema()
+                    app.state.hostinger_schema_ready = True
+                except Exception as exc:
+                    logger.error("Hostinger schema initialization failed (error_type=%s)", type(exc).__name__)
+                    raise HTTPException(status_code=503, detail="Website inventory is temporarily unavailable.") from exc
     return HostingerAsyncSessionLocal
 
 
@@ -1153,10 +1159,15 @@ async def create_customer_website(
             select(CustomerWebsite).where(
                 CustomerWebsite.license_key == license_obj.license_key,
                 CustomerWebsite.url_hash == url_hash,
-                CustomerWebsite.status == "active",
             )
         )).scalar_one_or_none()
         if existing is not None:
+            if existing.status != "active":
+                existing.status = "active"
+                existing.updated_at = datetime.now(timezone.utc)
+                if requested_name := (payload.display_name or "").strip():
+                    existing.display_name = requested_name[:120]
+                await operational_db.commit()
             return {"id": existing.id, "website_url": existing.canonical_url,
                     "display_name": existing.display_name, "status": existing.status,
                     "already_registered": True}
