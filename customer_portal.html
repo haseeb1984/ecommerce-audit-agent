@@ -735,9 +735,10 @@
           });
           tokenPanel.append(instruction, token, copy);
           websiteStatus.textContent = "Connection token generated; awaiting WordPress plugin registration.";
+          connectWebsite.textContent = "Token issued — awaiting connection";
         } catch (error) {
           setStatus("agencyStatus", error.message, "error");
-        } finally { connectWebsite.disabled = false; }
+        } finally { if (!tokenPanel.childElementCount) connectWebsite.disabled = false; else connectWebsite.disabled = true; }
       });
       const disconnectWebsite = document.createElement("button"); disconnectWebsite.type = "button";
       disconnectWebsite.className = "secondary"; disconnectWebsite.textContent = "Disconnect website"; disconnectWebsite.hidden = true;
