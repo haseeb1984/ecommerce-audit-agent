@@ -5403,14 +5403,16 @@ async def admin_customer_account_action(
             sql_func.lower(CustomerAccount.email) == normalized
         ).distinct()
     )).scalars().all())
-    ids = list((await db.execute(
+    # Always union both sources because operational-data migration is incremental.
+    ids = set((await db.execute(
         select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(account_license_keys))
-    )).scalars().all()) if account_license_keys else []
-    if not ids:
-        ids = list((await db.execute(select(SoftwareLicense.id).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
-        )).scalars().all())
+    )).scalars().all()) if account_license_keys else set()
+    legacy_ids = (await db.execute(select(SoftwareLicense.id).join(
+        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
+    )).scalars().all()
+    ids.update(legacy_ids)
+    ids = sorted(ids)
     if not ids:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     now = datetime.now(timezone.utc)
