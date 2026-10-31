@@ -46,9 +46,9 @@ Do not merge or deploy solely because CI passes. First verify the agreed scope a
 ### WordPress integration lifecycle follow-up
 
 - Customer WordPress installation listing is license-scoped and now exposes a non-mutating connection-health signal: active sites with no heartbeat or a heartbeat older than seven days are marked stale; recent active sites are healthy; disconnected sites remain disconnected.
-- WordPress site registration now takes a PostgreSQL `FOR UPDATE` lock on the canonical license before Hostinger account/site writes. This serializes same-license registrations, including first-account creation, so the 10-active-site limit cannot be bypassed by concurrent registration requests. A cross-database integration test with concurrent requests remains part of release verification.
-- The customer portal provides concrete recovery steps for stale plugin connections. Re-registration for the same license and hostname refreshes the existing installation record; existing license authentication and active-site limits still apply.
-- Remaining release acceptance: exercise register/re-register/disconnect/status flows against provisioned Hostinger MySQL and a real WordPress plugin installation, including suspended/expired license behavior and concurrent site-limit attempts. This change has not been runtime-tested in this implementation batch.
+- WordPress site registration now takes a PostgreSQL `FOR UPDATE` lock on the canonical license before Hostinger account/site writes. This serializes same-license registrations, including first-account creation, so concurrent registration requests cannot create more than one active WordPress connection for a customer license. A cross-database integration test with concurrent requests remains part of release verification.
+- The customer portal provides concrete recovery steps for stale plugin connections. Re-registration for the same license and hostname refreshes the existing installation record; existing license authentication and the one-active-site rule still apply.
+- Remaining release acceptance: exercise register/re-register/disconnect/status flows against provisioned Hostinger MySQL and a real WordPress plugin installation, including suspended/expired license behavior and concurrent duplicate-registration attempts. This change has not been runtime-tested in this implementation batch.
 
 
 ### Customer lifecycle synchronization retry ordering
