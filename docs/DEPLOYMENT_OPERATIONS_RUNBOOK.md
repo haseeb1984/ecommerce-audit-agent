@@ -106,3 +106,11 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - The portal calls `POST /api/v1/scan-jobs/{job_id}/retry` using the currently connected license/session. The API scopes the job and batch to that license, accepts only failed jobs in a failed non-cancelled batch, and returns HTTP 409 for a state conflict or 404 for a job outside the account.
 - A retry reuses the original job and idempotency identity; it does not create another URL submission. After acceptance, the portal reloads the batch list and job detail so queued/processing/completed state is refreshed. If the request fails, the portal displays the API error and leaves the retry available only when the previously loaded batch state still permits it.
 - Progress is refreshed on demand through **Refresh progress** or after queue/cancel/retry actions. This portal view does not claim continuous live updates.
+
+
+### Admin bulk-scan queue monitoring
+
+- The admin portal's **Bulk scan queue monitoring** panel calls `GET /api/v1/admin/scan-operations` with the configured admin key. The endpoint is read-only and sets private no-store response headers.
+- Queue counts are aggregated from Hostinger operational tables; failed-job details are capped at the latest 50 records. The display includes only job/batch IDs, mapped license ID, hostname, attempt counts, safe error code, and timestamps—not full target URLs, credentials, or customer secrets.
+- The endpoint reads scan batches/jobs from Hostinger and maps license keys to license IDs using the licensing database. Both database dependencies must be healthy for complete customer mapping; an unmapped license is shown as such rather than exposing its license key.
+- This is an operator snapshot, not a live stream. Use **Refresh diagnostics** to request a new snapshot. The panel does not retry, cancel, or otherwise mutate jobs.
