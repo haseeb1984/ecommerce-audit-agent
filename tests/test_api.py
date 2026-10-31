@@ -3172,3 +3172,34 @@ async def test_admin_scan_queue_requires_operator_authentication(client):
     assert response.status_code == 401
     retry = await client.post("/api/v1/admin/scan-jobs/not-a-job/retry")
     assert retry.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_customer_email_change_requires_account_authentication(client):
+    response = await client.post(
+        "/api/v1/account/email-change",
+        json={"email": "new-customer@example.com"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_email_change_rejects_invalid_email_before_operational_database(client):
+    await create_license(key="email-change-invalid-address")
+    response = await client.post(
+        "/api/v1/account/email-change",
+        json={"email": "not-an-email"},
+        headers={"X-License-Key": "email-change-invalid-address"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Enter a valid email address."
+
+
+@pytest.mark.asyncio
+async def test_customer_email_change_confirmation_rejects_short_token(client):
+    response = await client.post(
+        "/api/v1/account/email-change/confirm",
+        json={"token": "too-short"},
+    )
+    assert response.status_code == 422
