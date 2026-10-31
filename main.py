@@ -383,7 +383,7 @@ async def audit_lead(
 ):
     # Conversion dossiers are a premium entitlement; reject before quota reservation or provider calls.
     if not plan_features(license_obj.tier)["conversion_dossier"]:
-        raise HTTPException(status_code=403, detail="Conversion dossiers require a Pro, Agency, or Business plan.")
+        raise HTTPException(status_code=403, detail="Conversion dossiers require a Pro or Business plan.")
     # Validate and canonicalize before reserving quota or calling any external provider.
     # This keeps rejected input free of billable audit work and avoids inconsistent URL handling.
     try:
@@ -1104,23 +1104,29 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
-    linked = (await operational_db.execute(select(CustomerBillingEvent).where(
-        func.lower(CustomerBillingEvent.recipient_email) == email,
-    ).order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.created_at.desc()).limit(1))).scalar_one_or_none()
-    linked_license_key = linked.license_key if linked is not None else None
-    if linked_license_key is None:
-        # Compatibility fallback while existing PostgreSQL billing events are
-        # being copied to Hostinger; new billing history is mirrored operationally.
-        legacy_link = (await db.execute(select(PaymentWebhookEvent).where(
+    # One verified customer email owns exactly one SaaS license. Union the
+    # operational mirror and legacy billing ledger during migration, then fail
+    # closed if historical data links this email to more than one license.
+    operational_license_keys = set((await operational_db.execute(
+        select(CustomerBillingEvent.license_key).where(
+            func.lower(CustomerBillingEvent.recipient_email) == email,
+            CustomerBillingEvent.license_key.is_not(None),
+        ).distinct()
+    )).scalars().all())
+    legacy_license_keys = set((await db.execute(
+        select(SoftwareLicense.license_key)
+        .join(PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id)
+        .where(
             func.lower(PaymentWebhookEvent.recipient_email) == email,
-            PaymentWebhookEvent.license_id.is_not(None),
-        ).order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc()).limit(1))).scalar_one_or_none()
-        if legacy_link is not None:
-            linked_license_key = await db.scalar(
-                select(SoftwareLicense.license_key).where(SoftwareLicense.id == legacy_link.license_id)
-            )
-    if linked_license_key is None:
+            SoftwareLicense.license_key.is_not(None),
+        ).distinct()
+    )).scalars().all())
+    linked_license_keys = operational_license_keys | legacy_license_keys
+    if len(linked_license_keys) != 1:
+        if len(linked_license_keys) > 1:
+            logger.warning("Customer sign-in blocked because the verified email maps to multiple licenses.")
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
+    linked_license_key = next(iter(linked_license_keys))
 
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
     if len(auth_secret) < 32:
@@ -1532,135 +1538,6 @@ async def logout_all_account_sessions(
     return {"status": "sessions_revoked", "revoked_count": int(result.rowcount or 0)}
 
 
-@app.get("/api/v1/account/licenses")
-async def list_customer_account_licenses(
-    response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
-    operational_db: AsyncSession = Depends(get_hostinger_db),
-):
-    """List every license linked to the verified checkout email on this browser session."""
-    from sqlalchemy import func, select
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Email sign-in is required to manage linked licenses.")
-    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await operational_db.execute(select(CustomerSession).where(
-        CustomerSession.token_hash == token_hash,
-        CustomerSession.revoked_at.is_(None),
-    ))).scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    linked_license_keys = set((await operational_db.execute(
-        select(CustomerBillingEvent.license_key).where(
-            func.lower(CustomerBillingEvent.recipient_email) == session.email.lower()
-        ).distinct()
-    )).scalars().all())
-    # Union both stores on every request: migration is incremental, so a customer
-    # can have some billing events mirrored to Hostinger while older events remain
-    # only in PostgreSQL. A fallback-only query would hide those partially migrated
-    # licenses as soon as even one Hostinger event existed.
-    linked_ids = set((await db.execute(
-        select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(linked_license_keys))
-    )).scalars().all()) if linked_license_keys else set()
-    legacy_linked_ids = (await db.execute(
-        select(SoftwareLicense.id).join(
-            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(
-            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-            SoftwareLicense.id.is_not(None),
-        ).distinct()
-    )).scalars().all()
-    linked_ids.update(legacy_linked_ids)
-    licenses = (await db.execute(select(SoftwareLicense).where(
-        SoftwareLicense.id.in_(linked_ids)
-    ).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc()))).scalars().all() if linked_ids else []
-    response.headers["Cache-Control"] = "no-store, private"
-    response.headers["Pragma"] = "no-cache"
-    now = datetime.now(timezone.utc)
-    items = []
-    for item in licenses:
-        expires_at = item.expires_at
-        if expires_at is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        expired = bool(expires_at is not None and expires_at <= now)
-        items.append({
-            "id": item.id,
-            "client_name": item.client_name,
-            "tier": item.tier,
-            "is_active": bool(item.is_active),
-            "expired": expired,
-            "selectable": bool(item.is_active) and not expired,
-            "expires_at": expires_at.isoformat() if expires_at else None,
-            "selected": item.license_key == session.license_key,
-        })
-    return {
-        "items": items,
-        "selected_license_key": session.license_key,
-    }
-
-
-@app.post("/api/v1/account/licenses/switch")
-async def switch_customer_account_license(
-    request: Request,
-    response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
-    operational_db: AsyncSession = Depends(get_hostinger_db),
-):
-    """Switch the current browser session only to a license linked to its verified email."""
-    from sqlalchemy import func, select
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Email sign-in is required to switch linked licenses.")
-    try:
-        payload = await request.json()
-        target_id = int(payload.get("license_id"))
-    except (ValueError, TypeError, AttributeError):
-        raise HTTPException(status_code=422, detail="A valid license_id is required.")
-    token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    session = (await operational_db.execute(select(CustomerSession).where(
-        CustomerSession.token_hash == token_hash,
-        CustomerSession.revoked_at.is_(None),
-    ).with_for_update())).scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    target_license_key = await db.scalar(
-        select(SoftwareLicense.license_key).where(SoftwareLicense.id == target_id)
-    )
-    allowed = await operational_db.scalar(select(CustomerBillingEvent.event_id).where(
-        CustomerBillingEvent.license_key == target_license_key,
-        func.lower(CustomerBillingEvent.recipient_email) == session.email.lower(),
-    ).limit(1)) if target_license_key else None
-    if allowed is None:
-        allowed = (await db.execute(select(PaymentWebhookEvent.event_id).where(
-            PaymentWebhookEvent.license_id == target_id,
-            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-        ).limit(1))).scalar_one_or_none()
-    if allowed is None:
-        raise HTTPException(status_code=403, detail="That license is not linked to this verified customer email.")
-    target = (await db.execute(select(SoftwareLicense).where(
-        SoftwareLicense.id == target_id
-    ))).scalar_one_or_none()
-    if target is None:
-        raise HTTPException(status_code=404, detail="Linked license was not found.")
-    target_expiry = target.expires_at
-    if target_expiry is not None and target_expiry.tzinfo is None:
-        target_expiry = target_expiry.replace(tzinfo=timezone.utc)
-    if not target.is_active or (target_expiry is not None and target_expiry <= datetime.now(timezone.utc)):
-        raise HTTPException(status_code=403, detail="That linked license is inactive or expired and cannot be selected.")
-    session.license_key = target.license_key
-    session.last_seen_at = datetime.now(timezone.utc)
-    await operational_db.commit()
-    response.headers["Cache-Control"] = "no-store, private"
-    response.headers["Pragma"] = "no-cache"
-    return {"status": "switched", "account": {
-        "client_name": target.client_name, "tier": target.tier,
-        "license_id": target.id, "is_active": bool(target.is_active),
-    }}
-
-
-
 @app.post("/api/v1/integrations/wordpress/sites/register", status_code=201)
 async def register_wordpress_site(
     payload: WordPressSiteRegister,
@@ -1725,8 +1602,8 @@ async def register_wordpress_site(
         WordPressInstallation.status == "active",
     ))).scalar_one() or 0)
     if existing is None:
-        if active_count >= 10:
-            raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
+        if active_count >= 1:
+            raise HTTPException(status_code=409, detail="This license already has a connected WordPress site. Disconnect it before connecting another site.")
         existing = WordPressInstallation(
             id=secrets.token_urlsafe(24), license_key=license_obj.license_key,
             site_url=site_url, site_host=host, admin_email=admin_email,
@@ -1738,8 +1615,8 @@ async def register_wordpress_site(
         )
         operational_db.add(existing)
     else:
-        if existing.status != "active" and active_count >= 10:
-            raise HTTPException(status_code=409, detail="This license already has the maximum of 10 connected WordPress sites.")
+        if existing.status != "active" and active_count >= 1:
+            raise HTTPException(status_code=409, detail="This license already has a connected WordPress site. Disconnect it before connecting another site.")
         existing.site_url = site_url
         existing.admin_email = admin_email
         existing.customer_email = owner_email.strip().lower() if owner_email else None
