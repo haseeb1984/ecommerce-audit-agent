@@ -278,7 +278,7 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
     unnamed_input_actions = [
         item for item in parser.input_action_controls
         if not (
-            item["value"] or item["aria_label"] or item["aria_labelledby"] or item["title"]
+            item["value"] or item["aria_label"] or has_resolvable_labelledby(item) or item["title"]
         )
     ]
     if unnamed_input_actions:
