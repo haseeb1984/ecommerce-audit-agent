@@ -5132,8 +5132,8 @@ async def admin_customer_directory(
     ).group_by(identity_sources.c.email)
     count_query = select(sql_func.count(sql_func.distinct(identity_sources.c.email)))
     if normalized:
-        literal = normalized.replace("%", "").replace("_", "")
-        email_filter = identity_sources.c.email.ilike(f"%{literal}%")
+        search_term = normalized.replace("%", "").replace("_", "")
+        email_filter = identity_sources.c.email.ilike(f"%{search_term}%")
         query = query.where(email_filter)
         count_query = count_query.where(email_filter)
     total = int((await operational_db.execute(count_query)).scalar_one() or 0)
