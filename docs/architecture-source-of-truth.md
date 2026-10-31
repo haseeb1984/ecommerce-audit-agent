@@ -24,14 +24,15 @@ customer PDF files in Supabase.
 
 ## Package and bulk-scan behavior
 
-All three customer packages use the same operational website/scan queue model.
-Package entitlements determine allowed website/audit quantities and execution
-concurrency; package-specific values remain managed by the existing plan catalogue
-and licensing rules rather than being hard-coded into queue storage.
+Each customer account/license is associated with one ecommerce website.
+The Starter, Pro, and Business packages govern audit allowances and execution
+concurrency; they do not represent multi-website or agency site allowances.
 
-Bulk submissions are persisted in Hostinger MySQL. The application divides
-submitted URLs into batches of 10 or 11, persists each URL as an independently
-tracked job, and advances queued batches as worker capacity becomes available.
+Bulk submissions may contain multiple pages, but every URL in one submission
+must belong to that same ecommerce website. Bulk submissions are persisted in
+Hostinger MySQL. The application divides submitted page URLs into batches of
+10 or 11, persists each URL as an independently tracked job, and advances queued
+batches as worker capacity becomes available.
 Job identity/idempotency, attempts, retry timing, claim ownership, quota reservation
 and quota-consumption state must be persisted so retries/restarts do not create
 duplicate work or duplicate usage deductions.
