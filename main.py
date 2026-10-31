@@ -1975,10 +1975,29 @@ async def list_business_agency_team(
     members = (await operational_db.execute(select(AgencyTeamMember).where(
         AgencyTeamMember.agency_id == agency.id
     ).order_by(AgencyTeamMember.created_at.desc()).limit(500))).scalars().all()
+    member_ids = [item.id for item in members]
+    access_rows = []
+    if member_ids:
+        access_rows = (await operational_db.execute(
+            select(AgencyWorkspaceAccess, AgencyClientWorkspace.display_name)
+            .join(AgencyClientWorkspace, AgencyClientWorkspace.id == AgencyWorkspaceAccess.workspace_id)
+            .where(
+                AgencyWorkspaceAccess.agency_id == agency.id,
+                AgencyWorkspaceAccess.team_member_id.in_(member_ids),
+            )
+        )).all()
+    access_by_member = {}
+    for access, workspace_name in access_rows:
+        access_by_member.setdefault(access.team_member_id, []).append({
+            "workspace_id": access.workspace_id,
+            "workspace_name": workspace_name,
+            "role": access.role,
+        })
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"items": [{
         "id": item.id, "email": item.email, "role": item.role, "status": item.status,
+        "workspaces": access_by_member.get(item.id, []),
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "accepted_at": item.accepted_at.isoformat() if item.accepted_at else None,
     } for item in members]}
