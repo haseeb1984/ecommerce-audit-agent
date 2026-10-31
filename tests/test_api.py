@@ -3144,3 +3144,22 @@ async def test_admin_diagnostics_and_client_history_are_not_cached(client, monke
     assert history.status_code == 200, history.text
     assert history.headers["cache-control"] == "no-store, private"
     assert history.headers["pragma"] == "no-cache"
+
+
+
+@pytest.mark.asyncio
+async def test_customer_website_inventory_requires_account_authentication(client):
+    response = await client.get("/api/v1/websites")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_website_registration_rejects_parameterized_targets_before_hostinger(client):
+    await create_license(key="website-validation-license")
+    response = await client.post(
+        "/api/v1/websites",
+        json={"website_url": "https://shop.example/products?source=campaign"},
+        headers={"X-License-Key": "website-validation-license"},
+    )
+    assert response.status_code == 422
+    assert "Query strings are not accepted" in response.json()["detail"]
