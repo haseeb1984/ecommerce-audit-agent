@@ -1087,6 +1087,31 @@
         resultButton.className = "secondary"; resultButton.textContent = "View scan results";
         resultButton.addEventListener("click", () => loadScanJobResult(job.id));
         card.append(resultButton);
+      } else if (job.status === "failed") {
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.className = "secondary";
+        retryButton.textContent = "Retry failed scan";
+        retryButton.disabled = batch.status !== "failed";
+        retryButton.title = batch.status !== "failed"
+          ? "Retry is available after the batch reaches failed status."
+          : "Queue this failed URL again without creating a duplicate job.";
+        retryButton.addEventListener("click", async () => {
+          if (retryButton.disabled) return;
+          retryButton.disabled = true;
+          retryButton.textContent = "Queuing retry…";
+          try {
+            await api("/api/v1/scan-jobs/" + encodeURIComponent(job.id) + "/retry", {method: "POST"});
+            setStatus("bulkScanStatus", "Retry queued for " + job.url + ". The existing job and batch were reused.", "success");
+            await loadScanBatches();
+            await loadScanBatchDetail(batch.id);
+          } catch (error) {
+            setStatus("bulkScanStatus", error.message, "error");
+            retryButton.disabled = batch.status !== "failed";
+            retryButton.textContent = "Retry failed scan";
+          }
+        });
+        card.append(retryButton);
       }
       container.append(card);
     }
