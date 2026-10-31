@@ -111,6 +111,6 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 ### Admin bulk-scan queue monitoring
 
 - The admin portal's **Bulk scan queue monitoring** panel calls `GET /api/v1/admin/scan-operations` with the configured admin key. The endpoint is read-only and sets private no-store response headers.
-- Queue counts are aggregated from Hostinger operational tables; failed-job details are capped at the latest 50 records. The display includes only job/batch IDs, mapped license ID, hostname, attempt counts, safe error code, and timestamps—not full target URLs, credentials, or customer secrets.
+- Queue counts are aggregated from Hostinger operational tables. Failed-job details use `failed_limit` (default 25, maximum 100) and `failed_offset` query parameters; the response includes total count and `failed_jobs_has_more` so administrators can page through the entire failed-job set without an unbounded result. The display includes only job/batch IDs, mapped license ID, hostname, attempt counts, safe error code, and timestamps—not full target URLs, credentials, or customer secrets.
 - The endpoint reads scan batches/jobs from Hostinger and maps license keys to license IDs using the licensing database. Both database dependencies must be healthy for complete customer mapping; an unmapped license is shown as such rather than exposing its license key.
 - This is an operator snapshot, not a live stream. Use **Refresh diagnostics** to request a new snapshot. The panel does not retry, cancel, or otherwise mutate jobs.
