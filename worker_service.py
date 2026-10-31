@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 
+from hostinger_database import HostingerAsyncSessionLocal
 from scan_worker import process_scan_queue
 
 logging.basicConfig(
@@ -32,6 +33,8 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 
 async def run_worker() -> None:
+    if HostingerAsyncSessionLocal is None:
+        raise RuntimeError("HOSTINGER_DATABASE_URL is required to run the durable scan worker.")
     max_jobs = _bounded_int("SCAN_WORKER_MAX_JOBS", 1, 1, 10)
     poll_seconds = _bounded_int("SCAN_WORKER_POLL_SECONDS", 5, 1, 300)
     stop = asyncio.Event()
