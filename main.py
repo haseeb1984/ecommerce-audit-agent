@@ -1518,19 +1518,22 @@ async def list_customer_account_licenses(
             func.lower(CustomerBillingEvent.recipient_email) == session.email.lower()
         ).distinct()
     )).scalars().all())
-    linked_ids = (await db.execute(
+    # Union both stores on every request: migration is incremental, so a customer
+    # can have some billing events mirrored to Hostinger while older events remain
+    # only in PostgreSQL. A fallback-only query would hide those partially migrated
+    # licenses as soon as even one Hostinger event existed.
+    linked_ids = set((await db.execute(
         select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(linked_license_keys))
-    )).scalars().all() if linked_license_keys else []
-    if not linked_ids:
-        # Compatibility path for accounts whose billing history has not yet been migrated.
-        linked_ids = (await db.execute(
-            select(SoftwareLicense.id).join(
-                PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-            ).where(
-                func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
-                SoftwareLicense.id.is_not(None),
-            ).distinct()
-        )).scalars().all()
+    )).scalars().all()) if linked_license_keys else set()
+    legacy_linked_ids = (await db.execute(
+        select(SoftwareLicense.id).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(
+            func.lower(PaymentWebhookEvent.recipient_email) == session.email.lower(),
+            SoftwareLicense.id.is_not(None),
+        ).distinct()
+    )).scalars().all()
+    linked_ids.update(legacy_linked_ids)
     licenses = (await db.execute(select(SoftwareLicense).where(
         SoftwareLicense.id.in_(linked_ids)
     ).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc()))).scalars().all() if linked_ids else []
