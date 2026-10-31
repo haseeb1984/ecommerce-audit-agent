@@ -20,6 +20,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 - `DATABASE_SSL=true`: require TLS for PostgreSQL.
 - `HOSTINGER_DATABASE_URL`: Hostinger MySQL connection URL using `mysql+asyncmy` and TLS.
 - `HOSTINGER_DB_SSL=true`: enables certificate-verified TLS for Hostinger MySQL (disable only for isolated local development).
+- `HOSTINGER_DB_SSL=true`: enables certificate-verified TLS for Hostinger MySQL (disable only for isolated local development).
 - `HOSTINGER_DB_POOL_SIZE`, `HOSTINGER_DB_MAX_OVERFLOW`, `HOSTINGER_DB_POOL_RECYCLE`, `HOSTINGER_DB_POOL_TIMEOUT`: optional pool tuning.
 
 ### Audit providers
@@ -46,7 +47,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 5. Configure the environment variables above in Vercel. Use Paddle sandbox credentials until billing has been deliberately validated.
 6. Deploy only to a non-production preview environment after explicit release approval.
 7. Call `/health-check`. A successful response must report both PostgreSQL and MySQL as connected and schema-ready. Resolve every missing table, column, or required index before routing customer traffic.
-8. Verify the scheduled worker configuration in `vercel.json` and set `CRON_SECRET` in Vercel project environment variables. Vercel adds its bearer authorization header automatically. The cron schedule is once per minute and requests at most ten jobs per invocation; package concurrency remains governed by the license entitlement. Each invocation also performs bounded authentication-record cleanup: expired login/email challenges older than seven days and expired/revoked sessions older than 30 days are removed in batches of up to 500 per record type. A cleanup failure is logged and reported in the worker response but does not stop scan processing.
+8. Verify the scheduled worker configuration in `vercel.json` and set `CRON_SECRET` in Vercel project environment variables. Vercel adds its bearer authorization header automatically. The cron schedule is once per minute and requests at most ten jobs per invocation; package concurrency remains governed by the license entitlement.
 9. Configure outbound SMTP and verify deliverability using controlled test accounts.
 10. Configure Paddle webhook delivery to the deployed `/api/v1/billing/paddle-webhook` endpoint and verify the webhook secret and sandbox event flow before enabling live billing.
 11. Confirm the WordPress plugin ZIP endpoint serves the expected package and that a staging WordPress/WooCommerce site can register, report status, and disconnect.
@@ -64,7 +65,7 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 ## Operational endpoints and ownership
 
 - `/health-check`: independent readiness of PostgreSQL licensing/audit schema and Hostinger operational schema.
-- `/internal/scan-worker/run`: internal scheduled worker; Vercel Cron uses `CRON_SECRET` bearer authentication, with `SCAN_WORKER_TOKEN` retained for controlled manual invocations.
+- `/internal/scan-worker/run`: internal scheduled worker; protect with `SCAN_WORKER_TOKEN`.
 - `/api/v1/admin/operations`: administrator-only operational and billing diagnostics.
 - `/api/v1/admin/billing/reconcile`: bounded mirror reconciliation from canonical PostgreSQL payment events into Hostinger.
 - `/api/v1/billing/paddle-webhook`: canonical billing lifecycle event intake.
