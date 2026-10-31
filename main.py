@@ -6088,9 +6088,12 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     if "expires_at" in changes and changes["expires_at"] is not None:
         if changes["expires_at"].tzinfo is None:
             changes["expires_at"] = changes["expires_at"].replace(tzinfo=timezone.utc)
-    client = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == license_id))).scalar_one_or_none()
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id).with_for_update()
+    )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
+    previous_active = bool(client.is_active)
     if "tier" in changes:
         package = (await db.execute(text("""
             SELECT monthly_audit_allowance, is_active
@@ -6107,6 +6110,20 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
         if key not in allowed:
             raise HTTPException(status_code=422, detail="Unsupported client update field.")
         setattr(client, key, value)
+    # Route every direct suspend/reactivate transition through the same durable
+    # lifecycle outbox used by account-wide admin actions. Without this record,
+    # the canonical license changes but Hostinger customer status and browser
+    # sessions can remain stale indefinitely.
+    if "is_active" in changes and bool(client.is_active) != previous_active:
+        db.add(CustomerLifecycleSyncOutbox(
+            id=secrets.token_urlsafe(24),
+            license_key=client.license_key,
+            action="reactivate" if bool(client.is_active) else "suspend",
+            status="pending",
+            attempts=0,
+            next_attempt_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        ))
     await _write_admin_log(db, "client.updated", "client", client.id, {
         "fields": sorted(changes),
         "tier": client.tier,
