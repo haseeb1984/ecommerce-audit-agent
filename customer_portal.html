@@ -984,14 +984,28 @@
       title.textContent = "Batch " + batch.batch_number + " · " + String(batch.status || "unknown").replaceAll("_", " ");
       const detail = document.createElement("small");
       detail.textContent = batch.total_urls + " websites · " + batch.completed + " completed · " +
-        batch.processing + " processing · " + batch.queued + " queued · " + batch.failed + " failed";
+        batch.processing + " processing · " + batch.queued + " queued · " + batch.failed + " failed · " +
+        (batch.cancelled || 0) + " cancelled";
       const created = document.createElement("small");
       created.textContent = "Created " + (batch.created_at ? new Date(batch.created_at).toLocaleString() : "time unavailable") +
         " · Package " + (batch.package_tier || "unknown");
       info.append(title, detail, created);
       const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View URLs";
       view.addEventListener("click", () => loadScanBatchDetail(batch.id));
-      card.append(info, view); container.append(card);
+      card.append(info, view);
+      if (["queued", "processing", "cancel_requested"].includes(batch.status)) {
+        const cancel = document.createElement("button");
+        cancel.type = "button"; cancel.className = "secondary";
+        cancel.textContent = batch.status === "cancel_requested" ? "Cancellation pending" : "Cancel batch";
+        cancel.disabled = batch.status === "cancel_requested";
+        cancel.addEventListener("click", async () => {
+          const result = await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
+          if (!result.ok) throw new Error("Batch cancellation could not be recorded.");
+          await loadScanBatches();
+        });
+        card.append(cancel);
+      }
+      container.append(card);
     }
     await loadWebsites();
     setStatus("bulkScanStatus", "Loaded " + items.length + " scan batch(es).", "success");
