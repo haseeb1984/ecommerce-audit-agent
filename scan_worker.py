@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update, text
 
 from database import AsyncSessionLocal, Base
 from models import (AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox)
@@ -313,6 +313,12 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
     counts = {"processed": 0, "deferred": 0}
     async with AsyncSessionLocal() as licensing_db:
         for _ in range(batch_size):
+            # Serialize lifecycle projections so concurrent worker processes cannot
+            # apply a newer reactivate before an older suspend (or vice versa).
+            if licensing_db.get_bind().dialect.name == "postgresql":
+                await licensing_db.execute(text(
+                    "SELECT pg_advisory_xact_lock(hashtext('customer_lifecycle_sync_outbox'))"
+                ))
             event = (await licensing_db.execute(
                 select(CustomerLifecycleSyncOutbox)
                 .where(
