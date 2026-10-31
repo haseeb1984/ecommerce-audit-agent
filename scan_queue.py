@@ -114,6 +114,7 @@ async def fail_or_retry_scan_job(
     worker_id: str,
     error_code: str,
     retry_delay_seconds: int = 60,
+    retryable: bool = True,
 ) -> str:
     """Schedule bounded retry or terminal failure without accepting stale workers."""
     now = _utcnow()
@@ -127,7 +128,9 @@ async def fail_or_retry_scan_job(
     if job is None:
         await db.rollback()
         return "lease_lost"
-    terminal = int(job.attempts or 0) >= min(10, max(1, int(job.max_attempts or DEFAULT_MAX_ATTEMPTS)))
+    terminal = (not retryable) or (
+        int(job.attempts or 0) >= min(10, max(1, int(job.max_attempts or DEFAULT_MAX_ATTEMPTS)))
+    )
     job.status = "failed" if terminal else "retry"
     job.error_code = (error_code or "WORKER_ERROR")[:120]
     job.available_at = now + timedelta(seconds=min(86400, max(1, int(retry_delay_seconds))))
