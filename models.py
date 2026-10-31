@@ -117,6 +117,24 @@ class SaaSPlanPackage(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class CustomerLifecycleSyncOutbox(Base):
+    """Durable PostgreSQL-to-Hostinger customer lifecycle synchronization."""
+    __tablename__ = "customer_lifecycle_sync_outbox"
+    __table_args__ = (
+        Index("ix_customer_lifecycle_sync_due", "status", "next_attempt_at", "created_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    action = Column(String(24), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class SaaSAdminActionLog(Base):
     """Persistent operator activity log. Secret values must never be written here."""
     __tablename__ = "saas_admin_action_logs"
