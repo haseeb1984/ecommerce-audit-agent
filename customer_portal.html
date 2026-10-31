@@ -73,6 +73,12 @@
 </div>
 <div class="report-actions" style="margin-top:12px"><button id="createAgencyClient" type="button" disabled>Add client workspace</button><button id="refreshAgencyClients" class="secondary" type="button" disabled>Refresh clients</button></div>
 <div id="agencyClients" class="reports" aria-live="polite"><p class="muted">Connect a Business account to manage agency clients.</p></div>
+<h3>Agency team</h3>
+<p class="muted">Invite team members by email and assign an agency role. Invitations expire after 48 hours.</p>
+<div class="row"><div><label for="agencyTeamEmail">Team member email</label><input id="agencyTeamEmail" type="email" maxlength="254" placeholder="teammate@example.com"></div>
+<div><label for="agencyTeamRole">Agency role</label><select id="agencyTeamRole"><option value="analyst">Analyst</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select></div></div>
+<div class="report-actions" style="margin-top:12px"><button id="inviteAgencyTeam" type="button" disabled>Send invitation</button><button id="refreshAgencyTeam" class="secondary" type="button" disabled>Refresh team</button></div>
+<div id="agencyTeam" class="reports" aria-live="polite"><p class="muted">No team members loaded.</p></div>
 <div id="agencyStatus" class="status" role="status" aria-live="polite">Business plan required.</div>
 </section>
 <section class="panel" aria-labelledby="wordpressSitesHeading">
@@ -183,7 +189,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -613,6 +619,7 @@
     const agency = await provision.json();
     const response = await api("/api/v1/account/agency/clients");
     const data = await response.json();
+    await loadAgencyTeam();
     const container = $("agencyClients");
     container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
@@ -655,6 +662,53 @@
     }
     setStatus("agencyStatus", "Agency workspace ready · " + items.length + " client workspace(s).", "success");
     return agency;
+  }
+  async function loadAgencyTeam() {
+    const response = await api("/api/v1/account/agency/team");
+    const data = await response.json();
+    const container = $("agencyTeam");
+    container.replaceChildren();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No team invitations or members yet."; container.append(empty);
+    }
+    for (const item of items) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = item.email;
+      const detail = document.createElement("small"); detail.textContent = item.role + " · " + item.status;
+      info.append(title, detail);
+      const actions = document.createElement("div"); actions.className = "report-actions";
+      if (item.status !== "revoked") {
+        const revoke = document.createElement("button"); revoke.type = "button";
+        revoke.className = "secondary"; revoke.textContent = "Revoke";
+        revoke.addEventListener("click", async () => {
+          revoke.disabled = true;
+          try { await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id), {method:"DELETE"}); await loadAgencyTeam(); }
+          catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          finally { revoke.disabled = false; }
+        });
+        actions.append(revoke);
+      }
+      card.append(info, actions); container.append(card);
+    }
+  }
+  async function inviteAgencyTeam() {
+    const email = $("agencyTeamEmail").value.trim();
+    const role = $("agencyTeamRole").value;
+    if (!email) { setStatus("agencyStatus", "Enter a team member email address.", "error"); return; }
+    const button = $("inviteAgencyTeam"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/agency/team/invitations", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({email, role, workspace_ids:[]})
+      });
+      $("agencyTeamEmail").value = "";
+      await loadAgencyTeam();
+      setStatus("agencyStatus", "Invitation email sent to " + email + ".", "success");
+    } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+    finally { button.disabled = !credential; }
   }
   async function createAgencyClient() {
     const name = $("agencyClientName").value.trim();
@@ -1413,6 +1467,10 @@
   });
 
   $("createAgencyClient").addEventListener("click", createAgencyClient);
+  $("inviteAgencyTeam").addEventListener("click", inviteAgencyTeam);
+  $("refreshAgencyTeam").addEventListener("click", async () => {
+    try { await loadAgencyTeam(); } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
   $("refreshAgencyClients").addEventListener("click", async () => {
     try { await loadAgencyDashboard(); }
     catch (error) { setStatus("agencyStatus", error.message, "error"); }
