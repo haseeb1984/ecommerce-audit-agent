@@ -3184,14 +3184,32 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     # Paddle's retry/dunning policy remains authoritative: a single failed transaction
     # does not by itself revoke access, but the event must not disappear silently.
     if event_type in {"transaction.payment_failed", "subscription.past_due"}:
+        failed_transaction_id = str(transaction.get("id") or "").strip()[:100]
         subscription_id = str(
             transaction.get("subscription_id") or
             (transaction.get("id") if event_type == "subscription.past_due" else "") or ""
         )[:100]
-        if not subscription_id:
-            raise HTTPException(status_code=400, detail="Paddle payment-failure event has no subscription ID.")
         from sqlalchemy import select
-        await _lock_paddle_webhook_resource(db, subscription_id)
+        prior_transaction_event = None
+        if subscription_id:
+            await _lock_paddle_webhook_resource(db, subscription_id)
+        elif event_type == "transaction.payment_failed" and failed_transaction_id:
+            # Some Paddle failed-transaction notifications omit subscription_id.
+            # Resolve only through an already-linked transaction; never guess a
+            # customer/license from an email or Paddle customer identifier.
+            await _lock_paddle_webhook_resource(db, failed_transaction_id, "transaction_id")
+            prior_transaction_event = (await db.execute(
+                select(PaymentWebhookEvent)
+                .where(
+                    PaymentWebhookEvent.transaction_id == failed_transaction_id,
+                    PaymentWebhookEvent.license_id.is_not(None),
+                    PaymentWebhookEvent.status.notin_({"payment_failed", "subscription_past_due"}),
+                )
+                .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+        else:
+            raise HTTPException(status_code=503, detail="Payment-failure event is awaiting transaction reconciliation.")
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -3201,7 +3219,6 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # event ID. Transaction-level idempotency prevents duplicate customer
         # history/operation events while preserving separate retry attempts,
         # which have their own transaction IDs.
-        failed_transaction_id = str(transaction.get("id") or "").strip()[:100]
         if event_type == "transaction.payment_failed" and failed_transaction_id:
             prior_failure = (await db.execute(
                 select(PaymentWebhookEvent)
@@ -3214,11 +3231,14 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             )).scalar_one_or_none()
             if prior_failure is not None:
                 return {"status": "already_processed", "event_id": prior_failure.event_id}
-        linked_event = await _get_paddle_subscription_license_event(db, subscription_id)
+        linked_event = (
+            prior_transaction_event if prior_transaction_event is not None
+            else await _get_paddle_subscription_license_event(db, subscription_id)
+        )
         if linked_event is None:
             # Do not acknowledge an unlinked event permanently; Paddle may retry after
-            # the original purchase event is reconciled and the subscription is linked.
-            raise HTTPException(status_code=503, detail="Payment-failure event is awaiting subscription reconciliation.")
+            # the original purchase/renewal transaction is reconciled and linked.
+            raise HTTPException(status_code=503, detail="Payment-failure event is awaiting subscription or transaction reconciliation.")
         customer = transaction.get("customer") or {}
         if not isinstance(customer, dict):
             raise HTTPException(status_code=400, detail="Paddle lifecycle event customer must be a JSON object.")
