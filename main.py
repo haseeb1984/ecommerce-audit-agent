@@ -1574,15 +1574,25 @@ async def list_customer_account_licenses(
     ).order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc()))).scalars().all() if linked_ids else []
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {
-        "items": [{
+    now = datetime.now(timezone.utc)
+    items = []
+    for item in licenses:
+        expires_at = item.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expired = bool(expires_at is not None and expires_at <= now)
+        items.append({
             "id": item.id,
             "client_name": item.client_name,
             "tier": item.tier,
             "is_active": bool(item.is_active),
-            "expires_at": item.expires_at.isoformat() if item.expires_at else None,
+            "expired": expired,
+            "selectable": bool(item.is_active) and not expired,
+            "expires_at": expires_at.isoformat() if expires_at else None,
             "selected": item.license_key == session.license_key,
-        } for item in licenses],
+        })
+    return {
+        "items": items,
         "selected_license_key": session.license_key,
     }
 
