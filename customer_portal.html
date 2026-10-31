@@ -108,6 +108,7 @@
 <div id="bulkScanStatus" class="status" role="status" aria-live="polite">Connect your account to submit website batches.</div>
 <h3>Saved website inventory</h3>
 <div id="websiteInventory" class="reports" aria-live="polite"><p class="muted">Connect your account to load saved websites.</p></div>
+<button id="loadMoreWebsites" class="secondary" type="button" hidden>Load more websites</button>
 <div id="scanBatches" class="reports" aria-live="polite"><p class="muted">No scan batches loaded.</p></div>
 <div id="scanBatchDetail" class="reports" aria-live="polite"></div>
 </section>
@@ -153,6 +154,9 @@
   let billingOffset = 0;
   let billingTotal = 0;
   let billingLoading = false;
+  let websiteOffset = 0;
+  let websiteHasMore = false;
+  let websitesLoading = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -881,17 +885,25 @@
     catch (e) { setStatus("connectStatus", e.message, "error"); }
   });
 
-  async function loadWebsites() {
+  async function loadWebsites(reset = true) {
+    if (websitesLoading) return;
+    websitesLoading = true;
+    try {
     const container = $("websiteInventory");
-    const response = await api("/api/v1/websites?limit=500&offset=0");
+    if (reset) {
+      websiteOffset = 0;
+      container.replaceChildren();
+    }
+    const response = await api("/api/v1/websites?limit=100&offset=" + websiteOffset);
     const data = await response.json();
     const items = Array.isArray(data.items) ? data.items : [];
-    container.replaceChildren();
-    if (!items.length) {
+    websiteOffset += items.length;
+    websiteHasMore = Boolean(data.page && data.page.has_more);
+    $("loadMoreWebsites").hidden = !websiteHasMore;
+    if (!items.length && reset) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No websites have been saved for this account yet.";
       container.append(empty);
-      return;
     }
     for (const site of items) {
       const card = document.createElement("article"); card.className = "report";
@@ -948,6 +960,9 @@
       });
       card.append(label, view, save, archive);
       container.append(card);
+    }
+    } finally {
+      websitesLoading = false;
     }
   }
 
@@ -1058,6 +1073,10 @@
     }
   }
   $("submitBulkScans").addEventListener("click", submitBulkScans);
+  $("loadMoreWebsites").addEventListener("click", async () => {
+    try { await loadWebsites(false); }
+    catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
+  });
   $("refreshScanBatches").addEventListener("click", async () => {
     try { await loadScanBatches(); }
     catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
