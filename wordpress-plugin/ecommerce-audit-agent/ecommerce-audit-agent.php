@@ -463,7 +463,18 @@ function eaa_wp_render_admin_page() {
             $settings['connection_error'] = '';
             update_option(EAA_WP_OPTION, $settings, false);
         } else {
-            $error = $status_response->get_error_message();
+            $error_data = $status_response->get_error_data();
+            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+            if (404 === $http_status) {
+                // Reflect a customer-portal disconnect immediately when the
+                // administrator opens this screen, not only on the next cron.
+                unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+                $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
+                update_option(EAA_WP_OPTION, $settings, false);
+                $error = $settings['connection_error'];
+            } else {
+                $error = $status_response->get_error_message();
+            }
         }
         $usage_response = eaa_wp_api_request('/api/v1/account/usage');
         if (!is_wp_error($usage_response)) {
