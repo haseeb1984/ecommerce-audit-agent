@@ -377,6 +377,16 @@ function eaa_wp_handle_connect_agency_site() {
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connect_failed'), admin_url('admin.php')));
         exit;
     }
+    $current = eaa_wp_settings();
+    if (!empty($current['site_id']) && !empty($current['license_key'])) {
+        $retired = eaa_wp_disconnect_site();
+        if (is_wp_error($retired)) {
+            $current['connection_error'] = __('The existing license-based site connection could not be retired. Agency connection was not changed.', 'ecommerce-audit-agent');
+            update_option(EAA_WP_OPTION, $current, false);
+            wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'disconnect_failed'), admin_url('admin.php')));
+            exit;
+        }
+    }
     $result = eaa_wp_register_agency_site($token);
     if (is_wp_error($result)) {
         $settings = eaa_wp_settings();
@@ -385,6 +395,9 @@ function eaa_wp_handle_connect_agency_site() {
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connect_failed'), admin_url('admin.php')));
         exit;
     }
+    $connected_settings = eaa_wp_settings();
+    unset($connected_settings['license_key'], $connected_settings['site_id'], $connected_settings['connected_at']);
+    update_option(EAA_WP_OPTION, $connected_settings, false);
     wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connected'), admin_url('admin.php')));
     exit;
 }
