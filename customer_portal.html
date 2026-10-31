@@ -519,7 +519,11 @@
     for (const item of (Array.isArray(data.items) ? data.items : [])) {
       const option = document.createElement("option");
       option.value = String(item.id);
-      option.textContent = (item.client_name || "Account") + " · " + (item.tier || "plan") + (item.is_active ? "" : " · inactive");
+      const expired = Boolean(item.expired);
+      const inactive = !Boolean(item.is_active);
+      option.textContent = (item.client_name || "Account") + " · " + (item.tier || "plan") +
+        (expired ? " · expired" : (inactive ? " · inactive" : ""));
+      option.disabled = item.selectable === false || expired || inactive;
       option.selected = Boolean(item.selected);
       select.append(option);
     }
