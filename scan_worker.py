@@ -1,6 +1,7 @@
 """Worker that executes persisted Hostinger scan jobs through the audit engine."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from scan_queue import (
     complete_scan_job,
     fail_or_retry_scan_job,
     defer_scan_job,
+    renew_scan_job_lease,
 )
 from ecommerce_agent import UniversalEcommerceAgent
 
@@ -122,6 +124,24 @@ async def process_one_scan(worker_id: str) -> dict:
         website_id = job.website_id
         target_url = job.target_url
 
+    async def _heartbeat():
+        while True:
+            await asyncio.sleep(240)
+            try:
+                async with HostingerAsyncSessionLocal() as heartbeat_db:
+                    owned = await renew_scan_job_lease(
+                        heartbeat_db, job_id=job_id, worker_id=worker_id,
+                    )
+                if not owned:
+                    logger.warning("Scan worker lease ownership lost (job_id=%s)", job_id)
+                    return
+            except Exception as heartbeat_error:
+                logger.warning(
+                    "Scan worker heartbeat failed (job_id=%s, error_type=%s)",
+                    job_id, type(heartbeat_error).__name__,
+                )
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
     reservation_id = None
     try:
         async with AsyncSessionLocal() as licensing_db:
@@ -238,6 +258,9 @@ async def process_one_scan(worker_id: str) -> dict:
                 error_code=type(exc).__name__.upper(), retry_delay_seconds=60,
             )
         return {"status": outcome, "job_id": job_id, "error_code": type(exc).__name__.upper()}
+    finally:
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
 async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None) -> dict:
