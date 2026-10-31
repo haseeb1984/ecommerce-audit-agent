@@ -3,7 +3,7 @@
  * Plugin Name: Ecommerce Audit Agent
  * Plugin URI: https://ecommerce-audit-agent.vercel.app/
  * Description: Connect your WordPress or WooCommerce store to Ecommerce Audit Agent, monitor your SaaS license, run audits, and retrieve saved reports.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: Ecommerce Audit Agent
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('EAA_WP_VERSION', '1.0.0');
+define('EAA_WP_VERSION', '1.1.0');
 define('EAA_WP_OPTION', 'eaa_wp_settings');
 define('EAA_WP_DEFAULT_API', 'https://ecommerce-audit-agent.vercel.app');
 
