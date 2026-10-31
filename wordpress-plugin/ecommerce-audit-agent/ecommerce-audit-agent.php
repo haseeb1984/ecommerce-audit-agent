@@ -170,6 +170,34 @@ function eaa_wp_agency_api_request($path, $method = 'GET', $body = null, $token 
     return $response;
 }
 
+function eaa_wp_queue_agency_audit($target_url) {
+    $settings = eaa_wp_settings();
+    if (empty($settings['agency_site_token'])) {
+        return new WP_Error('eaa_agency_not_connected', __('This site is not connected to an agency client workspace.', 'ecommerce-audit-agent'));
+    }
+    $token = eaa_wp_decrypt_license($settings['agency_site_token']);
+    if (is_wp_error($token)) {
+        return $token;
+    }
+    $response = eaa_wp_agency_api_request(
+        '/api/v1/integrations/wordpress/agency/sites/audits',
+        'POST',
+        array('urls' => array($target_url), 'request_id' => wp_generate_uuid4()),
+        $token
+    );
+    if (is_wp_error($response)) {
+        return $response;
+    }
+    $data = eaa_wp_json($response);
+    if (empty($data['batch_ids']) || !is_array($data['batch_ids'])) {
+        return new WP_Error('eaa_agency_queue_invalid', __('The agency API did not confirm an audit batch.', 'ecommerce-audit-agent'));
+    }
+    $settings['agency_last_audit_batch_ids'] = array_map('sanitize_text_field', $data['batch_ids']);
+    $settings['agency_last_audit_queued_at'] = current_time('mysql', true);
+    update_option(EAA_WP_OPTION, $settings, false);
+    return $data;
+}
+
 function eaa_wp_register_agency_site($one_time_token) {
     $payload = array(
         'site_url' => home_url('/'),
@@ -365,6 +393,29 @@ add_action('admin_init', function () {
         wp_schedule_event(time() + 300, 'twicedaily', 'eaa_wp_scheduled_status_sync');
     }
 });
+
+add_action('admin_post_eaa_run_agency_audit', 'eaa_wp_handle_run_agency_audit');
+function eaa_wp_handle_run_agency_audit() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('You are not allowed to run audits for this integration.', 'ecommerce-audit-agent'), 403);
+    }
+    check_admin_referer('eaa_run_agency_audit');
+    $target_url = isset($_POST['agency_audit_url']) ? esc_url_raw(trim(wp_unslash($_POST['agency_audit_url']))) : '';
+    if (!$target_url || !wp_http_validate_url($target_url) || 'https' !== strtolower((string) wp_parse_url($target_url, PHP_URL_SCHEME))) {
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_audit_failed'), admin_url('admin.php')));
+        exit;
+    }
+    $result = eaa_wp_queue_agency_audit($target_url);
+    if (is_wp_error($result)) {
+        $settings = eaa_wp_settings();
+        $settings['connection_error'] = $result->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_audit_failed'), admin_url('admin.php')));
+        exit;
+    }
+    wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_audit_queued'), admin_url('admin.php')));
+    exit;
+}
 
 add_action('admin_post_eaa_connect_agency_site', 'eaa_wp_handle_connect_agency_site');
 function eaa_wp_handle_connect_agency_site() {
@@ -676,6 +727,8 @@ function eaa_wp_render_admin_page() {
         <?php if ('saved' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('Settings saved and site connected.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('disconnected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('WordPress site disconnected. Your SaaS license and reports remain intact.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('agency_connected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('This WordPress site is connected to the Business agency client workspace.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_audit_queued' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('The client website audit has been queued under the shared Business allowance. View progress and findings in the SaaS agency dashboard.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_audit_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The agency client audit could not be queued. Review the connection error and confirm the URL belongs to this connected client website.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('agency_connect_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The agency client connection could not be completed. Review the connection message and generate a fresh one-time token if needed.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
 
         <?php if ('' !== $error) : ?><div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div><?php endif; ?>
@@ -725,7 +778,15 @@ function eaa_wp_render_admin_page() {
             <div class="eaa-card">
                 <h2><?php esc_html_e('Run a store audit', 'ecommerce-audit-agent'); ?></h2>
                 <?php if ($agency_mode) : ?>
-                    <p><?php esc_html_e('This site is connected to an agency client workspace. Audit execution and reporting are managed through the Business agency dashboard while the dedicated WordPress audit workflow is being completed.', 'ecommerce-audit-agent'); ?></p>
+                    <p><?php esc_html_e('Queue an audit for this connected client website. The job consumes the shared Business allowance; saved findings appear in the SaaS agency dashboard.', 'ecommerce-audit-agent'); ?></p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <input type="hidden" name="action" value="eaa_run_agency_audit">
+                        <?php wp_nonce_field('eaa_run_agency_audit'); ?>
+                        <label for="eaa-agency-audit-url"><strong><?php esc_html_e('Client page URL', 'ecommerce-audit-agent'); ?></strong></label><br>
+                        <input id="eaa-agency-audit-url" name="agency_audit_url" type="url" class="regular-text" value="<?php echo esc_attr(home_url('/')); ?>" required>
+                        <?php submit_button(__('Queue client website audit', 'ecommerce-audit-agent'), 'primary eaa-primary', 'submit', false, array('disabled' => !$connected)); ?>
+                    </form>
+                    <?php if (!empty($settings['agency_last_audit_queued_at'])) : ?><p class="description"><?php esc_html_e('Last audit queued:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) $settings['agency_last_audit_queued_at']); ?></p><?php endif; ?>
                 <?php else : ?>
                 <p><?php esc_html_e('The audit uses your SaaS plan quota. The PDF is streamed to your browser and is not stored in the public WordPress uploads directory.', 'ecommerce-audit-agent'); ?></p>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
