@@ -109,3 +109,12 @@ CREATE TABLE IF NOT EXISTS agency_usage_events (
     CONSTRAINT fk_agency_usage_workspace FOREIGN KEY (workspace_id)
         REFERENCES agency_client_workspaces(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Link Business agency audit batches to a client workspace. Existing customer
+-- scan batches remain unassigned and continue to use their license-level quotas.
+ALTER TABLE scan_batches
+    ADD COLUMN workspace_id VARCHAR(64) NULL,
+    ADD KEY ix_scan_batches_workspace_created (workspace_id, created_at),
+    ADD CONSTRAINT fk_scan_batches_agency_workspace
+        FOREIGN KEY (workspace_id) REFERENCES agency_client_workspaces(id)
+        ON DELETE SET NULL;
