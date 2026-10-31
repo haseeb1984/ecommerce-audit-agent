@@ -5449,12 +5449,31 @@ async def admin_customer_account_action(
     if not ids:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     now = datetime.now(timezone.utc)
+    license_keys = list((await db.execute(
+        select(SoftwareLicense.license_key).where(SoftwareLicense.id.in_(ids))
+    )).scalars().all())
     if payload.action in {"suspend", "reactivate"}:
         active = payload.action == "reactivate"
-        result = await db.execute(update(SoftwareLicense).where(SoftwareLicense.id.in_(ids)).values(is_active=active))
+        # Keep the operational customer identity aligned with the canonical
+        # entitlement state; a suspension also terminates all browser sessions.
+        await operational_db.execute(update(CustomerAccount).where(
+            CustomerAccount.license_key.in_(license_keys)
+        ).values(status="active" if active else "suspended", updated_at=now))
+        if not active:
+            session_result = await operational_db.execute(update(CustomerSession).where(
+                CustomerSession.license_key.in_(license_keys),
+                CustomerSession.revoked_at.is_(None),
+            ).values(revoked_at=now))
+        else:
+            session_result = None
+        await operational_db.commit()
+        result = await db.execute(update(SoftwareLicense).where(
+            SoftwareLicense.id.in_(ids)
+        ).values(is_active=active))
         changed = int(result.rowcount or 0)
+        if session_result is not None:
+            changed += int(session_result.rowcount or 0)
     else:
-        license_keys = list((await db.execute(select(SoftwareLicense.license_key).where(SoftwareLicense.id.in_(ids)))).scalars().all())
         result = await operational_db.execute(update(CustomerSession).where(
             CustomerSession.license_key.in_(license_keys), CustomerSession.revoked_at.is_(None)
         ).values(revoked_at=now))
