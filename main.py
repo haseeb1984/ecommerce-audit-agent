@@ -34,7 +34,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Response, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, text
+from sqlalchemy import delete, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base, get_async_db
@@ -61,11 +61,24 @@ agent = UniversalEcommerceAgent()
 
 
 async def _enqueue_billing_mirror_sync(db: AsyncSession, event_id: str) -> None:
-    """Write a retryable Hostinger projection request in the canonical event transaction."""
+    """Write or refresh a retryable Hostinger projection request in the canonical event transaction."""
     if not event_id:
         return
-    existing = await db.get(BillingMirrorSyncOutbox, event_id)
-    if existing is None:
+    # UPDATE is intentional: if a worker currently holds the outbox row lock,
+    # this waits for its commit. If that worker deletes the row after mirroring,
+    # rowcount is zero and a fresh pending row is inserted for the newer event state.
+    refreshed = await db.execute(
+        update(BillingMirrorSyncOutbox)
+        .where(BillingMirrorSyncOutbox.event_id == event_id)
+        .values(
+            status="pending",
+            attempts=0,
+            next_attempt_at=datetime.now(timezone.utc),
+            last_error=None,
+            processed_at=None,
+        )
+    )
+    if not refreshed.rowcount:
         db.add(BillingMirrorSyncOutbox(event_id=event_id, status="pending", attempts=0))
 
 
@@ -2680,6 +2693,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if license_obj is None:
         webhook_event.status = "email_pending"
         webhook_event.updated_at = datetime.now(timezone.utc)
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         raise HTTPException(status_code=500, detail="The provisioned license record is unavailable.")
     try:
@@ -2689,10 +2703,12 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         logger.error("License email delivery failed (error_type=%s)", type(exc).__name__)
         webhook_event.status = "email_pending"
         webhook_event.updated_at = datetime.now(timezone.utc)
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         raise HTTPException(status_code=502, detail="Payment was recorded; license email is pending SMTP delivery retry.") from exc
     webhook_event.status = "delivered"
     webhook_event.updated_at = datetime.now(timezone.utc)
+    await _enqueue_billing_mirror_sync(db, event_id)
     await db.commit()
     return {"status": "provisioned", "event_id": event_id}
 
@@ -3450,12 +3466,14 @@ async def admin_retry_license_email(event_id: str, request: Request,
     except Exception as exc:
         event.status = "email_pending"
         event.updated_at = datetime.now(timezone.utc)
+        await _enqueue_billing_mirror_sync(db, event_id)
         await db.commit()
         logger.error("Admin license email retry failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="License email retry failed; the event remains pending.") from exc
 
     event.status = "delivered"
     event.updated_at = datetime.now(timezone.utc)
+    await _enqueue_billing_mirror_sync(db, event_id)
     await _write_admin_log(
         db, "payment.license_email_retried", "payment_event", event.event_id,
         {"license_id": event.license_id, "delivery_status": "delivered"},
