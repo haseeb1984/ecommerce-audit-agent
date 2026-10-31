@@ -5457,6 +5457,14 @@ async def admin_customer_account_action(
         active = payload.action == "reactivate"
         # Keep the operational customer identity aligned with the canonical
         # entitlement state; a suspension also terminates all browser sessions.
+        # Commit the canonical entitlement decision first. If the operational
+        # database is temporarily unavailable, API and portal authorization still
+        # fail closed against the canonical PostgreSQL license state.
+        result = await db.execute(update(SoftwareLicense).where(
+            SoftwareLicense.id.in_(ids)
+        ).values(is_active=active))
+        await db.commit()
+        changed = int(result.rowcount or 0)
         await operational_db.execute(update(CustomerAccount).where(
             CustomerAccount.license_key.in_(license_keys)
         ).values(status="active" if active else "suspended", updated_at=now))
@@ -5465,15 +5473,8 @@ async def admin_customer_account_action(
                 CustomerSession.license_key.in_(license_keys),
                 CustomerSession.revoked_at.is_(None),
             ).values(revoked_at=now))
-        else:
-            session_result = None
-        await operational_db.commit()
-        result = await db.execute(update(SoftwareLicense).where(
-            SoftwareLicense.id.in_(ids)
-        ).values(is_active=active))
-        changed = int(result.rowcount or 0)
-        if session_result is not None:
             changed += int(session_result.rowcount or 0)
+        await operational_db.commit()
     else:
         result = await operational_db.execute(update(CustomerSession).where(
             CustomerSession.license_key.in_(license_keys), CustomerSession.revoked_at.is_(None)
