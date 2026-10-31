@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select, update
 
 from database import AsyncSessionLocal
-from models import AuditLead, PaymentWebhookEvent, SoftwareLicense
+from models import AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
@@ -20,7 +20,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
+from hostinger_models import CustomerAccount, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -300,6 +300,66 @@ async def process_one_scan(worker_id: str) -> dict:
         await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
+async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
+    """Apply canonical PostgreSQL admin lifecycle actions to Hostinger operational records."""
+    if batch_size < 1 or batch_size > 200:
+        raise ValueError("batch_size must be between 1 and 200.")
+    now = datetime.now(timezone.utc)
+    counts = {"processed": 0, "deferred": 0}
+    async with AsyncSessionLocal() as licensing_db:
+        for _ in range(batch_size):
+            event = (await licensing_db.execute(
+                select(CustomerLifecycleSyncOutbox)
+                .where(
+                    CustomerLifecycleSyncOutbox.status == "pending",
+                    CustomerLifecycleSyncOutbox.next_attempt_at <= now,
+                )
+                .order_by(CustomerLifecycleSyncOutbox.created_at.asc())
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            )).scalar_one_or_none()
+            if event is None:
+                break
+            event_id = event.id
+            license_key = event.license_key
+            action = event.action
+            try:
+                async with HostingerAsyncSessionLocal() as operational_db:
+                    if action in {"suspend", "reactivate"}:
+                        await operational_db.execute(update(CustomerAccount).where(
+                            CustomerAccount.license_key == license_key
+                        ).values(
+                            status="suspended" if action == "suspend" else "active",
+                            updated_at=datetime.now(timezone.utc),
+                        ))
+                    if action in {"suspend", "revoke_sessions"}:
+                        await operational_db.execute(update(CustomerSession).where(
+                            CustomerSession.license_key == license_key,
+                            CustomerSession.revoked_at.is_(None),
+                        ).values(revoked_at=datetime.now(timezone.utc)))
+                    await operational_db.commit()
+                event.status = "completed"
+                event.processed_at = datetime.now(timezone.utc)
+                event.last_error = None
+                await licensing_db.commit()
+                counts["processed"] += 1
+            except Exception as exc:
+                await licensing_db.rollback()
+                retry_event = await licensing_db.get(CustomerLifecycleSyncOutbox, event_id)
+                if retry_event is not None:
+                    retry_event.attempts = int(retry_event.attempts or 0) + 1
+                    retry_event.last_error = type(exc).__name__[:120]
+                    delay = min(3600, 30 * (2 ** min(retry_event.attempts, 7)))
+                    retry_event.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    await licensing_db.commit()
+                counts["deferred"] += 1
+                logger.warning(
+                    "Customer lifecycle sync deferred (event_id=%s, error_type=%s)",
+                    event_id, type(exc).__name__,
+                )
+    return counts
+
+
 async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> dict:
     """Retry verified email changes into PostgreSQL billing records idempotently."""
     if batch_size < 1 or batch_size > 200:
@@ -388,6 +448,13 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
     import asyncio
 
+    lifecycle_sync = {"status": "completed", "processed": 0, "deferred": 0}
+    try:
+        lifecycle_sync.update(await reconcile_customer_lifecycle_outbox())
+    except Exception as exc:
+        lifecycle_sync = {"status": "deferred", "error_type": type(exc).__name__}
+        logger.warning("Customer lifecycle reconciliation failed (error_type=%s)", type(exc).__name__)
+
     identity_sync = {"status": "completed", "processed": 0, "deferred": 0}
     try:
         identity_sync.update(await reconcile_customer_email_identity_outbox())
@@ -412,6 +479,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
         "worker_id": worker_id,
         "authentication_cleanup": cleanup,
         "customer_email_identity_sync": identity_sync,
+        "customer_lifecycle_sync": lifecycle_sync,
         "claimed_slots": len(active),
         "processed": sum(1 for item in active if item["status"] == "completed"),
         "outcomes": active,
