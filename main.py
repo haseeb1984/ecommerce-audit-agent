@@ -3183,8 +3183,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 # Persist payment-failure lifecycle events for customer-visible billing history.
     # Paddle's retry/dunning policy remains authoritative: a single failed transaction
     # does not by itself revoke access, but the event must not disappear silently.
-    if event_type in {"transaction.payment_failed", "subscription.past_due"}:
-        failed_transaction_id = str(transaction.get("id") or "").strip()[:100]
+    if event_type in {"transaction.payment_failed", "transaction.past_due", "subscription.past_due"}:
+        is_transaction_failure = event_type in {"transaction.payment_failed", "transaction.past_due"}
+        failed_transaction_id = str(transaction.get("id") or "").strip()[:100] if is_transaction_failure else ""
         subscription_id = str(
             transaction.get("subscription_id") or
             (transaction.get("id") if event_type == "subscription.past_due" else "") or ""
@@ -3193,7 +3194,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         prior_transaction_event = None
         if subscription_id:
             await _lock_paddle_webhook_resource(db, subscription_id)
-        elif event_type == "transaction.payment_failed" and failed_transaction_id:
+        elif is_transaction_failure and failed_transaction_id:
             # Some Paddle failed-transaction notifications omit subscription_id.
             # Resolve only through an already-linked transaction; never guess a
             # customer/license from an email or Paddle customer identifier.
@@ -3230,7 +3231,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # event ID. Transaction-level idempotency prevents duplicate customer
         # history/operation events while preserving separate retry attempts,
         # which have their own transaction IDs.
-        if event_type == "transaction.payment_failed" and failed_transaction_id:
+        if is_transaction_failure and failed_transaction_id:
             prior_failure = (await db.execute(
                 select(PaymentWebhookEvent)
                 .where(
@@ -3254,14 +3255,14 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         if not isinstance(customer, dict):
             raise HTTPException(status_code=400, detail="Paddle lifecycle event customer must be a JSON object.")
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
-        status = "payment_failed" if event_type == "transaction.payment_failed" else "subscription_past_due"
+        status = "payment_failed" if is_transaction_failure else "subscription_past_due"
         db.add(PaymentWebhookEvent(
             event_id=event_id,
             status=status,
             license_id=linked_event.license_id,
             recipient_email=linked_event.recipient_email,
             transaction_id=(str(transaction.get("id") or "")[:100] or None)
-                if event_type == "transaction.payment_failed" else None,
+                if is_transaction_failure else None,
             subscription_id=subscription_id or None,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
         ))
