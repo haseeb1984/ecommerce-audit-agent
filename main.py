@@ -134,6 +134,14 @@ class AccountProfileUpdate(BaseModel):
     client_name: str = Field(..., min_length=1, max_length=255)
 
 
+class CustomerEmailChangeRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+
+
+class CustomerEmailChangeVerify(BaseModel):
+    token: str = Field(..., min_length=32, max_length=128)
+
+
 class WebsiteCreateRequest(BaseModel):
     website_url: str = Field(..., min_length=4, max_length=2048)
     display_name: str | None = Field(default=None, max_length=120)
@@ -1020,6 +1028,145 @@ async def update_account_profile(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"client_name": license_obj.client_name, "updated": True}
+
+
+@app.post("/api/v1/account/email-change")
+async def request_customer_email_change(
+    payload: CustomerEmailChangeRequest,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_key_revocation),
+):
+    """Request a verified email change; billing identity is untouched until confirmation."""
+    from sqlalchemy import func as sql_func, select, update
+    from hostinger_models import CustomerAccount, CustomerEmailChangeChallenge
+
+    new_email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", new_email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    factory = await _ensure_hostinger_operational_schema()
+    now = datetime.now(timezone.utc)
+    async with factory() as operational_db:
+        account = (await operational_db.execute(
+            select(CustomerAccount).where(CustomerAccount.license_key == license_obj.license_key)
+        )).scalar_one_or_none()
+        if account is None or not account.email:
+            raise HTTPException(status_code=409, detail="Account email is not available for self-service changes.")
+        if account.email.strip().lower() == new_email:
+            raise HTTPException(status_code=409, detail="This email address is already on the account.")
+        duplicate = await operational_db.scalar(
+            select(CustomerAccount.id).where(
+                sql_func.lower(CustomerAccount.email) == new_email,
+                CustomerAccount.license_key != license_obj.license_key,
+            ).limit(1)
+        )
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="This email address is already associated with another account.")
+        recent_count = int((await operational_db.execute(
+            select(sql_func.count(CustomerEmailChangeChallenge.id)).where(
+                CustomerEmailChangeChallenge.license_key == license_obj.license_key,
+                CustomerEmailChangeChallenge.created_at >= now - timedelta(hours=1),
+            )
+        )).scalar_one() or 0)
+        if recent_count >= 3:
+            raise HTTPException(status_code=429, detail="Too many email-change requests. Try again later.")
+        token = secrets.token_urlsafe(32)
+        challenge = CustomerEmailChangeChallenge(
+            id=secrets.token_hex(24),
+            license_key=license_obj.license_key,
+            new_email=new_email,
+            challenge_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            expires_at=now + timedelta(minutes=30),
+            created_at=now,
+        )
+        await operational_db.execute(
+            update(CustomerEmailChangeChallenge)
+            .where(
+                CustomerEmailChangeChallenge.license_key == license_obj.license_key,
+                CustomerEmailChangeChallenge.consumed_at.is_(None),
+            )
+            .values(consumed_at=now)
+        )
+        operational_db.add(challenge)
+        await operational_db.commit()
+    try:
+        await asyncio.to_thread(_send_customer_email_change_verification, new_email, token)
+    except Exception as exc:
+        logger.error("Customer email verification delivery failed (error_type=%s)", type(exc).__name__)
+        async with factory() as operational_db:
+            failed = await operational_db.get(CustomerEmailChangeChallenge, challenge.id)
+            if failed is not None and failed.consumed_at is None:
+                failed.consumed_at = datetime.now(timezone.utc)
+                await operational_db.commit()
+        raise HTTPException(status_code=503, detail="Verification email could not be delivered. Your account email is unchanged.") from exc
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "verification_sent", "expires_in_seconds": 1800,
+            "message": "Check the new email address for a verification token. The account email has not changed yet."}
+
+
+@app.post("/api/v1/account/email-change/confirm")
+async def confirm_customer_email_change(
+    payload: CustomerEmailChangeVerify,
+    response: Response,
+):
+    """Consume a one-time verification token and queue billing identity reconciliation."""
+    from sqlalchemy import func as sql_func, select
+    from hostinger_models import (
+        CustomerAccount, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox,
+    )
+
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        challenge = (await operational_db.execute(
+            select(CustomerEmailChangeChallenge)
+            .where(CustomerEmailChangeChallenge.challenge_hash == token_hash)
+            .with_for_update()
+        )).scalar_one_or_none()
+        if challenge is None or challenge.consumed_at is not None:
+            raise HTTPException(status_code=400, detail="Verification token is invalid or has already been used.")
+        expires_at = challenge.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= now:
+            challenge.consumed_at = now
+            await operational_db.commit()
+            raise HTTPException(status_code=400, detail="Verification token has expired. Request a new one.")
+        account = (await operational_db.execute(
+            select(CustomerAccount)
+            .where(CustomerAccount.license_key == challenge.license_key)
+            .with_for_update()
+        )).scalar_one_or_none()
+        if account is None or not account.email:
+            raise HTTPException(status_code=409, detail="Account email could not be verified. Contact support.")
+        duplicate = await operational_db.scalar(
+            select(CustomerAccount.id).where(
+                sql_func.lower(CustomerAccount.email) == challenge.new_email.lower(),
+                CustomerAccount.license_key != challenge.license_key,
+            ).limit(1)
+        )
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="This email address is already associated with another account.")
+        old_email = account.email.strip().lower()
+        new_email = challenge.new_email.strip().lower()
+        if old_email != new_email:
+            account.email = new_email
+            account.updated_at = now
+            operational_db.add(CustomerEmailIdentitySyncOutbox(
+                old_email=old_email,
+                new_email=new_email,
+                status="pending",
+                attempts=0,
+                next_attempt_at=now,
+                created_at=now,
+            ))
+        challenge.consumed_at = now
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "email_updated", "email": new_email,
+            "billing_sync": "queued" if old_email != new_email else "not_required"}
 
 
 @app.get("/api/v1/account/usage")
@@ -2062,6 +2209,43 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
         f"License key: {license_key}\nPlan: {tier}\nMonthly audit allowance: {quota}\n\n"
         "Open the customer dashboard, choose License key, and paste this key to access your reports. "
         "Keep this key private; it authorizes use of your account allowance."
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
+def _send_customer_email_change_verification(recipient: str, token: str) -> None:
+    """Send a short-lived email-change verification token without logging it."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = _configured_smtp_port()
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+    message = EmailMessage()
+    message["Subject"] = "Verify your E-commerce Audit Agent email change"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        "A request was made to change the email address on your E-commerce Audit Agent account.\n\n"
+        f"Verification token: {token}\n\n"
+        "Enter this token in your account dashboard within 30 minutes to confirm the change. "
+        "If you did not request this change, ignore this email. Your current email remains unchanged."
     )
     if mode == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=15) as server:
