@@ -61,50 +61,57 @@ async def enqueue_scan_request(
     request_hash = hashlib.sha256(
         "\\n".join(normalized_urls).encode("utf-8")
     ).hexdigest()
-    existing_batches = (await db.execute(
-        select(ScanBatch).where(
-            ScanBatch.license_key == license_key,
-            ScanBatch.request_id == request_id,
-        ).order_by(ScanBatch.batch_number)
-    )).scalars().all()
-    if existing_batches:
-        if any(batch.request_hash != request_hash for batch in existing_batches):
-            raise ValueError("This request ID has already been used for a different URL list.")
-        existing_ids = [batch.id for batch in existing_batches]
-        existing_jobs = (await db.execute(
-            select(WebsiteScanJob.id).where(WebsiteScanJob.batch_id.in_(existing_ids))
-        )).scalars().all()
-        return {
-            "request_id": request_id,
-            "batch_ids": existing_ids,
-            "job_ids": [],
-            "existing_job_ids": list(existing_jobs),
-            "submitted_urls": len(normalized_urls),
-            "new_jobs": 0,
-            "batch_size": batch_size,
-            "batch_count": len(existing_ids),
-            "idempotent_replay": True,
-        }
+    # Acquire the per-license sequence lock before checking idempotency. This
+    # serializes the check-and-create operation, so concurrent retries with the
+    # same request_id cannot both observe an empty request and enqueue duplicates.
+    try:
+        await db.execute(text("""
+            INSERT IGNORE INTO scan_batch_sequences (license_key, next_batch_number)
+            SELECT :license_key, COALESCE(MAX(batch_number), 0) + 1
+            FROM scan_batches WHERE license_key = :license_key
+        """), {"license_key": license_key})
+        sequence = (await db.execute(text("""
+            SELECT next_batch_number FROM scan_batch_sequences
+            WHERE license_key = :license_key FOR UPDATE
+        """), {"license_key": license_key})).scalar_one()
 
-    # Allocate a contiguous per-license batch range under a MySQL row lock.
-    # The sequence row serializes concurrent submissions, avoiding duplicate or
-    # interleaved batch numbers when two customer requests arrive simultaneously.
-    await db.execute(text("""
-        INSERT IGNORE INTO scan_batch_sequences (license_key, next_batch_number)
-        SELECT :license_key, COALESCE(MAX(batch_number), 0) + 1
-        FROM scan_batches WHERE license_key = :license_key
-    """), {"license_key": license_key})
-    sequence = (await db.execute(text("""
-        SELECT next_batch_number FROM scan_batch_sequences
-        WHERE license_key = :license_key FOR UPDATE
-    """), {"license_key": license_key})).scalar_one()
-    first_batch_number = int(sequence)
-    batch_count = (len(normalized_urls) + batch_size - 1) // batch_size
-    await db.execute(text("""
-        UPDATE scan_batch_sequences
-        SET next_batch_number = :next_number
-        WHERE license_key = :license_key
-    """), {"license_key": license_key, "next_number": first_batch_number + batch_count})
+        existing_batches = (await db.execute(
+            select(ScanBatch).where(
+                ScanBatch.license_key == license_key,
+                ScanBatch.request_id == request_id,
+            ).order_by(ScanBatch.batch_number)
+        )).scalars().all()
+        if existing_batches:
+            if any(batch.request_hash != request_hash for batch in existing_batches):
+                raise ValueError("This request ID has already been used for a different URL list.")
+            existing_ids = [batch.id for batch in existing_batches]
+            existing_jobs = (await db.execute(
+                select(WebsiteScanJob.id).where(WebsiteScanJob.batch_id.in_(existing_ids))
+            )).scalars().all()
+            await db.commit()  # Release the sequence lock before returning the replay.
+            return {
+                "request_id": request_id,
+                "batch_ids": existing_ids,
+                "job_ids": [],
+                "existing_job_ids": list(existing_jobs),
+                "submitted_urls": len(normalized_urls),
+                "new_jobs": 0,
+                "batch_size": batch_size,
+                "batch_count": len(existing_ids),
+                "idempotent_replay": True,
+            }
+
+        # Allocate the contiguous range only after the locked replay check.
+        first_batch_number = int(sequence)
+        batch_count = (len(normalized_urls) + batch_size - 1) // batch_size
+        await db.execute(text("""
+            UPDATE scan_batch_sequences
+            SET next_batch_number = :next_number
+            WHERE license_key = :license_key
+        """), {"license_key": license_key, "next_number": first_batch_number + batch_count})
+    except Exception:
+        await db.rollback()
+        raise
     created_batches = []
     created_jobs = []
     already_queued = []
