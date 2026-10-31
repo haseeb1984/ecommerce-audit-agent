@@ -2490,6 +2490,9 @@ async def list_agency_team_workspace_audit_results(
             return json.loads(raw) if raw else fallback
         except (TypeError, ValueError):
             return fallback
+    def decoded_list(raw, maximum):
+        value = decoded(raw, [])
+        return value[:maximum] if isinstance(value, list) else []
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"workspace_id": workspace.id, "workspace_name": workspace.display_name, "items": [{
@@ -2500,8 +2503,8 @@ async def list_agency_team_workspace_audit_results(
         "result": ({
             "status": result.status, "overall_score": result.overall_score,
             "finding_count": result.finding_count,
-            "findings": decoded(result.findings_json, [])[:200],
-            "check_outcomes": decoded(result.check_outcomes_json, [])[:300],
+            "findings": decoded_list(result.findings_json, 200),
+            "check_outcomes": decoded_list(result.check_outcomes_json, 300),
             "coverage": decoded(result.coverage_json, {}),
             "summary": decoded(result.summary_json, {}),
             "created_at": result.created_at.isoformat() if result.created_at else None,
@@ -2609,6 +2612,9 @@ async def list_business_agency_client_audit_results(
             return json.loads(raw) if raw else fallback
         except (TypeError, ValueError):
             return fallback
+    def decoded_list(raw, maximum):
+        value = decoded(raw, [])
+        return value[:maximum] if isinstance(value, list) else []
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"workspace_id": workspace.id, "workspace_name": workspace.display_name, "items": [{
