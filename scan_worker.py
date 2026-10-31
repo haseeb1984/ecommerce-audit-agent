@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 
 from database import AsyncSessionLocal
 from models import AuditLead, SoftwareLicense
@@ -20,7 +20,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import WebsiteScanResult
+from hostinger_models import CustomerEmailChangeChallenge, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -300,11 +300,47 @@ async def process_one_scan(worker_id: str) -> dict:
         await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
+async def cleanup_expired_customer_auth_records(*, batch_size: int = 500) -> dict:
+    """Bounded retention cleanup for expired customer authentication records."""
+    if batch_size < 1 or batch_size > 2000:
+        raise ValueError("batch_size must be between 1 and 2000.")
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    challenge_expiry_cutoff = now - timedelta(days=7)
+    challenge_retention_cutoff = now - timedelta(days=30)
+    session_retention_cutoff = now - timedelta(days=30)
+    counts = {"login_challenges_deleted": 0, "email_change_challenges_deleted": 0, "sessions_deleted": 0}
+    async with HostingerAsyncSessionLocal() as operational_db:
+        try:
+            cleanup_targets = (
+                (CustomerLoginChallenge, CustomerLoginChallenge.id, or_(CustomerLoginChallenge.expires_at < challenge_expiry_cutoff, CustomerLoginChallenge.consumed_at < challenge_retention_cutoff), "login_challenges_deleted"),
+                (CustomerEmailChangeChallenge, CustomerEmailChangeChallenge.id, or_(CustomerEmailChangeChallenge.expires_at < challenge_expiry_cutoff, CustomerEmailChangeChallenge.consumed_at < challenge_retention_cutoff), "email_change_challenges_deleted"),
+                (CustomerSession, CustomerSession.token_hash, or_(CustomerSession.expires_at < session_retention_cutoff, CustomerSession.revoked_at < session_retention_cutoff), "sessions_deleted"),
+            )
+            for model, key_column, condition, count_key in cleanup_targets:
+                identifiers = list((await operational_db.execute(select(key_column).where(condition).order_by(key_column).limit(batch_size))).scalars().all())
+                if identifiers:
+                    result = await operational_db.execute(delete(model).where(key_column.in_(identifiers)))
+                    counts[count_key] = max(0, int(result.rowcount or 0))
+            await operational_db.commit()
+        except Exception:
+            await operational_db.rollback()
+            raise
+    return counts
+
 async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None) -> dict:
     if max_jobs < 1 or max_jobs > 10:
         raise ValueError("max_jobs must be between 1 and 10.")
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
     import asyncio
+
+    cleanup = {"status": "completed"}
+    try:
+        cleanup.update(await cleanup_expired_customer_auth_records())
+    except Exception as exc:
+        # Authentication housekeeping must not take the scan queue offline.
+        cleanup = {"status": "deferred", "error_type": type(exc).__name__}
+        logger.warning("Customer authentication retention cleanup failed (error_type=%s)", type(exc).__name__)
 
     async def _run_slot(slot: int):
         return await process_one_scan(f"{worker_id}-{slot}")
@@ -313,6 +349,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     active = [item for item in outcomes if item["status"] != "idle"]
     return {
         "worker_id": worker_id,
+        "authentication_cleanup": cleanup,
         "claimed_slots": len(active),
         "processed": sum(1 for item in active if item["status"] == "completed"),
         "outcomes": active,
