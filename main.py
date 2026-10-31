@@ -5284,7 +5284,8 @@ async def admin_customer_account_detail(
             "created_at": item.created_at.isoformat() if item.created_at else None,
         } for item in rows],
         "sessions": [{
-            "email": item.email, "license_key": item.license_key,
+            "email": item.email,
+            "license_id": next((lic.id for lic in rows if lic.license_key == item.license_key), None),
             "status": "revoked" if item.revoked_at else ("expired" if (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now else "active"),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
