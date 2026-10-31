@@ -12,7 +12,7 @@ from hostinger_database import get_hostinger_db
 from hostinger_models import ScanBatch, WebsiteScanJob, WebsiteScanResult, CustomerWebsite
 from models import SoftwareLicense
 from plan_features import plan_features
-from scan_queue import enqueue_scan_request, cancel_scan_batch
+from scan_queue import enqueue_scan_request, cancel_scan_batch, retry_failed_scan_job
 from ecommerce_agent import UniversalEcommerceAgent
 
 router = APIRouter()
@@ -146,6 +146,29 @@ async def cancel_customer_scan_batch(
             if result["in_flight_jobs"]
             else "The scan batch cancellation has been recorded."
         ),
+        **result,
+    }
+
+
+@router.post("/api/v1/scan-jobs/{job_id}/retry")
+async def retry_customer_scan_job(
+    job_id: str,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Retry one failed job without resubmitting the original URL or batch."""
+    result = await retry_failed_scan_job(
+        db, job_id=job_id, license_key=license_obj.license_key,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Scan job not found.")
+    if result.get("status") == "not_retryable":
+        raise HTTPException(
+            status_code=409,
+            detail="Only failed jobs in a failed, non-cancelled batch can be retried.",
+        )
+    return {
+        "message": "The failed website scan has been returned to the queue.",
         **result,
     }
 
