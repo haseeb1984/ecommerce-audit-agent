@@ -133,6 +133,81 @@ function eaa_wp_api_request($path, $method = 'GET', $body = null, $timeout = 25)
     return $response;
 }
 
+function eaa_wp_agency_api_request($path, $method = 'GET', $body = null, $token = '', $header = 'X-Agency-Site-Token') {
+    $token = trim((string) $token);
+    if ('' === $token || strlen($token) > 200) {
+        return new WP_Error('eaa_agency_token_missing', __('An agency connection token is required.', 'ecommerce-audit-agent'));
+    }
+    $url = eaa_wp_api_base() . '/' . ltrim($path, '/');
+    $args = array(
+        'method' => strtoupper($method),
+        'timeout' => 25,
+        'redirection' => 0,
+        'reject_unsafe_urls' => true,
+        'sslverify' => true,
+        'headers' => array(
+            'Accept' => 'application/json',
+            $header => $token,
+            'User-Agent' => 'EcommerceAuditAgentWordPress/' . EAA_WP_VERSION,
+        ),
+    );
+    if (null !== $body) {
+        $args['headers']['Content-Type'] = 'application/json';
+        $args['body'] = wp_json_encode($body);
+    }
+    $response = wp_safe_remote_request($url, $args);
+    if (is_wp_error($response)) {
+        return new WP_Error('eaa_agency_connection_error', __('Could not connect securely to the agency SaaS API.', 'ecommerce-audit-agent'));
+    }
+    $code = (int) wp_remote_retrieve_response_code($response);
+    if ($code < 200 || $code >= 300) {
+        $decoded = json_decode(wp_remote_retrieve_body($response), true);
+        $message = is_array($decoded) && !empty($decoded['detail']) && is_string($decoded['detail'])
+            ? sanitize_text_field($decoded['detail'])
+            : sprintf(__('The agency SaaS API returned HTTP %d.', 'ecommerce-audit-agent'), $code);
+        return new WP_Error('eaa_agency_api_error', $message, array('status' => $code));
+    }
+    return $response;
+}
+
+function eaa_wp_register_agency_site($one_time_token) {
+    $payload = array(
+        'site_url' => home_url('/'),
+        'admin_email' => get_option('admin_email'),
+        'wordpress_version' => get_bloginfo('version'),
+        'woocommerce_version' => defined('WC_VERSION') ? WC_VERSION : '',
+        'plugin_version' => EAA_WP_VERSION,
+    );
+    $response = eaa_wp_agency_api_request(
+        '/api/v1/integrations/wordpress/agency/sites/register',
+        'POST',
+        $payload,
+        $one_time_token,
+        'X-Agency-Connect-Token'
+    );
+    if (is_wp_error($response)) {
+        return $response;
+    }
+    $data = eaa_wp_json($response);
+    if (empty($data['site_id']) || empty($data['agency_site_token'])) {
+        return new WP_Error('eaa_agency_registration_invalid', __('The agency API did not return a complete site credential.', 'ecommerce-audit-agent'));
+    }
+    $encrypted = eaa_wp_encrypt_license(sanitize_text_field($data['agency_site_token']));
+    if (is_wp_error($encrypted)) {
+        return $encrypted;
+    }
+    $settings = eaa_wp_settings();
+    $settings['agency_site_token'] = $encrypted;
+    $settings['agency_site_id'] = sanitize_text_field($data['site_id']);
+    $settings['agency_workspace_id'] = sanitize_text_field($data['workspace_id']);
+    $settings['agency_workspace_name'] = sanitize_text_field($data['workspace_name']);
+    $settings['agency_site_url'] = esc_url_raw($data['site_url']);
+    $settings['agency_connected_at'] = sanitize_text_field($data['connected_at']);
+    $settings['connection_error'] = '';
+    update_option(EAA_WP_OPTION, $settings, false);
+    return $data;
+}
+
 function eaa_wp_json($response) {
     $decoded = json_decode(wp_remote_retrieve_body($response), true);
     return is_array($decoded) ? $decoded : array();
@@ -163,6 +238,23 @@ function eaa_wp_register_site() {
 }
 
 function eaa_wp_disconnect_site() {
+    $settings = eaa_wp_settings();
+    if (!empty($settings['agency_site_token'])) {
+        $token = eaa_wp_decrypt_license($settings['agency_site_token']);
+        if (is_wp_error($token)) {
+            return $token;
+        }
+        $response = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/disconnect', 'POST', array(), $token);
+        if (is_wp_error($response)) {
+            $error_data = $response->get_error_data();
+            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+            if (404 !== $http_status) return $response;
+        }
+        unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
+              $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+        update_option(EAA_WP_OPTION, $settings, false);
+        return true;
+    }
     $settings = eaa_wp_settings();
     if (empty($settings['site_id'])) {
         return true;
@@ -245,6 +337,29 @@ add_action('admin_init', function () {
         wp_schedule_event(time() + 300, 'twicedaily', 'eaa_wp_scheduled_status_sync');
     }
 });
+
+add_action('admin_post_eaa_connect_agency_site', 'eaa_wp_handle_connect_agency_site');
+function eaa_wp_handle_connect_agency_site() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
+    }
+    check_admin_referer('eaa_connect_agency_site');
+    $token = isset($_POST['agency_connect_token']) ? sanitize_text_field(wp_unslash($_POST['agency_connect_token'])) : '';
+    if (strlen($token) < 32 || strlen($token) > 200) {
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connect_failed'), admin_url('admin.php')));
+        exit;
+    }
+    $result = eaa_wp_register_agency_site($token);
+    if (is_wp_error($result)) {
+        $settings = eaa_wp_settings();
+        $settings['connection_error'] = $result->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connect_failed'), admin_url('admin.php')));
+        exit;
+    }
+    wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connected'), admin_url('admin.php')));
+    exit;
+}
 
 add_action('admin_post_eaa_save_settings', 'eaa_wp_handle_save_settings');
 function eaa_wp_handle_save_settings() {
