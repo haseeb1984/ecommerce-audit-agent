@@ -230,6 +230,12 @@ async def public_marketing_site():
     return FileResponse(Path(__file__).resolve().parent / "marketing.html")
 
 
+@app.get("/agency", include_in_schema=False)
+async def agency_team_portal():
+    """Serve the separate, least-privilege agency team member workspace."""
+    return FileResponse(Path(__file__).resolve().parent / "agency_portal.html")
+
+
 @app.get("/health-check")
 async def health_check(
     db: AsyncSession = Depends(get_async_db),
