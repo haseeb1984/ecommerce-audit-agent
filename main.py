@@ -1672,6 +1672,16 @@ async def register_wordpress_site(
 ):
     """Register or refresh one WordPress installation in Hostinger."""
     from sqlalchemy import select, func as sql_func
+    # Serialize registrations for the same license across requests, including
+    # first-time CustomerAccount creation where no Hostinger row exists to lock.
+    # The PostgreSQL row lock remains held until this request's DB session closes,
+    # while the Hostinger transaction performs the account/site/cap updates.
+    locked_license_id = await db.scalar(select(SoftwareLicense.id).where(
+        SoftwareLicense.id == license_obj.id,
+        SoftwareLicense.license_key == license_obj.license_key,
+    ).with_for_update())
+    if locked_license_id is None:
+        raise HTTPException(status_code=404, detail="The license is no longer available for WordPress registration.")
     raw_url = payload.site_url.strip()
     parsed = urlsplit(raw_url)
     if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
