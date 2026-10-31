@@ -18,3 +18,18 @@ def test_bulk_scan_payload_accepts_optional_agency_workspace():
     )
     assert personal.workspace_id is None
     assert agency.workspace_id == "agency-client-workspace"
+
+
+def test_agency_wordpress_audit_payload_requires_request_identity_and_urls():
+    import pytest
+    from pydantic import ValidationError
+    from scan_api import AgencyWordPressAuditRequest
+
+    payload = AgencyWordPressAuditRequest(
+        urls=["https://shop.example/"],
+        request_id="wp-agency-audit-123456",
+    )
+    assert payload.urls == ["https://shop.example/"]
+    assert payload.request_id == "wp-agency-audit-123456"
+    with pytest.raises(ValidationError):
+        AgencyWordPressAuditRequest(urls=[], request_id="short")
