@@ -211,7 +211,7 @@ async def queue_agency_wordpress_site_audit(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="Agency scan queue is temporarily unavailable.") from exc
-    site.last_seen_at = _utcnow()
+    site.last_seen_at = datetime.now(timezone.utc)
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
