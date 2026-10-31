@@ -97,3 +97,12 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - A delayed failure notification is ignored when the same transaction already has a verified completion/provisioning record (`delivered`, `email_pending`, `email_sending`, or `subscription_renewed`). This prevents stale failure notifications from reopening a recovered billing issue.
 - Failure events remain billing-history/operations events and do not independently deactivate a license. Subscription cancellation and pause remain separate lifecycle transitions; Paddle subscription state and verified renewal events govern recovery.
 - When a transaction is linked to a subscription, preserve the subscription identifier on the failure event so customer/admin attention feeds can clear the old failure after a newer verified recovery event.
+
+
+### Customer bulk-scan retry from the portal
+
+- In Bulk website scanning, open a batch with **View URLs** to inspect each job's state, attempt count, and safe error code. Completed jobs expose their saved scan results.
+- A failed job shows **Retry failed scan** only as an enabled action after its parent batch reaches `failed`. While the request is in flight the control is disabled to prevent duplicate clicks.
+- The portal calls `POST /api/v1/scan-jobs/{job_id}/retry` using the currently connected license/session. The API scopes the job and batch to that license, accepts only failed jobs in a failed non-cancelled batch, and returns HTTP 409 for a state conflict or 404 for a job outside the account.
+- A retry reuses the original job and idempotency identity; it does not create another URL submission. After acceptance, the portal reloads the batch list and job detail so queued/processing/completed state is refreshed. If the request fails, the portal displays the API error and leaves the retry available only when the previously loaded batch state still permits it.
+- Progress is refreshed on demand through **Refresh progress** or after queue/cancel/retry actions. This portal view does not claim continuous live updates.
