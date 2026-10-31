@@ -2569,7 +2569,9 @@ async def test_discovery_fetches_enforce_same_origin_redirect_boundary(monkeypat
     async def fake_safe_get(client, url, allowed_origin=None):
         observed[url] = allowed_origin
         if url == "https://shop.example/":
-            return 200, '<html><head><title>Store</title></head><body></body></html>', {"content-type": "text/html"}, url
+            return 200, '<html><head><title>Store</title></head><body><a href="/products/one">One</a></body></html>', {"content-type": "text/html"}, url
+        if url == "https://shop.example/products/one":
+            return 200, '<html><head><title>Product</title></head><body></body></html>', {"content-type": "text/html"}, url
         if url in {
             "https://shop.example/llms.txt",
             "https://shop.example/robots.txt",
@@ -2587,6 +2589,7 @@ async def test_discovery_fetches_enforce_same_origin_redirect_boundary(monkeypat
         "https://shop.example/sitemap.xml",
     ):
         assert observed[url] == "https://shop.example/"
+    assert observed["https://shop.example/products/one"] == "https://shop.example/"
 
 
 @pytest.mark.asyncio
