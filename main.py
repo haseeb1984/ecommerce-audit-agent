@@ -125,6 +125,20 @@ class ReportEmailRequest(BaseModel):
     recipient_confirmed: bool = False
 
 
+class AgencyTeamInviteCreate(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+    role: str = Field(default="analyst", pattern="^(admin|analyst|viewer)$")
+    workspace_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
+class AgencyWorkspaceAccessUpdate(BaseModel):
+    role: str = Field(default="viewer", pattern="^(admin|analyst|viewer)$")
+
+
+class AgencyInvitationAccept(BaseModel):
+    token: str = Field(..., min_length=32, max_length=200)
+
+
 class AgencyClientWorkspaceCreate(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=160)
     external_reference: str | None = Field(default=None, max_length=120)
@@ -1944,6 +1958,237 @@ async def create_or_get_business_agency(
     }
 
 
+@app.get("/api/v1/account/agency/team")
+async def list_business_agency_team(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    members = (await operational_db.execute(select(AgencyTeamMember).where(
+        AgencyTeamMember.agency_id == agency.id
+    ).order_by(AgencyTeamMember.created_at.desc()).limit(500))).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": [{
+        "id": item.id, "email": item.email, "role": item.role, "status": item.status,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "accepted_at": item.accepted_at.isoformat() if item.accepted_at else None,
+    } for item in members]}
+
+
+@app.post("/api/v1/account/agency/team/invitations", status_code=201)
+async def invite_business_agency_team_member(
+    payload: AgencyTeamInviteCreate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Create a short-lived, email-verified invitation and optional workspace grants."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team invitations are available on the Business plan.")
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ))
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid team-member email address.")
+    if hmac.compare_digest(email, agency.owner_email.lower()):
+        raise HTTPException(status_code=409, detail="The agency owner already has full agency access.")
+    workspaces = []
+    if payload.workspace_ids:
+        workspaces = (await operational_db.execute(select(AgencyClientWorkspace).where(
+            AgencyClientWorkspace.agency_id == agency.id,
+            AgencyClientWorkspace.id.in_(payload.workspace_ids),
+            AgencyClientWorkspace.status == "active",
+        ))).scalars().all()
+        if len({item.id for item in workspaces}) != len(set(payload.workspace_ids)):
+            raise HTTPException(status_code=422, detail="One or more selected client workspaces are unavailable.")
+    existing = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.normalized_email == email,
+    ).with_for_update())
+    now = datetime.now(timezone.utc)
+    raw_token = secrets.token_urlsafe(36)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires = now + timedelta(hours=48)
+    if existing and existing.status == "active":
+        raise HTTPException(status_code=409, detail="This team member has already accepted the agency invitation.")
+    if existing:
+        existing.email = email
+        existing.role = payload.role
+        existing.status = "invited"
+        existing.invited_by = agency.owner_email
+        existing.invitation_token_hash = token_hash
+        existing.invitation_expires_at = expires
+        existing.accepted_at = None
+        member = existing
+        await operational_db.execute(delete(AgencyWorkspaceAccess).where(
+            AgencyWorkspaceAccess.agency_id == agency.id,
+            AgencyWorkspaceAccess.team_member_id == member.id,
+        ))
+    else:
+        member = AgencyTeamMember(
+            id=secrets.token_urlsafe(24), agency_id=agency.id, email=email,
+            normalized_email=email, role=payload.role, status="invited",
+            invited_by=agency.owner_email, invitation_token_hash=token_hash,
+            invitation_expires_at=expires,
+        )
+        operational_db.add(member)
+    for workspace in workspaces:
+        operational_db.add(AgencyWorkspaceAccess(
+            id=secrets.token_urlsafe(24), agency_id=agency.id,
+            workspace_id=workspace.id, team_member_id=member.id,
+            role=payload.role,
+        ))
+    try:
+        await operational_db.commit()
+    except IntegrityError:
+        await operational_db.rollback()
+        raise HTTPException(status_code=409, detail="An invitation for this email already exists. Refresh and retry.")
+    try:
+        _send_agency_invitation_email(email, raw_token, agency.owner_email, payload.role)
+    except Exception as exc:
+        logger.warning("Agency invitation email delivery failed: %s", type(exc).__name__)
+        await operational_db.rollback()
+        member = await operational_db.scalar(select(AgencyTeamMember).where(
+            AgencyTeamMember.agency_id == agency.id,
+            AgencyTeamMember.normalized_email == email,
+        ))
+        if member is not None and member.invitation_token_hash == token_hash:
+            member.status = "delivery_failed"
+            member.invitation_token_hash = None
+            member.invitation_expires_at = None
+            await operational_db.commit()
+        raise HTTPException(status_code=503, detail="Invitation could not be emailed. Check SMTP configuration and retry.")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"id": member.id, "email": member.email, "role": member.role, "status": member.status,
+            "invitation_expires_at": expires.isoformat(), "message": "Invitation email sent."}
+
+
+@app.post("/api/v1/account/agency/team/invitations/accept")
+async def accept_business_agency_invitation(
+    payload: AgencyInvitationAccept,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Accept an invitation only with its unexpired, single-use emailed token."""
+    from sqlalchemy import select
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.invitation_token_hash == token_hash,
+        AgencyTeamMember.status == "invited",
+    ).with_for_update())
+    now = datetime.now(timezone.utc)
+    if member is None or member.invitation_expires_at is None or member.invitation_expires_at <= now:
+        raise HTTPException(status_code=400, detail="Invitation is invalid, expired, or already used.")
+    member.status = "active"
+    member.accepted_at = now
+    member.invitation_token_hash = None
+    member.invitation_expires_at = None
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "accepted", "agency_id": member.agency_id, "email": member.email,
+            "role": member.role, "message": "Invitation accepted. Team-member sign-in is the next access-control step."}
+
+
+@app.put("/api/v1/account/agency/team/{member_id}/workspaces/{workspace_id}")
+async def set_business_agency_team_workspace_access(
+    member_id: str,
+    workspace_id: str,
+    payload: AgencyWorkspaceAccessUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == member_id, AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ))
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id, AgencyClientWorkspace.agency_id == agency.id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if member is None or workspace is None:
+        raise HTTPException(status_code=404, detail="Active team member or client workspace was not found in this agency.")
+    access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == agency.id,
+        AgencyWorkspaceAccess.workspace_id == workspace.id,
+        AgencyWorkspaceAccess.team_member_id == member.id,
+    ).with_for_update())
+    if access is None:
+        access = AgencyWorkspaceAccess(
+            id=secrets.token_urlsafe(24), agency_id=agency.id,
+            workspace_id=workspace.id, team_member_id=member.id, role=payload.role,
+        )
+        operational_db.add(access)
+    else:
+        access.role = payload.role
+    try:
+        await operational_db.commit()
+    except IntegrityError:
+        await operational_db.rollback()
+        raise HTTPException(status_code=409, detail="Workspace access could not be saved. Refresh and retry.")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "updated", "member_id": member.id, "workspace_id": workspace.id, "role": access.role}
+
+
+@app.delete("/api/v1/account/agency/team/{member_id}")
+async def revoke_business_agency_team_member(
+    member_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Agency workspace was not found.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == member_id, AgencyTeamMember.agency_id == agency.id,
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=404, detail="Team member was not found.")
+    member.status = "revoked"
+    member.invitation_token_hash = None
+    member.invitation_expires_at = None
+    await operational_db.execute(delete(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == agency.id,
+        AgencyWorkspaceAccess.team_member_id == member.id,
+    ))
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "member_id": member.id}
+
+
 @app.get("/api/v1/account/agency/clients")
 async def list_business_agency_clients(
     response: Response,
@@ -2862,6 +3107,49 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
         f"License key: {license_key}\nPlan: {tier}\nMonthly audit allowance: {quota}\n\n"
         "Open the customer dashboard, choose License key, and paste this key to access your reports. "
         "Keep this key private; it authorizes use of your account allowance."
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
+def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role: str) -> None:
+    """Send a single-use, 48-hour agency team invitation through configured SMTP."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = _configured_smtp_port()
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+    app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
+    if not app_url:
+        raise RuntimeError("PUBLIC_APP_URL is required for secure agency invitation links")
+    parsed_app_url = urlsplit(app_url)
+    if parsed_app_url.scheme != "https" or not parsed_app_url.hostname or parsed_app_url.username or parsed_app_url.password:
+        raise RuntimeError("PUBLIC_APP_URL must be a valid HTTPS URL")
+    invite_url = app_url + "/app?agency_invitation=" + token
+    message = EmailMessage()
+    message["Subject"] = "Invitation to join an Ecommerce Audit Agent agency"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        f"{inviter} invited you to join their agency as {role}.\\n\\n"
+        f"Accept this invitation within 48 hours: {invite_url}\\n\\n"
+        "This link is single-use. If you were not expecting this invitation, ignore this email."
     )
     if mode == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=15) as server:
