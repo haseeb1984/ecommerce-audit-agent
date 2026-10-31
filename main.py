@@ -2643,6 +2643,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         event_customer = transaction.get("customer") or {}
         event_customer_id = str(transaction.get("customer_id") or event_customer.get("id") or "").strip()
         webhook_event.paddle_customer_id = event_customer_id[:100] or None
+    # Also repair the mirror queue for pre-outbox payment events when Paddle retries.
+    await _enqueue_billing_mirror_sync(db, event_id)
     await db.commit()
 
     # Claim email delivery atomically so simultaneous Paddle retries cannot send
