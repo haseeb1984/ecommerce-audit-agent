@@ -1812,7 +1812,7 @@ async def list_account_wordpress_sites(
 ):
     """List WordPress installations linked to the currently selected customer license."""
     from sqlalchemy import select
-    rows = (await db.execute(
+    rows = (await operational_db.execute(
         select(WordPressInstallation).where(WordPressInstallation.license_key == license_obj.license_key)
         .order_by(WordPressInstallation.created_at.desc(), WordPressInstallation.id.desc()).limit(100)
     )).scalars().all()
@@ -1833,7 +1833,7 @@ async def customer_disconnect_wordpress_site(
     site_id: str,
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_customer_account),
-    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Let an authenticated customer disconnect only a site owned by the selected license."""
     from sqlalchemy import select
