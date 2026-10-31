@@ -5098,36 +5098,54 @@ async def admin_customer_directory(
 ):
     """Account directory aggregated from Hostinger billing identities."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func, distinct
+    from sqlalchemy import select, func as sql_func, distinct, union
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     normalized = search.strip().lower()
+
+    # The operational customer directory is the union of billing identities and
+    # authenticated customer accounts. A customer must remain discoverable even
+    # before the first payment event or after a billing mirror has been reconciled.
+    identity_sources = union(
+        select(
+            sql_func.lower(CustomerBillingEvent.recipient_email).label("email"),
+            CustomerBillingEvent.license_key.label("license_key"),
+            CustomerBillingEvent.updated_at.label("activity_at"),
+        ).where(
+            CustomerBillingEvent.recipient_email.is_not(None),
+            CustomerBillingEvent.recipient_email != "",
+        ),
+        select(
+            sql_func.lower(CustomerAccount.email).label("email"),
+            CustomerAccount.license_key.label("license_key"),
+            CustomerAccount.updated_at.label("activity_at"),
+        ).where(
+            CustomerAccount.email.is_not(None),
+            CustomerAccount.email != "",
+        ),
+    ).subquery("customer_identity_sources")
+
     query = select(
-        sql_func.lower(CustomerBillingEvent.recipient_email).label("email"),
-        sql_func.count(distinct(CustomerBillingEvent.license_key)).label("license_count"),
-        sql_func.max(CustomerBillingEvent.updated_at).label("last_billing_activity"),
-    ).where(
-        CustomerBillingEvent.recipient_email.is_not(None),
-        CustomerBillingEvent.recipient_email != "",
-    ).group_by(sql_func.lower(CustomerBillingEvent.recipient_email))
-    count_query = select(sql_func.count(sql_func.distinct(
-        sql_func.lower(CustomerBillingEvent.recipient_email)
-    ))).where(
-        CustomerBillingEvent.recipient_email.is_not(None),
-        CustomerBillingEvent.recipient_email != "",
-    )
+        identity_sources.c.email.label("email"),
+        sql_func.count(distinct(identity_sources.c.license_key)).label("license_count"),
+        sql_func.max(identity_sources.c.activity_at).label("last_billing_activity"),
+    ).group_by(identity_sources.c.email)
+    count_query = select(sql_func.count(sql_func.distinct(identity_sources.c.email)))
     if normalized:
         literal = normalized.replace("%", "").replace("_", "")
-        email_filter = sql_func.lower(CustomerBillingEvent.recipient_email).ilike(f"%{literal}%")
+        email_filter = identity_sources.c.email.ilike(f"%{literal}%")
         query = query.where(email_filter)
         count_query = count_query.where(email_filter)
     total = int((await operational_db.execute(count_query)).scalar_one() or 0)
     rows = (await operational_db.execute(
-        query.order_by(sql_func.max(CustomerBillingEvent.updated_at).desc())
+        query.order_by(sql_func.max(identity_sources.c.activity_at).desc(), identity_sources.c.email.asc())
         .offset(offset).limit(limit)
     )).all()
+
     legacy_directory = False
     if total == 0:
+        # Compatibility fallback for deployments where the Hostinger data
+        # migration has not yet been applied.
         legacy_directory = True
         legacy_query = select(
             sql_func.lower(PaymentWebhookEvent.recipient_email).label("email"),
@@ -5146,7 +5164,9 @@ async def admin_customer_directory(
             PaymentWebhookEvent.license_id.is_not(None),
         )
         if normalized:
-            legacy_filter = sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(f"%{normalized.replace('%', '').replace('_', '')}%")
+            legacy_filter = sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(
+                f"%{normalized.replace('%', '').replace('_', '')}%"
+            )
             legacy_query = legacy_query.having(legacy_filter)
             legacy_count = legacy_count.where(legacy_filter)
         total = int((await db.execute(legacy_count)).scalar_one() or 0)
@@ -5154,23 +5174,31 @@ async def admin_customer_directory(
             legacy_query.order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc())
             .offset(offset).limit(limit)
         )).all()
+
     items = []
     now = datetime.now(timezone.utc)
     for row in rows:
-        license_keys = set((await operational_db.execute(
-            select(CustomerBillingEvent.license_key).where(
-                sql_func.lower(CustomerBillingEvent.recipient_email) == row.email
-            ).distinct()
-        )).scalars().all()) if not legacy_directory else set()
         if legacy_directory:
             license_rows = (await db.execute(select(SoftwareLicense).join(
                 PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
             ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == row.email)
             .distinct())).scalars().all()
         else:
+            operational_license_keys = union(
+                select(CustomerBillingEvent.license_key).where(
+                    sql_func.lower(CustomerBillingEvent.recipient_email) == row.email
+                ),
+                select(CustomerAccount.license_key).where(
+                    sql_func.lower(CustomerAccount.email) == row.email
+                ),
+            ).subquery("customer_license_sources")
+            license_keys = set((await operational_db.execute(
+                select(operational_license_keys.c.license_key)
+            )).scalars().all())
             license_rows = (await db.execute(
                 select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
             )).scalars().all() if license_keys else []
+
         active = sum(
             1 for lic in license_rows
             if lic.is_active and (
