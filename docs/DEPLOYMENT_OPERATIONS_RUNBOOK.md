@@ -20,6 +20,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 - `DATABASE_SSL=true`: require TLS for PostgreSQL.
 - `HOSTINGER_DATABASE_URL`: Hostinger MySQL connection URL using `mysql+asyncmy` and TLS.
 - `HOSTINGER_DB_SSL=true`: enables certificate-verified TLS for Hostinger MySQL (disable only for isolated local development).
+- `HOSTINGER_DB_SSL=true`: enables certificate-verified TLS for Hostinger MySQL (disable only for isolated local development).
 - `HOSTINGER_DB_POOL_SIZE`, `HOSTINGER_DB_MAX_OVERFLOW`, `HOSTINGER_DB_POOL_RECYCLE`, `HOSTINGER_DB_POOL_TIMEOUT`: optional pool tuning.
 
 ### Audit providers
