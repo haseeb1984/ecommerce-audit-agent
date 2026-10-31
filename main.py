@@ -55,7 +55,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent
+from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, ScanBatch
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -1955,6 +1955,62 @@ async def create_or_get_business_agency(
         "owner_email": agency.owner_email,
         "status": agency.status,
         "created_at": agency.created_at.isoformat() if agency.created_at else None,
+    }
+
+
+@app.get("/api/v1/account/agency/clients/{workspace_id}/audits")
+async def list_business_agency_client_audits(
+    workspace_id: str,
+    response: Response,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1000000),
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return audit batches attributed to one client workspace within the owner's agency."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency client audit history is available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Business agency workspace was not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Client workspace was not found in this agency.")
+    batches = (await operational_db.execute(
+        select(ScanBatch).where(
+            ScanBatch.license_key == license_obj.license_key,
+            ScanBatch.workspace_id == workspace.id,
+        ).order_by(ScanBatch.created_at.desc(), ScanBatch.batch_number.desc())
+        .offset(offset).limit(limit)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "workspace_id": workspace.id,
+        "workspace_name": workspace.display_name,
+        "items": [{
+            "id": item.id,
+            "request_id": item.request_id,
+            "batch_number": item.batch_number,
+            "total_urls": item.total_urls,
+            "queued": item.queued_count,
+            "processing": item.processing_count,
+            "completed": item.completed_count,
+            "failed": item.failed_count,
+            "cancelled": item.cancelled_count,
+            "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+        } for item in batches],
+        "limit": limit,
+        "offset": offset,
     }
 
 
