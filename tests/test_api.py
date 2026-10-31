@@ -3163,3 +3163,12 @@ async def test_customer_website_registration_rejects_parameterized_targets_befor
     )
     assert response.status_code == 422
     assert "Query strings are not accepted" in response.json()["detail"]
+
+
+
+@pytest.mark.asyncio
+async def test_admin_scan_queue_requires_operator_authentication(client):
+    response = await client.get("/api/v1/admin/scan-jobs")
+    assert response.status_code == 401
+    retry = await client.post("/api/v1/admin/scan-jobs/not-a-job/retry")
+    assert retry.status_code == 401
