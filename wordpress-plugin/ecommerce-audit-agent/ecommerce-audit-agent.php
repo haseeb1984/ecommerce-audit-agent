@@ -671,7 +671,18 @@ function eaa_wp_render_admin_page() {
         } else {
             $agency_status = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $agency_token);
             if (is_wp_error($agency_status)) {
-                $error = $agency_status->get_error_message();
+                $error_data = $agency_status->get_error_data();
+                $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+                if (404 === $http_status) {
+                    unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
+                          $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+                    $settings['connection_error'] = __('The agency owner disconnected this client website. Generate a new token to reconnect.', 'ecommerce-audit-agent');
+                    update_option(EAA_WP_OPTION, $settings, false);
+                    $agency_mode = false;
+                    $error = $settings['connection_error'];
+                } else {
+                    $error = $agency_status->get_error_message();
+                }
             } else {
                 $settings['last_status'] = eaa_wp_json($agency_status);
                 $settings['connection_error'] = '';
