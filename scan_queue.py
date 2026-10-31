@@ -38,6 +38,7 @@ async def enqueue_scan_request(
     urls: Iterable[str],
     request_id: str,
     requested_by: str | None = None,
+    workspace_id: str | None = None,
     batch_size: int = 10,
     max_attempts: int = 3,
 ) -> dict:
@@ -59,7 +60,7 @@ async def enqueue_scan_request(
 
     now = _utcnow()
     request_hash = hashlib.sha256(
-        "\\n".join(normalized_urls).encode("utf-8")
+        ((workspace_id or "") + "\\n" + "\\n".join(normalized_urls)).encode("utf-8")
     ).hexdigest()
     # Acquire the per-license sequence lock before checking idempotency. This
     # serializes the check-and-create operation, so concurrent retries with the
@@ -84,6 +85,7 @@ async def enqueue_scan_request(
         if existing_batches:
             if any(
                 batch.request_hash != request_hash or batch.batch_size != batch_size
+                or batch.workspace_id != workspace_id
                 for batch in existing_batches
             ):
                 raise ValueError(
@@ -130,6 +132,7 @@ async def enqueue_scan_request(
                 requested_by=requested_by,
                 package_tier=package_tier,
                 request_id=request_id,
+                workspace_id=workspace_id,
                 request_hash=request_hash,
                 batch_number=first_batch_number + len(created_batches),
                 batch_size=batch_size,
