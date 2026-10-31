@@ -360,6 +360,7 @@ class AgencyClientWebsite(HostingerBase):
     disconnected_at = Column(DateTime(timezone=True), nullable=True)
     __table_args__ = (
         UniqueConstraint("workspace_id", "site_host", name="uq_agency_workspace_site_host"),
+        UniqueConstraint("agency_id", "site_host", name="uq_agency_site_host"),
         Index("ix_agency_client_site_tenant_workspace", "agency_id", "workspace_id", "status"),
     )
 
