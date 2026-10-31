@@ -134,6 +134,14 @@ class AccountProfileUpdate(BaseModel):
     client_name: str = Field(..., min_length=1, max_length=255)
 
 
+class CustomerLoginRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=254)
+
+
+class CustomerLoginVerify(BaseModel):
+    token: str = Field(..., min_length=32, max_length=128)
+
+
 class CustomerEmailChangeRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=254)
 
@@ -1028,6 +1036,144 @@ async def update_account_profile(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"client_name": license_obj.client_name, "updated": True}
+
+
+@app.post("/api/v1/account/login")
+async def request_customer_login(
+    payload: CustomerLoginRequest,
+    response: Response,
+):
+    """Start passwordless sign-in without revealing whether an email has an account."""
+    from sqlalchemy import func as sql_func, select, update
+    from hostinger_models import CustomerAccount, CustomerLoginChallenge
+
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    factory = await _ensure_hostinger_operational_schema()
+    now = datetime.now(timezone.utc)
+    async with factory() as operational_db:
+        accounts = (await operational_db.execute(
+            select(CustomerAccount)
+            .where(sql_func.lower(CustomerAccount.email) == email)
+            .limit(2)
+        )).scalars().all()
+        if len(accounts) == 1:
+            account = accounts[0]
+            recent_count = int((await operational_db.execute(
+                select(sql_func.count(CustomerLoginChallenge.id)).where(
+                    CustomerLoginChallenge.license_key == account.license_key,
+                    CustomerLoginChallenge.created_at >= now - timedelta(hours=1),
+                )
+            )).scalar_one() or 0)
+            if recent_count < 5:
+                token = secrets.token_urlsafe(32)
+                challenge = CustomerLoginChallenge(
+                    id=secrets.token_hex(24),
+                    license_key=account.license_key,
+                    challenge_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                    expires_at=now + timedelta(minutes=10),
+                    created_at=now,
+                )
+                await operational_db.execute(
+                    update(CustomerLoginChallenge)
+                    .where(
+                        CustomerLoginChallenge.license_key == account.license_key,
+                        CustomerLoginChallenge.consumed_at.is_(None),
+                    )
+                    .values(consumed_at=now)
+                )
+                operational_db.add(challenge)
+                await operational_db.commit()
+            else:
+                challenge = None
+        else:
+            challenge = None
+    if challenge is not None:
+        try:
+            await asyncio.to_thread(_send_customer_login_verification, email, token)
+        except Exception as exc:
+            logger.error("Customer sign-in email delivery failed (error_type=%s)", type(exc).__name__)
+            async with factory() as operational_db:
+                failed = await operational_db.get(CustomerLoginChallenge, challenge.id)
+                if failed is not None and failed.consumed_at is None:
+                    failed.consumed_at = datetime.now(timezone.utc)
+                    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "if_account_exists_email_sent",
+        "message": "If an account matches that address, a one-time sign-in token has been sent.",
+        "expires_in_seconds": 600,
+    }
+
+
+@app.post("/api/v1/account/login/verify")
+async def verify_customer_login(
+    payload: CustomerLoginVerify,
+    response: Response,
+):
+    """Consume a one-time sign-in token and issue a 30-day revocable session."""
+    from sqlalchemy import select
+    from hostinger_models import CustomerLoginChallenge, CustomerSession
+
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    factory = await _ensure_hostinger_operational_schema()
+    session_token = secrets.token_urlsafe(48)
+    async with factory() as operational_db:
+        challenge = (await operational_db.execute(
+            select(CustomerLoginChallenge)
+            .where(CustomerLoginChallenge.challenge_hash == token_hash)
+            .with_for_update()
+        )).scalar_one_or_none()
+        if challenge is None or challenge.consumed_at is not None:
+            raise HTTPException(status_code=400, detail="Sign-in token is invalid or has already been used.")
+        expires_at = challenge.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= now:
+            challenge.consumed_at = now
+            await operational_db.commit()
+            raise HTTPException(status_code=400, detail="Sign-in token has expired. Request a new one.")
+        challenge.consumed_at = now
+        operational_db.add(CustomerSession(
+            token_hash=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
+            license_key=challenge.license_key,
+            expires_at=now + timedelta(days=30),
+            created_at=now,
+        ))
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "signed_in", "session_token": session_token,
+            "token_type": "CustomerSession", "expires_in_seconds": 30 * 24 * 60 * 60}
+
+
+@app.post("/api/v1/account/logout")
+async def revoke_customer_session(request: Request, response: Response):
+    """Revoke the current customer session; other sessions remain unaffected."""
+    from sqlalchemy import select
+    from hostinger_models import CustomerSession
+
+    token = request.headers.get("x-customer-session", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Customer session is required.")
+    factory = await _ensure_hostinger_operational_schema()
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    async with factory() as operational_db:
+        session = (await operational_db.execute(
+            select(CustomerSession)
+            .where(CustomerSession.token_hash == token_hash)
+            .with_for_update()
+        )).scalar_one_or_none()
+        if session is None or session.revoked_at is not None:
+            raise HTTPException(status_code=401, detail="Customer session is invalid or already revoked.")
+        session.revoked_at = datetime.now(timezone.utc)
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "signed_out"}
 
 
 @app.post("/api/v1/account/email-change")
@@ -2210,6 +2356,43 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
         f"License key: {license_key}\nPlan: {tier}\nMonthly audit allowance: {quota}\n\n"
         "Open the customer dashboard, choose License key, and paste this key to access your reports. "
         "Keep this key private; it authorizes use of your account allowance."
+    )
+    if mode == "ssl":
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if username:
+                server.login(username, password)
+            server.send_message(message)
+
+
+def _send_customer_login_verification(recipient: str, token: str) -> None:
+    """Send a short-lived passwordless sign-in token without logging it."""
+    host = os.getenv("SMTP_HOST", "").strip()
+    sender = os.getenv("SMTP_FROM", "").strip()
+    if not host or not sender:
+        raise RuntimeError("Email delivery is not configured")
+    port = _configured_smtp_port()
+    username = os.getenv("SMTP_USERNAME", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+    if mode not in {"starttls", "ssl"}:
+        raise RuntimeError("Unsupported SMTP TLS mode")
+    message = EmailMessage()
+    message["Subject"] = "Your E-commerce Audit Agent sign-in token"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        "Use this one-time token to sign in to your E-commerce Audit Agent customer account.\n\n"
+        f"Sign-in token: {token}\n\n"
+        "The token expires in 10 minutes and can be used only once. "
+        "If you did not request this sign-in, ignore this email."
     )
     if mode == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=15) as server:
