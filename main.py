@@ -3482,6 +3482,123 @@ async def admin_retry_license_email(event_id: str, request: Request,
     return {"status": "delivered", "event_id": event.event_id}
 
 
+@app.get("/api/v1/admin/scan-jobs")
+async def admin_list_scan_jobs(
+    request: Request,
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10000000),
+    status_filter: str = Query(default="all", pattern="^(all|queued|processing|retry|completed|failed)$"),
+    license_id: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Inspect the durable scan queue without exposing customer license keys."""
+    _require_admin_key(request)
+    from sqlalchemy import select, func as sql_func
+    from hostinger_models import CustomerWebsite, ScanJob
+    factory = await _ensure_hostinger_operational_schema()
+    filters = []
+    if status_filter != "all":
+        filters.append(ScanJob.status == status_filter)
+    if license_id is not None:
+        license_key = await db.scalar(
+            select(SoftwareLicense.license_key).where(SoftwareLicense.id == license_id)
+        )
+        if not license_key:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        filters.append(ScanJob.license_key == license_key)
+    async with factory() as operational_db:
+        total = int((await operational_db.execute(
+            select(sql_func.count(ScanJob.id)).where(*filters)
+        )).scalar_one() or 0)
+        rows = (await operational_db.execute(
+            select(ScanJob, CustomerWebsite.display_name, CustomerWebsite.canonical_url)
+            .outerjoin(
+                CustomerWebsite,
+                (CustomerWebsite.id == ScanJob.website_id)
+                & (CustomerWebsite.license_key == ScanJob.license_key),
+            )
+            .where(*filters)
+            .order_by(ScanJob.created_at.desc(), ScanJob.id.desc())
+            .offset(offset).limit(limit)
+        )).all()
+    keys = list({job.license_key for job, _, _ in rows})
+    license_rows = (await db.execute(
+        select(SoftwareLicense.id, SoftwareLicense.license_key)
+        .where(SoftwareLicense.license_key.in_(keys))
+    )).all() if keys else []
+    license_ids = {key: row_id for row_id, key in license_rows}
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "items": [{
+            "job_id": job.id,
+            "license_id": license_ids.get(job.license_key),
+            "website_id": job.website_id,
+            "website_name": website_name or "Archived website",
+            "website_url": website_url or job.target_url,
+            "status": job.status,
+            "attempts": job.attempts,
+            "max_attempts": job.max_attempts,
+            "error_code": job.error_code,
+            "result_available": bool(job.result_reference),
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        } for job, website_name, website_url in rows],
+        "page": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": offset + len(rows) < total,
+            "status": status_filter, "license_id": license_id,
+        },
+    }
+
+
+@app.post("/api/v1/admin/scan-jobs/{job_id}/retry")
+async def admin_retry_scan_job(
+    job_id: str,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Requeue a terminal scan after an operator has resolved its blocking condition."""
+    _require_admin_key(request)
+    await _ensure_admin_tables(db)
+    from sqlalchemy import select
+    from hostinger_models import ScanJob
+    factory = await _ensure_hostinger_operational_schema()
+    async with factory() as operational_db:
+        job = (await operational_db.execute(
+            select(ScanJob).where(ScanJob.id == job_id).with_for_update()
+        )).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(status_code=404, detail="Scan job not found.")
+        if job.status != "failed":
+            raise HTTPException(status_code=409, detail="Only failed scan jobs can be retried.")
+        job.status = "queued"
+        job.attempts = 0
+        job.available_at = datetime.now(timezone.utc)
+        job.updated_at = job.available_at
+        job.lease_owner = None
+        job.lease_expires_at = None
+        job.error_code = None
+        job.result_reference = None
+        job.quota_committed = False
+        job.completed_at = None
+        license_key = job.license_key
+        await operational_db.commit()
+    license_id = await db.scalar(
+        select(SoftwareLicense.id).where(SoftwareLicense.license_key == license_key)
+    )
+    await _write_admin_log(db, "scan_job.retried", "scan_job", job_id, {
+        "license_id": license_id, "status": "queued",
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"job_id": job_id, "status": "queued", "attempts_reset": True}
+
+
 @app.get("/api/v1/admin/operations")
 async def admin_operations(request: Request, response: Response, db: AsyncSession = Depends(get_async_db)):
     """Private operational diagnostics without exposing environment values or customer secrets."""
