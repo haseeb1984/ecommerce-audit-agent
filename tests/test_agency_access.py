@@ -128,3 +128,27 @@ async def test_owner_can_remove_one_team_workspace_grant_without_revoking_member
     }
     assert db.deleted == [grant]
     assert db.committed
+
+
+@pytest.mark.asyncio
+async def test_suspended_agency_cannot_list_client_workspaces(monkeypatch):
+    import main
+    from fastapi import HTTPException, Response
+    from main import list_business_agency_clients
+
+    agency = SimpleNamespace(
+        id="agency-suspended", owner_license_key="business-license",
+        status="suspended",
+    )
+    class SuspendedAgencySession:
+        async def scalar(self, _statement):
+            return agency
+
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+    with pytest.raises(HTTPException) as error:
+        await list_business_agency_clients(
+            Response(),
+            license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+            operational_db=SuspendedAgencySession(),
+        )
+    assert error.value.status_code == 404
