@@ -713,7 +713,58 @@
         } finally { toggle.disabled = false; }
       });
       actions.append(toggle);
-      card.append(info, actions, auditHistoryPanel);
+      const websitePanel = document.createElement("div"); websitePanel.className = "reports";
+      const websiteStatus = document.createElement("small"); websiteStatus.textContent = "Checking WordPress connection…";
+      const connectWebsite = document.createElement("button"); connectWebsite.type = "button";
+      connectWebsite.className = "secondary"; connectWebsite.textContent = "Generate WordPress connection token";
+      const tokenPanel = document.createElement("div"); tokenPanel.className = "reports";
+      connectWebsite.addEventListener("click", async () => {
+        connectWebsite.disabled = true;
+        try {
+          const tokenResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website-connection-token", {method:"POST"});
+          const tokenData = await tokenResponse.json();
+          tokenPanel.replaceChildren();
+          const instruction = document.createElement("p");
+          instruction.textContent = "Copy this one-time token into the Ecommerce Audit Agent plugin on the client's WordPress site. It expires " + tokenData.expires_at + " and is shown only once.";
+          const token = document.createElement("input"); token.type = "text"; token.readOnly = true;
+          token.value = tokenData.connection_token; token.autocomplete = "off"; token.spellcheck = false;
+          const copy = document.createElement("button"); copy.type = "button"; copy.className = "secondary"; copy.textContent = "Copy token";
+          copy.addEventListener("click", async () => {
+            try { await navigator.clipboard.writeText(token.value); copy.textContent = "Copied"; }
+            catch (_) { token.select(); document.execCommand("copy"); copy.textContent = "Copied"; }
+          });
+          tokenPanel.append(instruction, token, copy);
+          websiteStatus.textContent = "Connection token generated; awaiting WordPress plugin registration.";
+        } catch (error) {
+          setStatus("agencyStatus", error.message, "error");
+        } finally { connectWebsite.disabled = false; }
+      });
+      const disconnectWebsite = document.createElement("button"); disconnectWebsite.type = "button";
+      disconnectWebsite.className = "secondary"; disconnectWebsite.textContent = "Disconnect website"; disconnectWebsite.hidden = true;
+      disconnectWebsite.addEventListener("click", async () => {
+        disconnectWebsite.disabled = true;
+        try {
+          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website/disconnect", {method:"POST"});
+          websiteStatus.textContent = "Website disconnected. Generate a new token to connect a replacement.";
+          disconnectWebsite.hidden = true; connectWebsite.hidden = false; tokenPanel.replaceChildren();
+        } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+        finally { disconnectWebsite.disabled = false; }
+      });
+      websitePanel.append(websiteStatus, connectWebsite, disconnectWebsite, tokenPanel);
+      if (item.status !== "active") connectWebsite.disabled = true;
+      if (item.status === "active") {
+        (async () => {
+          try {
+            const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
+            const website = await websiteResponse.json();
+            if (website.connected) {
+              websiteStatus.textContent = "Connected: " + website.site_url + " · Last seen: " + (website.last_seen_at || "not reported");
+              connectWebsite.hidden = true; disconnectWebsite.hidden = false;
+            } else { websiteStatus.textContent = "No WordPress website connected to this client."; }
+          } catch (error) { websiteStatus.textContent = error.message; }
+        })();
+      }
+      card.append(info, actions, websitePanel, auditHistoryPanel);
       container.append(card);
     }
     setStatus("agencyStatus", "Agency workspace ready · " + items.length + " client workspace(s).", "success");
