@@ -58,3 +58,14 @@ async def get_hostinger_db():
         raise RuntimeError("Hostinger operational database is not configured.")
     async with HostingerAsyncSessionLocal() as session:
         yield session
+
+
+
+async def ensure_hostinger_schema() -> None:
+    """Create missing operational tables for deployments using this service's schema."""
+    if hostinger_engine is None:
+        raise RuntimeError("Hostinger operational database is not configured.")
+    # Importing the models registers all operational tables on HostingerBase.
+    import hostinger_models  # noqa: F401
+    async with hostinger_engine.begin() as connection:
+        await connection.run_sync(HostingerBase.metadata.create_all)
