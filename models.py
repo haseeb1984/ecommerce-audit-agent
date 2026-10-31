@@ -52,6 +52,8 @@ class AuditLead(Base):
     email_subject = Column(String(255), nullable=True)
     email_body = Column(Text, nullable=True)
     source_channel = Column(String(50), default="wordpress_hub")
+    # Idempotency key for durable Hostinger scan jobs mirrored into the licensing DB.
+    source_job_id = Column(String(64), nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     license = relationship("SoftwareLicense", back_populates="leads")
@@ -165,3 +167,38 @@ class PaymentWebhookEvent(Base):
     recipient_email = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+
+class CustomerLifecycleSyncOutbox(Base):
+    """Retryable delivery of canonical customer lifecycle changes to Hostinger."""
+    __tablename__ = "customer_lifecycle_sync_outbox"
+    __table_args__ = (
+        Index("ix_customer_lifecycle_outbox_due", "status", "next_attempt_at", "created_at"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    action = Column(String(40), nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class BillingMirrorSyncOutbox(Base):
+    """Retryable projection of canonical payment events into Hostinger billing history."""
+    __tablename__ = "billing_mirror_sync_outbox"
+    __table_args__ = (
+        Index("ix_billing_mirror_outbox_due", "status", "next_attempt_at", "created_at"),
+    )
+
+    event_id = Column(String(255), primary_key=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
