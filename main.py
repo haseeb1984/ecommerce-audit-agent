@@ -4302,16 +4302,16 @@ async def admin_payment_events(
     if status:
         pg_statement = pg_statement.where(PaymentWebhookEvent.status == status)
         host_statement = host_statement.where(CustomerBillingEvent.status == status)
-    pg_count = int((await db.execute(
-        select(sql_func.count(PaymentWebhookEvent.event_id)).where(
-            PaymentWebhookEvent.status == status if status else True
-        )
-    )).scalar_one() or 0)
+    pg_ids_statement = select(PaymentWebhookEvent.event_id)
+    if status:
+        pg_ids_statement = pg_ids_statement.where(PaymentWebhookEvent.status == status)
+    pg_event_ids = set((await db.execute(pg_ids_statement)).scalars().all())
     async with HostingerAsyncSessionLocal() as operational_db:
-        host_count_statement = select(sql_func.count(CustomerBillingEvent.event_id))
+        host_ids_statement = select(CustomerBillingEvent.event_id)
         if status:
-            host_count_statement = host_count_statement.where(CustomerBillingEvent.status == status)
-        host_count = int((await operational_db.execute(host_count_statement)).scalar_one() or 0)
+            host_ids_statement = host_ids_statement.where(CustomerBillingEvent.status == status)
+        host_event_ids = set((await operational_db.execute(host_ids_statement)).scalars().all())
+        total = len(pg_event_ids | host_event_ids)
         candidate_limit = offset + limit
         host_rows = (await operational_db.execute(
             host_statement.order_by(
