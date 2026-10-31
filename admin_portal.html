@@ -171,7 +171,7 @@ async function loadCustomerAccount(email){
  box.append(sessionBox);
  const billingBox=el("div",undefined,"historybox");billingBox.append(el("h4","Billing lifecycle"));
  if(!d.billing_events.length)billingBox.append(el("p","No billing events recorded.","muted"));
- for(const x of d.billing_events){const row=el("div",undefined,"historyitem");row.append(el("strong",x.status+" · "+x.event_id),el("span","License #"+x.license_id+" · Transaction "+(x.transaction_id||"—")+" · Subscription "+(x.subscription_id||"—")+" · "+date(x.updated_at),"small"));if(x.subscription_id){const cancel=el("button","Cancel at period end","secondary");cancel.addEventListener("click",()=>cancelCustomerSubscription(x.subscription_id,"next_billing_period"));row.append(cancel)}billingBox.append(row)}
+ for(const x of d.billing_events){const row=el("div",undefined,"historyitem");row.append(el("strong",x.status+" · "+x.event_id),el("span","License #"+x.license_id+" · Transaction "+(x.transaction_id||"—")+" · Subscription "+(x.subscription_id||"—")+" · "+date(x.updated_at),"small"));if(x.subscription_id){const reconcile=el("button","Reconcile current Paddle state","secondary");reconcile.addEventListener("click",()=>reconcileCustomerSubscription(x.subscription_id,reconcile));row.append(reconcile);const cancel=el("button","Cancel at period end","secondary");cancel.addEventListener("click",()=>cancelCustomerSubscription(x.subscription_id,"next_billing_period"));row.append(cancel)}billingBox.append(row)}
  box.append(billingBox);
  const wpBox=el("div",undefined,"historybox");wpBox.append(el("h4","Connected WordPress sites"));
  if(!d.wordpress_sites||!d.wordpress_sites.length)wpBox.append(el("p","No WordPress sites linked to this customer.","muted"));
@@ -183,6 +183,21 @@ async function loadCustomerAccount(email){
  const input=el("textarea");input.id="customerSupportNote";input.maxLength=4000;input.rows=3;input.placeholder="Add internal support note (not visible to customer)";input.style.width="100%";
  const add=el("button","Add support note","secondary");add.style.marginTop="8px";add.addEventListener("click",async()=>{const note=input.value.trim();if(note.length<3){status("Support note must contain at least 3 characters.","error");return}add.disabled=true;try{await guardedFetch("/api/v1/admin/customers/notes?email="+encodeURIComponent(selectedCustomerEmail),{method:"POST",headers:{"X-Admin-Key":key,"Content-Type":"application/json"},body:JSON.stringify({note})});await loadCustomerAccount(selectedCustomerEmail);status("Internal support note saved.","success")}catch(e){status(e.message,"error")}finally{add.disabled=false}});
  notes.append(input,add);box.append(notes);box.scrollIntoView({behavior:"smooth",block:"start"});
+}
+async function reconcileCustomerSubscription(subscriptionId,button){
+ const typed=window.prompt("Enter the exact Paddle subscription ID to confirm state reconciliation:\\n"+subscriptionId);
+ if(typed===null)return;
+ if(typed.trim()!==subscriptionId){status("Subscription confirmation did not match. No changes were made.","error");return}
+ if(!window.confirm("Fetch the current subscription from Paddle and reconcile its canonical license state?"))return;
+ button.disabled=true;
+ try{
+  const r=await guardedFetch("/api/v1/admin/subscriptions/"+encodeURIComponent(subscriptionId)+"/reconcile",{method:"POST",headers:{"X-Admin-Key":key}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw Error(d.detail||"Subscription reconciliation failed ("+r.status+")");
+  status("Paddle state reconciled: "+d.provider_status+" · License "+(d.license_active?"active":"inactive")+(d.plan_reconciled?" · Plan "+d.tier:" · plan unchanged"),"success");
+  await loadCustomerAccount(selectedCustomerEmail);await refreshActions(true);
+ }catch(e){status(e.message,"error")}
+ finally{button.disabled=false}
 }
 async function cancelCustomerSubscription(subscriptionId,effectiveFrom){
  const typed=window.prompt("Enter the exact Paddle subscription ID to confirm cancellation:\n"+subscriptionId);
