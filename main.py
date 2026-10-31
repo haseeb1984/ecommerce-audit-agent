@@ -2185,6 +2185,14 @@ async def register_agency_wordpress_site(
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
     site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
+    agency_host_owner = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.site_host == host,
+        AgencyClientWebsite.workspace_id != workspace.id,
+        AgencyClientWebsite.status == "active",
+    ))
+    if agency_host_owner is not None:
+        raise HTTPException(status_code=409, detail="This website is already connected to another client workspace in this agency.")
     active_site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
         AgencyClientWebsite.workspace_id == workspace.id,
