@@ -171,9 +171,14 @@ function eaa_wp_disconnect_site() {
         'site_id' => sanitize_text_field($settings['site_id']),
     ));
     if (is_wp_error($response)) {
-        return $response;
+        $error_data = $response->get_error_data();
+        $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+        // A 404 means the remote installation is already disconnected.
+        if (404 !== $http_status) {
+            return $response;
+        }
     }
-    unset($settings['site_id'], $settings['connected_at']);
+    unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
     update_option(EAA_WP_OPTION, $settings, false);
     return true;
 }
@@ -198,7 +203,15 @@ function eaa_wp_sync_site_status() {
     $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
     $settings['last_sync'] = time();
     if (is_wp_error($response)) {
-        $settings['connection_error'] = $response->get_error_message();
+        $error_data = $response->get_error_data();
+        $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+        if (404 === $http_status) {
+            // The SaaS customer portal can disconnect this site remotely.
+            unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+            $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
+        } else {
+            $settings['connection_error'] = $response->get_error_message();
+        }
     } else {
         $settings['connection_error'] = '';
         $settings['last_status'] = eaa_wp_json($response);
