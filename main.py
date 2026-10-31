@@ -2010,6 +2010,76 @@ async def require_agency_team_session(
     return {"session": session, "member": member, "agency": agency}
 
 
+@app.get("/api/v1/account/agency/usage")
+async def get_business_agency_usage(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return the shared Business license quota and completed audit usage by client workspace."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency usage reporting is available on the Business plan.")
+    from sqlalchemy import select, func as sql_func
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_month = month_start.replace(year=month_start.year + 1, month=1) if month_start.month == 12 else month_start.replace(month=month_start.month + 1)
+    used = int((await db.execute(select(sql_func.count(AuditLead.id)).where(
+        AuditLead.license_id == license_obj.id,
+        AuditLead.created_at >= month_start,
+    ))).scalar_one() or 0)
+    pending = int((await db.execute(select(sql_func.count(AuditQuotaReservation.id)).where(
+        AuditQuotaReservation.license_id == license_obj.id,
+        AuditQuotaReservation.created_at >= month_start,
+        AuditQuotaReservation.expires_at > now,
+    ))).scalar_one() or 0)
+    package = (await db.execute(text("""
+        SELECT monthly_audit_allowance, max_concurrent_audits, is_active
+        FROM saas_plan_packages WHERE tier=:tier
+    """), {"tier": str(license_obj.tier or "starter").strip().lower()})).mappings().first()
+    monthly_limit = max(0, int(
+        package["monthly_audit_allowance"] if package is not None
+        else (license_obj.max_monthly_audits or 0)
+    ))
+    usage_rows = (await operational_db.execute(
+        select(AgencyUsageEvent.workspace_id, sql_func.coalesce(sql_func.sum(AgencyUsageEvent.quantity), 0))
+        .where(
+            AgencyUsageEvent.agency_id == agency.id,
+            AgencyUsageEvent.period_start == month_start,
+            AgencyUsageEvent.event_type == "audit_completed",
+        ).group_by(AgencyUsageEvent.workspace_id)
+    )).all()
+    usage_by_workspace = {workspace_id: int(quantity or 0) for workspace_id, quantity in usage_rows}
+    workspaces = (await operational_db.execute(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.agency_id == agency.id
+    ).order_by(AgencyClientWorkspace.display_name.asc()))).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    consumed = used + pending
+    return {
+        "tier": license_obj.tier,
+        "period_start": month_start.isoformat(),
+        "period_end": next_month.isoformat(),
+        "monthly_limit": monthly_limit,
+        "account_used_and_pending": consumed,
+        "account_remaining": max(0, monthly_limit - consumed),
+        "agency_completed": sum(usage_by_workspace.values()),
+        "items": [{
+            "workspace_id": workspace.id,
+            "workspace_name": workspace.display_name,
+            "status": workspace.status,
+            "completed_audits": usage_by_workspace.get(workspace.id, 0),
+        } for workspace in workspaces],
+        "shared_quota_note": "All agency client audits and personal account audits consume the same Business license allowance and concurrency limit.",
+    }
+
+
 @app.get("/api/v1/account/agency/clients/{workspace_id}/website")
 async def get_agency_client_website(workspace_id: str, response: Response,
                                     license_obj: SoftwareLicense = Depends(verify_customer_account),
