@@ -2532,17 +2532,18 @@ async def test_crawl_expands_bounded_children_of_secondary_sitemap_indexes(monke
             ), {"content-type": "text/plain"}, url
         if url == primary:
             return 200, (
-                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-                f'<url><loc>{primary_product}</loc></url></urlset>'
+                '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<sitemap><loc>{child_sitemap}</loc></sitemap></sitemapindex>'
             ), {"content-type": "application/xml"}, url
         if url == secondary_index:
             return 200, (
                 '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-                f'<sitemap><loc>{child_sitemap}</loc></sitemap></sitemapindex>'
+                f'<sitemap><loc>{child_sitemap}?utm_source=duplicate</loc></sitemap></sitemapindex>'
             ), {"content-type": "application/xml"}, url
         if url == child_sitemap:
             return 200, (
                 '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                f'<url><loc>{primary_product}</loc></url>'
                 f'<url><loc>{nested_product}</loc></url></urlset>'
             ), {"content-type": "application/xml"}, url
         if url in {primary_product, nested_product}:
