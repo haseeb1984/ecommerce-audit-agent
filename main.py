@@ -1048,7 +1048,7 @@ async def request_customer_login(
     from hostinger_models import CustomerAccount, CustomerLoginChallenge
 
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     factory = await _ensure_hostinger_operational_schema()
     now = datetime.now(timezone.utc)
