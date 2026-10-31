@@ -231,8 +231,9 @@ async function reconcileBillingHistory(){
  try{
   const query=new URLSearchParams({limit:"200",offset:String(billingMirrorNextOffset)});
   const d=await api("/api/v1/admin/billing/reconcile?"+query.toString(),{method:"POST"});
-  billingMirrorNextOffset=Number(d.next_offset)||0;
-  status("Billing history repair: "+d.repaired+" mirrored, "+d.failed+" failed. "+(d.next_offset===null?"All source pages processed.":"Next page offset: "+d.next_offset+". Run again to continue."),d.failed?"error":"success");
+  const attemptedOffset=billingMirrorNextOffset;
+  billingMirrorNextOffset=d.failed?attemptedOffset:(d.next_offset===null?0:Number(d.next_offset)||0);
+  status("Billing history repair: "+d.repaired+" mirrored, "+d.failed+" failed. "+(d.failed?"The same page is retained so you can retry it.":(d.next_offset===null?"All source pages processed.":"Next page offset: "+d.next_offset+". Run again to continue.")),d.failed?"error":"success");
   await refreshPaymentEvents(paymentEventOffset);
   await refreshActions(true);
  }catch(e){status("Billing history repair failed: "+e.message,"error")}
