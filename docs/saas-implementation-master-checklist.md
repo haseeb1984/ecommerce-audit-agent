@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Working branch:** `ci/validate-current-saas-chain`  
+**Working branch:** `main`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -15,6 +15,9 @@
 
 | Requirement area | Current status | Evidence / remaining gate |
 |---|---|---|
+| Customer website inventory and background scans | Implemented / verification pending | License-scoped website CRUD/archive, durable scan enqueue/status/history/result APIs, and customer portal controls now use Hostinger operational storage. Hostinger connection/schema initialization and a protected external scheduler are required; staging end-to-end acceptance is pending. |
+| Cross-database customer lifecycle and billing synchronization | Implemented / verification pending | Canonical Paddle/admin events now enqueue PostgreSQL outbox records; the worker retries projections into Hostinger. Apply the new PostgreSQL migration and verify retry/idempotency against staging databases. |
+| Scheduled worker execution | Partial | A bearer-protected worker endpoint processes one queued scan and reconciles outboxes. No cron schedule is configured in vercel.json; configure an approved external scheduler and verify invocation cadence/recovery. |
 | Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; re-run on latest branch head. |
 | Customer profile management | Implemented / verification pending | GET/PATCH profile endpoints exist; browser and latest CI acceptance required. |
 | Monthly quota and concurrent audit reservations | Implemented / verification pending | Reservation lifecycle exists in `quota.py`; run PostgreSQL-backed concurrency acceptance. |
@@ -58,3 +61,14 @@
 
 - CI run [40791577713](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40791577713) passed on commit `d9430c2949d7ec80eadada868a65f847a3ea708a`, reporting **661 passed** and 55 warnings. This run includes the expanded required-column/index readiness checks and their tests.
 - Documentation-only checklist/gap-matrix commits followed that code commit. Staging database/schema verification, provider sandbox journeys, browser QA, and production readiness remain unverified.
+
+
+## Latest repository implementation batch — 2026-11-01
+
+- Added license-scoped customer website registration, rename, archive, scan enqueue, scan history/status, and scan-result endpoints backed by Hostinger MySQL.
+- Added customer portal controls to register storefronts, queue background scans, review recent job state, and inspect a bounded preview of completed findings.
+- Added a protected /api/v1/internal/scan-worker entrypoint. It processes at most one scan per invocation and reconciles lifecycle/billing/email outboxes.
+- Paddle billing/lifecycle events and admin suspend/reactivate actions now create PostgreSQL outbox records for retryable Hostinger projection.
+- Added migrations/20261101_worker_outboxes_and_scan_idempotency.sql for scan idempotency and outbox persistence.
+- Added contract/API tests, but the latest Actions jobs have no runner allocation (runner_id=0, steps=[]); no tests are claimed as executed or passed.
+- No production migration, Hostinger initialization, external scheduler setup, deployment, live payment, or live website scan was performed.
