@@ -666,7 +666,6 @@
     const agency = await provision.json();
     const response = await api("/api/v1/account/agency/clients");
     const data = await response.json();
-    await loadAgencyTeam();
     await loadAgencyUsage();
     const workspaceSelect = $("agencyAuditWorkspace");
     const selectedWorkspace = workspaceSelect.value;
@@ -695,6 +694,7 @@
       teamWorkspaceSelect.append(option);
     }
     $("agencyAuditWorkspaceField").hidden = false;
+    await loadAgencyTeam();
     const container = $("agencyClients");
     container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
@@ -885,6 +885,52 @@
       const title = document.createElement("strong"); title.textContent = item.email;
       const detail = document.createElement("small"); detail.textContent = item.role + " · " + item.status + ((item.workspaces || []).length ? " · Clients: " + item.workspaces.map(workspace => workspace.workspace_name + " (" + workspace.role + ")").join(", ") : " · No client workspace assigned");
       info.append(title, detail);
+      const accessEditor = document.createElement("div"); accessEditor.className = "reports";
+      if (item.status === "active") {
+        const accessLabel = document.createElement("label"); accessLabel.textContent = "Assigned client workspaces";
+        const accessSelect = document.createElement("select"); accessSelect.multiple = true; accessSelect.size = 4;
+        accessSelect.style.width = "100%";
+        const existingAccess = new Map((item.workspaces || []).map(workspace => [workspace.workspace_id, workspace]));
+        for (const option of Array.from($("agencyTeamWorkspaces").options)) {
+          if (!option.value) continue;
+          const copy = document.createElement("option"); copy.value = option.value;
+          copy.textContent = option.textContent; copy.selected = existingAccess.has(option.value);
+          accessSelect.append(copy);
+        }
+        const roleLabel = document.createElement("label"); roleLabel.textContent = "Role for selected workspaces";
+        const accessRole = document.createElement("select");
+        for (const role of ["viewer", "analyst", "admin"]) {
+          const option = document.createElement("option"); option.value = role; option.textContent = role[0].toUpperCase() + role.slice(1);
+          accessRole.append(option);
+        }
+        const roles = new Set((item.workspaces || []).map(workspace => workspace.role));
+        if (roles.size === 1) accessRole.value = Array.from(roles)[0];
+        const saveAccess = document.createElement("button"); saveAccess.type = "button";
+        saveAccess.className = "secondary"; saveAccess.textContent = "Save workspace access";
+        saveAccess.addEventListener("click", async () => {
+          saveAccess.disabled = true;
+          try {
+            const selected = new Set(Array.from(accessSelect.selectedOptions).map(option => option.value));
+            for (const workspace of (item.workspaces || [])) {
+              if (!selected.has(workspace.workspace_id)) {
+                await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id) +
+                  "/workspaces/" + encodeURIComponent(workspace.workspace_id), {method:"DELETE"});
+              }
+            }
+            for (const workspaceId of selected) {
+              await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id) +
+                "/workspaces/" + encodeURIComponent(workspaceId), {
+                  method:"PUT", headers:{"Content-Type":"application/json"},
+                  body:JSON.stringify({role:accessRole.value})
+                });
+            }
+            await loadAgencyTeam();
+            setStatus("agencyStatus", "Workspace access updated for " + item.email + ".", "success");
+          } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          finally { saveAccess.disabled = false; }
+        });
+        accessEditor.append(accessLabel, accessSelect, roleLabel, accessRole, saveAccess);
+      }
       const actions = document.createElement("div"); actions.className = "report-actions";
       if (item.status !== "revoked") {
         const revoke = document.createElement("button"); revoke.type = "button";
@@ -897,7 +943,7 @@
         });
         actions.append(revoke);
       }
-      card.append(info, actions); container.append(card);
+      card.append(info, accessEditor, actions); container.append(card);
     }
   }
   async function inviteAgencyTeam() {
