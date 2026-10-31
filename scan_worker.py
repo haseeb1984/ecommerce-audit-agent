@@ -461,14 +461,34 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                     await licensing_db.commit()
                     counts["discarded"] += 1
                     continue
-                license_key = await licensing_db.scalar(
-                    select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
-                )
-                if not license_key:
+                license_row = (await licensing_db.execute(
+                    select(SoftwareLicense).where(SoftwareLicense.id == event.license_id)
+                )).scalar_one_or_none()
+                if license_row is None or not license_row.license_key:
                     raise RuntimeError("LicenseReferenceUnavailable")
+                license_key = license_row.license_key
                 if HostingerAsyncSessionLocal is None:
                     raise RuntimeError("HostingerUnavailable")
                 async with HostingerAsyncSessionLocal() as operational_db:
+                    account = (await operational_db.execute(
+                        select(CustomerAccount).where(CustomerAccount.license_key == license_key)
+                    )).scalar_one_or_none()
+                    if account is None:
+                        operational_db.add(CustomerAccount(
+                            license_key=license_key,
+                            email=(event.recipient_email or "")[:254] or None,
+                            display_name=(license_row.client_name or event.recipient_email or "Customer")[:255],
+                            status="active" if license_row.is_active else "suspended",
+                            created_at=event.created_at,
+                            updated_at=event.updated_at,
+                        ))
+                    else:
+                        if not account.email and event.recipient_email:
+                            account.email = event.recipient_email[:254]
+                        if not account.display_name and license_row.client_name:
+                            account.display_name = license_row.client_name[:255]
+                        account.status = "active" if license_row.is_active else "suspended"
+                        account.updated_at = event.updated_at
                     stored = await operational_db.get(CustomerBillingEvent, event_id)
                     if stored is None:
                         operational_db.add(CustomerBillingEvent(
