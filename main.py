@@ -58,6 +58,17 @@ from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSe
 from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent
 
 logger = logging.getLogger("audit_service")
+MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
+
+
+def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool) -> None:
+    """Enforce one active store per license while allowing same-site refreshes."""
+    if active_count >= MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE and not existing_is_active:
+        raise HTTPException(
+            status_code=409,
+            detail="This license already has a connected WordPress site. Disconnect it before connecting another site.",
+        )
+
 
 app = FastAPI(
     title="AI E-Commerce Audit Engine - Commercial Edition",
@@ -1601,9 +1612,11 @@ async def register_wordpress_site(
         WordPressInstallation.license_key == license_obj.license_key,
         WordPressInstallation.status == "active",
     ))).scalar_one() or 0)
+    _ensure_wordpress_site_capacity(
+        active_count,
+        existing_is_active=existing is not None and existing.status == "active",
+    )
     if existing is None:
-        if active_count >= 1:
-            raise HTTPException(status_code=409, detail="This license already has a connected WordPress site. Disconnect it before connecting another site.")
         existing = WordPressInstallation(
             id=secrets.token_urlsafe(24), license_key=license_obj.license_key,
             site_url=site_url, site_host=host, admin_email=admin_email,
@@ -1615,8 +1628,6 @@ async def register_wordpress_site(
         )
         operational_db.add(existing)
     else:
-        if existing.status != "active" and active_count >= 1:
-            raise HTTPException(status_code=409, detail="This license already has a connected WordPress site. Disconnect it before connecting another site.")
         existing.site_url = site_url
         existing.admin_email = admin_email
         existing.customer_email = owner_email.strip().lower() if owner_email else None
