@@ -152,3 +152,63 @@ async def test_suspended_agency_cannot_list_client_workspaces(monkeypatch):
             operational_db=SuspendedAgencySession(),
         )
     assert error.value.status_code == 404
+
+
+class AgencyInvitationSession:
+    def __init__(self, *rows):
+        self.rows = list(rows)
+        self.committed = False
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_invitation_acceptance_rejects_suspended_agency():
+    from fastapi import HTTPException, Response
+    from main import AgencyInvitationAccept, accept_business_agency_invitation
+
+    member = SimpleNamespace(
+        id="member-1", agency_id="agency-1", status="invited",
+        invitation_expires_at=datetime.utcnow() + timedelta(hours=1),
+        accepted_at=None, invitation_token_hash="hash",
+        invitation_expires_at_original=None, role="analyst", email="teammate@example.com",
+    )
+    operational = AgencyInvitationSession(member, None)
+    with pytest.raises(HTTPException) as error:
+        await accept_business_agency_invitation(
+            AgencyInvitationAccept(token="t" * 40), Response(),
+            db=AgencyInvitationSession(),
+            operational_db=operational,
+        )
+    assert error.value.status_code == 403
+    assert member.status == "invited"
+    assert not operational.committed
+
+
+@pytest.mark.asyncio
+async def test_invitation_acceptance_handles_naive_mysql_expiry_timestamp():
+    from fastapi import Response
+    from main import AgencyInvitationAccept, accept_business_agency_invitation
+
+    member = SimpleNamespace(
+        id="member-2", agency_id="agency-2", status="invited",
+        invitation_expires_at=datetime.utcnow() + timedelta(hours=1),
+        accepted_at=None, invitation_token_hash="hash",
+        role="viewer", email="viewer@example.com",
+    )
+    agency = SimpleNamespace(id="agency-2", owner_license_key="business-license", status="active")
+    license_obj = SimpleNamespace(is_active=True, expires_at=None, tier="business")
+    operational = AgencyInvitationSession(member, agency)
+    result = await accept_business_agency_invitation(
+        AgencyInvitationAccept(token="t" * 40), Response(),
+        db=AgencyInvitationSession(license_obj),
+        operational_db=operational,
+    )
+    assert result["status"] == "accepted"
+    assert member.status == "active"
+    assert member.invitation_token_hash is None
+    assert operational.committed
