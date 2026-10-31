@@ -87,3 +87,12 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Disconnecting an installation from the SaaS customer portal is reflected in the plugin on its next scheduled status sync. A 404 status response clears the stale local site identifier and asks the administrator to save settings to register again.
 - Plugin deactivation only removes its scheduled status-sync event; it does not revoke the SaaS registration. This avoids treating temporary plugin deactivation as an explicit account disconnect. Use the plugin's Disconnect action or the SaaS customer portal when the installation should be retired.
 - The SaaS customer portal disconnect is scoped to the currently selected license. It retains audit history, license records, and billing history. Reconnection is an explicit plugin settings save.
+
+
+### Paddle failed-transaction webhook recovery
+
+- A `transaction.payment_failed` event with no `subscription_id` is linked only when the same Paddle transaction already has a canonical PostgreSQL billing event tied to a license. The handler does not infer license ownership from an email address or Paddle customer ID.
+- If the transaction has not yet been linked to a license, the webhook returns a retryable `503`; allow Paddle delivery retries or reconcile the originating transaction before treating the failure as resolved.
+- A delayed failure notification is ignored when the same transaction already has a verified completion/provisioning record (`delivered`, `email_pending`, `email_sending`, or `subscription_renewed`). This prevents stale failure notifications from reopening a recovered billing issue.
+- Failure events remain billing-history/operations events and do not independently deactivate a license. Subscription cancellation and pause remain separate lifecycle transitions; Paddle subscription state and verified renewal events govern recovery.
+- When a transaction is linked to a subscription, preserve the subscription identifier on the failure event so customer/admin attention feeds can clear the old failure after a newer verified recovery event.
