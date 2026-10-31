@@ -1441,6 +1441,7 @@ async def run_bounded_site_crawl(
                     declared_sitemap,
                 ))
         sitemap_url = same_origin_sitemaps[0] if same_origin_sitemaps else conventional_sitemap_url
+        seen_sitemap_documents = {_canonical_page_url(sitemap_url)}
 
         def _safe_sitemap_label(value: str) -> str:
             try:
@@ -1526,6 +1527,10 @@ async def run_bounded_site_crawl(
                     for child_sitemap_url in child_sitemaps:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
+                        child_key = _canonical_page_url(child_sitemap_url)
+                        if child_key in seen_sitemap_documents:
+                            continue
+                        seen_sitemap_documents.add(child_key)
                         if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
                             limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
                             break
@@ -1634,6 +1639,10 @@ async def run_bounded_site_crawl(
         for extra_sitemap_url in additional_sitemaps:
             if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                 break
+            extra_key = _canonical_page_url(extra_sitemap_url)
+            if extra_key in seen_sitemap_documents:
+                continue
+            seen_sitemap_documents.add(extra_key)
             if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
                 limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
                 break
@@ -1708,6 +1717,10 @@ async def run_bounded_site_crawl(
                     for nested_url in nested_children:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
+                        nested_key = _canonical_page_url(nested_url)
+                        if nested_key in seen_sitemap_documents:
+                            continue
+                        seen_sitemap_documents.add(nested_key)
                         if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
                             limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
                             break
