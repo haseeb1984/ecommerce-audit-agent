@@ -2010,6 +2010,41 @@ async def require_agency_team_session(
     return {"session": session, "member": member, "agency": agency}
 
 
+@app.get("/api/v1/account/agency/clients/{workspace_id}/website")
+async def get_agency_client_website(workspace_id: str, response: Response,
+                                    license_obj: SoftwareLicense = Depends(verify_customer_account),
+                                    operational_db: AsyncSession = Depends(get_hostinger_db)):
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency website connections are available on the Business plan.")
+    from sqlalchemy import select
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key,
+        AgencyAccount.status == "active",
+    ))
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Client workspace not found.")
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.status == "active",
+    ))
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    if site is None:
+        return {"connected": False, "workspace_id": workspace.id}
+    return {"connected": True, "workspace_id": workspace.id, "site_id": site.id,
+            "site_url": site.site_url, "site_host": site.site_host,
+            "admin_email": site.admin_email, "plugin_version": site.plugin_version,
+            "connected_at": site.connected_at.isoformat() if site.connected_at else None,
+            "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None}
+
+
 @app.post("/api/v1/account/agency/clients/{workspace_id}/website-connection-token")
 async def create_agency_website_connection_token(
     workspace_id: str,
