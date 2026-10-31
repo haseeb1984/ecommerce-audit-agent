@@ -61,7 +61,7 @@ logger = logging.getLogger("audit_service")
 
 app = FastAPI(
     title="AI E-Commerce Audit Engine - Commercial Edition",
-    description="Multi-model API serving SaaS, Managed Services, White-Label, and Enterprise integrations.",
+    description="Ecommerce Audit Agent SaaS API for Starter, Pro, and Business customers.",
     swagger_ui_parameters={"persistAuthorization": True}
 )
 
@@ -4084,9 +4084,9 @@ async def _record_operation_event(db: AsyncSession, event_type: str, license_id:
 
 async def _db_payment_plans(db: AsyncSession, active_only: bool = True) -> list[dict]:
     await _ensure_admin_tables(db)
-    query = "SELECT tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active FROM saas_plan_packages"
+    query = "SELECT tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active FROM saas_plan_packages WHERE LOWER(tier) IN ('starter', 'pro', 'business')"
     if active_only:
-        query += " WHERE is_active = TRUE"
+        query += " AND is_active = TRUE"
     query += " ORDER BY monthly_audit_allowance ASC, tier ASC"
     rows = (await db.execute(text(query))).mappings().all()
     if not rows:
@@ -4134,8 +4134,8 @@ def _validate_admin_package(payload: AdminPackageInput) -> dict:
     tier = payload.tier.strip().lower()
     label = payload.label.strip()
     price_id = (payload.paddle_price_id or "").strip() or None
-    if not re.fullmatch(r"[a-z0-9_-]{2,50}", tier):
-        raise HTTPException(status_code=422, detail="Package tier must be 2-50 lowercase letters, numbers, underscores or hyphens.")
+    if tier not in {"starter", "pro", "business"}:
+        raise HTTPException(status_code=422, detail="Only Starter, Pro, and Business package tiers are supported.")
     if not label or len(label) > 100:
         raise HTTPException(status_code=422, detail="Package label must be 1-100 characters.")
     if not 1 <= payload.monthly_audit_allowance <= 10000000:
@@ -4258,6 +4258,8 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
     """Soft-delete packages to preserve subscription/account history."""
     _require_admin_key(request)
     tier = tier.strip().lower()
+    if tier not in {"starter", "pro", "business"}:
+        raise HTTPException(status_code=404, detail="Package not found.")
     await _ensure_admin_tables(db)
     result = await db.execute(text("""
         UPDATE saas_plan_packages SET is_active=FALSE, updated_at=CURRENT_TIMESTAMP WHERE tier=:tier
