@@ -197,6 +197,7 @@ async def health_check(
         "saas_plan_packages",
         "payment_webhook_events",
         "customer_lifecycle_sync_outbox",
+        "billing_mirror_sync_outbox",
     }
     try:
         pg_ping = await db.execute(text("SELECT 1"))
