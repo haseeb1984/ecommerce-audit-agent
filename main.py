@@ -102,7 +102,7 @@ class WordPressSiteRegister(BaseModel):
     plugin_version: str = Field(..., min_length=1, max_length=30)
 
 
-class WordPressSiteAction(BaseModel):
+class WordPressInstallationAction(BaseModel):
     site_id: str = Field(..., min_length=20, max_length=64)
 
 
