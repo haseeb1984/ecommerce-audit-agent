@@ -1333,10 +1333,12 @@ async def request_customer_email_change(
     if new_license_ids - old_license_ids:
         raise HTTPException(status_code=409, detail="That email is already linked to a different customer account.")
     recent_count = int((await operational_db.execute(select(func.count(CustomerEmailChangeChallenge.id)).where(
+        CustomerEmailChangeChallenge.license_key == current.license_key,
         CustomerEmailChangeChallenge.old_email == old_email,
         CustomerEmailChangeChallenge.created_at >= now - timedelta(hours=1),
     ))).scalar_one() or 0)
     latest = (await operational_db.execute(select(CustomerEmailChangeChallenge).where(
+        CustomerEmailChangeChallenge.license_key == current.license_key,
         CustomerEmailChangeChallenge.old_email == old_email,
     ).order_by(CustomerEmailChangeChallenge.created_at.desc()).limit(1))).scalar_one_or_none()
     if recent_count >= 5 or (latest is not None and latest.created_at >= now - timedelta(seconds=60)):
@@ -1345,6 +1347,7 @@ async def request_customer_email_change(
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Customer account security is temporarily unavailable.")
     await operational_db.execute(update(CustomerEmailChangeChallenge).where(
+        CustomerEmailChangeChallenge.license_key == current.license_key,
         CustomerEmailChangeChallenge.old_email == old_email,
         CustomerEmailChangeChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
@@ -1400,6 +1403,7 @@ async def verify_customer_email_change(
     old_email = current.email.strip().lower()
     challenge = (await operational_db.execute(select(CustomerEmailChangeChallenge).where(
         CustomerEmailChangeChallenge.id == payload.challenge_id,
+        CustomerEmailChangeChallenge.license_key == current.license_key,
         CustomerEmailChangeChallenge.old_email == old_email,
         CustomerEmailChangeChallenge.consumed_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
@@ -1426,20 +1430,20 @@ async def verify_customer_email_change(
     # Serialize claims for the same proposed address so two different accounts
     # cannot both pass the collision check concurrently on PostgreSQL.
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:email))"), {"email": challenge.new_email})
-    old_license_ids = await _billing_license_ids_for_email(db, operational_db, old_email)
+    current_license_id = await db.scalar(select(SoftwareLicense.id).where(
+        SoftwareLicense.license_key == current.license_key
+    ))
+    if current_license_id is None:
+        raise HTTPException(status_code=401, detail="Customer account is unavailable.")
     new_license_ids = await _billing_license_ids_for_email(db, operational_db, challenge.new_email)
-    if new_license_ids - old_license_ids:
+    if new_license_ids - {current_license_id}:
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=409, detail="That email is now linked to a different customer account.")
-    linked_license_keys = list((await db.execute(
-        select(SoftwareLicense.license_key).where(SoftwareLicense.id.in_(old_license_ids))
-    )).scalars().all()) if old_license_ids else []
-    if linked_license_keys:
-        await operational_db.execute(update(CustomerAccount).where(
-            CustomerAccount.license_key.in_(linked_license_keys),
-            CustomerAccount.email == old_email,
-        ).values(email=challenge.new_email, updated_at=now))
+    await operational_db.execute(update(CustomerAccount).where(
+        CustomerAccount.license_key == current.license_key,
+        CustomerAccount.email == old_email,
+    ).values(email=challenge.new_email, updated_at=now))
     # PostgreSQL is a separate transaction boundary. Persist a durable outbox
     # record in the same Hostinger transaction as the verified account/email changes;
     # the scheduled worker applies the billing identity update idempotently.
@@ -1454,18 +1458,22 @@ async def verify_customer_email_change(
         created_at=now,
     ))
     await operational_db.execute(update(CustomerBillingEvent).where(
+        CustomerBillingEvent.license_key == current.license_key,
         func.lower(CustomerBillingEvent.recipient_email) == old_email,
     ).values(recipient_email=challenge.new_email))
     # Keep the linked WordPress customer identity synchronized with the verified
     # SaaS email change in the same transaction as the billing identity records.
     await operational_db.execute(update(WordPressInstallation).where(
+        WordPressInstallation.license_key == current.license_key,
         func.lower(WordPressInstallation.customer_email) == old_email,
     ).values(customer_email=challenge.new_email))
     await operational_db.execute(update(CustomerLoginChallenge).where(
+        CustomerLoginChallenge.license_key == current.license_key,
         CustomerLoginChallenge.email == old_email,
         CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
     await operational_db.execute(update(CustomerSession).where(
+        CustomerSession.license_key == current.license_key,
         CustomerSession.email == old_email,
         CustomerSession.token_hash != token_hash,
         CustomerSession.revoked_at.is_(None),
