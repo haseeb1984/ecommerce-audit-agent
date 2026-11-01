@@ -183,6 +183,13 @@ def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bo
     return action == "revoke_sessions"
 
 
+def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
+    """Retain successful deliveries for bounded cleanup and operational visibility."""
+    item.status = "completed"
+    item.processed_at = processed_at
+    item.last_error = None
+
+
 def _customer_email_identity_update_statement(license_id: int, old_email: str, new_email: str):
     """Build a tenant-scoped, case-insensitive billing-recipient identity update."""
     return update(PaymentWebhookEvent).where(
@@ -664,7 +671,9 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                         stored.paddle_customer_id = event.paddle_customer_id
                         stored.updated_at = event.updated_at
                     await operational_db.commit()
-                await licensing_db.delete(item)
+                _mark_billing_mirror_outbox_completed(
+                    item, datetime.now(timezone.utc)
+                )
                 await licensing_db.commit()
                 counts["processed"] += 1
             except Exception as exc:
