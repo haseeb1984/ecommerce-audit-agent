@@ -455,6 +455,7 @@ async def fail_or_retry_scan_job(
     worker_id: str,
     error_code: str,
     retry_delay_seconds: int = 60,
+    retryable: bool = True,
 ) -> str:
     """Persist a bounded retry or terminal failure; never silently drops a job."""
     now = _utcnow()
@@ -490,7 +491,7 @@ async def fail_or_retry_scan_job(
                 batch.status = "cancelled"
                 batch.completed_at = now
             outcome = "failed"
-        elif job.attempt_count < job.max_attempts:
+        elif retryable and job.attempt_count < job.max_attempts:
             job.status = "retry_wait"
             backoff = max(1, min(retry_delay_seconds * (2 ** max(0, job.attempt_count - 1)), 3600))
             job.next_attempt_at = now + timedelta(seconds=backoff)
