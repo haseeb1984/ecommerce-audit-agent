@@ -63,3 +63,16 @@ def test_scan_worker_validates_operational_schema_before_processing():
     assert source.index("await ensure_scan_worker_schema()") < source.index(
         "reconcile_customer_lifecycle_outbox()"
     )
+
+
+
+@pytest.mark.asyncio
+async def test_scan_worker_schema_guard_fails_closed_without_hostinger_database(monkeypatch):
+    import scan_worker
+
+    monkeypatch.setattr(scan_worker, "_worker_schema_ready", False)
+    monkeypatch.setattr(scan_worker, "HostingerAsyncSessionLocal", None)
+    monkeypatch.setattr(scan_worker, "hostinger_engine", None)
+
+    with pytest.raises(RuntimeError, match="Hostinger operational database"):
+        await scan_worker.ensure_scan_worker_schema()
