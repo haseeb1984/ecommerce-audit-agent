@@ -3890,3 +3890,114 @@ def test_mobile_viewport_accepts_valid_initial_scale(scale):
         finding.title == "Viewport initial-scale value needs review"
         for finding in findings
     )
+
+
+@pytest.mark.asyncio
+async def test_agency_wordpress_connection_token_is_single_use_and_site_credential_is_revocable(client):
+    """Exercise the complete owner-token -> site-token -> disconnect lifecycle."""
+    owner_license_id = await create_license(key="agency-wp-token-lifecycle-license", tier="business")
+    async with AsyncSessionLocal() as db:
+        owner_license = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == owner_license_id
+        ))).scalar_one()
+        owner_license_key = owner_license.license_key
+
+    agency_id = "agency-wp-token-lifecycle-0001"
+    workspace_id = "agency-wp-token-workspace-0001"
+    raw_connect_token = "one-time-agency-connect-token-1234567890"
+    connect_token_hash = hashlib.sha256(raw_connect_token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.AgencyAccount(
+                id=agency_id,
+                owner_license_key=owner_license_key,
+                owner_email="agency-owner@example.test",
+                status="active",
+            ),
+            main.AgencyClientWorkspace(
+                id=workspace_id,
+                agency_id=agency_id,
+                display_name="Lifecycle client",
+                status="active",
+            ),
+            main.AgencyWebsiteConnectChallenge(
+                id="agency-wp-token-challenge-0001",
+                agency_id=agency_id,
+                workspace_id=workspace_id,
+                token_hash=connect_token_hash,
+                expires_at=now + timedelta(hours=1),
+                created_at=now,
+            ),
+        ])
+        await operational_db.commit()
+
+    registration = await client.post(
+        "/api/v1/integrations/wordpress/agency/sites/register",
+        headers={"X-Agency-Connect-Token": raw_connect_token},
+        json={
+            "site_url": "https://client-store.example.test/",
+            "admin_email": "wordpress-admin@example.test",
+            "wordpress_version": "6.8",
+            "woocommerce_version": "10.0",
+            "plugin_version": "1.2.3",
+        },
+    )
+    assert registration.status_code == 201, registration.text
+    assert registration.headers["cache-control"] == "no-store, private"
+    registered = registration.json()
+    assert registered["workspace_id"] == workspace_id
+    assert registered["site_url"] == "https://client-store.example.test/"
+    assert len(registered["agency_site_token"]) >= 32
+    site_token = registered["agency_site_token"]
+    site_token_hash = hashlib.sha256(site_token.encode("utf-8")).hexdigest()
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        challenge = await operational_db.get(
+            main.AgencyWebsiteConnectChallenge,
+            "agency-wp-token-challenge-0001",
+        )
+        site = await operational_db.get(main.AgencyClientWebsite, registered["site_id"])
+        assert challenge.consumed_at is not None
+        assert site.site_token_hash == site_token_hash
+        assert site_token not in site.site_token_hash
+        assert site.status == "active"
+
+    replay = await client.post(
+        "/api/v1/integrations/wordpress/agency/sites/register",
+        headers={"X-Agency-Connect-Token": raw_connect_token},
+        json={
+            "site_url": "https://attacker-store.example.test/",
+            "admin_email": "attacker@example.test",
+            "plugin_version": "1.2.3",
+        },
+    )
+    assert replay.status_code == 401
+
+    status = await client.get(
+        "/api/v1/integrations/wordpress/agency/sites/status",
+        headers={"X-Agency-Site-Token": site_token},
+    )
+    assert status.status_code == 200, status.text
+    assert status.headers["cache-control"] == "no-store, private"
+    assert status.json()["workspace_id"] == workspace_id
+    assert status.json()["agency_entitlement"] == "active"
+
+    disconnected = await client.post(
+        "/api/v1/integrations/wordpress/agency/sites/disconnect",
+        headers={"X-Agency-Site-Token": site_token},
+    )
+    assert disconnected.status_code == 200, disconnected.text
+    assert disconnected.json()["status"] == "disconnected"
+
+    stale_status = await client.get(
+        "/api/v1/integrations/wordpress/agency/sites/status",
+        headers={"X-Agency-Site-Token": site_token},
+    )
+    assert stale_status.status_code == 404
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        site = await operational_db.get(main.AgencyClientWebsite, registered["site_id"])
+        assert site.status == "disconnected"
+        assert site.disconnected_at is not None
+        assert site.site_token_hash is None
