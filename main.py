@@ -328,6 +328,62 @@ async def health_check(db: AsyncSession = Depends(get_async_db)):
         logger.error("Health check failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Database connection error")
 
+@app.get("/health-check/operational")
+async def operational_health_check(db: AsyncSession = Depends(get_async_db)):
+    """Read-only readiness for both canonical PostgreSQL and operational Hostinger MySQL."""
+    components = {
+        "licensing_database": {"connected": False, "schema_ready": False},
+        "operational_database": {"connected": False, "schema_ready": False},
+    }
+    try:
+        await db.execute(text("SELECT 1"))
+        components["licensing_database"]["connected"] = True
+        required_pg_tables = {
+            "software_licenses", "api_keys", "audit_leads",
+            "audit_quota_reservations", "audit_reports", "saas_plan_packages",
+            "saas_admin_action_logs", "saas_operation_events",
+            "payment_webhook_events", "customer_lifecycle_sync_outbox",
+            "billing_mirror_sync_outbox",
+        }
+        pg_result = await db.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema()"
+        ))
+        pg_tables = set(pg_result.scalars().all())
+        missing_pg = sorted(required_pg_tables - pg_tables)
+        components["licensing_database"]["missing_tables"] = missing_pg
+        components["licensing_database"]["schema_ready"] = not missing_pg
+    except Exception as exc:
+        logger.error("Licensing readiness probe failed (error_type=%s)", type(exc).__name__)
+        components["licensing_database"]["error"] = "connection_or_schema_probe_failed"
+
+    try:
+        from hostinger_database import hostinger_engine, HostingerBase
+        import hostinger_models  # noqa: F401 - register operational tables
+        if hostinger_engine is None:
+            components["operational_database"]["error"] = "not_configured"
+        else:
+            async with hostinger_engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+                components["operational_database"]["connected"] = True
+                table_result = await connection.execute(text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE()"
+                ))
+                hostinger_tables = set(table_result.scalars().all())
+                missing_hostinger = sorted(set(HostingerBase.metadata.tables) - hostinger_tables)
+                components["operational_database"]["missing_tables"] = missing_hostinger
+                components["operational_database"]["schema_ready"] = not missing_hostinger
+    except Exception as exc:
+        logger.error("Operational readiness probe failed (error_type=%s)", type(exc).__name__)
+        components["operational_database"]["error"] = "connection_or_schema_probe_failed"
+
+    ready = all(item["connected"] and item["schema_ready"] for item in components.values())
+    if not ready:
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "components": components})
+    return {"status": "ready", "components": components}
+
+
 
 def _normalize_request_audit_target(domain: str) -> str:
     """Reject parameterized targets at API boundaries before reserving quota."""
