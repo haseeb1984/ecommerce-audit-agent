@@ -76,3 +76,21 @@ async def test_scan_worker_schema_guard_fails_closed_without_hostinger_database(
 
     with pytest.raises(RuntimeError, match="Hostinger operational database"):
         await scan_worker.ensure_scan_worker_schema()
+
+
+def test_scan_worker_schema_guard_covers_all_operational_reconciliation_models():
+    import scan_worker
+
+    required = {model.__name__ for model in scan_worker._WORKER_REQUIRED_MODELS}
+    assert required == {
+        "CustomerAccount",
+        "CustomerLoginChallenge",
+        "CustomerSession",
+        "CustomerEmailChangeChallenge",
+        "CustomerEmailIdentitySyncOutbox",
+        "CustomerBillingEvent",
+        "CustomerWebsite",
+        "WebsiteScanResult",
+        "ScanBatch",
+        "WebsiteScanJob",
+    }
