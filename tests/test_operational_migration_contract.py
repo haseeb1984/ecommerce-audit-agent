@@ -72,3 +72,15 @@ def test_agency_operational_tables_exist_in_fresh_schema_and_forward_migration()
     assert "uq_agency_team_normalized_email" in baseline
     assert "uq_agency_usage_source_reference" in baseline
     assert "uq_agency_workspace_site_host" in baseline
+
+def test_fresh_hostinger_schema_covers_every_registered_operational_model():
+    from hostinger_database import HostingerBase
+    import hostinger_models  # noqa: F401 - register all operational model tables
+
+    schema = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    missing = [
+        table_name
+        for table_name in HostingerBase.metadata.tables
+        if f"CREATE TABLE IF NOT EXISTS {table_name}" not in schema
+    ]
+    assert missing == []
