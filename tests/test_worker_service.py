@@ -51,3 +51,15 @@ def test_worker_schema_contract_accepts_complete_table():
     from worker_service import _missing_required_columns
 
     assert _missing_required_columns({"id", "status"}, {"id", "status", "created_at"}) == []
+
+
+
+def test_scan_worker_validates_operational_schema_before_processing():
+    import inspect
+    import scan_worker
+
+    assert callable(scan_worker.ensure_scan_worker_schema)
+    source = inspect.getsource(scan_worker.process_scan_queue)
+    assert source.index("await ensure_scan_worker_schema()") < source.index(
+        "reconcile_customer_lifecycle_outbox()"
+    )
