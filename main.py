@@ -1176,6 +1176,113 @@ async def revoke_customer_session(request: Request, response: Response):
     return {"status": "signed_out"}
 
 
+@app.get("/api/v1/account/sessions")
+async def list_customer_sessions(
+    request: Request,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
+):
+    """List safe metadata for active sessions belonging only to the current account."""
+    from sqlalchemy import select
+    from hostinger_models import CustomerSession
+
+    token = request.headers.get("x-customer-session", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Sign in with a customer portal session to manage sessions.")
+    factory = await _ensure_hostinger_operational_schema()
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    async with factory() as operational_db:
+        current = await operational_db.scalar(
+            select(CustomerSession).where(
+                CustomerSession.token_hash == token_hash,
+                CustomerSession.license_key == license_obj.license_key,
+                CustomerSession.revoked_at.is_(None),
+            )
+        )
+        if current is None:
+            raise HTTPException(status_code=401, detail="Customer session is invalid or has been revoked.")
+        current_expiry = current.expires_at
+        if current_expiry.tzinfo is None:
+            current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+        if current_expiry <= now:
+            raise HTTPException(status_code=401, detail="Customer session has expired. Sign in again.")
+        rows = (await operational_db.execute(
+            select(CustomerSession)
+            .where(
+                CustomerSession.license_key == license_obj.license_key,
+                CustomerSession.revoked_at.is_(None),
+                CustomerSession.expires_at > now.replace(tzinfo=None),
+            )
+            .order_by(CustomerSession.created_at.desc())
+        )).scalars().all()
+        items = []
+        for row in rows:
+            created_at = row.created_at
+            expires_at = row.expires_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            items.append({
+                "created_at": created_at.isoformat(),
+                "expires_at": expires_at.isoformat(),
+                "current": hmac.compare_digest(row.token_hash, token_hash),
+            })
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"items": items, "active_count": len(items)}
+
+
+@app.post("/api/v1/account/sessions/revoke-others")
+async def revoke_other_customer_sessions(
+    request: Request,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_account_credentials_for_billing),
+):
+    """Revoke every other active session for this license while preserving this session."""
+    from sqlalchemy import select, update
+    from hostinger_models import CustomerSession
+
+    token = request.headers.get("x-customer-session", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Sign in with a customer portal session to manage sessions.")
+    factory = await _ensure_hostinger_operational_schema()
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    async with factory() as operational_db:
+        current = await operational_db.scalar(
+            select(CustomerSession)
+            .where(
+                CustomerSession.token_hash == token_hash,
+                CustomerSession.license_key == license_obj.license_key,
+                CustomerSession.revoked_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if current is None:
+            raise HTTPException(status_code=401, detail="Customer session is invalid or has been revoked.")
+        expires_at = current.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= now:
+            raise HTTPException(status_code=401, detail="Customer session has expired. Sign in again.")
+        result = await operational_db.execute(
+            update(CustomerSession)
+            .where(
+                CustomerSession.license_key == license_obj.license_key,
+                CustomerSession.token_hash != token_hash,
+                CustomerSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        revoked_count = max(0, result.rowcount or 0)
+        await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "revoked_count": revoked_count}
+
+
 @app.post("/api/v1/account/email-change")
 async def request_customer_email_change(
     payload: CustomerEmailChangeRequest,
