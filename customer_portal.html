@@ -1286,13 +1286,22 @@
     websitesLoading = true;
     try {
     const container = $("websiteInventory");
+    const requestedOffset = reset ? 0 : websiteOffset;
+    const response = await api("/api/v1/websites?limit=100&offset=" + requestedOffset);
+    if (!response.ok) {
+      let message = "Website inventory could not be loaded.";
+      try {
+        const body = await response.json();
+        if (typeof body.detail === "string") message = body.detail;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const data = await response.json();
+    const items = Array.isArray(data.items) ? data.items : [];
     if (reset) {
       websiteOffset = 0;
       container.replaceChildren();
     }
-    const response = await api("/api/v1/websites?limit=100&offset=" + websiteOffset);
-    const data = await response.json();
-    const items = Array.isArray(data.items) ? data.items : [];
     websiteOffset += items.length;
     websiteHasMore = Boolean(data.page && data.page.has_more);
     $("loadMoreWebsites").hidden = !websiteHasMore;
