@@ -47,7 +47,21 @@ async def ensure_scan_worker_schema() -> None:
     if HostingerAsyncSessionLocal is None or hostinger_engine is None:
         raise RuntimeError("Hostinger operational database is not configured.")
 
-    required_models = (CustomerWebsite, WebsiteScanResult, ScanBatch, WebsiteScanJob)
+    # The worker runs scan execution, customer lifecycle/session revocation,
+    # passwordless challenge cleanup, and verified-email identity outbox sync.
+    # Validate every Hostinger model touched by those paths before processing.
+    required_models = (
+        CustomerAccount,
+        CustomerLoginChallenge,
+        CustomerSession,
+        CustomerEmailChangeChallenge,
+        CustomerEmailIdentitySyncOutbox,
+        CustomerBillingEvent,
+        CustomerWebsite,
+        WebsiteScanResult,
+        ScanBatch,
+        WebsiteScanJob,
+    )
     async with _worker_schema_lock:
         if _worker_schema_ready:
             return
