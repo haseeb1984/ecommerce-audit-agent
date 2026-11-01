@@ -1673,7 +1673,7 @@ async def register_wordpress_site(
     if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
     admin_email = payload.admin_email.strip().lower()
-    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
+    if not _is_valid_agency_team_email(email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
     site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
