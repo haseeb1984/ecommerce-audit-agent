@@ -39,3 +39,15 @@ def test_worker_configuration_rejects_invalid_values(monkeypatch, name, raw, min
     monkeypatch.setenv(name, raw)
     with pytest.raises(RuntimeError):
         _bounded_int(name, 5, minimum, maximum)
+
+
+def test_worker_schema_contract_reports_missing_columns():
+    from worker_service import _missing_required_columns
+
+    assert _missing_required_columns({"id", "status", "batch_id"}, {"id", "status"}) == ["batch_id"]
+
+
+def test_worker_schema_contract_accepts_complete_table():
+    from worker_service import _missing_required_columns
+
+    assert _missing_required_columns({"id", "status"}, {"id", "status", "created_at"}) == []
