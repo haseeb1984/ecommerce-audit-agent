@@ -486,12 +486,21 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 break
             event_id = event.id
             try:
-                # Reapplying the same recipient update is safe if PostgreSQL committed
-                # but the Hostinger acknowledgement was interrupted.
+                # Email addresses are not globally unique identifiers. Resolve the
+                # canonical license and scope the billing-history rewrite to that
+                # tenant so a shared/previously-used email cannot cross-update accounts.
                 async with AsyncSessionLocal() as licensing_db:
+                    license_id = await licensing_db.scalar(
+                        select(SoftwareLicense.id).where(
+                            SoftwareLicense.license_key == event.license_key
+                        )
+                    )
+                    if license_id is None:
+                        raise RuntimeError("LicenseReferenceUnavailable")
                     await licensing_db.execute(update(PaymentWebhookEvent).where(
-                        func.lower(PaymentWebhookEvent.recipient_email) == event.old_email,
-                    ).values(recipient_email=event.new_email))
+                        PaymentWebhookEvent.license_id == license_id,
+                        func.lower(PaymentWebhookEvent.recipient_email) == event.old_email.strip().lower(),
+                    ).values(recipient_email=event.new_email.strip()))
                     await licensing_db.commit()
                 event.status = "completed"
                 event.processed_at = datetime.now(timezone.utc)
