@@ -3734,6 +3734,64 @@ async def test_admin_can_review_and_revoke_customer_browser_sessions(client, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_admin_can_review_and_disconnect_customer_wordpress_installations(client, monkeypatch):
+    admin_key = "test-admin-wordpress-operations"
+    monkeypatch.setenv("ADMIN_API_KEY", admin_key)
+    license_id = await create_license(key="admin-wordpress-operations-license")
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id
+        ))).scalar_one()
+        license_key = license_obj.license_key
+    site_id = "wordpress-admin-operations-site-0001"
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add(main.WordPressInstallation(
+            id=site_id,
+            license_key=license_key,
+            site_url="https://store.example.test",
+            site_host="store.example.test",
+            admin_email="owner@example.test",
+            customer_email="owner@example.test",
+            wordpress_version="6.8",
+            woocommerce_version="10.0",
+            plugin_version="1.2.3",
+            status="active",
+        ))
+        await operational_db.commit()
+
+    headers = {"X-Admin-Key": admin_key}
+    listed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.headers["cache-control"] == "no-store, private"
+    assert listed.json()["items"][0]["site_id"] == site_id
+    assert listed.json()["items"][0]["admin_email"] == "owner@example.test"
+
+    disconnected = await client.request(
+        "DELETE",
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+        json={"site_url": "https://store.example.test", "reason": "customer support request"},
+    )
+    assert disconnected.status_code == 200, disconnected.text
+    assert disconnected.json()["status"] == "disconnected"
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        site = await operational_db.get(main.WordPressInstallation, site_id)
+        assert site.status == "disconnected"
+        assert site.disconnected_at is not None
+
+    refreshed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["items"][0]["status"] == "disconnected"
+
+
 async def test_customer_sign_in_fails_closed_when_email_maps_to_multiple_licenses(client, monkeypatch):
     monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
     sent = []
