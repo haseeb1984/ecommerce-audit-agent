@@ -209,3 +209,51 @@ async def test_complete_scan_job_does_not_create_duplicate_agency_usage_event():
     assert completed is True
     assert not any(isinstance(item, AgencyUsageEvent) for item in db.added)
     assert db.committed
+
+@pytest.mark.asyncio
+async def test_non_retryable_scan_failure_is_terminal_and_closes_batch():
+    from scan_queue import fail_or_retry_scan_job
+
+    job = SimpleNamespace(
+        id="job-terminal-1",
+        batch_id="batch-terminal-1",
+        status="processing",
+        locked_by="worker-1",
+        locked_at="locked",
+        attempt_count=1,
+        max_attempts=5,
+        last_error_code=None,
+        completed_at=None,
+    )
+    batch = SimpleNamespace(
+        id="batch-terminal-1",
+        status="processing",
+        processing_count=1,
+        queued_count=0,
+        failed_count=0,
+        completed_count=0,
+        cancelled_count=0,
+        total_urls=1,
+        completed_at=None,
+    )
+    db = FakeSession(job, batch)
+
+    outcome = await fail_or_retry_scan_job(
+        db,
+        job_id=job.id,
+        worker_id="worker-1",
+        error_code="LICENSE_INACTIVE",
+        retry_delay_seconds=300,
+        retryable=False,
+    )
+
+    assert outcome == "failed"
+    assert job.status == "failed"
+    assert job.last_error_code == "LICENSE_INACTIVE"
+    assert job.locked_at is None and job.locked_by is None
+    assert job.completed_at is not None
+    assert batch.processing_count == 0
+    assert batch.failed_count == 1
+    assert batch.status == "failed"
+    assert batch.completed_at is not None
+    assert db.committed and not db.rolled_back
