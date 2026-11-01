@@ -36,6 +36,20 @@ _worker_schema_ready = False
 _worker_schema_lock = asyncio.Lock()
 
 
+_WORKER_REQUIRED_MODELS = (
+    CustomerAccount,
+    CustomerLoginChallenge,
+    CustomerSession,
+    CustomerEmailChangeChallenge,
+    CustomerEmailIdentitySyncOutbox,
+    CustomerBillingEvent,
+    CustomerWebsite,
+    WebsiteScanResult,
+    ScanBatch,
+    WebsiteScanJob,
+)
+
+
 async def ensure_scan_worker_schema() -> None:
     """Validate operational tables required by every scan-worker entry point.
 
@@ -50,18 +64,7 @@ async def ensure_scan_worker_schema() -> None:
     # The worker runs scan execution, customer lifecycle/session revocation,
     # passwordless challenge cleanup, and verified-email identity outbox sync.
     # Validate every Hostinger model touched by those paths before processing.
-    required_models = (
-        CustomerAccount,
-        CustomerLoginChallenge,
-        CustomerSession,
-        CustomerEmailChangeChallenge,
-        CustomerEmailIdentitySyncOutbox,
-        CustomerBillingEvent,
-        CustomerWebsite,
-        WebsiteScanResult,
-        ScanBatch,
-        WebsiteScanJob,
-    )
+    required_models = _WORKER_REQUIRED_MODELS
     async with _worker_schema_lock:
         if _worker_schema_ready:
             return
