@@ -90,5 +90,8 @@ async def admin_scan_operations(
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         } for job in failed],
-        "failed_jobs_total": failed_total,\n        "failed_jobs_limit": failed_limit,\n        "failed_jobs_offset": failed_offset,\n        "failed_jobs_has_more": failed_offset + len(failed) < failed_total,
+        "failed_jobs_total": failed_total,
+        "failed_jobs_limit": failed_limit,
+        "failed_jobs_offset": failed_offset,
+        "failed_jobs_has_more": failed_offset + len(failed) < failed_total,
     }
