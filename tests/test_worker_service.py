@@ -94,3 +94,51 @@ def test_scan_worker_schema_guard_covers_all_operational_reconciliation_models()
         "ScanBatch",
         "WebsiteScanJob",
     }
+
+def test_scan_worker_schema_guard_covers_postgres_execution_and_outbox_models():
+    import scan_worker
+
+    required = {model.__name__ for model in scan_worker._WORKER_REQUIRED_POSTGRES_MODELS}
+    assert required == {
+        "SoftwareLicense",
+        "AuditLead",
+        "AuditQuotaReservation",
+        "SaaSPlanPackage",
+        "CustomerLifecycleSyncOutbox",
+        "PaymentWebhookEvent",
+        "BillingMirrorSyncOutbox",
+    }
+
+
+def test_worker_schema_contract_reports_missing_tables_and_columns():
+    from scan_worker import _missing_worker_schema
+    from models import CustomerLifecycleSyncOutbox, SoftwareLicense
+
+    result = _missing_worker_schema(
+        (SoftwareLicense, CustomerLifecycleSyncOutbox),
+        {"software_licenses", "customer_lifecycle_sync_outbox"},
+        {
+            "software_licenses": {"id", "license_key"},
+            "customer_lifecycle_sync_outbox": {"id", "license_key"},
+        },
+    )
+
+    assert result["tables"] == []
+    assert "tier" in result["columns"]["software_licenses"]
+    assert "action" in result["columns"]["customer_lifecycle_sync_outbox"]
+
+
+def test_worker_schema_contract_reports_absent_outbox_table():
+    from scan_worker import _missing_worker_schema
+    from models import CustomerLifecycleSyncOutbox
+
+    result = _missing_worker_schema(
+        (CustomerLifecycleSyncOutbox,),
+        set(),
+        {},
+    )
+
+    assert result == {
+        "tables": ["customer_lifecycle_sync_outbox"],
+        "columns": {},
+    }
