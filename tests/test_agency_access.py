@@ -223,20 +223,6 @@ async def test_invitation_acceptance_handles_naive_mysql_expiry_timestamp():
     ],
 )
 def test_agency_invitation_email_validation_accepts_normal_addresses(email):
-    import re
-
-    assert re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
-
-
-@pytest.mark.parametrize(
-    "email",
-    [
-        "owner@example.com",
-        "first.last+agency@example.co.uk",
-        "name@sub.example.org",
-    ],
-)
-def test_agency_invitation_email_validation_accepts_normal_addresses(email):
     from main import _is_valid_agency_team_email
 
     assert _is_valid_agency_team_email(email)
