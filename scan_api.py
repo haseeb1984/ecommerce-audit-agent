@@ -429,6 +429,7 @@ async def get_scan_job_result(
 
 @router.get("/api/v1/websites")
 async def list_customer_websites(
+    response: Response,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
@@ -446,6 +447,8 @@ async def list_customer_websites(
         .offset(offset)
         .limit(limit)
     )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "items": [{
             "id": site.id,
@@ -469,6 +472,7 @@ async def list_customer_websites(
 async def update_customer_website(
     website_id: str,
     payload: CustomerWebsiteUpdate,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -487,6 +491,10 @@ async def update_customer_website(
         website.label = label.strip() or None if isinstance(label, str) else None
     await db.commit()
     await db.refresh(website)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "id": website.id,
         "url": website.url,
@@ -500,6 +508,7 @@ async def update_customer_website(
 @router.delete("/api/v1/websites/{website_id}")
 async def archive_customer_website(
     website_id: str,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -512,12 +521,15 @@ async def archive_customer_website(
         raise HTTPException(status_code=404, detail="Website not found.")
     website.status = "archived"
     await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {"id": website.id, "status": website.status, "message": "Website archived; scan history is preserved."}
 
 
 @router.get("/api/v1/websites/{website_id}")
 async def get_customer_website(
     website_id: str,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
