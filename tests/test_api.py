@@ -3314,3 +3314,23 @@ async def test_customer_portal_exposes_session_management_controls(client):
     assert 'id="refreshSessions"' in response.text
     assert 'id="revokeOtherSessions"' in response.text
     assert '/api/v1/account/sessions/revoke-others' in response.text
+
+
+
+@pytest.mark.asyncio
+async def test_admin_customer_session_endpoints_require_admin_key(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
+    listed = await client.get("/api/v1/admin/clients/1/sessions")
+    revoked = await client.post("/api/v1/admin/clients/1/sessions/revoke-all")
+    assert listed.status_code == 401
+    assert revoked.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_portal_includes_customer_session_operations(client):
+    response = await client.get("/admin")
+    assert response.status_code == 200
+    assert 'id="clientSessions"' in response.text
+    assert 'id="refreshClientSessions"' in response.text
+    assert 'id="revokeClientSessions"' in response.text
+    assert '/sessions/revoke-all' in response.text
