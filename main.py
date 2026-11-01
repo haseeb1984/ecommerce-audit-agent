@@ -1351,7 +1351,7 @@ async def request_customer_email_change(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
     new_email = payload.new_email.strip().lower()
-    if not _is_valid_agency_team_email(email):
+    if not _is_valid_agency_team_email(new_email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
     current = (await operational_db.execute(select(CustomerSession).where(
