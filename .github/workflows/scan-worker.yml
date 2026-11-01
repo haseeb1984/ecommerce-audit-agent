@@ -1,0 +1,43 @@
+name: Durable scan worker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: durable-scan-worker
+  cancel-in-progress: false
+
+jobs:
+  process-scan-queue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Invoke protected scan worker
+        env:
+          SCAN_WORKER_URL: ${{ vars.SCAN_WORKER_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SCAN_WORKER_URL:-}" ]]; then
+            echo "Repository variable SCAN_WORKER_URL is not configured." >&2
+            exit 1
+          fi
+          if [[ -z "${CRON_SECRET:-}" ]]; then
+            echo "Repository secret CRON_SECRET is not configured." >&2
+            exit 1
+          fi
+          case "$SCAN_WORKER_URL" in
+            https://*) ;;
+            *) echo "SCAN_WORKER_URL must use HTTPS." >&2; exit 1 ;;
+          esac
+          curl --silent --show-error --fail-with-body \
+            --connect-timeout 10 --max-time 150 \
+            --retry 2 --retry-all-errors --retry-delay 5 \
+            --request GET \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "$SCAN_WORKER_URL"
