@@ -137,3 +137,11 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Lifecycle outbox events are durable PostgreSQL records mirrored into Hostinger by the scan worker. Before applying a suspend/reactivate retry, the worker re-reads the canonical SoftwareLicense state in PostgreSQL. A delayed suspend is ignored if the license is currently active; a delayed reactivate is ignored if the license is currently inactive.
 - This protects Hostinger customer-account state and session revocation from an older retry arriving after a newer admin transition. Explicit revoke_sessions actions remain independent of current entitlement and continue to revoke active sessions.
 - A skipped stale transition is acknowledged as processed; operators should diagnose current entitlement from the canonical licensing database rather than replaying old lifecycle actions manually.
+
+### Managed long-running scan worker option
+
+- A managed Python process can drain the same durable queue without relying on HTTP scheduler invocations. Start it with `python worker_service.py` in a separate worker service/container; do not run it inside the Vercel request process.
+- Configure `HOSTINGER_DATABASE_URL`, `DATABASE_URL`, and the same provider/authentication environment required by the API. The worker refuses to start when Hostinger MySQL is not configured.
+- Optional bounded controls: `SCAN_WORKER_MAX_JOBS` (1–10, default 1), `SCAN_WORKER_POLL_SECONDS` (1–300, default 5), and `WORKER_LOG_LEVEL` (default INFO).
+- The process drains queued jobs promptly, backs off after a failed cycle, and handles SIGINT/SIGTERM for clean shutdown. It logs counts and exception classes only; it must not log credentials, full target URLs, or customer tokens.
+- Use either this persistent worker or the protected GitHub Actions scheduler as the active queue-draining mechanism unless duplicate processing capacity is deliberately configured. The database lease/claim contract remains the concurrency boundary.
