@@ -1300,6 +1300,39 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
 
 
 
+def _customer_email_change_operational_updates(
+    *, license_key: str, old_email: str, new_email: str, current_token_hash: str, now: datetime
+):
+    """Build operational identity updates that are always scoped to one license."""
+    from sqlalchemy import func, update
+
+    return (
+        update(CustomerAccount).where(
+            CustomerAccount.license_key == license_key,
+            CustomerAccount.email == old_email,
+        ).values(email=new_email, updated_at=now),
+        update(CustomerBillingEvent).where(
+            CustomerBillingEvent.license_key == license_key,
+            func.lower(CustomerBillingEvent.recipient_email) == old_email,
+        ).values(recipient_email=new_email),
+        update(WordPressInstallation).where(
+            WordPressInstallation.license_key == license_key,
+            func.lower(WordPressInstallation.customer_email) == old_email,
+        ).values(customer_email=new_email),
+        update(CustomerLoginChallenge).where(
+            CustomerLoginChallenge.license_key == license_key,
+            CustomerLoginChallenge.email == old_email,
+            CustomerLoginChallenge.consumed_at.is_(None),
+        ).values(consumed_at=now),
+        update(CustomerSession).where(
+            CustomerSession.license_key == license_key,
+            CustomerSession.email == old_email,
+            CustomerSession.token_hash != current_token_hash,
+            CustomerSession.revoked_at.is_(None),
+        ).values(revoked_at=now),
+    )
+
+
 @app.post("/api/v1/account/auth/email-change/request-code", status_code=202)
 async def request_customer_email_change(
     payload: AccountEmailChangeRequest,
@@ -1444,10 +1477,15 @@ async def verify_customer_email_change(
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=409, detail="That email is now linked to a different customer account.")
-    await operational_db.execute(update(CustomerAccount).where(
-        CustomerAccount.license_key == current.license_key,
-        CustomerAccount.email == old_email,
-    ).values(email=challenge.new_email, updated_at=now))
+    # All account-side operational writes share the authenticated license scope.
+    for statement in _customer_email_change_operational_updates(
+        license_key=current.license_key,
+        old_email=old_email,
+        new_email=challenge.new_email,
+        current_token_hash=token_hash,
+        now=now,
+    ):
+        await operational_db.execute(statement)
     # PostgreSQL is a separate transaction boundary. Persist a durable outbox
     # record in the same Hostinger transaction as the verified account/email changes;
     # the scheduled worker applies the billing identity update idempotently.
@@ -1461,27 +1499,6 @@ async def verify_customer_email_change(
         next_attempt_at=now,
         created_at=now,
     ))
-    await operational_db.execute(update(CustomerBillingEvent).where(
-        CustomerBillingEvent.license_key == current.license_key,
-        func.lower(CustomerBillingEvent.recipient_email) == old_email,
-    ).values(recipient_email=challenge.new_email))
-    # Keep the linked WordPress customer identity synchronized with the verified
-    # SaaS email change in the same transaction as the billing identity records.
-    await operational_db.execute(update(WordPressInstallation).where(
-        WordPressInstallation.license_key == current.license_key,
-        func.lower(WordPressInstallation.customer_email) == old_email,
-    ).values(customer_email=challenge.new_email))
-    await operational_db.execute(update(CustomerLoginChallenge).where(
-        CustomerLoginChallenge.license_key == current.license_key,
-        CustomerLoginChallenge.email == old_email,
-        CustomerLoginChallenge.consumed_at.is_(None),
-    ).values(consumed_at=now))
-    await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.license_key == current.license_key,
-        CustomerSession.email == old_email,
-        CustomerSession.token_hash != token_hash,
-        CustomerSession.revoked_at.is_(None),
-    ).values(revoked_at=now))
     current.email = challenge.new_email
     current.last_seen_at = now
     challenge.consumed_at = now
