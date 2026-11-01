@@ -141,6 +141,11 @@ class AdminAgencyStatusUpdate(BaseModel):
     status: str = Field(..., pattern="^(active|suspended)$")
 
 
+def _is_valid_agency_team_email(value: str) -> bool:
+    """Reject whitespace and malformed domains in agency team invitations."""
+    return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value))
+
+
 class AgencyTeamInviteCreate(BaseModel):
     email: str = Field(..., min_length=3, max_length=254)
     role: str = Field(default="analyst", pattern="^(admin|analyst|viewer)$")
@@ -1157,7 +1162,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     """Send a short-lived sign-in code without disclosing whether an email owns an account."""
     from sqlalchemy import select, func
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+    if not _is_valid_agency_team_email(email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
