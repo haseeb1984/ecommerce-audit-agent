@@ -58,7 +58,7 @@ def test_agency_operational_tables_exist_in_fresh_schema_and_forward_migration()
     }
     baseline = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
     migration = (
-        ROOT / "migrations" / "20261108_agency_operational_tables.sql"
+        ROOT / "migrations" / "20261101_agency_operational_tables.sql"
     ).read_text()
 
     for table_name, model in expected.items():
