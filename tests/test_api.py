@@ -3294,3 +3294,23 @@ async def test_customer_session_auth_rejects_revoked_or_expired_tokens(monkeypat
     with pytest.raises(HTTPException) as raised:
         await auth._customer_session_license_key(session_token)
     assert raised.value.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_customer_session_management_requires_passwordless_session_authentication(client):
+    listed = await client.get("/api/v1/account/sessions")
+    assert listed.status_code == 401
+
+    revoked = await client.post("/api/v1/account/sessions/revoke-others")
+    assert revoked.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_portal_exposes_session_management_controls(client):
+    response = await client.get("/app")
+    assert response.status_code == 200
+    assert 'id="sessionList"' in response.text
+    assert 'id="refreshSessions"' in response.text
+    assert 'id="revokeOtherSessions"' in response.text
+    assert '/api/v1/account/sessions/revoke-others' in response.text
