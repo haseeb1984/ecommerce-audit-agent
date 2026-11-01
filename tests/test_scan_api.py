@@ -187,3 +187,120 @@ async def test_agency_wordpress_audit_rejects_another_clients_domain(monkeypatch
             operational_db=AgencyRouteSession(site, agency, workspace),
         )
     assert error.value.status_code == 422
+
+class WebsiteInventoryResult:
+    def __init__(self, value=None, rows=None):
+        self.value = value
+        self.rows = list(rows or [])
+
+    def scalar_one(self):
+        return self.value
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class WebsiteInventorySession:
+    def __init__(self, *, scalar_rows=None, execute_results=None):
+        self.scalar_rows = list(scalar_rows or [])
+        self.execute_results = list(execute_results or [])
+        self.scalar_statements = []
+        self.execute_statements = []
+        self.committed = False
+        self.refreshed = []
+
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
+        return self.scalar_rows.pop(0)
+
+    async def execute(self, statement):
+        self.execute_statements.append(statement)
+        return self.execute_results.pop(0)
+
+    async def commit(self):
+        self.committed = True
+
+    async def refresh(self, row):
+        self.refreshed.append(row)
+
+
+@pytest.mark.asyncio
+async def test_customer_website_inventory_is_license_scoped_and_private():
+    from scan_api import list_customer_websites
+
+    license_obj = SimpleNamespace(license_key="license-customer-a")
+    website = SimpleNamespace(
+        id="website-a", url="https://shop-a.example/", host="shop-a.example",
+        label="Store A", status="active", created_at=None, updated_at=None,
+    )
+    db = WebsiteInventorySession(execute_results=[
+        WebsiteInventoryResult(value=1),
+        WebsiteInventoryResult(rows=[website]),
+    ])
+    response = Response()
+
+    result = await list_customer_websites(
+        response, limit=100, offset=0, license_obj=license_obj, db=db,
+    )
+
+    assert result["page"] == {"limit": 100, "offset": 0, "total": 1, "has_more": False}
+    assert result["items"][0]["id"] == "website-a"
+    assert len(db.execute_statements) == 2
+    for statement in db.execute_statements:
+        assert "license_key" in str(statement).lower()
+        assert "license-customer-a" in statement.compile().params.values()
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+
+
+@pytest.mark.asyncio
+async def test_customer_website_label_update_requires_owning_license():
+    from scan_api import CustomerWebsiteUpdate, update_customer_website
+
+    license_obj = SimpleNamespace(license_key="license-customer-a")
+    website = SimpleNamespace(
+        id="website-a", license_key="license-customer-a",
+        url="https://shop-a.example/", host="shop-a.example",
+        label=None, status="active", updated_at=None,
+    )
+    db = WebsiteInventorySession(scalar_rows=[website])
+    response = Response()
+
+    result = await update_customer_website(
+        "website-a", CustomerWebsiteUpdate(label="  Main store  "), response,
+        license_obj=license_obj, db=db,
+    )
+
+    statement = db.scalar_statements[0]
+    assert "license_key" in str(statement).lower()
+    assert "license-customer-a" in statement.compile().params.values()
+    assert result["label"] == "Main store"
+    assert db.committed and db.refreshed == [website]
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.asyncio
+async def test_customer_website_archive_is_license_scoped_and_preserves_record():
+    from scan_api import archive_customer_website
+
+    license_obj = SimpleNamespace(license_key="license-customer-a")
+    website = SimpleNamespace(
+        id="website-a", license_key="license-customer-a", status="active",
+    )
+    db = WebsiteInventorySession(scalar_rows=[website])
+    response = Response()
+
+    result = await archive_customer_website(
+        "website-a", response, license_obj=license_obj, db=db,
+    )
+
+    statement = db.scalar_statements[0]
+    assert "license_key" in str(statement).lower()
+    assert "license-customer-a" in statement.compile().params.values()
+    assert website.status == "archived"
+    assert result["status"] == "archived"
+    assert db.committed
+    assert response.headers["cache-control"] == "no-store, private"
