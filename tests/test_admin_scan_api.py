@@ -78,3 +78,49 @@ def test_admin_client_non_status_updates_do_not_enqueue_lifecycle_sync():
     condition = 'if "is_active" in changes and bool(client.is_active) != previous_active:'
     assert condition in source
     assert source.index(condition) < source.index('await _write_admin_log(db, "client.updated"')
+
+
+
+def test_admin_failed_scan_retry_route_is_registered_as_post():
+    route = next(
+        route for route in router.routes
+        if route.path == "/api/v1/admin/scan-operations/jobs/{job_id}/retry"
+    )
+    assert route.methods == {"POST"}
+
+
+def test_admin_failed_scan_retry_authenticates_before_loading_job():
+    route = next(
+        route for route in router.routes
+        if route.path == "/api/v1/admin/scan-operations/jobs/{job_id}/retry"
+    )
+    source = inspect.getsource(route.endpoint)
+    assert source.index("_require_scan_admin(request)") < source.index(
+        "await operational_db.scalar"
+    )
+    assert "retry_failed_scan_job(" in source
+    assert "status_code=409" in source
+    assert "Cache-Control" in source
+
+
+def test_admin_retry_response_does_not_expose_customer_target_or_license_key():
+    route = next(
+        route for route in router.routes
+        if route.path == "/api/v1/admin/scan-operations/jobs/{job_id}/retry"
+    )
+    source = inspect.getsource(route.endpoint)
+    response_block = source[source.index("return {"):]
+    assert '"job_id"' in response_block
+    assert '"batch_id"' in response_block
+    assert '"next_attempt_at"' in response_block
+    assert '"target_url"' not in response_block
+    assert '"license_key"' not in response_block
+
+
+def test_admin_portal_exposes_confirmed_failed_scan_retry_action():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+    assert "Retry failed job" in portal
+    assert "Cancelled batches cannot be reopened." in portal
+    assert "/api/v1/admin/scan-operations/jobs/" in portal
