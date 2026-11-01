@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS scan_batches (
   KEY ix_scan_batches_claim (status, available_at, created_at),
   KEY ix_scan_batches_license_key (license_key),
   KEY ix_scan_batches_license_sequence (license_key, batch_number),
-  UNIQUE KEY uq_scan_batches_request_sequence (license_key, request_id, batch_number)
+  UNIQUE KEY uq_scan_batches_request_sequence (license_key, request_id, batch_number),
+  UNIQUE KEY uq_scan_batches_sequence (license_key, batch_number, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS website_scan_jobs (
