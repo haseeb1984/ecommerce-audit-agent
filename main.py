@@ -1328,9 +1328,13 @@ async def request_customer_email_change(
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    old_license_ids = await _billing_license_ids_for_email(db, operational_db, old_email)
+    current_license_id = await db.scalar(select(SoftwareLicense.id).where(
+        SoftwareLicense.license_key == current.license_key
+    ))
+    if current_license_id is None:
+        raise HTTPException(status_code=401, detail="Customer account is unavailable.")
     new_license_ids = await _billing_license_ids_for_email(db, operational_db, new_email)
-    if new_license_ids - old_license_ids:
+    if new_license_ids - {current_license_id}:
         raise HTTPException(status_code=409, detail="That email is already linked to a different customer account.")
     recent_count = int((await operational_db.execute(select(func.count(CustomerEmailChangeChallenge.id)).where(
         CustomerEmailChangeChallenge.license_key == current.license_key,
@@ -1517,6 +1521,7 @@ async def list_customer_device_sessions(
     now = datetime.now(timezone.utc)
     sessions = (await operational_db.execute(
         select(CustomerSession).where(
+            CustomerSession.license_key == current.license_key,
             CustomerSession.email == current.email,
             CustomerSession.revoked_at.is_(None),
             CustomerSession.expires_at > now,
@@ -1549,7 +1554,7 @@ async def revoke_customer_device_session(
     credentials=Depends(CUSTOMER_BEARER),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Revoke one other active device belonging to the same verified customer email."""
+    """Revoke one other active device belonging to the same customer license."""
     from sqlalchemy import select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
@@ -1562,6 +1567,7 @@ async def revoke_customer_device_session(
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     target = await operational_db.scalar(select(CustomerSession).where(
         CustomerSession.public_id == session_id,
+        CustomerSession.license_key == current.license_key,
         CustomerSession.email == current.email,
         CustomerSession.revoked_at.is_(None),
     ).with_for_update())
