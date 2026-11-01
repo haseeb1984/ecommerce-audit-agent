@@ -493,8 +493,6 @@ async def update_customer_website(
     await db.refresh(website)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    response.headers["Cache-Control"] = "no-store, private"
-    response.headers["Pragma"] = "no-cache"
     return {
         "id": website.id,
         "url": website.url,
@@ -549,6 +547,8 @@ async def get_customer_website(
         .order_by(WebsiteScanJob.created_at.desc())
         .limit(100)
     )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "id": website.id,
         "url": website.url,
