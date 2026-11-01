@@ -11,6 +11,7 @@ from database import get_async_db
 from hostinger_database import get_hostinger_db
 from hostinger_models import ScanBatch, WebsiteScanJob
 from models import SoftwareLicense
+from scan_queue import retry_failed_scan_job
 
 router = APIRouter()
 
@@ -94,4 +95,43 @@ async def admin_scan_operations(
         "failed_jobs_limit": failed_limit,
         "failed_jobs_offset": failed_offset,
         "failed_jobs_has_more": failed_offset + len(failed) < failed_total,
+    }
+
+
+@router.post("/api/v1/admin/scan-operations/jobs/{job_id}/retry")
+async def admin_retry_failed_scan_job(
+    job_id: str,
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Explicitly requeue one failed job without reopening cancelled batches."""
+    _require_scan_admin(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+
+    job = await operational_db.scalar(
+        select(WebsiteScanJob).where(WebsiteScanJob.id == job_id)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scan job was not found.")
+
+    result = await retry_failed_scan_job(
+        operational_db,
+        job_id=job_id,
+        license_key=job.license_key,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Scan job or owning batch was not found.")
+    if result.get("status") != "retry_wait":
+        raise HTTPException(
+            status_code=409,
+            detail="Only failed jobs in non-cancelled failed batches can be retried.",
+        )
+    return {
+        "status": "accepted",
+        "job_id": result["job_id"],
+        "batch_id": result["batch_id"],
+        "next_attempt_at": result["next_attempt_at"].isoformat()
+        if result.get("next_attempt_at") else None,
     }
