@@ -19,6 +19,15 @@ define('EAA_WP_VERSION', '1.1.0');
 define('EAA_WP_OPTION', 'eaa_wp_settings');
 define('EAA_WP_DEFAULT_API', 'https://ecommerce-audit-agent.vercel.app');
 
+/**
+ * Allow site owners to delegate the dashboard to a trusted role without
+ * weakening the default administrator-only permission boundary.
+ */
+function eaa_wp_dashboard_capability() {
+    $capability = apply_filters('eaa_wp_dashboard_capability', 'manage_options');
+    return is_string($capability) && '' !== trim($capability) ? trim($capability) : 'manage_options';
+}
+
 function eaa_wp_settings() {
     $settings = get_option(EAA_WP_OPTION, array());
     return is_array($settings) ? $settings : array();
@@ -307,7 +316,7 @@ add_action('admin_menu', function () {
     add_menu_page(
         __('Ecommerce Audit Agent', 'ecommerce-audit-agent'),
         __('Ecommerce Audit', 'ecommerce-audit-agent'),
-        'manage_options',
+        eaa_wp_dashboard_capability(),
         'ecommerce-audit-agent',
         'eaa_wp_render_admin_page',
         'dashicons-chart-area',
@@ -396,7 +405,7 @@ add_action('admin_init', function () {
 
 add_action('admin_post_eaa_run_agency_audit', 'eaa_wp_handle_run_agency_audit');
 function eaa_wp_handle_run_agency_audit() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to run audits for this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_run_agency_audit');
@@ -419,7 +428,7 @@ function eaa_wp_handle_run_agency_audit() {
 
 add_action('admin_post_eaa_connect_agency_site', 'eaa_wp_handle_connect_agency_site');
 function eaa_wp_handle_connect_agency_site() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_connect_agency_site');
@@ -455,7 +464,7 @@ function eaa_wp_handle_connect_agency_site() {
 
 add_action('admin_post_eaa_save_settings', 'eaa_wp_handle_save_settings');
 function eaa_wp_handle_save_settings() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_save_settings');
@@ -539,7 +548,7 @@ function eaa_wp_handle_save_settings() {
 
 add_action('admin_post_eaa_save_white_label', 'eaa_wp_handle_save_white_label');
 function eaa_wp_handle_save_white_label() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_save_white_label');
@@ -562,7 +571,7 @@ function eaa_wp_handle_save_white_label() {
 
 add_action('admin_post_eaa_disconnect_site', 'eaa_wp_handle_disconnect');
 function eaa_wp_handle_disconnect() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_disconnect_site');
@@ -574,7 +583,7 @@ function eaa_wp_handle_disconnect() {
 
 add_action('admin_post_eaa_run_audit', 'eaa_wp_handle_run_audit');
 function eaa_wp_handle_run_audit() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to run audits.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_run_audit');
@@ -606,7 +615,7 @@ function eaa_wp_handle_run_audit() {
 
 add_action('admin_post_eaa_download_report', 'eaa_wp_handle_download_report');
 function eaa_wp_handle_download_report() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to download reports.', 'ecommerce-audit-agent'), 403);
     }
     $report_id = isset($_GET['report_id']) ? absint($_GET['report_id']) : 0;
@@ -634,7 +643,7 @@ function eaa_wp_handle_download_report() {
 
 add_action('admin_post_eaa_open_billing', 'eaa_wp_handle_open_billing');
 function eaa_wp_handle_open_billing() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage billing.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_open_billing');
@@ -653,7 +662,7 @@ function eaa_wp_handle_open_billing() {
 }
 
 function eaa_wp_render_admin_page() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         return;
     }
     $settings = eaa_wp_settings();
