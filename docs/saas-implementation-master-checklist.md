@@ -33,7 +33,7 @@
 | Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; admin can inspect a customer’s session metadata and force-revoke all active portal sessions for a selected license; browser and staging authorization checks pending. |
 | Admin operations/health visibility | Implemented / verification pending | Operational event and overview endpoints exist; production schema/configuration acceptance pending. |
 | Email delivery | Implemented / verification pending | Explicit-recipient report delivery and configured sender checks exist; real SMTP inbox delivery requires approved staging credentials. |
-| Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks required tables/columns/configuration and now critical indexes; run against staging with approved environment. |
+| Production schema/configuration readiness | Implemented / verification pending | Existing PostgreSQL readiness plus new read-only `/health-check/operational` probe reports PostgreSQL and Hostinger connectivity/schema readiness independently without creating tables or exposing connection details; run against staging with approved environment. |
 | Deployment, production migration and live-provider verification | Blocked / approval required | No production migration or deployment without explicit approval. |
 
 ## Audit engine scope
