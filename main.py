@@ -4878,11 +4878,29 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
         if key not in allowed:
             raise HTTPException(status_code=422, detail="Unsupported client update field.")
         setattr(client, key, value)
-    if "is_active" in changes and previous_active_state != bool(client.is_active):
-        await _enqueue_customer_lifecycle_sync(
-            db, client.license_key,
-            "reactivate" if client.is_active else "suspend",
+    if "is_active" in changes or "expires_at" in changes:
+        effective_expiry = client.expires_at
+        if effective_expiry is not None and effective_expiry.tzinfo is None:
+            effective_expiry = effective_expiry.replace(tzinfo=timezone.utc)
+        entitlement_is_current = (
+            bool(client.is_active)
+            and (effective_expiry is None or effective_expiry > datetime.now(timezone.utc))
         )
+        previous_entitlement_is_current = (
+            previous_active_state
+            and (
+                client.expires_at is None
+                or (
+                    client.expires_at.replace(tzinfo=timezone.utc)
+                    if client.expires_at.tzinfo is None else client.expires_at
+                ) > datetime.now(timezone.utc)
+            )
+        )
+        if entitlement_is_current != previous_entitlement_is_current or "expires_at" in changes:
+            await _enqueue_customer_lifecycle_sync(
+                db, client.license_key,
+                "reactivate" if entitlement_is_current else "suspend",
+            )
     await _write_admin_log(db, "client.updated", "client", client.id, {
         "fields": sorted(changes),
         "tier": client.tier,
