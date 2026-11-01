@@ -4682,6 +4682,99 @@ async def admin_revoke_client_api_key(
     return {"status": "revoked", "client_id": license_id, "key_id": key_id}
 
 
+@app.get("/api/v1/admin/clients/{license_id}/sessions")
+async def admin_list_client_sessions(
+    license_id: int,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List safe session metadata for one customer account; never expose bearer token hashes."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    from hostinger_models import CustomerSession
+
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    factory = await _ensure_hostinger_operational_schema()
+    now = datetime.now(timezone.utc)
+    async with factory() as operational_db:
+        rows = (await operational_db.execute(
+            select(CustomerSession)
+            .where(CustomerSession.license_key == client.license_key)
+            .order_by(CustomerSession.created_at.desc())
+            .limit(200)
+        )).scalars().all()
+    items = []
+    active_count = 0
+    for row in rows:
+        expiry = row.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        is_active = row.revoked_at is None and expiry > now
+        if is_active:
+            active_count += 1
+        created = row.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        revoked = row.revoked_at
+        if revoked is not None and revoked.tzinfo is None:
+            revoked = revoked.replace(tzinfo=timezone.utc)
+        items.append({
+            "created_at": created.isoformat(),
+            "expires_at": expiry.isoformat(),
+            "revoked_at": revoked.isoformat() if revoked else None,
+            "active": is_active,
+        })
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"client_id": license_id, "active_count": active_count, "items": items, "limit": 200}
+
+
+@app.post("/api/v1/admin/clients/{license_id}/sessions/revoke-all")
+async def admin_revoke_client_sessions(
+    license_id: int,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Force sign-out every active customer portal session for a selected license."""
+    _require_admin_key(request)
+    from sqlalchemy import select, update
+    from hostinger_models import CustomerSession
+
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    factory = await _ensure_hostinger_operational_schema()
+    now = datetime.now(timezone.utc)
+    async with factory() as operational_db:
+        result = await operational_db.execute(
+            update(CustomerSession)
+            .where(
+                CustomerSession.license_key == client.license_key,
+                CustomerSession.revoked_at.is_(None),
+                CustomerSession.expires_at > now.replace(tzinfo=None),
+            )
+            .values(revoked_at=now)
+        )
+        revoked_count = max(0, result.rowcount or 0)
+        await operational_db.commit()
+    await _write_admin_log(db, "client.sessions_revoked", "client", license_id, {
+        "revoked_count": revoked_count,
+        "reason": "operator forced sign-out",
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "revoked", "client_id": license_id, "revoked_count": revoked_count}
+
+
 @app.patch("/api/v1/admin/clients/{license_id}")
 async def admin_update_client(license_id: int, payload: AdminClientUpdate, request: Request,
                               db: AsyncSession = Depends(get_async_db)):
