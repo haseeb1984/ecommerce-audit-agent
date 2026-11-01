@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, inspect, or_, select, update
 
 from database import AsyncSessionLocal
 from models import AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox
@@ -19,8 +19,8 @@ from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
-from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, WebsiteScanResult
+from hostinger_database import HostingerAsyncSessionLocal, hostinger_engine
+from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, CustomerWebsite, ScanBatch, WebsiteScanJob, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -31,6 +31,61 @@ from scan_queue import (
 from ecommerce_agent import UniversalEcommerceAgent
 
 logger = logging.getLogger("scan_worker")
+
+_worker_schema_ready = False
+_worker_schema_lock = asyncio.Lock()
+
+
+async def ensure_scan_worker_schema() -> None:
+    """Validate operational tables required by every scan-worker entry point.
+
+    DDL remains migration-managed; this check never creates or alters production tables.
+    """
+    global _worker_schema_ready
+    if _worker_schema_ready:
+        return
+    if HostingerAsyncSessionLocal is None or hostinger_engine is None:
+        raise RuntimeError("Hostinger operational database is not configured.")
+
+    required_models = (CustomerWebsite, WebsiteScanResult, ScanBatch, WebsiteScanJob)
+    async with _worker_schema_lock:
+        if _worker_schema_ready:
+            return
+        async with hostinger_engine.connect() as connection:
+            table_names = await connection.run_sync(
+                lambda sync_connection: set(inspect(sync_connection).get_table_names())
+            )
+            missing_tables = sorted(
+                model.__tablename__ for model in required_models
+                if model.__tablename__ not in table_names
+            )
+            if missing_tables:
+                raise RuntimeError(
+                    "Operational scan schema is incomplete; apply the Hostinger migrations. "
+                    "Missing tables: " + ", ".join(missing_tables)
+                )
+            missing_columns = {}
+            for model in required_models:
+                actual = await connection.run_sync(
+                    lambda sync_connection, table=model.__tablename__: {
+                        column["name"]
+                        for column in inspect(sync_connection).get_columns(table)
+                    }
+                )
+                required = {column.name for column in model.__table__.columns}
+                missing = sorted(required - actual)
+                if missing:
+                    missing_columns[model.__tablename__] = missing
+            if missing_columns:
+                details = "; ".join(
+                    "{}: {}".format(table, ", ".join(columns))
+                    for table, columns in sorted(missing_columns.items())
+                )
+                raise RuntimeError(
+                    "Operational scan schema is incompatible; apply the latest Hostinger migrations. "
+                    "Missing columns: " + details
+                )
+        _worker_schema_ready = True
 
 
 def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bool:
@@ -575,6 +630,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     if max_jobs < 1 or max_jobs > 10:
         raise ValueError("max_jobs must be between 1 and 10.")
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
+    await ensure_scan_worker_schema()
     import asyncio
 
     lifecycle_sync = {"status": "completed", "processed": 0, "deferred": 0}
