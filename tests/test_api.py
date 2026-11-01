@@ -3744,20 +3744,39 @@ async def test_admin_can_review_and_disconnect_customer_wordpress_installations(
             SoftwareLicense.id == license_id
         ))).scalar_one()
         license_key = license_obj.license_key
+    other_license_id = await create_license(key="other-admin-wordpress-operations-license")
+    async with AsyncSessionLocal() as db:
+        other_license = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == other_license_id
+        ))).scalar_one()
+        other_license_key = other_license.license_key
     site_id = "wordpress-admin-operations-site-0001"
+    foreign_site_id = "wordpress-admin-operations-foreign-0001"
     async with main.HostingerAsyncSessionLocal() as operational_db:
-        operational_db.add(main.WordPressInstallation(
-            id=site_id,
-            license_key=license_key,
-            site_url="https://store.example.test",
-            site_host="store.example.test",
-            admin_email="owner@example.test",
-            customer_email="owner@example.test",
-            wordpress_version="6.8",
-            woocommerce_version="10.0",
-            plugin_version="1.2.3",
-            status="active",
-        ))
+        operational_db.add_all([
+            main.WordPressInstallation(
+                id=site_id,
+                license_key=license_key,
+                site_url="https://store.example.test",
+                site_host="store.example.test",
+                admin_email="owner@example.test",
+                customer_email="owner@example.test",
+                wordpress_version="6.8",
+                woocommerce_version="10.0",
+                plugin_version="1.2.3",
+                status="active",
+            ),
+            main.WordPressInstallation(
+                id=foreign_site_id,
+                license_key=other_license_key,
+                site_url="https://other.example.test",
+                site_host="other.example.test",
+                admin_email="other@example.test",
+                customer_email="other@example.test",
+                plugin_version="1.2.3",
+                status="active",
+            ),
+        ])
         await operational_db.commit()
 
     headers = {"X-Admin-Key": admin_key}
@@ -3769,6 +3788,16 @@ async def test_admin_can_review_and_disconnect_customer_wordpress_installations(
     assert listed.headers["cache-control"] == "no-store, private"
     assert listed.json()["items"][0]["site_id"] == site_id
     assert listed.json()["items"][0]["admin_email"] == "owner@example.test"
+    assert len(listed.json()["items"]) == 1
+    assert all(item["site_id"] != foreign_site_id for item in listed.json()["items"])
+
+    foreign_disconnect = await client.request(
+        "DELETE",
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+        json={"site_url": "https://other.example.test", "reason": "must not cross tenant"},
+    )
+    assert foreign_disconnect.status_code == 404
 
     disconnected = await client.request(
         "DELETE",
