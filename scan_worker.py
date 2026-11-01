@@ -114,6 +114,14 @@ def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bo
     return action == "revoke_sessions"
 
 
+def _customer_email_identity_update_statement(license_id: int, old_email: str, new_email: str):
+    """Build a tenant-scoped, case-insensitive billing-recipient identity update."""
+    return update(PaymentWebhookEvent).where(
+        PaymentWebhookEvent.license_id == license_id,
+        func.lower(PaymentWebhookEvent.recipient_email) == old_email.strip().lower(),
+    ).values(recipient_email=new_email.strip())
+
+
 
 
 def _json(value) -> str:
@@ -497,10 +505,9 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                     )
                     if license_id is None:
                         raise RuntimeError("LicenseReferenceUnavailable")
-                    await licensing_db.execute(update(PaymentWebhookEvent).where(
-                        PaymentWebhookEvent.license_id == license_id,
-                        func.lower(PaymentWebhookEvent.recipient_email) == event.old_email.strip().lower(),
-                    ).values(recipient_email=event.new_email.strip()))
+                    await licensing_db.execute(_customer_email_identity_update_statement(
+                        license_id, event.old_email, event.new_email
+                    ))
                     await licensing_db.commit()
                 event.status = "completed"
                 event.processed_at = datetime.now(timezone.utc)
