@@ -1313,18 +1313,32 @@
       const view = document.createElement("button"); view.type = "button";
       view.className = "secondary"; view.textContent = "Site scan history";
       view.addEventListener("click", async () => {
-        const response = await api("/api/v1/websites/" + encodeURIComponent(site.id));
-        const detailData = await response.json();
-        const panel = $("scanBatchDetail"); panel.replaceChildren();
-        const heading = document.createElement("h3"); heading.textContent = "Website history · " + detailData.host;
-        panel.append(heading);
-        for (const job of (Array.isArray(detailData.scan_history) ? detailData.scan_history : [])) {
-          const row = document.createElement("p"); row.className = "muted";
-          row.textContent = job.status + " · " + new Date(job.created_at).toLocaleString() +
-            (job.last_error_code ? " · " + job.last_error_code : "");
-          panel.append(row);
+        view.disabled = true;
+        try {
+          const response = await api("/api/v1/websites/" + encodeURIComponent(site.id));
+          if (!response.ok) throw new Error("Website scan history could not be loaded.");
+          const detailData = await response.json();
+          const panel = $("scanBatchDetail"); panel.replaceChildren();
+          const heading = document.createElement("h3"); heading.textContent = "Website history · " + detailData.host;
+          panel.append(heading);
+          const jobs = Array.isArray(detailData.scan_history) ? detailData.scan_history : [];
+          if (!jobs.length) {
+            const empty = document.createElement("p"); empty.className = "muted";
+            empty.textContent = "No scan history is available for this website yet.";
+            panel.append(empty);
+          }
+          for (const job of jobs) {
+            const row = document.createElement("p"); row.className = "muted";
+            row.textContent = job.status + " · " + new Date(job.created_at).toLocaleString() +
+              (job.last_error_code ? " · " + job.last_error_code : "");
+            panel.append(row);
+          }
+          panel.scrollIntoView({behavior:"smooth", block:"nearest"});
+        } catch (error) {
+          setStatus("connectStatus", error.message || "Website scan history could not be loaded.", "error");
+        } finally {
+          view.disabled = false;
         }
-        panel.scrollIntoView({behavior:"smooth", block:"nearest"});
       });
       const label = document.createElement("input");
       label.type = "text";
@@ -1336,13 +1350,25 @@
       save.className = "secondary";
       save.textContent = "Save label";
       save.addEventListener("click", async () => {
-        const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {
-          method: "PATCH",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({label: label.value})
-        });
-        if (!result.ok) throw new Error("Website label update failed.");
-        await loadWebsites();
+        save.disabled = true;
+        try {
+          const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({label: label.value})
+          });
+          if (!result.ok) {
+            let message = "Website label update failed.";
+            try { const body = await result.json(); if (typeof body.detail === "string") message = body.detail; } catch (_) {}
+            throw new Error(message);
+          }
+          setStatus("connectStatus", "Website label saved.", "success");
+          await loadWebsites();
+        } catch (error) {
+          setStatus("connectStatus", error.message || "Website label update failed.", "error");
+        } finally {
+          save.disabled = false;
+        }
       });
       const archive = document.createElement("button");
       archive.type = "button";
@@ -1350,9 +1376,22 @@
       archive.textContent = "Archive";
       archive.disabled = site.status === "archived";
       archive.addEventListener("click", async () => {
-        const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
-        if (!result.ok) throw new Error("Website archive failed.");
-        await loadWebsites();
+        if (!window.confirm("Archive this website from your inventory? Existing scan history will be preserved.")) return;
+        archive.disabled = true;
+        try {
+          const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
+          if (!result.ok) {
+            let message = "Website archive failed.";
+            try { const body = await result.json(); if (typeof body.detail === "string") message = body.detail; } catch (_) {}
+            throw new Error(message);
+          }
+          setStatus("connectStatus", "Website archived. Existing scan history is preserved.", "success");
+          await loadWebsites();
+        } catch (error) {
+          setStatus("connectStatus", error.message || "Website archive failed.", "error");
+        } finally {
+          archive.disabled = site.status === "archived";
+        }
       });
       card.append(label, view, save, archive);
       container.append(card);
