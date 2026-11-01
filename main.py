@@ -6697,6 +6697,11 @@ class AdminAPIKeyCreate(BaseModel):
 class AdminAPIKeyRevoke(BaseModel):
     reason: str = Field(default="operator revocation", min_length=1, max_length=200)
 
+class AdminWordPressLinkUnlink(BaseModel):
+    site_url: str = Field(..., min_length=8, max_length=2048)
+    reason: str = Field(..., min_length=1, max_length=200)
+
+
 
 
 
@@ -7339,6 +7344,99 @@ async def admin_revoke_client_sessions(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"status": "revoked", "client_id": license_id, "revoked_count": count}
+
+
+@app.get("/api/v1/admin/clients/{license_id}/wordpress-links")
+async def admin_list_client_wordpress_links(
+    license_id: int,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """List connected WordPress installation metadata for an operator-selected license."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    rows = (await operational_db.execute(
+        select(WordPressInstallation).where(
+            WordPressInstallation.license_key == client.license_key
+        ).order_by(
+            WordPressInstallation.created_at.desc(),
+            WordPressInstallation.id.desc(),
+        ).limit(100)
+    )).scalars().all()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "client_id": license_id,
+        "items": [{
+            "site_id": item.id,
+            "site_url": item.site_url,
+            "site_host": item.site_host,
+            "admin_email": item.admin_email,
+            "wordpress_version": item.wordpress_version,
+            "woocommerce_version": item.woocommerce_version,
+            "plugin_version": item.plugin_version,
+            "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
+            "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,
+        } for item in rows],
+        "limit": 100,
+    }
+
+
+@app.delete("/api/v1/admin/clients/{license_id}/wordpress-links")
+async def admin_unlink_client_wordpress_site(
+    license_id: int,
+    payload: AdminWordPressLinkUnlink,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Disconnect one customer WordPress installation with an auditable operator reason."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    client = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="An operator reason is required.")
+    site_url = payload.site_url.strip()
+    if not site_url:
+        raise HTTPException(status_code=422, detail="A WordPress site URL is required.")
+    site = (await operational_db.execute(
+        select(WordPressInstallation).where(
+            WordPressInstallation.license_key == client.license_key,
+            WordPressInstallation.site_url == site_url,
+            WordPressInstallation.status == "active",
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if site is None:
+        raise HTTPException(status_code=404, detail="Active WordPress site not found for this client.")
+    now = datetime.now(timezone.utc)
+    site.status = "disconnected"
+    site.disconnected_at = now
+    await operational_db.commit()
+    await _write_admin_log(db, "client.wordpress_site_disconnected", "client", license_id, {
+        "site_id": site.id,
+        "site_url": site.site_url,
+        "site_host": site.site_host,
+        "reason": reason,
+    })
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "disconnected", "client_id": license_id, "site_id": site.id, "site_url": site.site_url}
 
 
 @app.get("/api/v1/admin/clients/{license_id}/api-keys")
