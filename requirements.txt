@@ -1912,4 +1912,5 @@ yarl==1.25.1 \
     #   supabase
     #   supabase-functions
 
-asyncmy==0.2.17
+asyncmy==0.2.17 \
+    --hash=sha256:a6b615e1062a1ecb943b75eb30dc45c54a9aaa618d85010f17822c77921e8701
