@@ -302,8 +302,7 @@ CREATE TABLE IF NOT EXISTS agency_accounts (
   status VARCHAR(24) NOT NULL DEFAULT 'active',
   created_at DATETIME(6) NOT NULL,
   updated_at DATETIME(6) NOT NULL,
-  UNIQUE KEY owner_license_key (owner_license_key),
-  KEY ix_agency_accounts_owner_license_key (owner_license_key),
+  UNIQUE KEY ix_agency_accounts_owner_license_key (owner_license_key),
   KEY ix_agency_accounts_owner_email (owner_email),
   KEY ix_agency_accounts_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
