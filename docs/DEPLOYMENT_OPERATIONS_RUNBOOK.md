@@ -145,3 +145,6 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 - Optional bounded controls: `SCAN_WORKER_MAX_JOBS` (1–10, default 1), `SCAN_WORKER_POLL_SECONDS` (1–300, default 5), and `WORKER_LOG_LEVEL` (default INFO).
 - The process drains queued jobs promptly, backs off after a failed cycle, and handles SIGINT/SIGTERM for clean shutdown. It logs counts and exception classes only; it must not log credentials, full target URLs, or customer tokens.
 - Use either this persistent worker or the protected GitHub Actions scheduler as the active queue-draining mechanism unless duplicate processing capacity is deliberately configured. The database lease/claim contract remains the concurrency boundary.
+
+- Before entering its polling loop, the worker now validates that the live `website_scan_jobs` table contains every column required by the batch/idempotency queue model. Missing tables or columns stop startup with a migration-directed error; the worker does not execute schema-changing DDL.
+- The authoritative table definition is in `migrations/hostinger_operational_schema.sql`. Apply and verify that migration through the approved non-production database rollout before enabling the managed worker.
