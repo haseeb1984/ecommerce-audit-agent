@@ -21,7 +21,7 @@
 | Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; re-run on latest branch head. |
 | Customer profile management | Implemented / verification pending | GET/PATCH profile endpoints exist; browser and latest CI acceptance required. |
 | Verified customer email identity change | Implemented / verification pending | Rate-limited 30-minute one-time verification, duplicate-address checks, portal controls, and license-scoped billing outbox sync are implemented; SMTP and Hostinger staging acceptance pending. |
-| Passwordless customer sign-in and session lifecycle | Implemented / verification pending | Email sign-in uses a 10-minute single-use challenge, hashed 30-day session tokens, X-Customer-Session auth across customer APIs, logout revocation, and retention cleanup; SMTP/Hostinger staging acceptance pending. |
+| Passwordless customer sign-in and session lifecycle | Implemented / verification pending | Email sign-in uses a 10-minute single-use challenge, hashed 30-day session tokens, X-Customer-Session auth across customer APIs, logout revocation, customer-side active-session listing and revoke-other-sessions controls, and retention cleanup; SMTP/Hostinger staging acceptance pending. |
 | Monthly quota and concurrent audit reservations | Implemented / verification pending | Reservation lifecycle exists in `quota.py`; run PostgreSQL-backed concurrency acceptance. |
 | Customer usage and audit activity | Implemented / verification pending | Usage/activity endpoints and portal meters exist; latest CI and browser QA required. |
 | Customer report history and evidence coverage | Implemented / verification pending | Scoped/paginated history and evidence endpoints exist; generated report quality is a separate final gate. |
@@ -30,7 +30,7 @@
 | Checkout and subscription provisioning | Implemented / verification pending | Paddle checkout/webhook handlers exist; sandbox provider acceptance still required. |
 | Billing history and billing portal | Implemented / verification pending | Billing-only account ownership allows expired customers to manage billing; Paddle sandbox acceptance pending. |
 | Payment webhook idempotency/reconciliation | Implemented / verification pending | Event persistence, cancellation/payment-failure handling and reconciliation exist; run current CI and sandbox lifecycle acceptance. |
-| Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; browser and staging authorization checks pending. |
+| Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; admin can inspect a customer’s session metadata and force-revoke all active portal sessions for a selected license; browser and staging authorization checks pending. |
 | Admin operations/health visibility | Implemented / verification pending | Operational event and overview endpoints exist; production schema/configuration acceptance pending. |
 | Email delivery | Implemented / verification pending | Explicit-recipient report delivery and configured sender checks exist; real SMTP inbox delivery requires approved staging credentials. |
 | Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks required tables/columns/configuration and now critical indexes; run against staging with approved environment. |
@@ -94,3 +94,12 @@
 - Successful verification creates a 30-day customer session stored by token hash. Customer API, billing, and account-management authentication now accept `X-Customer-Session` while preserving license/API-key support.
 - Added explicit logout revocation. The customer portal can request a sign-in token, verify it, load the account using the resulting session, and revoke the session when disconnecting.
 - The portal clears sign-in fields when switching accounts. Full integration acceptance against configured Hostinger MySQL and SMTP remains pending.
+
+
+## Customer and admin session-security implementation batch — 2026-11-01
+
+- Added customer portal session listing with safe metadata only; bearer tokens and token hashes are never returned.
+- Added customer action to revoke other active sessions while preserving the current signed-in session.
+- Added admin endpoints to inspect session history for one license and force-revoke every active customer portal session for that license.
+- Added admin-console session history and explicit force-sign-out controls inside the selected customer's history panel.
+- Added admin authentication and portal-contract regression tests. Latest CI verification is pending; Hostinger staging acceptance remains required.
