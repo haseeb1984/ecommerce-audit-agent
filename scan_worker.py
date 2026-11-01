@@ -11,8 +11,16 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import delete, func, inspect, or_, select, update
 
-from database import AsyncSessionLocal
-from models import AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox
+from database import AsyncSessionLocal, engine as licensing_engine
+from models import (
+    AuditLead,
+    AuditQuotaReservation,
+    BillingMirrorSyncOutbox,
+    CustomerLifecycleSyncOutbox,
+    PaymentWebhookEvent,
+    SaaSPlanPackage,
+    SoftwareLicense,
+)
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
@@ -34,6 +42,32 @@ logger = logging.getLogger("scan_worker")
 
 _worker_schema_ready = False
 _worker_schema_lock = asyncio.Lock()
+
+
+_WORKER_REQUIRED_POSTGRES_MODELS = (
+    SoftwareLicense,
+    AuditLead,
+    AuditQuotaReservation,
+    SaaSPlanPackage,
+    CustomerLifecycleSyncOutbox,
+    PaymentWebhookEvent,
+    BillingMirrorSyncOutbox,
+)
+
+
+def _missing_worker_schema(models, table_names: set[str], columns_by_table: dict[str, set[str]]) -> dict:
+    """Describe missing tables and model columns without changing either database."""
+    missing_tables = sorted(model.__tablename__ for model in models if model.__tablename__ not in table_names)
+    missing_columns = {}
+    for model in models:
+        if model.__tablename__ not in table_names:
+            continue
+        actual = columns_by_table.get(model.__tablename__, set())
+        required = {column.name for column in model.__table__.columns}
+        absent = sorted(required - actual)
+        if absent:
+            missing_columns[model.__tablename__] = absent
+    return {"tables": missing_tables, "columns": missing_columns}
 
 
 _WORKER_REQUIRED_MODELS = (
@@ -102,6 +136,41 @@ async def ensure_scan_worker_schema() -> None:
                     "Operational scan schema is incompatible; apply the latest Hostinger migrations. "
                     "Missing columns: " + details
                 )
+        # PostgreSQL is the canonical licensing/billing database. Validate
+        # every table used by queue execution, quota reservations, and the three
+        # cross-database outboxes before a worker claims any customer work.
+        if licensing_engine is None:
+            raise RuntimeError("PostgreSQL licensing database is not configured.")
+        async with licensing_engine.connect() as connection:
+            pg_table_names = await connection.run_sync(
+                lambda sync_connection: set(inspect(sync_connection).get_table_names())
+            )
+            pg_columns = {}
+            for model in _WORKER_REQUIRED_POSTGRES_MODELS:
+                if model.__tablename__ not in pg_table_names:
+                    continue
+                pg_columns[model.__tablename__] = await connection.run_sync(
+                    lambda sync_connection, table=model.__tablename__: {
+                        column["name"]
+                        for column in inspect(sync_connection).get_columns(table)
+                    }
+                )
+        pg_missing = _missing_worker_schema(
+            _WORKER_REQUIRED_POSTGRES_MODELS, pg_table_names, pg_columns
+        )
+        if pg_missing["tables"] or pg_missing["columns"]:
+            details = []
+            if pg_missing["tables"]:
+                details.append("missing tables: " + ", ".join(pg_missing["tables"]))
+            if pg_missing["columns"]:
+                details.extend(
+                    f"{table} missing columns: {', '.join(columns)}"
+                    for table, columns in sorted(pg_missing["columns"].items())
+                )
+            raise RuntimeError(
+                "PostgreSQL worker schema is incomplete; apply the reviewed licensing database migrations. "
+                + "; ".join(details)
+            )
         _worker_schema_ready = True
 
 
