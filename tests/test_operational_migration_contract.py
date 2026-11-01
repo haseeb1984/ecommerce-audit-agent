@@ -31,3 +31,44 @@ def test_existing_hostinger_databases_have_forward_sequence_constraint_migration
     assert "uq_scan_batches_sequence" in migration
     assert "CREATE UNIQUE INDEX uq_scan_batches_sequence" in migration
     assert "HAVING COUNT(*) > 1" in migration
+
+def test_agency_operational_tables_exist_in_fresh_schema_and_forward_migration():
+    from hostinger_models import (
+        AgencyAccount,
+        AgencyClientWebsite,
+        AgencyClientWorkspace,
+        AgencyTeamLoginChallenge,
+        AgencyTeamMember,
+        AgencyTeamSession,
+        AgencyUsageEvent,
+        AgencyWebsiteConnectChallenge,
+        AgencyWorkspaceAccess,
+    )
+
+    expected = {
+        "agency_accounts": AgencyAccount,
+        "agency_client_workspaces": AgencyClientWorkspace,
+        "agency_client_websites": AgencyClientWebsite,
+        "agency_website_connect_challenges": AgencyWebsiteConnectChallenge,
+        "agency_team_members": AgencyTeamMember,
+        "agency_team_login_challenges": AgencyTeamLoginChallenge,
+        "agency_team_sessions": AgencyTeamSession,
+        "agency_workspace_access": AgencyWorkspaceAccess,
+        "agency_usage_events": AgencyUsageEvent,
+    }
+    baseline = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    migration = (
+        ROOT / "migrations" / "20261108_agency_operational_tables.sql"
+    ).read_text()
+
+    for table_name, model in expected.items():
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in baseline
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in migration
+        assert table_name in model.__table__.metadata.tables
+        assert model.__tablename__ == table_name
+
+    assert "FOREIGN KEY (workspace_id) REFERENCES agency_client_workspaces(id)" in baseline
+    assert "FOREIGN KEY (team_member_id) REFERENCES agency_team_members(id)" in baseline
+    assert "uq_agency_team_normalized_email" in baseline
+    assert "uq_agency_usage_source_reference" in baseline
+    assert "uq_agency_workspace_site_host" in baseline
