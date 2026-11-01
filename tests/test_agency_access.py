@@ -212,3 +212,33 @@ async def test_invitation_acceptance_handles_naive_mysql_expiry_timestamp():
     assert member.status == "active"
     assert member.invitation_token_hash is None
     assert operational.committed
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        "owner@example.com",
+        "first.last+agency@example.co.uk",
+        "name@sub.example.org",
+    ],
+)
+def test_agency_invitation_email_validation_accepts_normal_addresses(email):
+    import re
+
+    assert re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        "has space@example.com",
+        "missing-at.example.com",
+        "missing-domain@",
+        "name@domain",
+        r"bad\sname@example.com",
+    ],
+)
+def test_agency_invitation_email_validation_rejects_malformed_addresses(email):
+    import re
+
+    assert not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
