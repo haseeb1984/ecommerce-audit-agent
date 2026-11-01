@@ -231,6 +231,20 @@ def test_agency_invitation_email_validation_accepts_normal_addresses(email):
 @pytest.mark.parametrize(
     "email",
     [
+        "owner@example.com",
+        "first.last+agency@example.co.uk",
+        "name@sub.example.org",
+    ],
+)
+def test_agency_invitation_email_validation_accepts_normal_addresses(email):
+    from main import _is_valid_agency_team_email
+
+    assert _is_valid_agency_team_email(email)
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
         "has space@example.com",
         "missing-at.example.com",
         "missing-domain@",
@@ -239,6 +253,6 @@ def test_agency_invitation_email_validation_accepts_normal_addresses(email):
     ],
 )
 def test_agency_invitation_email_validation_rejects_malformed_addresses(email):
-    import re
+    from main import _is_valid_agency_team_email
 
-    assert not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
+    assert not _is_valid_agency_team_email(email)
