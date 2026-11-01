@@ -43,6 +43,13 @@
 <div class="report-actions"><button id="requestEmailChange" type="button" disabled>Send verification token</button><button id="confirmEmailChange" class="secondary" type="button" disabled>Verify and update email</button></div>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
+<section class="panel" aria-labelledby="sessionsHeading">
+<h2 id="sessionsHeading">Active sign-in sessions</h2>
+<p class="muted">Review active customer portal sessions for this account. Session tokens are never displayed. Use “Revoke other sessions” if a device is lost or you suspect an old sign-in is still active.</p>
+<div id="sessionList" class="reports"><p class="muted">Connect with passwordless sign-in to manage sessions.</p></div>
+<div class="report-actions"><button id="refreshSessions" class="secondary" type="button" disabled>Refresh sessions</button><button id="revokeOtherSessions" type="button" disabled>Revoke other sessions</button></div>
+<div id="sessionStatus" class="status" role="status" aria-live="polite">Customer session sign-in required.</div>
+</section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
@@ -558,6 +565,35 @@
     setStatus("profileStatus", "Account profile loaded.", "success");
     return profile;
   }
+  async function loadCustomerSessions() {
+    const response = await api("/api/v1/account/sessions");
+    const payload = await response.json();
+    const container = $("sessionList");
+    container.replaceChildren();
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No active customer portal sessions were found.";
+      container.append(empty);
+    }
+    let otherCount = 0;
+    for (const session of items) {
+      if (!session.current) otherCount += 1;
+      const card = document.createElement("div"); card.className = "report";
+      const details = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = session.current ? "This session" : "Other active session";
+      const meta = document.createElement("small");
+      const created = new Date(session.created_at), expires = new Date(session.expires_at);
+      meta.textContent = "Signed in: " + (Number.isNaN(created.getTime()) ? "unknown" : created.toLocaleString()) +
+        " · Expires: " + (Number.isNaN(expires.getTime()) ? "unknown" : expires.toLocaleString());
+      details.append(title, meta); card.append(details); container.append(card);
+    }
+    $("revokeOtherSessions").disabled = !credential || headerName !== "X-Customer-Session" || otherCount === 0;
+    $("refreshSessions").disabled = !credential || headerName !== "X-Customer-Session";
+    setStatus("sessionStatus", "Showing " + items.length + " active session(s), including this session.", "success");
+    return payload;
+  }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
     const usage = await response.json();
@@ -862,6 +898,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
+    $("sessionList").replaceChildren(); const sessionEmpty = document.createElement("p"); sessionEmpty.className = "muted"; sessionEmpty.textContent = "Connect with passwordless sign-in to manage sessions."; $("sessionList").append(sessionEmpty); $("refreshSessions").disabled = true; $("revokeOtherSessions").disabled = true; setStatus("sessionStatus", "Customer session sign-in required.");
     $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; $("emailChangeAddress").value = ""; $("emailChangeToken").value = ""; $("loginEmail").value = ""; $("loginToken").value = ""; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     $("usageFill").style.width = "0%";
@@ -933,8 +970,8 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWebsites()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "website inventory"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWebsites(), loadCustomerSessions()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "website inventory", "customer sessions"];
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
@@ -1008,6 +1045,27 @@
       setStatus("profileStatus", error.message, "error");
     } finally {
       button.disabled = !credential;
+    }
+  });
+  $("refreshSessions").addEventListener("click", async () => {
+    try { await loadCustomerSessions(); }
+    catch (error) { setStatus("sessionStatus", error.message + " Use passwordless sign-in to manage customer sessions.", "error"); }
+  });
+  $("revokeOtherSessions").addEventListener("click", async () => {
+    if (headerName !== "X-Customer-Session" || !credential) {
+      setStatus("sessionStatus", "Sign in with passwordless customer access before revoking sessions.", "error"); return;
+    }
+    if (!window.confirm("Revoke all other active sessions for this account? This current session will remain signed in.")) return;
+    const button = $("revokeOtherSessions"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/sessions/revoke-others", {method:"POST"});
+      const result = await response.json();
+      await loadCustomerSessions();
+      setStatus("sessionStatus", "Revoked " + Number(result.revoked_count || 0) + " other session(s). This session remains active.", "success");
+    } catch (error) {
+      setStatus("sessionStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential || headerName !== "X-Customer-Session";
     }
   });
   $("requestEmailChange").addEventListener("click", async () => {
