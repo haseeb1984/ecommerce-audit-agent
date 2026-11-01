@@ -3334,3 +3334,20 @@ async def test_admin_portal_includes_customer_session_operations(client):
     assert 'id="refreshClientSessions"' in response.text
     assert 'id="revokeClientSessions"' in response.text
     assert '/sessions/revoke-all' in response.text
+
+
+@pytest.mark.asyncio
+async def test_operational_health_check_reports_unconfigured_hostinger_without_secrets(client, monkeypatch):
+    import hostinger_database
+
+    monkeypatch.setattr(hostinger_database, "hostinger_engine", None)
+    response = await client.get("/health-check/operational")
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["status"] == "not_ready"
+    assert body["components"]["operational_database"]["connected"] is False
+    assert body["components"]["operational_database"]["schema_ready"] is False
+    assert body["components"]["operational_database"]["error"] == "not_configured"
+    serialized = json.dumps(body).lower()
+    assert "password" not in serialized
+    assert "database_url" not in serialized
