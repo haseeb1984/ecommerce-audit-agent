@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense, CustomerLifecycleSyncOutbox
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
 from coverage_manifest import build_coverage_manifest
@@ -3351,3 +3351,31 @@ async def test_operational_health_check_reports_unconfigured_hostinger_without_s
     serialized = json.dumps(body).lower()
     assert "password" not in serialized
     assert "database_url" not in serialized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expiry_offset_days", "expected_action"),
+    [(-1, "suspend"), (30, "reactivate")],
+)
+async def test_admin_expiry_change_syncs_customer_lifecycle_and_session_state(
+    client, monkeypatch, expiry_offset_days, expected_action
+):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-expiry-sync")
+    license_id = await create_license(key=f"admin-expiry-sync-{expected_action}")
+    expiry = datetime.now(timezone.utc) + timedelta(days=expiry_offset_days)
+    response = await client.patch(
+        f"/api/v1/admin/clients/{license_id}",
+        headers={"X-Admin-Key": "test-admin-expiry-sync"},
+        json={"expires_at": expiry.isoformat()},
+    )
+    assert response.status_code == 200, response.text
+    async with AsyncSessionLocal() as db:
+        events = (await db.execute(
+            select(CustomerLifecycleSyncOutbox).where(
+                CustomerLifecycleSyncOutbox.license_key == f"admin-expiry-sync-{expected_action}"
+            )
+        )).scalars().all()
+        assert len(events) == 1
+        assert events[0].action == expected_action
+        assert events[0].status == "pending"
