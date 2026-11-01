@@ -372,7 +372,9 @@ async def process_one_scan(worker_id: str) -> dict:
         async with HostingerAsyncSessionLocal() as operational_db:
             outcome = await fail_or_retry_scan_job(
                 operational_db, job_id=job_id, worker_id=worker_id,
-                error_code=error_code, retry_delay_seconds=300,
+                error_code=error_code,
+                retry_delay_seconds=300,
+                retryable=exc.status_code >= 500 or exc.status_code in (408, 425),
             )
         return {"status": outcome, "job_id": job_id, "error_code": error_code}
     except Exception as exc:
