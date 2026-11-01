@@ -1673,7 +1673,7 @@ async def register_wordpress_site(
     if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
     admin_email = payload.admin_email.strip().lower()
-    if not _is_valid_agency_team_email(email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
     site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
@@ -2891,7 +2891,7 @@ async def invite_business_agency_team_member(
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
     email = payload.email.strip().lower()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+    if not _is_valid_agency_team_email(email):
         raise HTTPException(status_code=422, detail="Enter a valid team-member email address.")
     if hmac.compare_digest(email, agency.owner_email.lower()):
         raise HTTPException(status_code=409, detail="The agency owner already has full agency access.")
