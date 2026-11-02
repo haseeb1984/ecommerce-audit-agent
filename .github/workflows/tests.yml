@@ -54,6 +54,8 @@ jobs:
       - name: Record resolved Python dependency versions
         if: always()
         run: python -m pip freeze > resolved-dependencies.txt
+      - name: Compile all Python sources
+        run: python -m compileall -q .
       - name: Run tests
         run: python -m pytest -q
       - name: Install PHP CLI and lint WordPress plugin
