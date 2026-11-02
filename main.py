@@ -1879,7 +1879,7 @@ async def list_account_wordpress_sites(
         )
         items.append({
             "site_id": row.id, "site_url": row.site_url, "site_host": row.site_host,
-            "admin_email": row.admin_email, "wordpress_version": row.wordpress_version,
+            "admin_email": row.admin_email, "wordpress_user_id": row.wordpress_user_id, "wordpress_user_login": row.wordpress_user_login, "wordpress_version": row.wordpress_version,
             "woocommerce_version": row.woocommerce_version, "plugin_version": row.plugin_version,
             "status": row.status,
             "connection_health": "stale" if stale else ("healthy" if row.status == "active" else row.status),
