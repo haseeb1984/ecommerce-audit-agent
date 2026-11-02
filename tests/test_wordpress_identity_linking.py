@@ -63,7 +63,7 @@ def test_wordpress_identity_routes_are_registered_in_the_saas_application():
 def test_wordpress_identity_forward_migration_matches_model_contract():
     from pathlib import Path
 
-    migration = Path("migrations/20261108_wordpress_identity_linking.sql").read_text()
+    migration = Path("migrations/20261103_wordpress_identity_linking.sql").read_text()
     assert "wordpress_user_id" in migration
     assert "wordpress_user_login" in migration
     assert "wordpress_site_link_challenges" in migration
