@@ -142,3 +142,31 @@ def test_worker_schema_contract_reports_absent_outbox_table():
         "tables": ["customer_lifecycle_sync_outbox"],
         "columns": {},
     }
+
+
+@pytest.mark.asyncio
+async def test_worker_startup_uses_shared_dual_database_schema_guard(monkeypatch):
+    import scan_worker
+    import worker_service
+
+    calls = []
+
+    async def validate_all_databases():
+        calls.append("validated")
+
+    monkeypatch.setattr(worker_service, "ensure_scan_worker_schema", validate_all_databases)
+
+    await worker_service.validate_worker_schema()
+
+    assert calls == ["validated"]
+    assert callable(scan_worker.ensure_scan_worker_schema)
+
+
+def test_worker_service_no_longer_maintains_a_separate_queue_only_schema_contract():
+    import inspect
+    import worker_service
+
+    source = inspect.getsource(worker_service.validate_worker_schema)
+
+    assert "ensure_scan_worker_schema" in source
+    assert "WebsiteScanJob" not in source
