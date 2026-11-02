@@ -56,6 +56,11 @@ jobs:
         run: python -m pip freeze > resolved-dependencies.txt
       - name: Run tests
         run: python -m pytest -q
+      - name: Install PHP CLI and lint WordPress plugin
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-cli
+          find wordpress-plugin -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Generate synthetic PDF report for layout review
         if: success()
         run: python scripts/generate_sample_audit_pdf.py --output audit-report-sample.pdf
