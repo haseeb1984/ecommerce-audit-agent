@@ -43,6 +43,7 @@ from database import Base, get_async_db
 from scan_api import router as scan_router
 from admin_scan_api import router as admin_scan_router
 from scan_worker_api import router as scan_worker_router
+from wordpress_identity_api import router as wordpress_identity_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
@@ -92,6 +93,7 @@ agent = UniversalEcommerceAgent()
 app.include_router(scan_router)
 app.include_router(scan_worker_router)
 app.include_router(admin_scan_router)
+app.include_router(wordpress_identity_router)
 
 
 @app.middleware("http")
