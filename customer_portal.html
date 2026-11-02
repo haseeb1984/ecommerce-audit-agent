@@ -90,6 +90,9 @@
 <p><a href="/wordpress-plugin-guide" target="_blank" rel="noopener">Installation guide</a> · <a href="/wordpress-plugin.zip">Download plugin ZIP</a></p>
 <div id="wordpressSites" class="reports" aria-live="polite"><p class="muted">Connect your account to view WordPress installations.</p></div>
 <div id="wordpressSitesStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+<div class="report-actions"><button id="generateWordPressLinkCode" type="button" disabled>Generate one-time WordPress identity code</button></div>
+<div id="wordpressLinkCodePanel" class="status" hidden aria-live="polite"><strong>One-time WordPress identity code</strong><p id="wordpressLinkCode" style="overflow-wrap:anywhere"></p><p id="wordpressLinkCodeExpiry" class="muted"></p><button id="copyWordPressLinkCode" class="secondary" type="button">Copy code</button><button id="hideWordPressLinkCode" class="secondary" type="button">Hide code</button></div>
+<div id="wordpressLinkCodeStatus" class="status" role="status" aria-live="polite">Connect your account to generate a one-time code.</div>
 </section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
@@ -193,7 +196,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -1597,7 +1600,7 @@
     $("billingAccount").textContent = "Connect your account to load billing status.";
     $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
     apiKeyCreationAllowed = false;
-    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required."); $("wordpressSites").replaceChildren(); const wpEmpty=document.createElement("p");wpEmpty.className="muted";wpEmpty.textContent="Connect your account to view WordPress installations."; $("wordpressSites").append(wpEmpty); setStatus("wordpressSitesStatus","Account connection required.");
+    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required."); $("wordpressSites").replaceChildren(); const wpEmpty=document.createElement("p");wpEmpty.className="muted";wpEmpty.textContent="Connect your account to view WordPress installations."; $("wordpressSites").append(wpEmpty); setStatus("wordpressSitesStatus","Account connection required."); $("generateWordPressLinkCode").disabled = true; $("wordpressLinkCodePanel").hidden = true; $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodeExpiry").textContent = ""; setStatus("wordpressLinkCodeStatus", "Connect your account to generate a one-time code.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
   $("requestLoginCode").addEventListener("click", async () => {
@@ -1775,6 +1778,30 @@
     }
   });
 
+  $("generateWordPressLinkCode").addEventListener("click", async () => {
+    if (!credential) { setStatus("wordpressLinkCodeStatus", "Connect your customer account first.", "error"); return; }
+    const button = $("generateWordPressLinkCode"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/wordpress-link/challenges", {method:"POST"});
+      const data = await response.json();
+      if (!data.token) throw new Error("The service did not return a one-time code.");
+      $("wordpressLinkCode").textContent = data.token;
+      $("wordpressLinkCodeExpiry").textContent = "Expires at " + new Date(data.expires_at).toLocaleString() + ". This code can be used once and is shown only here.";
+      $("wordpressLinkCodePanel").hidden = false;
+      setStatus("wordpressLinkCodeStatus", "Code generated. Paste it into the WordPress plugin identity-link form.", "success");
+    } catch (error) {
+      setStatus("wordpressLinkCodeStatus", error.message, "error");
+    } finally { button.disabled = !credential; }
+  });
+  $("copyWordPressLinkCode").addEventListener("click", async () => {
+    const value = $("wordpressLinkCode").textContent;
+    if (!value) return;
+    try { await navigator.clipboard.writeText(value); setStatus("wordpressLinkCodeStatus", "One-time code copied.", "success"); }
+    catch { setStatus("wordpressLinkCodeStatus", "Clipboard access was blocked. Copy the code manually.", "error"); }
+  });
+  $("hideWordPressLinkCode").addEventListener("click", () => {
+    $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodePanel").hidden = true;
+  });
   $("createAgencyClient").addEventListener("click", createAgencyClient);
   $("inviteAgencyTeam").addEventListener("click", inviteAgencyTeam);
   $("refreshAgencyTeam").addEventListener("click", async () => {
