@@ -911,7 +911,7 @@ def test_sitemap_seed_extraction_reports_invalid_xml_and_sitemap_index():
         "<urlset><url>", "https://shop.example/sitemap.xml", "https://shop.example/"
     )
     assert urls == []
-    assert any("could not be parsed" in item for item in limitations)
+    assert any("invalid" in item for item in limitations)
 
     urls, limitations = audit_checks.extract_same_origin_sitemap_urls(
         '<sitemapindex><sitemap><loc>https://shop.example/nested.xml</loc></sitemap></sitemapindex>',
