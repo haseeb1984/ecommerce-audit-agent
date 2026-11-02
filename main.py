@@ -4354,6 +4354,8 @@ def _apply_paddle_billing_period(license_obj: SoftwareLicense, payload: dict, *,
 
 async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_id: str) -> PaymentWebhookEvent | None:
     """Resolve one canonical license link and fail closed if legacy rows conflict."""
+    from sqlalchemy import select
+
     license_ids = set((await db.execute(
         select(PaymentWebhookEvent.license_id)
         .where(
