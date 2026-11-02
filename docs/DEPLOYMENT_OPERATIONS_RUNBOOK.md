@@ -6,7 +6,7 @@ This runbook describes the current deployment topology and the safe order for pr
 
 - **Vercel / FastAPI**: HTTP API, customer and administrator interfaces, and application orchestration. The worker is invoked by a separate GitHub Actions scheduler.
 - **Supabase PostgreSQL**: canonical software licenses, API keys, quota reservations, audit leads/reports, Paddle webhook events, and plan packages.
-- **Hostinger MySQL**: customer accounts and sessions, email challenges, website inventory, WordPress installations, scan batches/jobs/results, customer usage/activity, billing mirrors, administrator notes/actions, operational diagnostics, and the durable email-identity and billing-mirror synchronization outboxes.
+- **Hostinger MySQL**: customer accounts and sessions, email challenges, website inventory, WordPress installations, scan batches/jobs/results, customer usage/activity, billing mirrors, administrator notes/actions, operational diagnostics, and the durable email-identity and billing-mirror synchronization outboxes. WordPress administrator identity links use hashed, ten-minute single-use challenges.
 - **Private object storage**: intended location for generated report files and customer uploads. Configure and verify this independently before enabling any workflow that relies on private object storage.
 
 Do not move customer operational tables back into Supabase. The stable cross-database reference is the license key; there are intentionally no cross-database foreign keys.
@@ -148,3 +148,7 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 
 - Before entering its polling loop, the worker now validates that the live `website_scan_jobs` table contains every column required by the batch/idempotency queue model. Missing tables or columns stop startup with a migration-directed error; the worker does not execute schema-changing DDL.
 - The authoritative table definition is in `migrations/hostinger_operational_schema.sql`. Apply and verify that migration through the approved non-production database rollout before enabling the managed worker.
+
+## WordPress identity-link schema
+
+Before enabling the customer portal's one-time WordPress identity-link flow, apply `migrations/20261108_wordpress_identity_linking.sql` to Hostinger MySQL. It adds the linked WordPress user ID/login fields and creates the hashed, expiring challenge table. Fresh installations receive the same objects from `migrations/hostinger_operational_schema.sql`. Do not apply the migration to PostgreSQL.
