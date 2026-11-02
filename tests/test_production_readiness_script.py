@@ -31,17 +31,15 @@ def test_missing_database_url_fails_with_actionable_message() -> None:
     assert "readiness_check" not in result.stderr
 
 def test_schema_gate_includes_application_runtime_columns() -> None:
-    required_columns = runpy.run_path(str(SCRIPT))["REQUIRED_COLUMNS"]
+    import models  # noqa: F401
+    from database import Base
 
-    assert {
-        "client_name", "expires_at", "created_at",
-    } <= required_columns["software_licenses"]
-    assert {
-        "created_at", "key_prefix", "api_key_hash",
-    } <= required_columns["api_keys"]
-    assert {
-        "contact_email", "email_subject", "email_body", "source_channel",
-    } <= required_columns["audit_leads"]
+    contract = runpy.run_path(str(SCRIPT))["_postgres_schema_contract"]
+    _, required_columns, _ = contract(Base)
+
+    assert {"client_name", "expires_at", "created_at"} <= required_columns["software_licenses"]
+    assert {"created_at", "key_prefix", "api_key_hash"} <= required_columns["api_keys"]
+    assert {"contact_email", "email_subject", "email_body", "source_channel"} <= required_columns["audit_leads"]
     assert {
         "transaction_id", "subscription_id", "paddle_customer_id",
         "recipient_email", "updated_at",
@@ -59,7 +57,11 @@ def test_core_schema_enforces_unique_paddle_price_mapping() -> None:
     assert "WHERE paddle_price_id IS NOT NULL" in sql
 
 def test_schema_gate_requires_critical_operational_indexes() -> None:
-    required_indexes = runpy.run_path(str(SCRIPT))["REQUIRED_INDEXES"]
+    import models  # noqa: F401
+    from database import Base
+
+    contract = runpy.run_path(str(SCRIPT))["_postgres_schema_contract"]
+    _, _, required_indexes = contract(Base)
 
     assert "uq_saas_plan_packages_paddle_price_id" in required_indexes
     assert "ix_audit_reports_license_created" in required_indexes
