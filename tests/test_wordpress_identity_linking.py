@@ -1,3 +1,4 @@
+import hashlib
 import pytest
 from fastapi import HTTPException
 
@@ -36,7 +37,7 @@ def test_wordpress_link_rejects_unsafe_site_urls(url):
 
 def test_wordpress_link_token_is_stored_as_sha256_digest():
     token = "a" * 48
-    assert _token_digest(token) == _token_digest(token)
+    assert _token_digest(token) == hashlib.sha256(token.encode("utf-8")).hexdigest()
     assert _token_digest(token) != token
 
 
