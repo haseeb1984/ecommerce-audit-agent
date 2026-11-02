@@ -4288,7 +4288,9 @@ async def create_paddle_checkout(
     if not os.getenv("PADDLE_WEBHOOK_SECRET", "").strip():
         raise HTTPException(status_code=503, detail="Paddle webhook verification is not configured.")
     smtp_status = _smtp_configuration_status()
-    if not smtp_status["configured"]:        raise HTTPException(status_code=503, detail="License delivery is not configured.")    transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
+    if not smtp_status["configured"]:
+        raise HTTPException(status_code=503, detail="License delivery is not configured.")
+    transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
                    "custom_data": {"license_tier": plan["tier"]}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
     if checkout_url:
