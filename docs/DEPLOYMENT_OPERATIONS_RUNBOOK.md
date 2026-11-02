@@ -151,4 +151,4 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 
 ## WordPress identity-link schema
 
-Before enabling the customer portal's one-time WordPress identity-link flow, apply `migrations/20261108_wordpress_identity_linking.sql` to Hostinger MySQL. It adds the linked WordPress user ID/login fields and creates the hashed, expiring challenge table. Fresh installations receive the same objects from `migrations/hostinger_operational_schema.sql`. Do not apply the migration to PostgreSQL.
+Before enabling the customer portal's one-time WordPress identity-link flow, apply `migrations/20261103_wordpress_identity_linking.sql` to Hostinger MySQL. It adds the linked WordPress user ID/login fields and creates the hashed, expiring challenge table. Fresh installations receive the same objects from `migrations/hostinger_operational_schema.sql`. Do not apply the migration to PostgreSQL.
