@@ -13,6 +13,18 @@ os.environ.setdefault(
 os.environ.setdefault("HOSTINGER_DB_SSL", "false")
 os.environ.setdefault("GROQ_API_KEY", "test-only-key")
 
+# The autouse fixtures below drop and recreate both schemas. Refuse to run them
+# against a database whose name is not clearly dedicated to tests.
+from urllib.parse import urlsplit
+
+for _database_env in ("DATABASE_URL", "HOSTINGER_DATABASE_URL"):
+    _database_name = urlsplit(os.environ[_database_env]).path.strip("/").split("/")[-1].lower()
+    if "test" not in _database_name and os.getenv("ALLOW_DESTRUCTIVE_TEST_DATABASE_RESET") != "1":
+        raise RuntimeError(
+            f"{_database_env} must target a dedicated database with 'test' in its name; "
+            "set ALLOW_DESTRUCTIVE_TEST_DATABASE_RESET=1 only for an explicitly isolated test database."
+        )
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
