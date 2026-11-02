@@ -183,7 +183,7 @@ class _AccessibilityParser(HTMLParser):
             if self._role_control_stack[index][0] == tag:
                 self._role_control_stack.pop(index)
                 break
-        elif tag == "title" and self._in_svg_title:
+        if tag == "title" and self._in_svg_title:
             self._in_svg_title = False
             if self._active_svg_control is not None and str(self._active_svg_control.get("svg_title", "")).strip():
                 self._active_svg_control["has_svg_title"] = True
