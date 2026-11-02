@@ -36,7 +36,11 @@ def _token_digest(token: str) -> str:
 
 def _normalize_site_url(value: str) -> tuple[str, str]:
     raw = value.strip()
-    parsed = urlsplit(raw)
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="WordPress site URL is malformed.") from exc
     if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
     if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
@@ -47,7 +51,7 @@ def _normalize_site_url(value: str) -> tuple[str, str]:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from exc
     if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
-    if parsed.port not in (None, 443):
+    if port not in (None, 443):
         raise HTTPException(status_code=422, detail="WordPress site URL must use the standard HTTPS port.")
     path = parsed.path.rstrip("/")
     canonical = f"https://{host}{path}/" if path else f"https://{host}/"
@@ -61,6 +65,17 @@ def _valid_email(value: str) -> str:
     return email
 
 
+def _license_is_current(license_obj) -> bool:
+    if license_obj is None or not bool(license_obj.is_active):
+        return False
+    expiry = license_obj.expires_at
+    if expiry is None:
+        return True
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    return expiry > datetime.now(timezone.utc)
+
+
 @router.post("/api/v1/account/wordpress-link/challenges", status_code=201)
 async def create_wordpress_link_challenge(
     response: Response,
@@ -69,6 +84,8 @@ async def create_wordpress_link_challenge(
 ):
     """Issue a short-lived single-use token for the authenticated license."""
     now = datetime.now(timezone.utc)
+    if not _license_is_current(license_obj):
+        raise HTTPException(status_code=403, detail="An active, non-expired license is required to link a WordPress site.")
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     recent = int((await operational_db.execute(
