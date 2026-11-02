@@ -46,7 +46,7 @@ from scan_worker_api import router as scan_worker_router
 from wordpress_identity_api import router as wordpress_identity_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
-from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, CUSTOMER_BEARER
+from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, CUSTOMER_BEARER
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
@@ -3565,7 +3565,7 @@ async def account_billing_history(
 @app.post("/api/v1/account/billing-portal")
 async def create_account_billing_portal(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a short-lived Paddle customer portal session for the authenticated license."""
@@ -3621,7 +3621,7 @@ async def create_account_billing_portal(
 @app.get("/api/v1/account/api-keys")
 async def list_account_api_keys(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
 ):
     """List metadata for this account's API keys; never return stored key material."""
@@ -3673,7 +3673,7 @@ async def list_account_api_keys(
 @app.post("/api/v1/account/api-keys", status_code=201)
 async def create_account_api_key(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a customer-owned API key and reveal its secret exactly once.
@@ -3742,7 +3742,7 @@ async def create_account_api_key(
 async def revoke_account_api_key(
     key_id: int,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Revoke an account-owned API key, including after the license expires.
