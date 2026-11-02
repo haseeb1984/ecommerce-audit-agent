@@ -49,3 +49,30 @@ def test_wordpress_link_claim_requires_positive_wp_user_id():
             wp_user_login="storeadmin",
             wp_user_email="admin@example.com",
         )
+
+
+def test_wordpress_identity_routes_are_registered_in_the_saas_application():
+    import main
+
+    paths = {route.path for route in main.app.routes}
+    assert "/api/v1/account/wordpress-link/challenges" in paths
+    assert "/api/v1/integrations/wordpress/sites/claim" in paths
+
+
+def test_wordpress_identity_forward_migration_matches_model_contract():
+    from pathlib import Path
+
+    migration = Path("migrations/20261108_wordpress_identity_linking.sql").read_text()
+    assert "wordpress_user_id" in migration
+    assert "wordpress_user_login" in migration
+    assert "wordpress_site_link_challenges" in migration
+
+
+def test_wordpress_plugin_uses_admin_nonce_for_identity_claim():
+    from pathlib import Path
+
+    plugin = Path("wordpress-plugin/ecommerce-audit-agent/ecommerce-audit-agent.php").read_text()
+    assert "admin_post_eaa_link_customer_identity" in plugin
+    assert "check_admin_referer('eaa_link_customer_identity')" in plugin
+    assert "current_user_can('manage_options')" in plugin
+    assert "/api/v1/integrations/wordpress/sites/claim" in plugin
