@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import verify_customer_account
 from database import get_async_db
 from hostinger_database import get_hostinger_db
-from hostinger_models import WordPressInstallation, WordPressSiteLinkChallenge
-from models import SoftwareLicense
+from hostinger_models import CustomerAccount, CustomerBillingEvent, WordPressInstallation, WordPressSiteLinkChallenge
+from models import PaymentWebhookEvent, SoftwareLicense
 
 router = APIRouter()
 
@@ -164,6 +164,24 @@ async def claim_wordpress_site_identity(
         if license_expiry <= now:
             raise HTTPException(status_code=403, detail="The linked SaaS license has expired.")
 
+    customer_account = await operational_db.scalar(
+        select(CustomerAccount).where(CustomerAccount.license_key == challenge.license_key)
+    )
+    customer_email = customer_account.email if customer_account is not None else None
+    if not customer_email:
+        customer_email = await operational_db.scalar(
+            select(CustomerBillingEvent.recipient_email).where(
+                CustomerBillingEvent.license_key == challenge.license_key
+            ).order_by(CustomerBillingEvent.updated_at.desc()).limit(1)
+        )
+    if not customer_email:
+        customer_email = await db.scalar(
+            select(PaymentWebhookEvent.recipient_email).where(
+                PaymentWebhookEvent.license_id == license_obj.id,
+                PaymentWebhookEvent.recipient_email.is_not(None),
+            ).order_by(PaymentWebhookEvent.updated_at.desc()).limit(1)
+        )
+
     existing = await operational_db.scalar(
         select(WordPressInstallation).where(
             WordPressInstallation.license_key == challenge.license_key,
@@ -189,7 +207,7 @@ async def claim_wordpress_site_identity(
             site_url=site_url,
             site_host=site_host,
             admin_email=wp_email,
-            customer_email=None,
+            customer_email=customer_email.strip().lower() if customer_email else None,
             plugin_version=payload.plugin_version.strip() or "unknown",
             wordpress_version=payload.wordpress_version.strip() or None,
             woocommerce_version=payload.woocommerce_version.strip() or None,
@@ -201,6 +219,7 @@ async def claim_wordpress_site_identity(
     else:
         existing.site_url = site_url
         existing.admin_email = wp_email
+        existing.customer_email = customer_email.strip().lower() if customer_email else existing.customer_email
         existing.plugin_version = payload.plugin_version.strip() or existing.plugin_version
         existing.wordpress_version = payload.wordpress_version.strip() or existing.wordpress_version
         existing.woocommerce_version = payload.woocommerce_version.strip() or existing.woocommerce_version
