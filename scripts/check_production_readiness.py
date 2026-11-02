@@ -22,6 +22,22 @@ EXTRA_REQUIRED_TABLES = {
     "saas_admin_customer_notes",
 }
 
+def _postgres_schema_contract(base):
+    """Derive the PostgreSQL readiness contract from the registered ORM metadata."""
+    required_tables = set(base.metadata.tables) | EXTRA_REQUIRED_TABLES
+    required_columns = {
+        table_name: {column.name for column in base.metadata.tables[table_name].columns}
+        for table_name in base.metadata.tables
+    }
+    required_indexes = {
+        index.name
+        for table in base.metadata.tables.values()
+        for index in table.indexes
+        if index.name
+    } | EXTRA_REQUIRED_INDEXES
+    return required_tables, required_columns, required_indexes
+
+
 REQUIRED_ENV_GROUPS = {
     "admin_access": ("ADMIN_API_KEY",),
     "paddle_checkout_and_provisioning": (
@@ -115,17 +131,7 @@ async def main() -> int:
     # Register every mapped table before deriving the schema contract.
     import models  # noqa: F401
 
-    required_tables = set(Base.metadata.tables) | EXTRA_REQUIRED_TABLES
-    required_columns = {
-        table_name: {column.name for column in Base.metadata.tables[table_name].columns}
-        for table_name in Base.metadata.tables
-    }
-    required_indexes = {
-        index.name
-        for table in Base.metadata.tables.values()
-        for index in table.indexes
-        if index.name
-    } | EXTRA_REQUIRED_INDEXES
+    required_tables, required_columns, required_indexes = _postgres_schema_contract(Base)
 
     missing: list[str] = []
     async with AsyncSessionLocal() as db:
