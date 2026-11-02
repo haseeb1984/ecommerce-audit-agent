@@ -45,3 +45,8 @@ The API's `category_signal_coverage_pct` is the percentage of required audit cat
 - [ ] Review latest GitHub Actions results and the generated PDF before enabling production mode.
 
 No production migration, billing activation, or deployment is performed by a source-code change alone.
+
+
+## WordPress administrator identity linking
+
+A signed-in customer can generate a ten-minute, single-use WordPress identity code from the customer portal. A WordPress administrator pastes the code into the Ecommerce Audit Agent plugin's **Customer account identity link** section. The backend stores only the token digest and binds the WordPress user ID/login to the existing license-scoped site record. This does not replace the plugin's existing license credential for audit operations. A license can still have only one active standard WordPress site; disconnect the current site before replacing it. Apply Hostinger migration `20261108_wordpress_identity_linking.sql` before enabling this flow.
