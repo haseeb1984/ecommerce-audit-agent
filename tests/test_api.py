@@ -1766,7 +1766,7 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-packages-key")
     headers = {"X-Admin-Key": "test-admin-packages-key"}
     payload = {
-        "tier": "qa-test-plan",
+        "tier": "business",
         "label": "QA Test Plan",
         "monthly_audit_allowance": 37,
         "max_concurrent_audits": 4,
@@ -1779,11 +1779,11 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
 
     created = await client.post("/api/v1/admin/packages", headers=headers, json=payload)
     assert created.status_code == 200, created.text
-    assert created.json() == {"status": "created", "tier": "qa-test-plan"}
+    assert created.json() == {"status": "created", "tier": "business"}
 
     listed = await client.get("/api/v1/admin/packages", headers=headers)
     assert listed.status_code == 200, listed.text
-    package = next(item for item in listed.json()["packages"] if item["tier"] == "qa-test-plan")
+    package = next(item for item in listed.json()["packages"] if item["tier"] == "business")
     assert package["monthly_audit_allowance"] == 37
     assert package["max_concurrent_audits"] == 4
     assert package["price_id"] == "pri_QaTestPlan123"
@@ -1797,21 +1797,21 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
         "paddle_price_id": None,
     }
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-test-plan", headers=headers, json=updated_payload
+        "/api/v1/admin/packages/business", headers=headers, json=updated_payload
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json() == {"status": "updated", "tier": "qa-test-plan"}
+    assert updated.json() == {"status": "updated", "tier": "business"}
 
     deactivated = await client.delete(
-        "/api/v1/admin/packages/qa-test-plan", headers=headers
+        "/api/v1/admin/packages/business", headers=headers
     )
     assert deactivated.status_code == 200, deactivated.text
-    assert deactivated.json() == {"status": "deactivated", "tier": "qa-test-plan"}
+    assert deactivated.json() == {"status": "deactivated", "tier": "business"}
 
     final_list = await client.get("/api/v1/admin/packages", headers=headers)
     assert final_list.status_code == 200, final_list.text
     final_package = next(
-        item for item in final_list.json()["packages"] if item["tier"] == "qa-test-plan"
+        item for item in final_list.json()["packages"] if item["tier"] == "business"
     )
     assert final_package["label"] == "QA Test Plan Updated"
     assert final_package["monthly_audit_allowance"] == 73
@@ -2150,7 +2150,11 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadAccountLicenses()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()])" in response.text
+    assert 'id="generateWordPressLinkCode"' in response.text
+    assert 'id="wordpressLinkCodePanel"' in response.text
+    assert "loadDeviceSessions()" in response.text
+    assert "loadAccountLicenses()" not in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
