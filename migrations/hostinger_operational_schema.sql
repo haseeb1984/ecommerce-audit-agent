@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS wordpress_installations (
   site_host VARCHAR(253) NOT NULL,
   admin_email VARCHAR(254) NOT NULL,
   customer_email VARCHAR(254) NULL,
+  wordpress_user_id INT NULL,
+  wordpress_user_login VARCHAR(60) NULL,
   wordpress_version VARCHAR(30) NULL,
   woocommerce_version VARCHAR(30) NULL,
   plugin_version VARCHAR(30) NOT NULL,
@@ -180,6 +182,19 @@ CREATE TABLE IF NOT EXISTS wordpress_installations (
   disconnected_at DATETIME(6) NULL,
   UNIQUE KEY uq_wp_installations_license_host (license_key, site_host),
   KEY ix_wp_installations_license_created (license_key, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS wordpress_site_link_challenges (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  license_key VARCHAR(100) NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  expires_at DATETIME(6) NOT NULL,
+  consumed_at DATETIME(6) NULL,
+  created_at DATETIME(6) NOT NULL,
+  KEY ix_wp_site_link_challenges_license (license_key),
+  KEY ix_wp_site_link_challenges_expiry (expires_at),
+  KEY ix_wp_site_link_challenges_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS customer_branding (
