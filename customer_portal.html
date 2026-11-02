@@ -570,7 +570,7 @@
       const title = document.createElement("strong"); title.textContent = site.site_url || site.site_host || "WordPress site";
       const meta = document.createElement("small");
       const health = site.connection_health || site.status || "unknown";
-      meta.textContent = "Status: " + health + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
+      meta.textContent = "Status: " + health + " · WP user " + (site.wordpress_user_login || "not linked") + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
       info.append(title, meta);
       if (health === "stale") {
         const recovery = document.createElement("small");
