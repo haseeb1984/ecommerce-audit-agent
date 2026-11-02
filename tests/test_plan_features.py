@@ -38,5 +38,5 @@ def test_only_the_three_configured_package_names_are_recognized():
 
 def test_unknown_tiers_fail_closed_and_missing_tier_keeps_legacy_starter_default():
     assert plan_features(None)["standard_audits"] is True
-    assert not any(plan_features(""))
-    assert not any(plan_features("unknown-plan"))
+    assert not any(plan_features("").values())
+    assert not any(plan_features("unknown-plan").values())
