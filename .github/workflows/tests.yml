@@ -28,9 +28,23 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ecommerce_audit_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/ecommerce_audit_test
       DATABASE_SSL: "false"
+      HOSTINGER_DATABASE_URL: mysql+asyncmy://root:root@127.0.0.1:3306/ecommerce_audit_test
+      HOSTINGER_DB_SSL: "false"
       GROQ_API_KEY: test-only-key
       # Optional live PageSpeed smoke-test credential; never printed by the script.
       GOOGLE_PAGESPEED_API_KEY: ${{ secrets.GOOGLE_PAGESPEED_API_KEY }}
