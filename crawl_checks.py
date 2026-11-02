@@ -2038,20 +2038,11 @@ async def run_bounded_site_crawl(
 
             product_schema_findings = inspect_product_page_schema_presence(body, final_url)
             findings.extend(product_schema_findings)
-            _record_static_check_outcome(
-                outcome_records, check_id="structured_data.product",
-                category="structured_data", page_url=final_url,
-                findings=product_schema_findings,
-                method="static product-route JSON-LD presence and parseability review",
-            )
             catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
             findings.extend(catalog_findings)
-            _record_static_check_outcome(
-                outcome_records, check_id="ecommerce.catalog_navigation",
-                category="ecommerce", page_url=final_url,
-                findings=catalog_findings,
-                method="static HTML ecommerce product/category navigation inspection",
-            )
+            # The page-family outcome pass below applies product and catalog checks
+            # only to matching routes and records each canonical check once. Do not
+            # emit unconditional homepage outcomes here.
             sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
             findings.extend(sensitive_form_findings)
             _record_static_check_outcome(
