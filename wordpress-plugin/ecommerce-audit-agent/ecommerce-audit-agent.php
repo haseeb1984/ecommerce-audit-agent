@@ -516,10 +516,13 @@ function eaa_wp_handle_connect_agency_site() {
 
 add_action('admin_post_eaa_link_customer_identity', 'eaa_wp_handle_link_customer_identity');
 function eaa_wp_handle_link_customer_identity() {
-    if (!current_user_can('manage_options')) {
-        wp_die(esc_html__('Only a WordPress administrator can link the customer identity.', 'ecommerce-audit-agent'), 403);
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
+        wp_die(esc_html__('You do not have permission to link the customer identity.', 'ecommerce-audit-agent'), 403);
     }
-    check_admin_referer('eaa_link_customer_identity');
+    $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash($_POST['_wpnonce'])) : '';
+    if (!wp_verify_nonce($nonce, 'eaa_link_customer_identity')) {
+        wp_die(esc_html__('The identity-link request expired. Reload the page and try again.', 'ecommerce-audit-agent'), 403);
+    }
     $token = isset($_POST['wordpress_link_token']) ? sanitize_text_field(wp_unslash($_POST['wordpress_link_token'])) : '';
     $result = eaa_wp_claim_customer_identity($token);
     $notice = is_wp_error($result) ? 'identity_link_failed' : 'identity_linked';
