@@ -180,6 +180,8 @@ class WordPressInstallation(HostingerBase):
     site_host = Column(String(253), nullable=False)
     admin_email = Column(String(254), nullable=False)
     customer_email = Column(String(254), nullable=True)
+    wordpress_user_id = Column(Integer, nullable=True)
+    wordpress_user_login = Column(String(60), nullable=True)
     wordpress_version = Column(String(30), nullable=True)
     woocommerce_version = Column(String(30), nullable=True)
     plugin_version = Column(String(30), nullable=False)
@@ -190,6 +192,20 @@ class WordPressInstallation(HostingerBase):
     __table_args__ = (
         UniqueConstraint("license_key", "site_host", name="uq_wp_installations_license_host"),
         Index("ix_wp_installations_license_created", "license_key", "created_at"),
+    )
+
+
+class WordPressSiteLinkChallenge(HostingerBase):
+    """Hashed, short-lived, single-use challenge binding a WordPress user to one license."""
+    __tablename__ = "wordpress_site_link_challenges"
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    __table_args__ = (
+        Index("ix_wp_site_link_challenges_license_created", "license_key", "created_at"),
     )
 
 
