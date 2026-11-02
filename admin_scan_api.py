@@ -1,6 +1,7 @@
 """Admin-only read-only diagnostics for the durable website scan queue."""
 import hmac
 import os
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -59,7 +60,7 @@ async def admin_scan_operations(
         due = int((await session.execute(
             select(func.count()).select_from(model).where(
                 model.status == "pending",
-                model.next_attempt_at <= __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+                model.next_attempt_at <= datetime.now(timezone.utc),
             )
         )).scalar_one() or 0)
         oldest_pending = await session.scalar(
