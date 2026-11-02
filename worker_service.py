@@ -11,11 +11,7 @@ import logging
 import os
 import signal
 
-from sqlalchemy import inspect
-
-from hostinger_database import HostingerAsyncSessionLocal, hostinger_engine
-from hostinger_models import WebsiteScanJob
-from scan_worker import process_scan_queue
+from scan_worker import ensure_scan_worker_schema, process_scan_queue
 
 
 logging.basicConfig(
@@ -36,41 +32,14 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return value
 
 
-def _missing_required_columns(required: set[str], actual: set[str]) -> list[str]:
-    """Return sorted queue columns absent from the live operational schema."""
-    return sorted(required - actual)
-
-
 async def validate_worker_schema() -> None:
-    """Fail fast when the live queue table does not match this worker's model contract.
+    """Validate every database model used by scan and reconciliation workers.
 
-    Schema changes remain migration-managed; the worker never mutates production DDL.
+    The shared guard checks both Hostinger operational tables and PostgreSQL
+    licensing/outbox tables before this process begins polling for customer work.
+    Schema changes remain migration-managed; validation never mutates DDL.
     """
-    if HostingerAsyncSessionLocal is None or hostinger_engine is None:
-        raise RuntimeError("HOSTINGER_DATABASE_URL is required to run the durable scan worker.")
-
-    async with hostinger_engine.connect() as connection:
-        table_names = await connection.run_sync(
-            lambda sync_connection: set(inspect(sync_connection).get_table_names())
-        )
-        if WebsiteScanJob.__tablename__ not in table_names:
-            raise RuntimeError(
-                "Operational scan queue table is missing; apply the Hostinger operational schema migration."
-            )
-        actual_columns = await connection.run_sync(
-            lambda sync_connection: {
-                column["name"]
-                for column in inspect(sync_connection).get_columns(WebsiteScanJob.__tablename__)
-            }
-        )
-
-    required_columns = {column.name for column in WebsiteScanJob.__table__.columns}
-    missing = _missing_required_columns(required_columns, actual_columns)
-    if missing:
-        raise RuntimeError(
-            "Operational scan queue schema is incompatible; apply the latest Hostinger scan queue migration. "
-            f"Missing columns: {', '.join(missing)}"
-        )
+    await ensure_scan_worker_schema()
 
 
 async def run_worker() -> None:
