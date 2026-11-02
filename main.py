@@ -5422,8 +5422,10 @@ async def _write_admin_log(db: AsyncSession, action: str, entity_type: str,
         logger.warning("Admin activity log write failed (error_type=%s)", type(exc).__name__)
 
 
-def _safe_audit_metadata_url(value: str | None) -> str | None:    """Persist only public HTTP(S) URLs without credentials, private hosts, queries or fragments."""
-    if not value:        return None
+def _safe_audit_metadata_url(value: str | None) -> str | None:
+    """Persist only public HTTP(S) URLs without credentials, private hosts, queries or fragments."""
+    if not value:
+        return None
     try:
         parts = urlsplit(str(value))
         if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
@@ -6563,9 +6565,11 @@ async def admin_download_audit_report(report_id: int, request: Request,
     _require_admin_key(request)
     from sqlalchemy import select
     report = (await db.execute(select(AuditReport).where(AuditReport.id == report_id))).scalar_one_or_none()
-    if report is None:        raise HTTPException(status_code=404, detail="Audit report not found.")
+    if report is None:
+        raise HTTPException(status_code=404, detail="Audit report not found.")
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
-    return Response(        content=report.pdf_bytes,
+    return Response(
+        content=report.pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"',
