@@ -55,7 +55,7 @@ def test_wordpress_link_claim_requires_positive_wp_user_id():
 def test_wordpress_identity_routes_are_registered_in_the_saas_application():
     import main
 
-    paths = {route.path for route in main.app.routes}
+    paths = set(main.app.openapi()["paths"])
     assert "/api/v1/account/wordpress-link/challenges" in paths
     assert "/api/v1/integrations/wordpress/sites/claim" in paths
 
