@@ -124,3 +124,29 @@ def test_admin_portal_exposes_confirmed_failed_scan_retry_action():
     assert "Retry failed job" in portal
     assert "Cancelled batches cannot be reopened." in portal
     assert "/api/v1/admin/scan-operations/jobs/" in portal
+
+
+def test_scan_operations_reports_all_cross_database_reconciliation_outboxes():
+    route = next(route for route in router.routes if route.path == "/api/v1/admin/scan-operations")
+    source = inspect.getsource(route.endpoint)
+
+    assert "CustomerLifecycleSyncOutbox" in source
+    assert "BillingMirrorSyncOutbox" in source
+    assert "CustomerEmailIdentitySyncOutbox" in source
+    assert '"reconciliation_outboxes"' in source
+    assert '"pending"' in source
+    assert '"due"' in source
+    assert '"completed"' in source
+    assert '"oldest_pending_at"' in source
+
+
+def test_admin_portal_renders_reconciliation_queue_health_without_identity_secrets():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+
+    assert 'id="syncOutboxMetrics"' in portal
+    assert 'customer_lifecycle' in portal
+    assert 'billing_mirror' in portal
+    assert 'customer_email_identity' in portal
+    assert "No customer email addresses or license secrets are displayed." in portal
