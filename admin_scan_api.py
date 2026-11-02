@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_async_db
 from hostinger_database import get_hostinger_db
-from hostinger_models import ScanBatch, WebsiteScanJob
-from models import SoftwareLicense
+from hostinger_models import ScanBatch, WebsiteScanJob, CustomerEmailIdentitySyncOutbox
+from models import SoftwareLicense, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
 from scan_queue import retry_failed_scan_job
 
 router = APIRouter()
@@ -50,6 +50,34 @@ async def admin_scan_operations(
         select(func.count(ScanBatch.id))
     )).scalar_one() or 0)
 
+    async def outbox_summary(session: AsyncSession, model) -> dict:
+        status_rows = (await session.execute(
+            select(model.status, func.count()).group_by(model.status)
+        )).all()
+        status_counts = {str(status): int(count or 0) for status, count in status_rows}
+        pending = int(status_counts.get("pending", 0))
+        due = int((await session.execute(
+            select(func.count()).select_from(model).where(
+                model.status == "pending",
+                model.next_attempt_at <= __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            )
+        )).scalar_one() or 0)
+        oldest_pending = await session.scalar(
+            select(func.min(model.created_at)).where(model.status == "pending")
+        )
+        return {
+            "pending": pending,
+            "due": due,
+            "completed": int(status_counts.get("completed", 0)),
+            "oldest_pending_at": oldest_pending.isoformat() if oldest_pending else None,
+        }
+
+    reconciliation_outboxes = {
+        "customer_lifecycle": await outbox_summary(db, CustomerLifecycleSyncOutbox),
+        "billing_mirror": await outbox_summary(db, BillingMirrorSyncOutbox),
+        "customer_email_identity": await outbox_summary(operational_db, CustomerEmailIdentitySyncOutbox),
+    }
+
     failed_query = select(WebsiteScanJob).where(WebsiteScanJob.status == "failed")
     failed_total = int((await operational_db.execute(
         select(func.count(WebsiteScanJob.id)).where(WebsiteScanJob.status == "failed")
@@ -71,6 +99,7 @@ async def admin_scan_operations(
         }
 
     return {
+        "reconciliation_outboxes": reconciliation_outboxes,
         "counts": {
             "batches_total": batch_total,
             "jobs_queued": counts.get("queued", 0),
