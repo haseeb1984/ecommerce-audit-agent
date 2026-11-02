@@ -2160,90 +2160,112 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert "Connected for billing. Unavailable features:" in response.text
 
 
-@pytest.mark.asyncio
-async def test_health_check_returns_not_ready_when_required_schema_tables_are_missing():
-    class IncompleteSchemaSession:
+def _health_schema_session(tables, columns, indexes, *, mysql=False):
+    class SchemaSession:
         async def execute(self, statement):
             sql = str(statement)
             if "SELECT 1" in sql:
                 return SimpleNamespace(scalar=lambda: 1)
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["software_licenses"]))
+            if "information_schema.tables" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(tables)))
+            if "information_schema.columns" in sql:
+                return SimpleNamespace(all=lambda: columns)
+            if "pg_indexes" in sql or "information_schema.statistics" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: indexes))
+            raise AssertionError(f"Unexpected schema query: {sql}")
+    return SchemaSession()
 
+
+def _complete_health_schema_sessions():
+    from sqlalchemy import UniqueConstraint
+
+    pg_tables = {
+        "software_licenses", "api_keys", "audit_leads", "audit_quota_reservations",
+        "audit_reports", "saas_plan_packages", "payment_webhook_events",
+        "customer_lifecycle_sync_outbox", "billing_mirror_sync_outbox",
+    }
+    pg_columns = [
+        (table_name, column.name)
+        for table_name in pg_tables
+        for column in main.Base.metadata.tables[table_name].columns
+    ]
+    pg_indexes = {
+        index.name
+        for table_name in pg_tables
+        for index in main.Base.metadata.tables[table_name].indexes
+        if index.name
+    } | {"uq_saas_plan_packages_paddle_price_id"}
+    hostinger_tables = set(main.HostingerBase.metadata.tables)
+    hostinger_columns = [
+        (table_name, column.name)
+        for table_name, table in main.HostingerBase.metadata.tables.items()
+        for column in table.columns
+    ]
+    hostinger_indexes = {
+        index.name
+        for table in main.HostingerBase.metadata.tables.values()
+        for index in table.indexes
+        if index.name
+    } | {
+        constraint.name
+        for table in main.HostingerBase.metadata.tables.values()
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name
+    }
+    return (
+        _health_schema_session(pg_tables, pg_columns, sorted(pg_indexes)),
+        _health_schema_session(hostinger_tables, hostinger_columns, sorted(hostinger_indexes), mysql=True),
+        pg_tables, pg_columns, pg_indexes,
+    )
+
+
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_schema_tables_are_missing():
+    _, operational_db, _, _, _ = _complete_health_schema_sessions()
+    licensing_db = _health_schema_session({"software_licenses"}, [], [])
     with pytest.raises(HTTPException) as raised:
-        await main.health_check(IncompleteSchemaSession())
+        await main.health_check(licensing_db, operational_db)
 
+    detail = raised.value.detail
     assert raised.value.status_code == 503
-    assert raised.value.detail["status"] == "not_ready"
-    assert raised.value.detail["db_connected"] is True
-    assert raised.value.detail["schema_ready"] is False
-    assert "audit_reports" in raised.value.detail["missing_tables"]
-    assert "payment_webhook_events" in raised.value.detail["missing_tables"]
+    assert detail["status"] == "not_ready"
+    assert detail["licensing_database"]["connected"] is True
+    assert detail["licensing_database"]["schema_ready"] is False
+    assert "audit_reports" in detail["licensing_database"]["missing_tables"]
+    assert "payment_webhook_events" in detail["licensing_database"]["missing_tables"]
+    assert detail["operational_database"]["schema_ready"] is True
+
 
 @pytest.mark.asyncio
 async def test_health_check_returns_not_ready_when_required_schema_columns_are_missing():
-    required_tables = set(main.Base.metadata.tables)
-    existing_columns = [
-        (table_name, column.name)
-        for table_name, table in main.Base.metadata.tables.items()
-        for column in table.columns
-        if not (table_name == "software_licenses" and column.name == "license_key")
+    _, operational_db, pg_tables, pg_columns, pg_indexes = _complete_health_schema_sessions()
+    incomplete_columns = [
+        item for item in pg_columns
+        if item != ("software_licenses", "license_key")
     ]
-
-    class IncompleteColumnSchemaSession:
-        async def execute(self, statement):
-            sql = str(statement)
-            if "SELECT 1" in sql:
-                return SimpleNamespace(scalar=lambda: 1)
-            if "information_schema.tables" in sql:
-                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
-            return SimpleNamespace(all=lambda: existing_columns)
-
+    licensing_db = _health_schema_session(pg_tables, incomplete_columns, sorted(pg_indexes))
     with pytest.raises(HTTPException) as raised:
-        await main.health_check(IncompleteColumnSchemaSession())
+        await main.health_check(licensing_db, operational_db)
 
+    detail = raised.value.detail
     assert raised.value.status_code == 503
-    assert raised.value.detail["status"] == "not_ready"
-    assert raised.value.detail["db_connected"] is True
-    assert raised.value.detail["schema_ready"] is False
-    assert raised.value.detail["missing_tables"] == []
-    assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
+    assert detail["licensing_database"]["schema_ready"] is False
+    assert detail["licensing_database"]["missing_tables"] == []
+    assert "license_key" in detail["licensing_database"]["missing_columns"]["software_licenses"]
+
 
 @pytest.mark.asyncio
 async def test_health_check_returns_not_ready_when_required_database_indexes_are_missing():
-    required_tables = set(main.Base.metadata.tables)
-    existing_columns = [
-        (table_name, column.name)
-        for table_name, table in main.Base.metadata.tables.items()
-        for column in table.columns
-    ]
-    required_indexes = sorted({
-        index.name
-        for table_name in required_tables
-        for index in main.Base.metadata.tables[table_name].indexes
-        if index.name
-    })
-    assert required_indexes, "test fixture requires at least one mapped index"
-    existing_indexes = [name for name in required_indexes if name != required_indexes[0]]
-
-    class IncompleteIndexSchemaSession:
-        async def execute(self, statement):
-            sql = str(statement)
-            if "SELECT 1" in sql:
-                return SimpleNamespace(scalar=lambda: 1)
-            if "information_schema.tables" in sql:
-                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
-            if "information_schema.columns" in sql:
-                return SimpleNamespace(all=lambda: existing_columns)
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: existing_indexes))
-
+    _, operational_db, pg_tables, pg_columns, pg_indexes = _complete_health_schema_sessions()
+    missing_index = sorted(pg_indexes)[0]
+    licensing_db = _health_schema_session(pg_tables, pg_columns, sorted(pg_indexes - {missing_index}))
     with pytest.raises(HTTPException) as raised:
-        await main.health_check(IncompleteIndexSchemaSession())
+        await main.health_check(licensing_db, operational_db)
 
+    detail = raised.value.detail
     assert raised.value.status_code == 503
-    assert raised.value.detail["status"] == "not_ready"
-    assert raised.value.detail["schema_ready"] is False
-    assert raised.value.detail["missing_indexes"] == [required_indexes[0]]
-
+    assert detail["licensing_database"]["schema_ready"] is False
+    assert detail["licensing_database"]["missing_indexes"] == [missing_index]
 
 
 @pytest.mark.asyncio
