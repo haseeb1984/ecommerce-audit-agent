@@ -117,7 +117,7 @@ async def test_agency_wordpress_audit_queues_only_its_connected_workspace(monkey
         site_host="shop.example", admin_email="store-admin@shop.example",
         last_seen_at=None,
     )
-    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license")
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", display_name="Agency One")
     workspace = SimpleNamespace(id="workspace-1", agency_id="agency-1", status="active")
     owner_license = SimpleNamespace(
         license_key="business-license", is_active=True, expires_at=None,
