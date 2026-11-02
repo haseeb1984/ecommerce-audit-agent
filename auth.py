@@ -230,3 +230,63 @@ async def verify_customer_account(
     if not license_obj.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
     return license_obj
+
+
+
+async def verify_customer_account_for_management(
+    credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
+    api_key: str = Security(API_KEY_HEADER),
+    license_key: str = Security(LICENSE_HEADER),
+    db: AsyncSession = Depends(get_async_db),
+) -> SoftwareLicense:
+    """Resolve account ownership for billing/key management while permitting expired accounts.
+
+    Suspended non-expired licenses remain forbidden. This dependency grants no audit,
+    scan, report, or other paid-feature access; callers must enforce their own action
+    policy after account ownership is established.
+    """
+    if credentials is not None:
+        if credentials.scheme.lower() != "bearer" or not credentials.credentials:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid customer session.")
+        token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+        if HostingerAsyncSessionLocal is None:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Customer session storage is unavailable.")
+        async with HostingerAsyncSessionLocal() as operational_db:
+            session = (await operational_db.execute(
+                select(CustomerSession).where(CustomerSession.token_hash == token_hash)
+            )).scalar_one_or_none()
+            if session is not None:
+                session.last_seen_at = datetime.now(timezone.utc)
+                await operational_db.commit()
+        now = datetime.now(timezone.utc)
+        if session is None or session.revoked_at is not None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session is invalid or revoked.")
+        expiry = session.expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= now:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer session has expired. Sign in again.")
+        license_obj = await db.scalar(
+            select(SoftwareLicense).where(SoftwareLicense.license_key == session.license_key)
+        )
+    else:
+        if not api_key and not license_key:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Sign in with your verified email or provide an existing account key.")
+        if api_key:
+            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            stmt = select(SoftwareLicense).join(APIKey).where(APIKey.api_key_hash == key_hash)
+        else:
+            stmt = select(SoftwareLicense).where(SoftwareLicense.license_key == license_key)
+        license_obj = await db.scalar(stmt)
+
+    if license_obj is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid account credentials.")
+    now = datetime.now(timezone.utc)
+    expires_at = license_obj.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    is_expired = expires_at is not None and expires_at <= now
+    if not license_obj.is_active and not is_expired:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
+    return license_obj
