@@ -199,12 +199,15 @@ class WordPressSiteLinkChallenge(HostingerBase):
     """Hashed, short-lived, single-use challenge binding a WordPress user to one license."""
     __tablename__ = "wordpress_site_link_challenges"
     id = Column(String(64), primary_key=True)
-    license_key = Column(String(100), nullable=False, index=True)
+    license_key = Column(String(100), nullable=False)
     token_hash = Column(String(64), nullable=False, unique=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     consumed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     __table_args__ = (
+        Index("ix_wp_site_link_challenges_license", "license_key"),
+        Index("ix_wp_site_link_challenges_expiry", "expires_at"),
+        Index("ix_wp_site_link_challenges_created", "created_at"),
         Index("ix_wp_site_link_challenges_license_created", "license_key", "created_at"),
     )
 
