@@ -6,12 +6,19 @@ os.environ.setdefault(
     "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/ecommerce_audit_test",
 )
 os.environ.setdefault("DATABASE_SSL", "false")
+os.environ.setdefault(
+    "HOSTINGER_DATABASE_URL",
+    "mysql+asyncmy://root:root@127.0.0.1:3306/ecommerce_audit_test",
+)
+os.environ.setdefault("HOSTINGER_DB_SSL", "false")
 os.environ.setdefault("GROQ_API_KEY", "test-only-key")
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from database import Base, engine
+from hostinger_database import HostingerBase, hostinger_engine
+import hostinger_models  # noqa: F401 - register all operational models
 from main import app
 
 
@@ -21,6 +28,10 @@ async def clean_database():
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
+    if hostinger_engine is not None:
+        async with hostinger_engine.begin() as connection:
+            await connection.run_sync(HostingerBase.metadata.drop_all)
+            await connection.run_sync(HostingerBase.metadata.create_all)
     yield
 
 
