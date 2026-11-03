@@ -15,7 +15,8 @@
 <main class="wrap">
 <section class="panel">
 <h2>Purchase access</h2>
-<p class="muted">Choose a configured plan to pay securely through Paddle. After confirmed payment, your license key is sent to the checkout email address. If no plan is shown, checkout has not been configured on this deployment.</p>
+<p class="muted">Choose a configured plan to pay securely through Paddle. Use one verified email for your customer account; existing customers should sign in and manage their current subscription.</p>
+<div class="emailbox" style="margin:14px 0"><label for="checkoutEmail">Customer account email</label><input id="checkoutEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required></div>
 <div id="plans" class="reports"><p class="muted">Loading available plans…</p></div>
 </section>
 <section class="panel" aria-labelledby="emailLoginHeading">
@@ -282,12 +283,17 @@
         meta.append(title, quota);
         const link = document.createElement("button"); link.type = "button"; link.textContent = "Continue to Paddle checkout";
         link.addEventListener("click", async () => {
+          const checkoutEmail = $("checkoutEmail").value.trim();
+          if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(checkoutEmail)) {
+            setStatus("connectStatus", "Enter a valid customer account email before checkout.", "error");
+            return;
+          }
           link.disabled = true;
           try {
             const checkoutResponse = await fetch("/api/v1/billing/checkout", {
               method: "POST", cache: "no-store",
               headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({tier: plan.tier})
+              body: JSON.stringify({tier: plan.tier, email: $("checkoutEmail").value.trim()})
             });
             let checkoutData = {};
             try { checkoutData = await checkoutResponse.json(); } catch (_) {}
