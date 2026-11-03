@@ -482,7 +482,7 @@ async def test_parallel_requests_with_one_slot_return_one_200_and_one_429(
 @pytest.mark.asyncio
 async def test_configured_concurrency_limit_rejects_extra_active_audit(client, monkeypatch):
     license_id = await create_license(key="concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "1")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_BUSINESS", "1")
     async with AsyncSessionLocal() as db:
         db.add(
             AuditQuotaReservation(
@@ -507,7 +507,7 @@ async def test_configured_concurrency_limit_rejects_extra_active_audit(client, m
 @pytest.mark.asyncio
 async def test_invalid_configured_concurrency_limit_fails_closed(client, monkeypatch):
     await create_license(key="invalid-concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "not-a-number")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_BUSINESS", "not-a-number")
 
     response = await client.post(
         "/api/v1/audit-lead",
@@ -1713,7 +1713,7 @@ async def test_paddle_webhook_claims_license_email_delivery_once_for_concurrent_
     def blocking_email(email, key, tier, quota):
         attempts.append(key)
         entered_send.set()
-        if not release_send.wait(timeout=5):
+        if not release_send.wait(timeout=30):
             raise RuntimeError("test email send timed out")
 
     monkeypatch.setattr(main, "_send_license_email", blocking_email)
@@ -2638,18 +2638,33 @@ async def test_customer_audit_activity_is_paginated_scoped_and_minimizes_sensiti
     owner_id = await create_license(key="activity-owner")
     other_id = await create_license(key="activity-other")
     now = datetime.now(timezone.utc)
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            AuditLead(license_id=owner_id, domain="first.example", mobile_score=80, speed_index_sec=2.2,
-                      contact_email="private@example.com", revenue_leak_hypothesis="private pitch", email_body="secret body",
-                      source_channel="customer_portal", created_at=now - timedelta(minutes=1)),
-            AuditLead(license_id=owner_id, domain="second.example", mobile_score=60, speed_index_sec=4.5,
-                      contact_email="other-private@example.com", revenue_leak_hypothesis="other pitch",
-                      source_channel="api", created_at=now),
-            AuditLead(license_id=other_id, domain="must-not-leak.example", mobile_score=99, speed_index_sec=1.0,
-                      created_at=now),
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.WebsiteScanResult(
+                id="activity-owner-first", job_id="activity-job-owner-first",
+                license_key="activity-owner", website_id="activity-site-first",
+                target_url="https://first.example/", overall_score=80,
+                summary_json=json.dumps({"pagespeed": {"mobile_score": 80, "speed_index_sec": 2.2}}),
+                findings_json='[{"contact_email":"private@example.com","note":"secret body"}]',
+                created_at=now - timedelta(minutes=1),
+            ),
+            main.WebsiteScanResult(
+                id="activity-owner-second", job_id="activity-job-owner-second",
+                license_key="activity-owner", website_id="activity-site-second",
+                target_url="https://second.example/", overall_score=60,
+                summary_json=json.dumps({"pagespeed": {"mobile_score": 60, "speed_index_sec": 4.5}}),
+                findings_json='[{"revenue_leak_hypothesis":"private pitch"}]',
+                created_at=now,
+            ),
+            main.WebsiteScanResult(
+                id="activity-other-private", job_id="activity-job-other",
+                license_key="activity-other", website_id="activity-site-other",
+                target_url="https://must-not-leak.example/", overall_score=99,
+                summary_json=json.dumps({"pagespeed": {"mobile_score": 99, "speed_index_sec": 1.0}}),
+                created_at=now,
+            ),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     response = await client.get(
         "/api/v1/account/activity?limit=1&offset=0",
@@ -2741,16 +2756,16 @@ async def test_customer_billing_history_is_paginated_scoped_and_validated(client
 @pytest.mark.asyncio
 async def test_admin_action_history_is_paginated_and_validated(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-pagination")
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            SaaSAdminActionLog(action="package_created", entity_type="package", entity_id="starter",
-                               details_json='{"tier":"starter"}'),
-            SaaSAdminActionLog(action="client_updated", entity_type="client", entity_id="12",
-                               details_json='{"field":"is_active"}'),
-            SaaSAdminActionLog(action="key_revoked", entity_type="api_key", entity_id="31",
-                               details_json='{"reason":"rotation"}'),
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.AdminActionLog(action="package_created", entity_type="package", entity_id="starter",
+                                details_json='{"tier":"starter"}'),
+            main.AdminActionLog(action="client_updated", entity_type="client", entity_id="12",
+                                details_json='{"field":"is_active"}'),
+            main.AdminActionLog(action="key_revoked", entity_type="api_key", entity_id="31",
+                                details_json='{"reason":"rotation"}'),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     headers = {"X-Admin-Key": "test-admin-actions-pagination"}
     first = await client.get("/api/v1/admin/actions?limit=2&offset=0", headers=headers)
@@ -2778,18 +2793,18 @@ async def test_admin_action_history_is_paginated_and_validated(client, monkeypat
 
 async def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_secrets(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-legacy")
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            SaaSAdminActionLog(
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.AdminActionLog(
                 action="legacy_malformed", entity_type="system", entity_id="legacy-malformed",
                 details_json="{not valid json",
             ),
-            SaaSAdminActionLog(
+            main.AdminActionLog(
                 action="legacy_sensitive", entity_type="system", entity_id="legacy-sensitive",
                 details_json='{"api_key":"super-secret-value","note":"password=hunter2","nested":{"access_token":"abc123"}}',
             ),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     response = await client.get(
         "/api/v1/admin/actions?limit=200&offset=0",
@@ -2890,15 +2905,15 @@ async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_min
     assert after_revoke.status_code == 200
     assert after_revoke.json()["items"] == []
 
-    async with AsyncSessionLocal() as db:
-        actions = (await db.execute(
-            select(SaaSAdminActionLog).where(
-                SaaSAdminActionLog.entity_id == str(first_client_id),
-                SaaSAdminActionLog.action.in_([
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        actions = (await operational_db.execute(
+            select(main.AdminActionLog).where(
+                main.AdminActionLog.entity_id == str(first_client_id),
+                main.AdminActionLog.action.in_([
                     "client.api_key_created",
                     "client.api_key_revoked",
                 ]),
-            ).order_by(SaaSAdminActionLog.id.asc())
+            ).order_by(main.AdminActionLog.id.asc())
         )).scalars().all()
         assert [item.action for item in actions] == [
             "client.api_key_created",
@@ -2967,12 +2982,18 @@ async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypa
 async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names(client):
     owner_id = await create_license(key="profile-owner")
     other_id = await create_license(key="profile-other")
-    async with AsyncSessionLocal() as db:
-        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
-        owner.client_name = "Original Customer"
-        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
-        other.client_name = "Other Customer"
-        await db.commit()
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.CustomerAccount(
+                id="profile-owner-account", license_key="profile-owner",
+                email="profile-owner@example.com", display_name="Original Customer",
+            ),
+            main.CustomerAccount(
+                id="profile-other-account", license_key="profile-other",
+                email="profile-other@example.com", display_name="Other Customer",
+            ),
+        ])
+        await operational_db.commit()
 
     headers = {"X-License-Key": "profile-owner"}
     updated = await client.patch(
@@ -3006,11 +3027,15 @@ async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names
     )
     assert too_long.status_code == 422
 
-    async with AsyncSessionLocal() as db:
-        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
-        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
-        assert owner.client_name == "Updated Store"
-        assert other.client_name == "Other Customer"
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        owner = await operational_db.scalar(select(main.CustomerAccount).where(
+            main.CustomerAccount.license_key == "profile-owner"
+        ))
+        other = await operational_db.scalar(select(main.CustomerAccount).where(
+            main.CustomerAccount.license_key == "profile-other"
+        ))
+        assert owner.display_name == "Updated Store"
+        assert other.display_name == "Other Customer"
 
     assert (await client.get("/api/v1/account/profile")).status_code == 401
 
@@ -3357,7 +3382,7 @@ async def test_paddle_subscription_update_after_cancellation_is_sticky(client, m
         license_obj = (await db.execute(
             select(SoftwareLicense).where(SoftwareLicense.id == license_id)
         )).scalar_one()
-        assert license_obj.tier == "test"
+        assert license_obj.tier == "business"
         assert license_obj.max_monthly_audits == 100
         assert license_obj.is_active is False
         stored = (await db.execute(select(PaymentWebhookEvent).where(
@@ -3636,9 +3661,9 @@ async def test_customer_passwordless_login_issues_and_revokes_session(client, mo
         headers={"Authorization": f"Bearer {token}"},
     )
     assert usage.status_code == 200, usage.text
-    async with AsyncSessionLocal() as db:
-        stored_session = (await db.execute(select(main.AccountSession).where(
-            main.AccountSession.license_id == license_id
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        stored_session = (await operational_db.execute(select(main.CustomerSession).where(
+            main.CustomerSession.license_key == "passwordless-customer-license"
         ))).scalar_one()
         assert stored_session.token_hash == hashlib.sha256(token.encode()).hexdigest()
         assert stored_session.token_hash != token
@@ -3724,14 +3749,14 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     })
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]
-    async with AsyncSessionLocal() as db:
-        db.add(main.AccountSession(
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add(main.CustomerSession(
             token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
-            license_id=license_id,
+            license_key="passwordless-logout-all-license",
             email="logout-all@example.com",
             expires_at=datetime.now(timezone.utc) + timedelta(days=5),
         ))
-        await db.commit()
+        await operational_db.commit()
 
     response = await client.post(
         "/api/v1/account/auth/logout-all",
@@ -3753,25 +3778,25 @@ async def test_admin_can_review_and_revoke_customer_browser_sessions(client, mon
     monkeypatch.setenv("ADMIN_API_KEY", admin_key)
     license_id = await create_license(key="admin-session-controls-license")
     now = datetime.now(timezone.utc)
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            main.AccountSession(
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.CustomerSession(
                 token_hash=hashlib.sha256(b"active-admin-review-session").hexdigest(),
-                license_id=license_id,
+                license_key="admin-session-controls-license",
                 email="admin-review@example.com",
                 expires_at=now + timedelta(days=10),
                 created_at=now - timedelta(days=1),
                 last_seen_at=now,
             ),
-            main.AccountSession(
+            main.CustomerSession(
                 token_hash=hashlib.sha256(b"already-revoked-admin-review-session").hexdigest(),
-                license_id=license_id,
+                license_key="admin-session-controls-license",
                 email="admin-review@example.com",
                 expires_at=now + timedelta(days=10),
                 revoked_at=now - timedelta(hours=1),
             ),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     headers = {"X-Admin-Key": admin_key}
     listed = await client.get(
@@ -3800,10 +3825,10 @@ async def test_admin_can_review_and_revoke_customer_browser_sessions(client, mon
     assert refreshed.status_code == 200
     assert {item["status"] for item in refreshed.json()["items"]} == {"revoked"}
 
-    async with AsyncSessionLocal() as db:
-        action = (await db.execute(select(SaaSAdminActionLog).where(
-            SaaSAdminActionLog.action == "client.sessions_revoked",
-            SaaSAdminActionLog.entity_id == str(license_id),
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        action = (await operational_db.execute(select(main.AdminActionLog).where(
+            main.AdminActionLog.action == "client.sessions_revoked",
+            main.AdminActionLog.entity_id == str(license_id),
         ))).scalar_one()
         assert "customer reported a lost device" in action.details_json
 
