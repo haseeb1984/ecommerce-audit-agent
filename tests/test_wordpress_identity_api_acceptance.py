@@ -1,5 +1,4 @@
 """Acceptance tests for the current Hostinger-backed WordPress identity flow."""
-import asyncio
 import hashlib
 from datetime import datetime, timedelta, timezone
 
@@ -73,7 +72,11 @@ async def test_wordpress_identity_claim_persists_owner_and_wp_user_and_token_is_
         assert challenge.token_hash == token_hash
         assert challenge.token_hash != token
         assert challenge.consumed_at is None
-        assert timedelta(minutes=9) < challenge.expires_at - datetime.now(timezone.utc) <= timedelta(minutes=10, seconds=2)
+        expires_at = challenge.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        remaining = expires_at - datetime.now(timezone.utc)
+        assert timedelta(minutes=9) < remaining <= timedelta(minutes=10, seconds=2)
 
     claimed = await client.post(
         "/api/v1/integrations/wordpress/sites/claim",
