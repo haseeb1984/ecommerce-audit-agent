@@ -144,8 +144,9 @@ class AdminAgencyStatusUpdate(BaseModel):
 
 
 def _is_valid_agency_team_email(value: str) -> bool:
-    """Reject whitespace and malformed domains in agency team invitations."""
-    return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value))
+    """Accept a conservative unquoted email form and reject control/special separators."""
+    pattern = r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+"
+    return bool(re.fullmatch(pattern, value, flags=re.IGNORECASE))
 
 
 class AgencyTeamInviteCreate(BaseModel):
