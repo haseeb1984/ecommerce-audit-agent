@@ -1424,15 +1424,29 @@ async def test_paddle_webhook_rejects_invalid_signature_without_provisioning(cli
 
 @pytest.mark.asyncio
 async def test_public_plans_only_show_configured_paddle_price_ids(client, monkeypatch):
+    import main
+
     for key, value in {"PADDLE_API_KEY": "pdl_sandbox_test_key", "PADDLE_WEBHOOK_SECRET": "test-webhook-secret",
         "SMTP_HOST": "smtp.example.com", "SMTP_FROM": "reports@example.com", "PADDLE_PRICE_ID_STARTER": "pri_01abc123"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("PADDLE_PRICE_ID_PRO", raising=False)
+    monkeypatch.setattr(main, "_public_paddle_price_details", lambda price_id: {
+        "amount_minor": "1200",
+        "currency_code": "USD",
+        "billing_cycle_interval": "month",
+        "billing_cycle_frequency": 1,
+    })
     response = await client.get("/api/v1/billing/plans")
     payload = response.json()
     assert response.status_code == 200 and payload["configured"] is True
     assert payload["checkout_provider"] == "Paddle" and [plan["tier"] for plan in payload["plans"]] == ["starter"]
     assert "price_id" not in payload["plans"][0]
+    assert payload["plans"][0]["price"] == {
+        "amount_minor": "1200",
+        "currency_code": "USD",
+        "billing_cycle_interval": "month",
+        "billing_cycle_frequency": 1,
+    }
     assert payload["plans"][0]["features"] == {
         "standard_audits": True,
         "conversion_dossier": False,
@@ -1440,6 +1454,33 @@ async def test_public_plans_only_show_configured_paddle_price_ids(client, monkey
         "agency_management": False,
         "direct_api_access": False,
     }
+
+
+def test_public_paddle_price_details_validate_and_cache_provider_catalogue_data(monkeypatch):
+    import main
+
+    main._PADDLE_PUBLIC_PRICE_CACHE.clear()
+    calls = []
+
+    def fake_paddle_request(path, method="GET", payload=None):
+        calls.append((path, method))
+        return {"data": {
+            "id": "pri_price_contract123",
+            "status": "active",
+            "unit_price": {"amount": "1299", "currency_code": "USD"},
+            "billing_cycle": {"interval": "month", "frequency": 1},
+        }}
+
+    monkeypatch.setenv("PADDLE_ENVIRONMENT", "sandbox")
+    monkeypatch.setattr(main, "_paddle_api_request", fake_paddle_request)
+    first = main._public_paddle_price_details("pri_price_contract123")
+    second = main._public_paddle_price_details("pri_price_contract123")
+
+    assert first == second
+    assert first["amount_minor"] == "1299"
+    assert first["currency_code"] == "USD"
+    assert first["billing_cycle_interval"] == "month"
+    assert calls == [("/prices/pri_price_contract123", "GET")]
 
 
 
