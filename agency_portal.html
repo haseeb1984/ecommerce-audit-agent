@@ -67,7 +67,7 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       submitForm.append(urlsLabel,submitButton,permission);
       submitForm.addEventListener("submit",async event=>{
         event.preventDefault();
-        const urls=urlsInput.value.split(/\\r?\\n/).map(value=>value.trim()).filter(Boolean);
+        const urls=urlsInput.value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
         if(!urls.length){$("workspaceStatus").textContent="Enter at least one client page URL.";return;}
         submitButton.disabled=true;$("workspaceStatus").textContent="Queueing client audit…";
         try{
