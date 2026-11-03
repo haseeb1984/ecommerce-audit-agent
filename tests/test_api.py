@@ -271,7 +271,9 @@ async def test_portal_pages_send_browser_security_headers_and_disable_caching(cl
 async def test_root_and_database_health(client):
     root = await client.get("/")
     assert root.status_code == 200
-    assert root.json()["status"] == "AI Agent Commercial Engine Operational"
+    assert root.headers["content-type"].startswith("text/html")
+    assert "Ecommerce Audit Agent" in root.text
+    assert 'id="pricing"' in root.text
 
     health = await client.get("/health-check")
     assert health.status_code == 200
