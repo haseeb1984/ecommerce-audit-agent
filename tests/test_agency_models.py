@@ -13,11 +13,17 @@ from hostinger_models import (
 
 
 def _unique_column_sets(model):
-    return {
+    unique_sets = {
         tuple(column.name for column in constraint.columns)
         for constraint in model.__table__.constraints
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
+    unique_sets.update(
+        (column.name,)
+        for column in model.__table__.columns
+        if column.unique
+    )
+    return unique_sets
 
 
 def _foreign_key_targets(model):
