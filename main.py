@@ -1551,7 +1551,6 @@ async def list_customer_device_sessions(
     now = datetime.now(timezone.utc)
     sessions = (await operational_db.execute(
         select(CustomerSession).where(
-            CustomerSession.license_key == current.license_key,
             CustomerSession.email == current.email,
             CustomerSession.revoked_at.is_(None),
             CustomerSession.expires_at > now,
@@ -1598,7 +1597,6 @@ async def revoke_customer_device_session(
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     target = await operational_db.scalar(select(CustomerSession).where(
         CustomerSession.public_id == session_id,
-        CustomerSession.license_key == current.license_key,
         CustomerSession.email == current.email,
         CustomerSession.revoked_at.is_(None),
     ).with_for_update())
@@ -1653,7 +1651,6 @@ async def revoke_other_customer_sessions(
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
     result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.license_key == current.license_key,
         CustomerSession.email == current.email,
         CustomerSession.token_hash != digest,
         CustomerSession.revoked_at.is_(None),
@@ -1667,14 +1664,23 @@ async def revoke_other_customer_sessions(
 @app.post("/api/v1/account/auth/logout-all")
 async def logout_all_account_sessions(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    credentials=Depends(get_customer_session_credentials),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Revoke every active browser session for the authenticated customer account."""
-    from sqlalchemy import update
+    """Revoke every active browser session for the verified email across linked licenses."""
+    from sqlalchemy import select, update
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Customer session is required.")
+    digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == digest,
+        CustomerSession.revoked_at.is_(None),
+    ))
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
     result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.license_key == license_obj.license_key,
+        CustomerSession.email == current.email,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
