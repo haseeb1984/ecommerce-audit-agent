@@ -105,5 +105,8 @@ def test_fresh_hostinger_schema_and_forward_migration_cover_storage_key_hash():
     assert "storage_key VARCHAR(1024) NOT NULL," in schema
     assert "storage_key_hash CHAR(64) NOT NULL UNIQUE" in schema
     assert "SHA2(storage_key, 256)" in migration
+    assert "information_schema.columns" in migration
+    assert "information_schema.statistics" in migration
     assert "DROP INDEX storage_key" in migration
     assert "uq_customer_report_files_storage_key_hash" in migration
+    assert "SELECT 1" in migration
