@@ -34,6 +34,35 @@ from audit_checks import (
 from crawl_checks import MAX_CRAWL_PAGES, MAX_LINKS_FROM_HOME, MAX_URLS_FROM_SITEMAP
 
 
+def _format_check_outcome_summary(recorded_outcomes: list[object]) -> str:
+    """Summarize only explicit per-page outcomes from ORM or serialized records."""
+    normalized = []
+    for item in recorded_outcomes:
+        if isinstance(item, dict):
+            normalized.append(item)
+        else:
+            normalized.append({
+                "outcome": getattr(item, "outcome", None),
+                "check_id": getattr(item, "check_id", None),
+                "page_url": getattr(item, "page_url", None),
+            })
+    counts = {
+        key: sum(1 for item in normalized if item.get("outcome") == key)
+        for key in ("pass", "issue", "warning", "not_assessed", "error")
+    }
+    denominator = len(normalized)
+    if not denominator:
+        return "Unavailable for this specific check. No pass percentage is inferred without explicit outcome records."
+    states = ", ".join(
+        f"{key.replace('_', ' ')} {counts[key]} ({counts[key] / denominator * 100:.1f}%)"
+        for key in ("pass", "issue", "warning", "not_assessed", "error")
+    )
+    return (
+        f"Explicit tested-page denominator {denominator}; {states}. "
+        "These sampled outcomes do not imply full-site coverage."
+    )
+
+
 def _format_check_outcome_summary_from_dicts(recorded_outcomes: list[dict[str, object]]) -> str:
     """Summarize serialized, URL-linked outcomes without inferring unrecorded checks."""
     counts = {
@@ -1635,7 +1664,11 @@ def render_audit_pdf(
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
-        story.extend([dashboard, Spacer(1, 1.5 * mm)])
+        story.extend([
+            _p(f"Status: {status.replace('_', ' ').title()}", small_style),
+            dashboard,
+            Spacer(1, 1.5 * mm),
+        ])
         # Only show counts when an explicit runner outcome matches this exact check.
         # Findings alone are never used to infer a pass or denominator.
         title_key = str(finding.get("title", "")).strip().lower()
