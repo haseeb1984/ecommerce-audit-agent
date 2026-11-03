@@ -37,14 +37,21 @@ from main import app
 @pytest_asyncio.fixture(autouse=True)
 async def clean_database():
     """Use a fresh schema for each test; intended for a dedicated test database only."""
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
-        await connection.run_sync(Base.metadata.create_all)
-    if hostinger_engine is not None:
-        async with hostinger_engine.begin() as connection:
-            await connection.run_sync(HostingerBase.metadata.drop_all)
-            await connection.run_sync(HostingerBase.metadata.create_all)
-    yield
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+            await connection.run_sync(Base.metadata.create_all)
+        if hostinger_engine is not None:
+            async with hostinger_engine.begin() as connection:
+                await connection.run_sync(HostingerBase.metadata.drop_all)
+                await connection.run_sync(HostingerBase.metadata.create_all)
+        yield
+    finally:
+        # Each pytest-asyncio test may run on a different event loop. Dispose
+        # async pools so connections are never reused across those loops.
+        if hostinger_engine is not None:
+            await hostinger_engine.dispose()
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture
