@@ -1,8 +1,8 @@
-"""Long-running worker process for Hostinger or another managed Python runtime.
+"""Long-running worker process for the durable Hostinger scan queue.
 
 Run with: python worker_service.py
-The HTTP API remains in main.py; this process independently drains durable scan jobs
-and PostgreSQL-to-Hostinger synchronization outboxes.
+The HTTP API remains in main.py; this process independently drains queued
+website scans and the retryable PostgreSQL/Hostinger synchronization outboxes.
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import logging
 import os
 import signal
 
-from hostinger_database import HostingerAsyncSessionLocal
-from scan_worker import process_scan_queue
+from scan_worker import ensure_scan_worker_schema, process_scan_queue
+
 
 logging.basicConfig(
     level=os.getenv("WORKER_LOG_LEVEL", "INFO").upper(),
@@ -32,9 +32,19 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return value
 
 
+async def validate_worker_schema() -> None:
+    """Validate every database model used by scan and reconciliation workers.
+
+    The shared guard checks both Hostinger operational tables and PostgreSQL
+    licensing/outbox tables before this process begins polling for customer work.
+    Schema changes remain migration-managed; validation never mutates DDL.
+    """
+    await ensure_scan_worker_schema()
+
+
 async def run_worker() -> None:
-    if HostingerAsyncSessionLocal is None:
-        raise RuntimeError("HOSTINGER_DATABASE_URL is required to run the durable scan worker.")
+    await validate_worker_schema()
+
     max_jobs = _bounded_int("SCAN_WORKER_MAX_JOBS", 1, 1, 10)
     poll_seconds = _bounded_int("SCAN_WORKER_POLL_SECONDS", 5, 1, 300)
     stop = asyncio.Event()
@@ -43,11 +53,15 @@ async def run_worker() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:
+        except (NotImplementedError, RuntimeError):
             # Some managed runtimes do not expose POSIX signal handlers.
             pass
 
-    logger.info("Durable scan worker started (max_jobs=%s, poll_seconds=%s)", max_jobs, poll_seconds)
+    logger.info(
+        "Durable scan worker started (max_jobs=%s, poll_seconds=%s)",
+        max_jobs,
+        poll_seconds,
+    )
     while not stop.is_set():
         try:
             result = await process_scan_queue(max_jobs=max_jobs)
@@ -55,7 +69,8 @@ async def run_worker() -> None:
             processed = int(result.get("processed", 0) or 0)
             logger.info(
                 "Worker cycle complete (claimed=%s, processed=%s)",
-                claimed, processed,
+                claimed,
+                processed,
             )
             delay = 1 if claimed else poll_seconds
         except Exception as exc:

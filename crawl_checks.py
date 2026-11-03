@@ -46,6 +46,7 @@ MAX_CRAWL_PAGES = 12
 MAX_LINKS_FROM_HOME = 100
 MAX_URLS_FROM_SITEMAP = 100
 MAX_CHILD_SITEMAPS = 3
+MAX_SITEMAP_DOCUMENTS = 8
 
 PRODUCT_DETAIL_PATH = re.compile(r"(?:^|/)(?:products?|items?)(?:/|$)", re.I)
 
@@ -1059,7 +1060,14 @@ def _record_static_check_outcome(
     statuses = {str(item.status or "").casefold() for item in findings}
     if any(status in {"not_tested", "not tested", "insufficient_data"} for status in statuses):
         outcome = "not_assessed"
-    elif any(status == "verified" for status in statuses):
+    elif any(
+        str(item.status or "").casefold() == "verified"
+        and str(item.severity or "").casefold() != "info"
+        for item in findings
+    ):
+        # "Verified" means the signal was observed, not necessarily that it is a defect.
+        # Informational detections (for example, valid structured data) must not inflate
+        # issue counts merely because their presence was confirmed.
         outcome = "issue"
     elif findings:
         outcome = "warning"
@@ -1102,7 +1110,7 @@ async def run_bounded_site_crawl(
     limitations = [
         f"Same-origin crawl is capped at {MAX_CRAWL_PAGES} URLs and follows discovered HTML links only while page budget remains; it does not crawl the whole site.",
         "Query-string variants, JavaScript-rendered links, authenticated pages, and form/checkout flows are not crawled.",
-        f"Sitemap discovery considers at most {MAX_CHILD_SITEMAPS} same-origin Sitemap directives from robots.txt (falling back to /sitemap.xml when none are usable) and at most {MAX_URLS_FROM_SITEMAP} page URLs. The primary sitemap index expands one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps; additional declared sitemap files are inspected within the same bounded discovery budget, but child indexes referenced by those additional files and deeper sitemap-index nesting are not fully expanded.",
+        f"Sitemap discovery considers at most {MAX_CHILD_SITEMAPS} same-origin Sitemap directives from robots.txt (falling back to /sitemap.xml when none are usable), at most {MAX_SITEMAP_DOCUMENTS} fetched sitemap documents across all discovery paths, and at most {MAX_URLS_FROM_SITEMAP} page URLs. The primary sitemap index expands one level into at most {MAX_CHILD_SITEMAPS} same-origin child sitemaps; additional declared sitemap files are inspected within the same bounded discovery budget, but child indexes referenced by those additional files and deeper sitemap-index nesting are not fully expanded.",
     ]
 
     async with aiohttp.ClientSession(
@@ -1188,7 +1196,7 @@ async def run_bounded_site_crawl(
         # conventional path and report basic format cues without implying ranking value.
         llms_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "llms.txt")
         try:
-            llms_status, llms_body, llms_headers, llms_final_url = await _safe_get(client, llms_url)
+            llms_status, llms_body, llms_headers, llms_final_url = await _safe_get(client, llms_url, allowed_origin=final_home)
             if _same_origin(llms_final_url, final_home):
                 llms_findings = inspect_llms_txt(
                     llms_body, llms_status, llms_final_url,
@@ -1237,7 +1245,7 @@ async def run_bounded_site_crawl(
         robots_rules: list[tuple[str, str]] = []
         robots_url = urljoin(f"{urlsplit(final_home).scheme}://{urlsplit(final_home).netloc}/", "robots.txt")
         try:
-            robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url)
+            robots_status, robots_body, robots_headers, robots_final_url = await _safe_get(client, robots_url, allowed_origin=final_home)
             if 200 <= robots_status < 300 and _same_origin(robots_final_url, final_home):
                 robots_findings, robots_limitations = inspect_robots_txt(robots_body, robots_final_url)
                 robots_rules = _parse_robots_rules(robots_body, USER_AGENT)
@@ -1387,6 +1395,7 @@ async def run_bounded_site_crawl(
         # index is expanded only one level, with a strict child-sitemap and URL cap.
         # Every child sitemap must remain on the audited origin before it is fetched.
         sitemap_urls: list[str] = []
+        sitemap_documents_fetched = 0
         conventional_sitemap_url = urljoin(f"{final_origin.scheme}://{final_origin.netloc}/", "sitemap.xml")
 
         def _same_origin_http_url(value: str, base: str) -> bool:
@@ -1432,6 +1441,7 @@ async def run_bounded_site_crawl(
                     declared_sitemap,
                 ))
         sitemap_url = same_origin_sitemaps[0] if same_origin_sitemaps else conventional_sitemap_url
+        seen_sitemap_documents = {_canonical_page_url(sitemap_url)}
 
         def _safe_sitemap_label(value: str) -> str:
             try:
@@ -1457,7 +1467,8 @@ async def run_bounded_site_crawl(
             ]
 
         try:
-            sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url)
+            sitemap_documents_fetched += 1
+            sitemap_status, sitemap_body, sitemap_headers, sitemap_final_url = await _safe_get(client, sitemap_url, allowed_origin=final_home)
             if 200 <= sitemap_status < 300 and _same_origin(sitemap_final_url, final_home) and (
                 "xml" in sitemap_headers.get("content-type", "").lower()
                 or sitemap_body.lstrip().startswith("<")
@@ -1516,8 +1527,16 @@ async def run_bounded_site_crawl(
                     for child_sitemap_url in child_sitemaps:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
+                        child_key = _canonical_page_url(child_sitemap_url)
+                        if child_key in seen_sitemap_documents:
+                            continue
+                        seen_sitemap_documents.add(child_key)
+                        if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
+                            limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
+                            break
                         try:
-                            child_status, child_body, child_headers, child_final_url = await _safe_get(client, child_sitemap_url)
+                            sitemap_documents_fetched += 1
+                            child_status, child_body, child_headers, child_final_url = await _safe_get(client, child_sitemap_url, allowed_origin=final_home)
                             if not _same_origin(child_final_url, final_home):
                                 findings.append(_finding(
                                     "indexing", "Child sitemap redirect left the audited origin",
@@ -1620,9 +1639,17 @@ async def run_bounded_site_crawl(
         for extra_sitemap_url in additional_sitemaps:
             if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                 break
+            extra_key = _canonical_page_url(extra_sitemap_url)
+            if extra_key in seen_sitemap_documents:
+                continue
+            seen_sitemap_documents.add(extra_key)
+            if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
+                limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
+                break
             try:
+                sitemap_documents_fetched += 1
                 extra_status, extra_body, extra_headers, extra_final_url = await _safe_get(
-                    client, extra_sitemap_url
+                    client, extra_sitemap_url, allowed_origin=final_home
                 )
                 if not _same_origin(extra_final_url, final_home):
                     findings.append(_finding(
@@ -1690,9 +1717,17 @@ async def run_bounded_site_crawl(
                     for nested_url in nested_children:
                         if len(sitemap_urls) >= MAX_URLS_FROM_SITEMAP:
                             break
+                        nested_key = _canonical_page_url(nested_url)
+                        if nested_key in seen_sitemap_documents:
+                            continue
+                        seen_sitemap_documents.add(nested_key)
+                        if sitemap_documents_fetched >= MAX_SITEMAP_DOCUMENTS:
+                            limitations.append(f"Sitemap document inspection stopped at the global limit of {MAX_SITEMAP_DOCUMENTS} documents.")
+                            break
                         try:
+                            sitemap_documents_fetched += 1
                             nested_status, nested_body, nested_headers, nested_final = await _safe_get(
-                                client, nested_url
+                                client, nested_url, allowed_origin=final_home
                             )
                             if not _same_origin(nested_final, final_home):
                                 continue
@@ -1807,12 +1842,30 @@ async def run_bounded_site_crawl(
             client, final_home, allowed_url=lambda candidate_url: _robots_path_allowed(candidate_url, robots_rules)
         )
         findings.extend(exposure_findings)
+        _record_static_check_outcome(
+            outcome_records, check_id="security.exposure_path_probes",
+            category="security_exposure", page_url=final_home,
+            findings=[item for item in exposure_findings if item.category == "security_exposure"],
+            method="bounded public GET probes for common accidentally exposed artifacts",
+        )
+        _record_static_check_outcome(
+            outcome_records, check_id="security.api_documentation_exposure",
+            category="security_api_documentation", page_url=final_home,
+            findings=[item for item in exposure_findings if item.category == "security_api_documentation"],
+            method="bounded public GET probes for common API documentation and schema endpoints",
+        )
         limitations.extend(exposure_limitations)
 
         transport_findings, transport_limitations = await inspect_transport_security(
             client, homepage, final_home
         )
         findings.extend(transport_findings)
+        _record_static_check_outcome(
+            outcome_records, check_id="security.transport_tls_and_mixed_content",
+            category="security_transport", page_url=final_home,
+            findings=transport_findings,
+            method="public HTTPS/TLS redirect and static mixed-content inspection",
+        )
         limitations.extend(transport_limitations)
 
         title_pages: dict[str, list[str]] = defaultdict(list)
@@ -1839,7 +1892,7 @@ async def run_bounded_site_crawl(
                 if url == _canonical_page_url(final_home):
                     page_status, body, page_headers, final_url = status, homepage, headers, final_home
                 else:
-                    page_status, body, page_headers, final_url = await _safe_get(client, url)
+                    page_status, body, page_headers, final_url = await _safe_get(client, url, allowed_origin=final_home)
             except Exception as exc:
                 findings.append(_finding(
                     "crawl", "Internal page could not be checked", "not_tested", "info",
@@ -1985,17 +2038,19 @@ async def run_bounded_site_crawl(
 
             product_schema_findings = inspect_product_page_schema_presence(body, final_url)
             findings.extend(product_schema_findings)
-            if product_schema_findings:
-                _record_static_check_outcome(
-                    outcome_records, check_id="structured_data.product",
-                    category="structured_data", page_url=final_url,
-                    findings=product_schema_findings,
-                    method="static product-route JSON-LD presence and parseability review",
-                )
             catalog_findings = inspect_ecommerce_catalog_navigation(body, final_url)
             findings.extend(catalog_findings)
+            # The page-family outcome pass below applies product and catalog checks
+            # only to matching routes and records each canonical check once. Do not
+            # emit unconditional homepage outcomes here.
             sensitive_form_findings = inspect_sensitive_get_forms(body, final_url)
             findings.extend(sensitive_form_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="security.sensitive_get_forms",
+                category="security_baseline", page_url=final_url,
+                findings=sensitive_form_findings,
+                method="static HTML form-method and sensitive-field heuristic",
+            )
             canonical_findings = inspect_canonical_declaration(body, final_url)
             findings.extend(canonical_findings)
             _record_static_check_outcome(
@@ -2012,7 +2067,14 @@ async def run_bounded_site_crawl(
             _record_static_check_outcome(
                 outcome_records, check_id="security_headers.header_quality",
                 category="security_headers", page_url=final_url,
-                findings=header_quality_findings, method="static HTTP response-header review",
+                findings=[item for item in header_quality_findings if item.category == "security_headers"],
+                method="static HTTP response-header and CSP/HSTS review",
+            )
+            _record_static_check_outcome(
+                outcome_records, check_id="security_cookies.cookie_attributes",
+                category="security_cookies", page_url=final_url,
+                findings=[item for item in header_quality_findings if item.category == "security_cookies"],
+                method="static Set-Cookie attribute inspection; cookie values are not retained",
             )
             standard_header_findings = inspect_standard_security_headers(page_headers, final_url)
             findings.extend(standard_header_findings)
@@ -2034,6 +2096,12 @@ async def run_bounded_site_crawl(
 
             hreflang_findings = inspect_hreflang(body, final_url)
             findings.extend(hreflang_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="international_seo.hreflang",
+                category="international_seo", page_url=final_url,
+                findings=hreflang_findings,
+                method="static HTML hreflang declaration and reciprocal-reference review",
+            )
             hreflang_declared = bool(
                 re.search(r"(?is)<link\b[^>]*\bhreflang\s*=", body[:500_000])
             )
@@ -2070,6 +2138,20 @@ async def run_bounded_site_crawl(
                 category="accessibility", page_url=final_url,
                 findings=accessibility_findings, method="static HTML accessibility signal inspection",
             )
+            aria_findings = [
+                item for item in accessibility_findings
+                if any(token in item.title.lower() for token in (
+                    "aria reference", "label or aria", "duplicate html ids",
+                    "accessible name", "accessible labels", "accessible label",
+                    "focusable controls may be hidden",
+                ))
+            ]
+            _record_static_check_outcome(
+                outcome_records, check_id="aria.accessible_names_and_relationships",
+                category="aria", page_url=final_url,
+                findings=aria_findings,
+                method="static HTML accessible-name, label association, ID-reference and aria-hidden focusability inspection",
+            )
             # Trust inventory is source-level only and explicitly avoids authenticity claims.
             trust_findings = inspect_trust_signals(body, final_url)
             findings.extend(trust_findings)
@@ -2081,6 +2163,12 @@ async def run_bounded_site_crawl(
             # Detect source-visible tags and consent signals; never infer event success or legal compliance.
             privacy_tracking_findings = inspect_privacy_tracking_signals(body, final_url)
             findings.extend(privacy_tracking_findings)
+            _record_static_check_outcome(
+                outcome_records, check_id="pixel_analytics.source_tag_and_consent_signals",
+                category="pixel_analytics", page_url=final_url,
+                findings=privacy_tracking_findings,
+                method="static HTML analytics/pixel tag and consent-interface signal inspection",
+            )
 
             # The homepage alt-attribute check is already part of Phase 1. Add
             # page-specific findings for sampled internal pages without duplicating it.
@@ -2652,6 +2740,27 @@ async def run_bounded_site_crawl(
                     "Use page-specific descriptions where they provide useful information; do not change them solely to force a ranking result.",
                     ["Compare the listed pages in a crawler.", "Retest after changes."], urls[0],
                 ))
+        if outcome_records is not None:
+            duplicate_content_findings = [
+                item for item in findings if item.category == "duplicate_content"
+            ]
+            if pages_checked:
+                _record_static_check_outcome(
+                    outcome_records, check_id="content_quality.duplicate_metadata",
+                    category="content_quality", page_url=normalized,
+                    findings=duplicate_content_findings,
+                    method="cross-page comparison of normalized HTML title and meta-description values within the bounded crawl sample",
+                )
+            else:
+                outcome_records.append(CheckOutcome(
+                    check_id="content_quality.duplicate_metadata",
+                    category="content_quality", page_url=normalized,
+                    outcome="not_assessed",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="bounded cross-page title and meta-description comparison",
+                    evidence="No pages were successfully fetched; duplicate metadata could not be compared.",
+                    evidence_ref="content_quality.duplicate_metadata",
+                ))
 
     if len(candidates) >= MAX_CRAWL_PAGES - 1:
         limitations.append(f"The crawler reached its {MAX_CRAWL_PAGES}-page budget; additional links were not inspected.")
@@ -2668,4 +2777,28 @@ async def run_bounded_site_crawl(
         limitations.append(
             f"{unchecked_sitemap_count} discovered sitemap URL(s) were not fetched during this audit because sitemap discovery shares the bounded crawl page budget; sitemap inclusion alone does not establish URL status, canonical consistency, or indexability."
         )
+    # The link-response category is assessed only for the bounded same-origin
+    # pages that were actually fetched. Never infer a pass when the homepage
+    # could not be fetched or the crawler produced no page denominator.
+    if outcome_records is not None:
+        broken_link_findings = [
+            item for item in findings if item.category == "broken_internal_links"
+        ]
+        if pages_checked:
+            _record_static_check_outcome(
+                outcome_records, check_id="broken_internal_links.sampled_internal_urls",
+                category="broken_internal_links", page_url=normalized,
+                findings=broken_link_findings,
+                method=f"HTTP response inspection for up to {MAX_CRAWL_PAGES - 1} sampled same-origin internal URLs",
+            )
+        else:
+            outcome_records.append(CheckOutcome(
+                check_id="broken_internal_links.sampled_internal_urls",
+                category="broken_internal_links", page_url=normalized,
+                outcome="not_assessed",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="bounded same-origin URL response inspection",
+                evidence="No page was successfully fetched; internal-link response health cannot be assessed.",
+                evidence_ref="broken_internal_links.sampled_internal_urls",
+            ))
     return findings, pages_checked, limitations

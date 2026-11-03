@@ -3,7 +3,7 @@
  * Plugin Name: Ecommerce Audit Agent
  * Plugin URI: https://ecommerce-audit-agent.vercel.app/
  * Description: Connect your WordPress or WooCommerce store to Ecommerce Audit Agent, monitor your SaaS license, run audits, and retrieve saved reports.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author: Ecommerce Audit Agent
@@ -15,9 +15,18 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('EAA_WP_VERSION', '1.0.0');
+define('EAA_WP_VERSION', '1.1.0');
 define('EAA_WP_OPTION', 'eaa_wp_settings');
 define('EAA_WP_DEFAULT_API', 'https://ecommerce-audit-agent.vercel.app');
+
+/**
+ * Allow site owners to delegate the dashboard to a trusted role without
+ * weakening the default administrator-only permission boundary.
+ */
+function eaa_wp_dashboard_capability() {
+    $capability = apply_filters('eaa_wp_dashboard_capability', 'manage_options');
+    return is_string($capability) && '' !== trim($capability) ? trim($capability) : 'manage_options';
+}
 
 function eaa_wp_settings() {
     $settings = get_option(EAA_WP_OPTION, array());
@@ -133,6 +142,109 @@ function eaa_wp_api_request($path, $method = 'GET', $body = null, $timeout = 25)
     return $response;
 }
 
+function eaa_wp_agency_api_request($path, $method = 'GET', $body = null, $token = '', $header = 'X-Agency-Site-Token') {
+    $token = trim((string) $token);
+    if ('' === $token || strlen($token) > 200) {
+        return new WP_Error('eaa_agency_token_missing', __('An agency connection token is required.', 'ecommerce-audit-agent'));
+    }
+    $url = eaa_wp_api_base() . '/' . ltrim($path, '/');
+    $args = array(
+        'method' => strtoupper($method),
+        'timeout' => 25,
+        'redirection' => 0,
+        'reject_unsafe_urls' => true,
+        'sslverify' => true,
+        'headers' => array(
+            'Accept' => 'application/json',
+            $header => $token,
+            'User-Agent' => 'EcommerceAuditAgentWordPress/' . EAA_WP_VERSION,
+        ),
+    );
+    if (null !== $body) {
+        $args['headers']['Content-Type'] = 'application/json';
+        $args['body'] = wp_json_encode($body);
+    }
+    $response = wp_safe_remote_request($url, $args);
+    if (is_wp_error($response)) {
+        return new WP_Error('eaa_agency_connection_error', __('Could not connect securely to the agency SaaS API.', 'ecommerce-audit-agent'));
+    }
+    $code = (int) wp_remote_retrieve_response_code($response);
+    if ($code < 200 || $code >= 300) {
+        $decoded = json_decode(wp_remote_retrieve_body($response), true);
+        $message = is_array($decoded) && !empty($decoded['detail']) && is_string($decoded['detail'])
+            ? sanitize_text_field($decoded['detail'])
+            : sprintf(__('The agency SaaS API returned HTTP %d.', 'ecommerce-audit-agent'), $code);
+        return new WP_Error('eaa_agency_api_error', $message, array('status' => $code));
+    }
+    return $response;
+}
+
+function eaa_wp_queue_agency_audit($target_url) {
+    $settings = eaa_wp_settings();
+    if (empty($settings['agency_site_token'])) {
+        return new WP_Error('eaa_agency_not_connected', __('This site is not connected to an agency client workspace.', 'ecommerce-audit-agent'));
+    }
+    $token = eaa_wp_decrypt_license($settings['agency_site_token']);
+    if (is_wp_error($token)) {
+        return $token;
+    }
+    $response = eaa_wp_agency_api_request(
+        '/api/v1/integrations/wordpress/agency/sites/audits',
+        'POST',
+        array('urls' => array($target_url), 'request_id' => wp_generate_uuid4()),
+        $token
+    );
+    if (is_wp_error($response)) {
+        return $response;
+    }
+    $data = eaa_wp_json($response);
+    if (empty($data['batch_ids']) || !is_array($data['batch_ids'])) {
+        return new WP_Error('eaa_agency_queue_invalid', __('The agency API did not confirm an audit batch.', 'ecommerce-audit-agent'));
+    }
+    $settings['agency_last_audit_batch_ids'] = array_map('sanitize_text_field', $data['batch_ids']);
+    $settings['agency_last_audit_queued_at'] = current_time('mysql', true);
+    update_option(EAA_WP_OPTION, $settings, false);
+    return $data;
+}
+
+function eaa_wp_register_agency_site($one_time_token) {
+    $payload = array(
+        'site_url' => home_url('/'),
+        'admin_email' => get_option('admin_email'),
+        'wordpress_version' => get_bloginfo('version'),
+        'woocommerce_version' => defined('WC_VERSION') ? WC_VERSION : '',
+        'plugin_version' => EAA_WP_VERSION,
+    );
+    $response = eaa_wp_agency_api_request(
+        '/api/v1/integrations/wordpress/agency/sites/register',
+        'POST',
+        $payload,
+        $one_time_token,
+        'X-Agency-Connect-Token'
+    );
+    if (is_wp_error($response)) {
+        return $response;
+    }
+    $data = eaa_wp_json($response);
+    if (empty($data['site_id']) || empty($data['agency_site_token'])) {
+        return new WP_Error('eaa_agency_registration_invalid', __('The agency API did not return a complete site credential.', 'ecommerce-audit-agent'));
+    }
+    $encrypted = eaa_wp_encrypt_license(sanitize_text_field($data['agency_site_token']));
+    if (is_wp_error($encrypted)) {
+        return $encrypted;
+    }
+    $settings = eaa_wp_settings();
+    $settings['agency_site_token'] = $encrypted;
+    $settings['agency_site_id'] = sanitize_text_field($data['site_id']);
+    $settings['agency_workspace_id'] = sanitize_text_field($data['workspace_id']);
+    $settings['agency_workspace_name'] = sanitize_text_field($data['workspace_name']);
+    $settings['agency_site_url'] = esc_url_raw($data['site_url']);
+    $settings['agency_connected_at'] = sanitize_text_field($data['connected_at']);
+    $settings['connection_error'] = '';
+    update_option(EAA_WP_OPTION, $settings, false);
+    return $data;
+}
+
 function eaa_wp_json($response) {
     $decoded = json_decode(wp_remote_retrieve_body($response), true);
     return is_array($decoded) ? $decoded : array();
@@ -162,7 +274,76 @@ function eaa_wp_register_site() {
     return $data;
 }
 
+function eaa_wp_claim_customer_identity($token) {
+    $token = trim((string) $token);
+    if (strlen($token) < 32 || strlen($token) > 128) {
+        return new WP_Error('eaa_invalid_link_token', __('Enter a valid one-time WordPress identity code.', 'ecommerce-audit-agent'));
+    }
+    $user = wp_get_current_user();
+    if (!$user || empty($user->ID) || empty($user->user_email)) {
+        return new WP_Error('eaa_missing_wp_user', __('Sign in as the WordPress administrator who should own this connection.', 'ecommerce-audit-agent'));
+    }
+    $payload = array(
+        'token' => $token,
+        'site_url' => home_url('/'),
+        'wp_user_id' => (int) $user->ID,
+        'wp_user_login' => (string) $user->user_login,
+        'wp_user_email' => (string) $user->user_email,
+        'plugin_version' => EAA_WP_VERSION,
+        'wordpress_version' => get_bloginfo('version'),
+        'woocommerce_version' => defined('WC_VERSION') ? WC_VERSION : '',
+    );
+    $response = wp_safe_remote_request(eaa_wp_api_base() . '/api/v1/integrations/wordpress/sites/claim', array(
+        'method' => 'POST',
+        'timeout' => 25,
+        'redirection' => 0,
+        'reject_unsafe_urls' => true,
+        'sslverify' => true,
+        'headers' => array(
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+            'User-Agent' => 'EcommerceAuditAgentWordPress/' . EAA_WP_VERSION,
+        ),
+        'body' => wp_json_encode($payload),
+    ));
+    if (is_wp_error($response)) {
+        return new WP_Error('eaa_identity_link_unavailable', __('Could not securely reach the Ecommerce Audit Agent identity-link service.', 'ecommerce-audit-agent'));
+    }
+    $status = (int) wp_remote_retrieve_response_code($response);
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+    if ($status < 200 || $status >= 300 || !is_array($data) || empty($data['site_id'])) {
+        $message = is_array($data) && !empty($data['detail']) && is_string($data['detail'])
+            ? sanitize_text_field($data['detail'])
+            : sprintf(__('The identity-link service returned HTTP %d.', 'ecommerce-audit-agent'), $status);
+        return new WP_Error('eaa_identity_link_failed', $message, array('status' => $status));
+    }
+    $settings = eaa_wp_settings();
+    $settings['identity_site_id'] = sanitize_text_field($data['site_id']);
+    $settings['identity_wp_user_login'] = sanitize_text_field((string) ($data['wordpress_user_login'] ?? $user->user_login));
+    $settings['identity_linked_at'] = current_time('mysql', true);
+    $settings['connection_error'] = '';
+    update_option(EAA_WP_OPTION, $settings, false);
+    return $data;
+}
+
 function eaa_wp_disconnect_site() {
+    $settings = eaa_wp_settings();
+    if (!empty($settings['agency_site_token'])) {
+        $token = eaa_wp_decrypt_license($settings['agency_site_token']);
+        if (is_wp_error($token)) {
+            return $token;
+        }
+        $response = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/disconnect', 'POST', array(), $token);
+        if (is_wp_error($response)) {
+            $error_data = $response->get_error_data();
+            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+            if (404 !== $http_status) return $response;
+        }
+        unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
+              $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+        update_option(EAA_WP_OPTION, $settings, false);
+        return true;
+    }
     $settings = eaa_wp_settings();
     if (empty($settings['site_id'])) {
         return true;
@@ -173,7 +354,7 @@ function eaa_wp_disconnect_site() {
     if (is_wp_error($response)) {
         $error_data = $response->get_error_data();
         $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-        // A remote 404 means the SaaS side has already retired this registration.
+        // A 404 means the remote installation is already disconnected.
         if (404 !== $http_status) {
             return $response;
         }
@@ -187,7 +368,7 @@ add_action('admin_menu', function () {
     add_menu_page(
         __('Ecommerce Audit Agent', 'ecommerce-audit-agent'),
         __('Ecommerce Audit', 'ecommerce-audit-agent'),
-        'manage_options',
+        eaa_wp_dashboard_capability(),
         'ecommerce-audit-agent',
         'eaa_wp_render_admin_page',
         'dashicons-chart-area',
@@ -197,6 +378,32 @@ add_action('admin_menu', function () {
 
 function eaa_wp_sync_site_status() {
     $settings = eaa_wp_settings();
+    if (!empty($settings['agency_site_token'])) {
+        $token = eaa_wp_decrypt_license($settings['agency_site_token']);
+        if (is_wp_error($token)) {
+            $settings['connection_error'] = $token->get_error_message();
+            update_option(EAA_WP_OPTION, $settings, false);
+            return;
+        }
+        $response = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $token);
+        $settings['last_sync'] = time();
+        if (is_wp_error($response)) {
+            $error_data = $response->get_error_data();
+            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+            if (404 === $http_status) {
+                unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
+                      $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+                $settings['connection_error'] = __('This agency client site was disconnected by the agency owner.', 'ecommerce-audit-agent');
+            } else {
+                $settings['connection_error'] = $response->get_error_message();
+            }
+        } else {
+            $settings['connection_error'] = '';
+            $settings['last_status'] = eaa_wp_json($response);
+        }
+        update_option(EAA_WP_OPTION, $settings, false);
+        return;
+    }
     if (empty($settings['license_key']) || empty($settings['site_id'])) {
         return;
     }
@@ -206,9 +413,7 @@ function eaa_wp_sync_site_status() {
         $error_data = $response->get_error_data();
         $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
         if (404 === $http_status) {
-            // A customer may disconnect this installation from the SaaS portal.
-            // Clear the stale local identifier so the plugin cannot present it as
-            // connected; saving settings can register it again intentionally.
+            // The SaaS customer portal can disconnect this site remotely.
             unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
             $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
         } else {
@@ -227,7 +432,9 @@ register_activation_hook(__FILE__, function () {
         wp_schedule_event(time() + 300, 'twicedaily', 'eaa_wp_scheduled_status_sync');
     }
     $settings = eaa_wp_settings();
-    if (!empty($settings['license_key'])) {
+    if (!empty($settings['agency_site_token'])) {
+        eaa_wp_sync_site_status();
+    } elseif (!empty($settings['license_key'])) {
         $registration = eaa_wp_register_site();
         if (is_wp_error($registration)) {
             $settings = eaa_wp_settings();
@@ -248,9 +455,89 @@ add_action('admin_init', function () {
     }
 });
 
+add_action('admin_post_eaa_run_agency_audit', 'eaa_wp_handle_run_agency_audit');
+function eaa_wp_handle_run_agency_audit() {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
+        wp_die(esc_html__('You are not allowed to run audits for this integration.', 'ecommerce-audit-agent'), 403);
+    }
+    check_admin_referer('eaa_run_agency_audit');
+    $target_url = isset($_POST['agency_audit_url']) ? esc_url_raw(trim(wp_unslash($_POST['agency_audit_url']))) : '';
+    if (!$target_url || !wp_http_validate_url($target_url) || 'https' !== strtolower((string) wp_parse_url($target_url, PHP_URL_SCHEME))) {
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_audit_failed'), admin_url('admin.php')));
+        exit;
+    }
+    $result = eaa_wp_queue_agency_audit($target_url);
+    if (is_wp_error($result)) {
+        $settings = eaa_wp_settings();
+        $settings['connection_error'] = $result->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_audit_failed'), admin_url('admin.php')));
+        exit;
+    }
+    wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_audit_queued'), admin_url('admin.php')));
+    exit;
+}
+
+add_action('admin_post_eaa_connect_agency_site', 'eaa_wp_handle_connect_agency_site');
+function eaa_wp_handle_connect_agency_site() {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
+        wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
+    }
+    check_admin_referer('eaa_connect_agency_site');
+    $token = isset($_POST['agency_connect_token']) ? sanitize_text_field(wp_unslash($_POST['agency_connect_token'])) : '';
+    if (strlen($token) < 32 || strlen($token) > 200) {
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connect_failed'), admin_url('admin.php')));
+        exit;
+    }
+    $current = eaa_wp_settings();
+    if (!empty($current['site_id']) && !empty($current['license_key'])) {
+        $retired = eaa_wp_disconnect_site();
+        if (is_wp_error($retired)) {
+            $current['connection_error'] = __('The existing license-based site connection could not be retired. Agency connection was not changed.', 'ecommerce-audit-agent');
+            update_option(EAA_WP_OPTION, $current, false);
+            wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'disconnect_failed'), admin_url('admin.php')));
+            exit;
+        }
+    }
+    $result = eaa_wp_register_agency_site($token);
+    if (is_wp_error($result)) {
+        $settings = eaa_wp_settings();
+        $settings['connection_error'] = $result->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connect_failed'), admin_url('admin.php')));
+        exit;
+    }
+    $connected_settings = eaa_wp_settings();
+    unset($connected_settings['license_key'], $connected_settings['site_id'], $connected_settings['connected_at']);
+    update_option(EAA_WP_OPTION, $connected_settings, false);
+    wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'agency_connected'), admin_url('admin.php')));
+    exit;
+}
+
+add_action('admin_post_eaa_link_customer_identity', 'eaa_wp_handle_link_customer_identity');
+function eaa_wp_handle_link_customer_identity() {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
+        wp_die(esc_html__('You do not have permission to link the customer identity.', 'ecommerce-audit-agent'), 403);
+    }
+    $nonce = isset($_POST['_wpnonce']) ? sanitize_text_field(wp_unslash($_POST['_wpnonce'])) : '';
+    if (!wp_verify_nonce($nonce, 'eaa_link_customer_identity')) {
+        wp_die(esc_html__('The identity-link request expired. Reload the page and try again.', 'ecommerce-audit-agent'), 403);
+    }
+    $token = isset($_POST['wordpress_link_token']) ? sanitize_text_field(wp_unslash($_POST['wordpress_link_token'])) : '';
+    $result = eaa_wp_claim_customer_identity($token);
+    $notice = is_wp_error($result) ? 'identity_link_failed' : 'identity_linked';
+    if (is_wp_error($result)) {
+        $settings = eaa_wp_settings();
+        $settings['connection_error'] = $result->get_error_message();
+        update_option(EAA_WP_OPTION, $settings, false);
+    }
+    wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => $notice), admin_url('admin.php')));
+    exit;
+}
+
 add_action('admin_post_eaa_save_settings', 'eaa_wp_handle_save_settings');
 function eaa_wp_handle_save_settings() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_save_settings');
@@ -334,7 +621,7 @@ function eaa_wp_handle_save_settings() {
 
 add_action('admin_post_eaa_save_white_label', 'eaa_wp_handle_save_white_label');
 function eaa_wp_handle_save_white_label() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_save_white_label');
@@ -357,7 +644,7 @@ function eaa_wp_handle_save_white_label() {
 
 add_action('admin_post_eaa_disconnect_site', 'eaa_wp_handle_disconnect');
 function eaa_wp_handle_disconnect() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage this integration.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_disconnect_site');
@@ -369,7 +656,7 @@ function eaa_wp_handle_disconnect() {
 
 add_action('admin_post_eaa_run_audit', 'eaa_wp_handle_run_audit');
 function eaa_wp_handle_run_audit() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to run audits.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_run_audit');
@@ -401,7 +688,7 @@ function eaa_wp_handle_run_audit() {
 
 add_action('admin_post_eaa_download_report', 'eaa_wp_handle_download_report');
 function eaa_wp_handle_download_report() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to download reports.', 'ecommerce-audit-agent'), 403);
     }
     $report_id = isset($_GET['report_id']) ? absint($_GET['report_id']) : 0;
@@ -429,7 +716,7 @@ function eaa_wp_handle_download_report() {
 
 add_action('admin_post_eaa_open_billing', 'eaa_wp_handle_open_billing');
 function eaa_wp_handle_open_billing() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         wp_die(esc_html__('You are not allowed to manage billing.', 'ecommerce-audit-agent'), 403);
     }
     check_admin_referer('eaa_open_billing');
@@ -448,7 +735,7 @@ function eaa_wp_handle_open_billing() {
 }
 
 function eaa_wp_render_admin_page() {
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can(eaa_wp_dashboard_capability())) {
         return;
     }
     $settings = eaa_wp_settings();
@@ -457,15 +744,52 @@ function eaa_wp_render_admin_page() {
     $reports = array();
     $billing = null;
     $branding = null;
+    $agency_mode = !empty($settings['agency_site_token']);
     $error = isset($settings['connection_error']) ? $settings['connection_error'] : '';
-    if (!empty($settings['site_id']) && '' === $error) {
+    if ($agency_mode && '' === $error) {
+        $agency_token = eaa_wp_decrypt_license($settings['agency_site_token']);
+        if (is_wp_error($agency_token)) {
+            $error = $agency_token->get_error_message();
+        } else {
+            $agency_status = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $agency_token);
+            if (is_wp_error($agency_status)) {
+                $error_data = $agency_status->get_error_data();
+                $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+                if (404 === $http_status) {
+                    unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
+                          $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+                    $settings['connection_error'] = __('The agency owner disconnected this client website. Generate a new token to reconnect.', 'ecommerce-audit-agent');
+                    update_option(EAA_WP_OPTION, $settings, false);
+                    $agency_mode = false;
+                    $error = $settings['connection_error'];
+                } else {
+                    $error = $agency_status->get_error_message();
+                }
+            } else {
+                $settings['last_status'] = eaa_wp_json($agency_status);
+                $settings['connection_error'] = '';
+                update_option(EAA_WP_OPTION, $settings, false);
+            }
+        }
+    } elseif (!empty($settings['site_id']) && '' === $error) {
         $status_response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
         if (!is_wp_error($status_response)) {
             $settings['last_status'] = eaa_wp_json($status_response);
             $settings['connection_error'] = '';
             update_option(EAA_WP_OPTION, $settings, false);
         } else {
-            $error = $status_response->get_error_message();
+            $error_data = $status_response->get_error_data();
+            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
+            if (404 === $http_status) {
+                // Reflect a customer-portal disconnect immediately when the
+                // administrator opens this screen, not only on the next cron.
+                unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+                $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
+                update_option(EAA_WP_OPTION, $settings, false);
+                $error = $settings['connection_error'];
+            } else {
+                $error = $status_response->get_error_message();
+            }
         }
         $usage_response = eaa_wp_api_request('/api/v1/account/usage');
         if (!is_wp_error($usage_response)) {
@@ -487,7 +811,7 @@ function eaa_wp_render_admin_page() {
             $reports = isset($report_data['reports']) && is_array($report_data['reports']) ? $report_data['reports'] : array();
         }
     }
-    $connected = !empty($settings['site_id']) && '' === $error;
+    $connected = (!empty($settings['site_id']) || !empty($settings['agency_site_id'])) && '' === $error;
     $brand = !empty($settings['brand_name']) ? $settings['brand_name'] : __('Ecommerce Audit Agent', 'ecommerce-audit-agent');
     $color = !empty($settings['brand_color']) ? $settings['brand_color'] : '#1d4ed8';
     ?>
@@ -495,9 +819,16 @@ function eaa_wp_render_admin_page() {
         <h1><?php echo esc_html($brand); ?></h1>
         <?php if ('saved' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('Settings saved and site connected.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('disconnected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('WordPress site disconnected. Your SaaS license and reports remain intact.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_connected' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('This WordPress site is connected to the Business agency client workspace.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_audit_queued' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('The client website audit has been queued under the shared Business allowance. View progress and findings in the SaaS agency dashboard.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_audit_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The agency client audit could not be queued. Review the connection error and confirm the URL belongs to this connected client website.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('agency_connect_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The agency client connection could not be completed. Review the connection message and generate a fresh one-time token if needed.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+
         <?php if ('' !== $error) : ?><div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div><?php endif; ?>
         <?php if ('invalid_url' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The API URL must use HTTPS.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('branding_saved' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('White-label branding saved to your SaaS account.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('identity_linked' === $notice) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e('This WordPress administrator identity is now linked to the customer account.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
+        <?php if ('identity_link_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('WordPress identity linking failed. Generate a fresh one-time code in the customer portal and retry.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('branding_failed' === $notice || 'branding_invalid' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('White-label branding could not be saved. Check your plan eligibility and HTTPS logo URL.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <?php if ('connection_failed' === $notice || 'disconnect_failed' === $notice) : ?><div class="notice notice-error"><p><?php esc_html_e('The SaaS connection action could not be completed. Review the connection message and retry.', 'ecommerce-audit-agent'); ?></p></div><?php endif; ?>
         <style>
@@ -510,9 +841,15 @@ function eaa_wp_render_admin_page() {
                     <p><strong><?php echo $connected ? esc_html__('Connected', 'ecommerce-audit-agent') : esc_html__('Not connected', 'ecommerce-audit-agent'); ?></strong></p>
                     <?php if ($connected) : ?>
                         <p><?php esc_html_e('Site:', 'ecommerce-audit-agent'); ?> <?php echo esc_html(home_url('/')); ?></p>
+                        <?php if ($agency_mode) : ?>
+                            <p><?php esc_html_e('Agency client:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html((string) ($settings['agency_workspace_name'] ?? 'Client workspace')); ?></strong></p>
+                            <p><?php esc_html_e('Client site:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) ($settings['agency_site_url'] ?? home_url('/'))); ?></p>
+                            <p><?php esc_html_e('Connection:', 'ecommerce-audit-agent'); ?> <code><?php echo esc_html((string) ($settings['agency_site_id'] ?? '')); ?></code></p>
+                        <?php else : ?>
                         <p><?php esc_html_e('WordPress site ID:', 'ecommerce-audit-agent'); ?> <code><?php echo esc_html($settings['site_id']); ?></code></p>
-                        <?php if (!empty($settings['last_status']['license']['entitlement_state'])) : ?><p><?php esc_html_e('SaaS entitlement:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html($settings['last_status']['license']['entitlement_state']); ?></strong></p><?php endif; ?>
-                    <?php if (!empty($settings['last_status']['license']['expires_at'])) : ?><p><?php esc_html_e('License expiry:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) $settings['last_status']['license']['expires_at']); ?></p><?php endif; ?>
+                        <?php endif; ?>
+                        <?php if (!$agency_mode && !empty($settings['last_status']['license']['entitlement_state'])) : ?><p><?php esc_html_e('SaaS entitlement:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html($settings['last_status']['license']['entitlement_state']); ?></strong></p><?php endif; ?>
+                    <?php if (!$agency_mode && !empty($settings['last_status']['license']['expires_at'])) : ?><p><?php esc_html_e('License expiry:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) $settings['last_status']['license']['expires_at']); ?></p><?php endif; ?>
                     <?php if (!empty($settings['last_sync'])) : ?><p class="description"><?php esc_html_e('Last status synchronization:', 'ecommerce-audit-agent'); ?> <?php echo esc_html(wp_date(get_option('date_format') . ' ' . get_option('time_format'), (int) $settings['last_sync'])); ?></p><?php endif; ?>
                         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                             <input type="hidden" name="action" value="eaa_disconnect_site">
@@ -535,6 +872,17 @@ function eaa_wp_render_admin_page() {
             </div>
             <div class="eaa-card">
                 <h2><?php esc_html_e('Run a store audit', 'ecommerce-audit-agent'); ?></h2>
+                <?php if ($agency_mode) : ?>
+                    <p><?php esc_html_e('Queue an audit for this connected client website. The job consumes the shared Business allowance; saved findings appear in the SaaS agency dashboard.', 'ecommerce-audit-agent'); ?></p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <input type="hidden" name="action" value="eaa_run_agency_audit">
+                        <?php wp_nonce_field('eaa_run_agency_audit'); ?>
+                        <label for="eaa-agency-audit-url"><strong><?php esc_html_e('Client page URL', 'ecommerce-audit-agent'); ?></strong></label><br>
+                        <input id="eaa-agency-audit-url" name="agency_audit_url" type="url" class="regular-text" value="<?php echo esc_attr(home_url('/')); ?>" required>
+                        <?php submit_button(__('Queue client website audit', 'ecommerce-audit-agent'), 'primary eaa-primary', 'submit', false, array('disabled' => !$connected)); ?>
+                    </form>
+                    <?php if (!empty($settings['agency_last_audit_queued_at'])) : ?><p class="description"><?php esc_html_e('Last audit queued:', 'ecommerce-audit-agent'); ?> <?php echo esc_html((string) $settings['agency_last_audit_queued_at']); ?></p><?php endif; ?>
+                <?php else : ?>
                 <p><?php esc_html_e('The audit uses your SaaS plan quota. The PDF is streamed to your browser and is not stored in the public WordPress uploads directory.', 'ecommerce-audit-agent'); ?></p>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <input type="hidden" name="action" value="eaa_run_audit">
@@ -543,6 +891,7 @@ function eaa_wp_render_admin_page() {
                     <input id="eaa-domain" name="domain" type="url" class="regular-text" placeholder="https://example.com" required>
                     <?php submit_button(__('Run audit and download PDF', 'ecommerce-audit-agent'), 'primary eaa-primary', 'submit', false, array('disabled' => !$connected)); ?>
                 </form>
+                <?php endif; ?>
             </div>
             <div class="eaa-card" style="margin-top:16px">
                 <h2><?php esc_html_e('Subscription and billing', 'ecommerce-audit-agent'); ?></h2>
@@ -589,6 +938,32 @@ function eaa_wp_render_admin_page() {
                 </form>
             </div>
             <?php endif; ?>
+            <?php if (!$agency_mode) : ?>
+            <div class="eaa-card" style="margin-top:16px">
+                <h2><?php esc_html_e('Connect this site to a Business agency client', 'ecommerce-audit-agent'); ?></h2>
+                <p><?php esc_html_e('In your SaaS Business agency dashboard, generate a one-time token for this client workspace, then paste it here. This connects the site using a separate client credential; do not paste the agency owner license key.', 'ecommerce-audit-agent'); ?></p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="eaa_connect_agency_site">
+                    <?php wp_nonce_field('eaa_connect_agency_site'); ?>
+                    <label for="eaa-agency-token"><strong><?php esc_html_e('One-time agency client connection token', 'ecommerce-audit-agent'); ?></strong></label><br>
+                    <input id="eaa-agency-token" name="agency_connect_token" type="password" class="regular-text" autocomplete="new-password" required>
+                    <?php submit_button(__('Connect to agency client workspace', 'ecommerce-audit-agent'), 'secondary'); ?>
+                </form>
+            </div>
+            <?php endif; ?>
+            <?php if (!$agency_mode) : ?>
+            <div class="eaa-card" style="margin-top:16px">
+                <h2><?php esc_html_e('Customer account identity link', 'ecommerce-audit-agent'); ?></h2>
+                <p><?php esc_html_e('Generate a one-time identity code in your SaaS customer portal, then paste it here while signed in as the WordPress administrator whose identity should be associated with this store. The code expires after ten minutes and can be used once.', 'ecommerce-audit-agent'); ?></p>
+                <?php if (!empty($settings['identity_site_id'])) : ?><p><?php esc_html_e('Linked WordPress user:', 'ecommerce-audit-agent'); ?> <strong><?php echo esc_html((string) ($settings['identity_wp_user_login'] ?? 'connected administrator')); ?></strong> · <?php echo esc_html((string) ($settings['identity_linked_at'] ?? '')); ?></p><?php endif; ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="eaa_link_customer_identity">
+                    <?php wp_nonce_field('eaa_link_customer_identity'); ?>
+                    <label for="eaa-wordpress-link-token"><strong><?php esc_html_e('One-time code from the SaaS customer portal', 'ecommerce-audit-agent'); ?></strong></label><br>
+                    <input id="eaa-wordpress-link-token" name="wordpress_link_token" type="password" class="regular-text" autocomplete="off" minlength="32" maxlength="128" required>
+                    <?php submit_button(__('Link this WordPress administrator', 'ecommerce-audit-agent'), 'secondary'); ?>
+                </form>
+            </div>
             <div class="eaa-card" style="margin-top:16px">
                 <h2><?php esc_html_e('Connection and branding settings', 'ecommerce-audit-agent'); ?></h2>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
@@ -603,7 +978,14 @@ function eaa_wp_render_admin_page() {
                     <?php submit_button(__('Save and connect', 'ecommerce-audit-agent'), 'primary eaa-primary'); ?>
                 </form>
             </div>
-            <p class="description"><?php esc_html_e('Your license key is stored in the WordPress options database and sent only from your server to the configured HTTPS SaaS API. It is never rendered into public-page HTML.', 'ecommerce-audit-agent'); ?></p>
+            <?php endif; ?>
+            <?php if ($agency_mode) : ?>
+            <div class="eaa-card" style="margin-top:16px">
+                <h2><?php esc_html_e('Agency connection settings', 'ecommerce-audit-agent'); ?></h2>
+                <p><?php esc_html_e('This site uses a dedicated, encrypted client-site credential. The agency owner can revoke access from the SaaS dashboard.', 'ecommerce-audit-agent'); ?></p>
+            </div>
+            <?php endif; ?>
+            <p class="description"><?php esc_html_e('Credentials are encrypted in WordPress options and sent only from your server to the configured HTTPS SaaS API. They are never rendered into public-page HTML.', 'ecommerce-audit-agent'); ?></p>
         </div>
     </div>
     <?php

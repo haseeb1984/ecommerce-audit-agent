@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary, text
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -16,6 +16,7 @@ class SoftwareLicense(Base):
     max_monthly_audits = Column(Integer, default=100)
     is_active = Column(Boolean, default=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
+    billing_period_ends_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     api_keys = relationship("APIKey", back_populates="license")
@@ -52,8 +53,7 @@ class AuditLead(Base):
     email_subject = Column(String(255), nullable=True)
     email_body = Column(Text, nullable=True)
     source_channel = Column(String(50), default="wordpress_hub")
-    # Idempotency key for durable Hostinger scan jobs mirrored into the licensing DB.
-    source_job_id = Column(String(64), nullable=True, unique=True, index=True)
+    source_job_id = Column(String(64), unique=True, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     license = relationship("SoftwareLicense", back_populates="leads")
@@ -106,6 +106,14 @@ class AuditReport(Base):
 class SaaSPlanPackage(Base):
     """Operator-managed plan catalogue; raw SQL endpoints use the same table schema."""
     __tablename__ = "saas_plan_packages"
+    __table_args__ = (
+        Index(
+            "uq_saas_plan_packages_paddle_price_id",
+            "paddle_price_id",
+            unique=True,
+            postgresql_where=text("paddle_price_id IS NOT NULL"),
+        ),
+    )
 
     tier = Column(String(50), primary_key=True)
     label = Column(String(100), nullable=False)
@@ -115,6 +123,40 @@ class SaaSPlanPackage(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class CustomerLifecycleSyncOutbox(Base):
+    """Durable PostgreSQL-to-Hostinger customer lifecycle synchronization."""
+    __tablename__ = "customer_lifecycle_sync_outbox"
+    __table_args__ = (
+        Index("ix_customer_lifecycle_sync_due", "status", "next_attempt_at", "created_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    action = Column(String(24), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class BillingMirrorSyncOutbox(Base):
+    """Durable retry queue for canonical Paddle events mirrored to Hostinger."""
+    __tablename__ = "billing_mirror_sync_outbox"
+    __table_args__ = (
+        Index("ix_billing_mirror_sync_due", "status", "next_attempt_at", "created_at"),
+    )
+
+    event_id = Column(String(255), primary_key=True)
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    processed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class SaaSAdminActionLog(Base):
@@ -170,35 +212,114 @@ class PaymentWebhookEvent(Base):
 
 
 
-class CustomerLifecycleSyncOutbox(Base):
-    """Retryable delivery of canonical customer lifecycle changes to Hostinger."""
-    __tablename__ = "customer_lifecycle_sync_outbox"
+class AccountLoginChallenge(Base):
+    """Short-lived one-time email code used to establish a customer account session."""
+    __tablename__ = "account_login_challenges"
     __table_args__ = (
-        Index("ix_customer_lifecycle_outbox_due", "status", "next_attempt_at", "created_at"),
+        Index("ix_account_login_challenges_email_created", "email", "created_at"),
+        Index("ix_account_login_challenges_expires_at", "expires_at"),
     )
+
+    id = Column(String(64), primary_key=True)
+    email = Column(String(255), nullable=False, index=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class AccountSession(Base):
+    """Opaque customer bearer session; only its SHA-256 token digest is persisted."""
+    __tablename__ = "account_sessions"
+    __table_args__ = (
+        Index("ix_account_sessions_license_created", "license_id", "created_at"),
+        Index("ix_account_sessions_expires_at", "expires_at"),
+    )
+
+    token_hash = Column(String(64), primary_key=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    public_id = Column(String(64), unique=True, nullable=True, index=True)
+    user_agent = Column(String(500), nullable=True)
+
+
+
+class WordPressSite(Base):
+    """A WordPress installation linked to a single authenticated SaaS license."""
+    __tablename__ = "wordpress_sites"
+    __table_args__ = (
+        Index("ix_wordpress_sites_license_created", "license_id", "created_at"),
+        Index("ix_wordpress_sites_license_host", "license_id", "site_host", unique=True),
+    )
+
+    id = Column(String(64), primary_key=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    site_url = Column(String(2048), nullable=False)
+    site_host = Column(String(253), nullable=False)
+    admin_email = Column(String(254), nullable=False)
+    customer_email = Column(String(254), nullable=True)
+    wordpress_version = Column(String(30), nullable=True)
+    woocommerce_version = Column(String(30), nullable=True)
+    plugin_version = Column(String(30), nullable=False)
+    status = Column(String(20), nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    disconnected_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AccountEmailChangeChallenge(Base):
+    """One-time proof that an authenticated customer controls a proposed new email."""
+    __tablename__ = "account_email_change_challenges"
+    __table_args__ = (
+        Index("ix_account_email_change_challenges_old_created", "old_email", "created_at"),
+        Index("ix_account_email_change_challenges_new_created", "new_email", "created_at"),
+        Index("ix_account_email_change_challenges_expires_at", "expires_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    old_email = Column(String(255), nullable=False, index=True)
+    new_email = Column(String(255), nullable=False, index=True)
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+
+
+class WhiteLabelBranding(Base):
+    """Per-license white-label branding configuration."""
+    __tablename__ = "white_label_branding"
+
+    license_id = Column(Integer, ForeignKey("software_licenses.id", ondelete="CASCADE"), primary_key=True)
+    brand_name = Column(String(100), nullable=False)
+    logo_url = Column(String(2048), nullable=True)
+    primary_color = Column(String(7), nullable=False, default="#155a8a", server_default="#155a8a")
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class SaaSAdminCustomerNote(Base):
+    """Append-only internal support note attached to a normalized customer email."""
+    __tablename__ = "saas_admin_customer_notes"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    license_key = Column(String(100), nullable=False, index=True)
-    action = Column(String(40), nullable=False)
-    status = Column(String(20), nullable=False, default="pending", index=True)
-    attempts = Column(Integer, nullable=False, default=0)
-    next_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    last_error = Column(String(120), nullable=True)
+    customer_email = Column(String(254), nullable=False)
+    note = Column(Text, nullable=False)
+    created_by = Column(String(100), nullable=False, default="admin", server_default="admin")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    processed_at = Column(DateTime(timezone=True), nullable=True)
 
-
-class BillingMirrorSyncOutbox(Base):
-    """Retryable projection of canonical payment events into Hostinger billing history."""
-    __tablename__ = "billing_mirror_sync_outbox"
     __table_args__ = (
-        Index("ix_billing_mirror_outbox_due", "status", "next_attempt_at", "created_at"),
+        Index(
+            "ix_saas_admin_customer_notes_email_created",
+            func.lower(customer_email),
+            created_at.desc(),
+        ),
     )
-
-    event_id = Column(String(255), primary_key=True)
-    status = Column(String(20), nullable=False, default="pending", index=True)
-    attempts = Column(Integer, nullable=False, default=0)
-    next_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    last_error = Column(String(120), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    processed_at = Column(DateTime(timezone=True), nullable=True)

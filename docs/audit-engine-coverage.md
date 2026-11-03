@@ -8,7 +8,7 @@ For each successfully fetched HTML page, the bounded crawler records independent
 
 - Ecommerce catalog navigation and product/category signals.
 - Sensitive-looking fields in GET forms.
-- Accessible-name and ARIA relationships, including labels, duplicate IDs, and focusable content hidden from assistive technology.
+- Accessible-name and ARIA relationships, including native and custom `role=button` / `role=link` controls, labels, duplicate IDs, focusable content hidden from assistive technology, and unnamed input button/submit/reset controls.
 - Product structured-data inspection, including a clean no-signal result.
 - Hreflang and international SEO declarations.
 - Analytics/pixel tags and visible consent-interface signals.
@@ -36,6 +36,3 @@ A `verified` finding means the observation was confirmed; it does not automatica
 This remains a bounded public, unauthenticated HTTP(S) audit. It does not claim rendered-browser coverage, manual WCAG conformance, Google Search Console index status, backlink/competitor dataset analysis, authorized checkout completion, consent-dependent analytics event delivery, or active penetration testing. Those methods remain explicitly not assessed until the corresponding browser, owner-authorized provider, or manual-review capability is configured.
 
 The crawler remains capped by its page, link, response-size, and timeout limits. Findings and outcomes are evidence summaries, not a guarantee of ranking, conversion, security, or legal compliance.
-
-
-Mobile viewport checks also flag empty, non-numeric, non-finite, and out-of-range `initial-scale` directives. This remains source-level review only; it does not verify rendered reflow or browser zoom behavior.

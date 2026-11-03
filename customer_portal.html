@@ -18,17 +18,22 @@
 <p class="muted">Choose a configured plan to pay securely through Paddle. After confirmed payment, your license key is sent to the checkout email address. If no plan is shown, checkout has not been configured on this deployment.</p>
 <div id="plans" class="reports"><p class="muted">Loading available plans…</p></div>
 </section>
+<section class="panel" aria-labelledby="emailLoginHeading">
+<h2 id="emailLoginHeading">Sign in with your email</h2>
+<p class="muted">Enter the email address used at checkout. We will send a one-time code that expires in 10 minutes. Your session stays in this page's memory only.</p>
+<div class="row">
+  <div><label for="loginEmail">Account email</label><input id="loginEmail" type="text" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com"></div>
+  <div><label for="loginCode">Six-digit sign-in code</label><input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456"></div>
+</div>
+<div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button><button id="logoutAllSessions" class="secondary" type="button" disabled>Sign out all devices</button></div>
+<div id="deviceSessions" class="reports" aria-live="polite" style="margin-top:14px"><p class="muted">Sign in to manage devices connected to your customer account.</p></div>
+<div id="loginStatus" class="status" role="status" aria-live="polite">Passwordless sign-in is available for accounts with a verified checkout email.</div>
+</section>
 <section class="panel">
 <h2>1. Connect your license</h2>
 <p class="muted">Your key stays in this page's memory only; it is not saved in browser storage. Use the API key or license key issued to you.</p>
-<div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option><option value="X-Customer-Session">Customer session</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
-<div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div>
-<hr>
-<h3>Passwordless customer sign-in</h3>
-<p class="muted">Enter the email address registered to your account. If it matches an account, a one-time token will be sent. The token expires after 10 minutes.</p>
-<div class="row"><div><label for="loginEmail">Account email</label><input id="loginEmail" type="email" maxlength="254" autocomplete="email" placeholder="name@example.com"></div><div><label for="loginToken">Sign-in token</label><input id="loginToken" type="text" maxlength="128" autocomplete="one-time-code" placeholder="Paste the emailed token"></div></div>
-<div class="report-actions"><button id="requestLogin" type="button">Email me a sign-in token</button><button id="verifyLogin" class="secondary" type="button">Verify token and sign in</button></div>
-<div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
+<div class="row"><div><label for="authType">Credential type</label><select id="authType"><option value="X-License-Key">License key</option><option value="X-API-Key">API key</option></select></div><div><label for="credential">Credential</label><input id="credential" type="password" autocomplete="off" placeholder="Paste your key"></div></div>
+<div class="report-actions"><button id="connect" type="button">Load account</button><button id="disconnectAccount" class="secondary" type="button" disabled>Disconnect & clear account data</button></div><div id="connectStatus" class="status" role="status" aria-live="polite">Not connected.</div>
 </section>
 <section class="panel" aria-labelledby="profileHeading">
 <h2 id="profileHeading">Account profile</h2>
@@ -36,25 +41,65 @@
 <div class="row"><div><label for="profileName">Account name</label><input id="profileName" type="text" maxlength="255" autocomplete="organization" placeholder="Your business or account name"></div><div><label for="profileTier">Current plan</label><input id="profileTier" type="text" readonly aria-readonly="true" value="—"></div></div>
 <p id="profileMeta" class="muted">Connect your account to view profile details.</p>
 <button id="saveProfile" type="button" disabled>Save account name</button>
-<hr>
-<h3>Email address</h3>
-<p class="muted">Changing your account email requires a one-time verification token sent to the new address. Billing history is synchronized after verification.</p>
-<div class="row"><div><label for="emailChangeAddress">New email address</label><input id="emailChangeAddress" type="email" maxlength="254" autocomplete="email" placeholder="name@example.com"></div><div><label for="emailChangeToken">Verification token</label><input id="emailChangeToken" type="text" maxlength="128" autocomplete="one-time-code" placeholder="Paste the token from your email"></div></div>
-<div class="report-actions"><button id="requestEmailChange" type="button" disabled>Send verification token</button><button id="confirmEmailChange" class="secondary" type="button" disabled>Verify and update email</button></div>
 <div id="profileStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+<div class="emailbox" style="margin-top:16px">
+  <label for="newAccountEmail">Change verified account email</label>
+  <input id="newAccountEmail" type="email" maxlength="254" autocomplete="email" placeholder="new-address@example.com">
+  <div class="report-actions"><button id="requestEmailChange" type="button" disabled>Send verification code</button></div>
+  <label for="emailChangeCode">Six-digit code sent to the new address</label>
+  <input id="emailChangeCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456">
+  <button id="verifyEmailChange" type="button" disabled>Verify and update account email</button>
+  <p class="muted">Your existing email and linked licenses remain unchanged until the new address is verified. On success, other signed-in devices are signed out. Paddle billing identity is not changed.</p>
+  <div id="emailChangeStatus" class="status" role="status" aria-live="polite">Sign in with email to change your account address.</div>
+</div>
 </section>
-<section class="panel" aria-labelledby="sessionsHeading">
-<h2 id="sessionsHeading">Active sign-in sessions</h2>
-<p class="muted">Review active customer portal sessions for this account. Session tokens are never displayed. Use “Revoke other sessions” if a device is lost or you suspect an old sign-in is still active.</p>
-<div id="sessionList" class="reports"><p class="muted">Connect with passwordless sign-in to manage sessions.</p></div>
-<div class="report-actions"><button id="refreshSessions" class="secondary" type="button" disabled>Refresh sessions</button><button id="revokeOtherSessions" type="button" disabled>Revoke other sessions</button></div>
-<div id="sessionStatus" class="status" role="status" aria-live="polite">Customer session sign-in required.</div>
+<section class="panel" id="brandingPanel" aria-labelledby="brandingHeading" hidden>
+<h2 id="brandingHeading">White-label branding</h2>
+<p class="muted">Configure the brand identity used by supported white-label experiences. This section is available on plans that include white-label branding.</p>
+<div class="row">
+  <div><label for="brandName">Brand name</label><input id="brandName" type="text" maxlength="100" placeholder="Your agency name"></div>
+  <div><label for="brandColor">Primary brand color</label><input id="brandColor" type="color" value="#155a8a" style="width:100%;min-height:44px"></div>
+</div>
+<label for="brandLogoUrl">Logo URL (HTTPS)</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.png">
+<div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
+<div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to load white-label settings.</div>
+</section>
+<section class="panel" id="agencyPanel" aria-labelledby="agencyHeading" hidden>
+<h2 id="agencyHeading">Agency client workspaces</h2>
+<p class="muted">Business plan agency workspace. Create separate client workspaces, connect one verified WordPress website per client, assign audit batches, review saved findings, manage team invitations and workspace access, and monitor the shared Business quota. Team members sign in separately at <a href="/agency">the Agency Team Portal</a>.</p>
+<div class="row">
+  <div><label for="agencyClientName">Client / workspace name</label><input id="agencyClientName" type="text" maxlength="160" placeholder="Client company name"></div>
+  <div><label for="agencyClientReference">Your client reference (optional)</label><input id="agencyClientReference" type="text" maxlength="120" placeholder="CRM reference"></div>
+</div>
+<div class="report-actions" style="margin-top:12px"><button id="createAgencyClient" type="button" disabled>Add client workspace</button><button id="refreshAgencyClients" class="secondary" type="button" disabled>Refresh clients</button></div>
+<h3>Shared Business quota and client usage</h3>
+<div id="agencyUsage" class="reports" aria-live="polite"><p class="muted">Usage will appear when the agency loads.</p></div>
+<div id="agencyClients" class="reports" aria-live="polite"><p class="muted">Connect a Business account to manage agency clients.</p></div>
+<h3>Agency team</h3>
+<p class="muted">Invite team members by email and assign an agency role. Invitations expire after 48 hours.</p>
+<div class="row"><div><label for="agencyTeamEmail">Team member email</label><input id="agencyTeamEmail" type="email" maxlength="254" placeholder="teammate@example.com"></div>
+<div><label for="agencyTeamRole">Agency role</label><select id="agencyTeamRole"><option value="analyst">Analyst</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select></div></div>
+<label for="agencyTeamWorkspaces">Client workspaces this member can be assigned to (optional)</label><select id="agencyTeamWorkspaces" multiple size="4" style="width:100%;padding:10px;border:1px solid #b8c7d8;border-radius:8px"></select>
+<div class="report-actions" style="margin-top:12px"><button id="inviteAgencyTeam" type="button" disabled>Send invitation</button><button id="refreshAgencyTeam" class="secondary" type="button" disabled>Refresh team</button></div>
+<div id="agencyTeam" class="reports" aria-live="polite"><p class="muted">No team members loaded.</p></div>
+<div id="agencyStatus" class="status" role="status" aria-live="polite">Business plan required.</div>
+</section>
+<section class="panel" aria-labelledby="wordpressSitesHeading">
+<h2 id="wordpressSitesHeading">Connected WordPress sites</h2>
+<p class="muted">Connect one WordPress or WooCommerce website to this customer license. Business agency owners should instead create a client workspace above and generate its separate one-time agency connection token; this keeps each client website isolated from the owner license and other clients.</p>
+<p><a href="/wordpress-plugin-guide" target="_blank" rel="noopener">Installation guide</a> · <a href="/wordpress-plugin.zip">Download plugin ZIP</a></p>
+<div id="wordpressSites" class="reports" aria-live="polite"><p class="muted">Connect your account to view WordPress installations.</p></div>
+<div id="wordpressSitesStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
+<div class="report-actions"><button id="generateWordPressLinkCode" type="button" disabled>Generate one-time WordPress identity code</button></div>
+<div id="wordpressLinkCodePanel" class="status" hidden aria-live="polite"><strong>One-time WordPress identity code</strong><p id="wordpressLinkCode" style="overflow-wrap:anywhere"></p><p id="wordpressLinkCodeExpiry" class="muted"></p><button id="copyWordPressLinkCode" class="secondary" type="button">Copy code</button><button id="hideWordPressLinkCode" class="secondary" type="button">Hide code</button></div>
+<div id="wordpressLinkCodeStatus" class="status" role="status" aria-live="polite">Connect your account to generate a one-time code.</div>
 </section>
 <section class="panel" aria-labelledby="usageHeading">
 <h2 id="usageHeading">Account usage</h2>
 <p id="usageSummary" class="muted">Connect your license to load monthly usage.</p>
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
+<div class="panel" style="margin-top:12px"><h3>Included plan features</h3><div id="planFeatures" class="muted" aria-live="polite">Connect your account to view included features.</div></div>
 </section>
 <section class="panel" aria-labelledby="billingHistoryHeading">
 <h2 id="billingHistoryHeading">Billing history</h2>
@@ -74,16 +119,6 @@
 <div id="apiKeys" class="reports" aria-live="polite"><p class="muted">Connect your account to manage API keys.</p></div>
 <div id="apiKeyStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 </section>
-<section class="panel" aria-labelledby="websitesHeading">
-<h2 id="websitesHeading">Website inventory and background scans</h2>
-<p class="muted">Register public storefronts once, then queue repeatable background scans. Scan jobs continue through the worker even if you leave this page.</p>
-<form id="websiteForm">
-<div class="row"><div><label for="websiteName">Website name (optional)</label><input id="websiteName" type="text" maxlength="120" placeholder="My store"></div><div><label for="websiteUrl">Public website URL</label><input id="websiteUrl" type="url" required maxlength="2048" placeholder="https://example.com"></div></div>
-<div class="report-actions" style="margin-top:12px"><button id="addWebsite" type="submit">Register website</button><button id="refreshWebsites" class="secondary" type="button">Refresh websites and scans</button></div>
-</form>
-<div id="websiteList" class="reports" aria-live="polite"><p class="muted">Connect your account to manage websites.</p></div>
-<div id="websiteStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
-</section>
 <section class="panel" aria-labelledby="activityHeading">
 <h2 id="activityHeading">Recent audit activity</h2>
 <p class="muted">See recent audit runs associated with this account. Contact details and generated outreach content are never shown in this activity list.</p>
@@ -92,6 +127,24 @@
 <div id="auditActivity" class="reports"><p class="muted">Connect your account to load audit activity.</p></div>
 <p id="activityPageStatus" class="muted" aria-live="polite">No activity loaded.</p>
 <div class="report-actions"><button id="refreshActivity" class="secondary" type="button">Refresh activity</button><button id="loadMoreActivity" class="secondary" type="button" hidden>Load more activity</button></div>
+</section>
+<section class="panel" aria-labelledby="bulkScanHeading">
+<h2 id="bulkScanHeading">Bulk website scanning</h2>
+<p class="muted">Submit multiple public website URLs. The system stores each URL and its scan history, groups submissions into sequential batches of 10 or 11, and displays queue progress here.</p>
+<label for="bulkUrls">Website URLs (one per line)</label>
+<textarea id="bulkUrls" rows="7" maxlength="250000" placeholder="https://store-one.example&#10;https://store-two.example&#10;https://store-three.example" style="width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;font:inherit"></textarea>
+<div id="agencyAuditWorkspaceField" hidden><label for="agencyAuditWorkspace">Assign audit batch to client workspace</label><select id="agencyAuditWorkspace"><option value="">Personal account (not assigned to a client)</option></select></div>
+<div class="row">
+  <div><label for="bulkBatchSize">URLs per batch</label><select id="bulkBatchSize"><option value="10">10 websites</option><option value="11">11 websites</option></select></div>
+  <div style="display:flex;align-items:end;gap:8px"><button id="submitBulkScans" type="button" disabled>Queue website scans</button><button id="refreshScanBatches" class="secondary" type="button" disabled>Refresh progress</button></div>
+</div>
+<p class="muted">A submission can contain up to 1,000 URLs. Package entitlements and audit quota are checked by the licensing workflow during processing.</p>
+<div id="bulkScanStatus" class="status" role="status" aria-live="polite">Connect your account to submit website batches.</div>
+<h3>Saved website inventory</h3>
+<div id="websiteInventory" class="reports" aria-live="polite"><p class="muted">Connect your account to load saved websites.</p></div>
+<button id="loadMoreWebsites" class="secondary" type="button" hidden>Load more websites</button>
+<div id="scanBatches" class="reports" aria-live="polite"><p class="muted">No scan batches loaded.</p></div>
+<div id="scanBatchDetail" class="reports" aria-live="polite"></div>
 </section>
 <section class="panel">
 <h2>2. Run a website audit</h2>
@@ -112,6 +165,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   let credential = "";
+  let sessionToken = "";
   let headerName = "X-License-Key";
   // Invalidate in-flight authenticated requests whenever the connected identity changes
   // or the user disconnects, so late responses cannot repopulate another account's view.
@@ -134,12 +188,15 @@
   let billingOffset = 0;
   let billingTotal = 0;
   let billingLoading = false;
+  let websiteOffset = 0;
+  let websiteHasMore = false;
+  let websitesLoading = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
-  const authHeaders = () => ({[headerName]: credential});
+  const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "requestEmailChange", "confirmEmailChange", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "addWebsite", "refreshWebsites"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
   }
   setAccountControls(false);
   loadPlans();
@@ -179,6 +236,28 @@
     }
     return response;
   }
+  async function acceptAgencyInvitationFromLink() {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("agency_invitation");
+    if (!token) return;
+    params.delete("agency_invitation");
+    const remaining = params.toString();
+    window.history.replaceState({}, document.title, window.location.pathname + (remaining ? "?" + remaining : "") + window.location.hash);
+    const status = $("loginStatus");
+    status.textContent = "Verifying your agency invitation…";
+    try {
+      const response = await fetch("/api/v1/account/agency/team/invitations/accept", {
+        method:"POST", cache:"no-store", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({token})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "This invitation is invalid or has expired.");
+      status.textContent = "Agency invitation accepted for " + data.email + ". Your team account is active. Sign in to your assigned client workspaces at /agency.";
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+  acceptAgencyInvitationFromLink();
   async function loadPlans() {
     const container = $("plans");
     try {
@@ -392,8 +471,7 @@
       const card = document.createElement("article"); card.className = "report";
       const meta = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = "API key · " + String(item.key_prefix || "prefix unavailable");
-      const detail = document.createElement("small");
-      const created = item.created_at ? new Date(item.created_at) : null;
+      const detail = document.createElement("small");      const created = item.created_at ? new Date(item.created_at) : null;
       detail.textContent = "Key ID " + item.id + " · Created " + (created && !Number.isNaN(created.getTime()) ? created.toLocaleString() : "date unavailable");
       meta.append(title, detail);
       const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "secondary"; revoke.textContent = "Revoke";
@@ -447,112 +525,78 @@
       if (operationSessionVersion === accountSessionVersion) renderApiKeys();
     }
   }
-  async function loadWebsiteScans(website, card) {
-    const response = await api("/api/v1/websites/" + encodeURIComponent(website.id) + "/scans?limit=10");
+  async function loadDeviceSessions() {
+    const container = $("deviceSessions");
+    if (!sessionToken) { container.replaceChildren(); const note=document.createElement("p"); note.className="muted"; note.textContent="Email sign-in is required to manage devices."; container.append(note); return; }
+    const response = await api("/api/v1/account/auth/sessions");
     const data = await response.json();
-    const history = document.createElement("div"); history.className = "reports";
-    const heading = document.createElement("strong"); heading.textContent = "Recent scans"; history.append(heading);
-    if (!Array.isArray(data.items) || !data.items.length) {
-      const empty = document.createElement("small"); empty.textContent = "No background scans yet."; history.append(empty);
-    } else {
-      for (const job of data.items) {
-        const row = document.createElement("div"); row.className = "status";
-        const state = document.createElement("strong"); state.textContent = String(job.status || "unknown").replaceAll("_", " ");
-        const detail = document.createElement("small");
-        detail.textContent = " · " + (job.created_at ? new Date(job.created_at).toLocaleString() : "Time unavailable") +
-          " · Attempts: " + Number(job.attempts || 0) + "/" + Number(job.max_attempts || 0) +
-          (job.finding_count == null ? "" : " · Findings: " + Number(job.finding_count));
-        row.append(state, detail);
-        if (job.result_available && job.status === "completed") {
-          const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View scan findings";
-          view.addEventListener("click", async () => {
-            view.disabled = true;
-            try {
-              const resultResponse = await api("/api/v1/scans/" + encodeURIComponent(job.job_id) + "/result");
-              const result = await resultResponse.json();
-              const summary = document.createElement("p"); summary.className = "muted";
-              summary.textContent = "Completed scan · " + Number(result.finding_count || 0) + " findings · " + String(result.website_url || "");
-              const titles = document.createElement("ul");
-              for (const finding of (Array.isArray(result.findings) ? result.findings : []).slice(0, 8)) {
-                const item = document.createElement("li");
-                item.textContent = String(finding.title || finding.category || "Finding") + " · " + String(finding.severity || "unrated");
-                titles.append(item);
-              }
-              const previous = card.querySelector(".scan-result-preview");
-              if (previous) previous.remove();
-              const preview = document.createElement("div"); preview.className = "status scan-result-preview";
-              preview.append(summary, titles); card.append(preview);
-            } catch (error) {
-              setStatus("websiteStatus", error.message, "error");
-            } finally { view.disabled = false; }
-          });
-          row.append(view);
-        } else if (job.error_code) {
-          const error = document.createElement("small"); error.textContent = " · " + String(job.error_code); row.append(error);
-        }
-        history.append(row);
-      }
+    container.replaceChildren();
+    const heading = document.createElement("strong"); heading.textContent = "Signed-in devices (" + ((data.items || []).length) + ")"; container.append(heading);
+    for (const item of (Array.isArray(data.items) ? data.items : [])) {
+      const card = document.createElement("div"); card.className = "report";
+      const details = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = item.current ? "This device" : (item.client_name || "Customer device");
+      const meta = document.createElement("small");
+      meta.textContent = String(item.user_agent || "Unknown device").slice(0,180) + " · Last active: " + (item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Not yet active");
+      details.append(title, meta); card.append(details);
+      if (!item.current) {
+        const revoke = document.createElement("button"); revoke.type="button"; revoke.className="secondary"; revoke.textContent="Sign out device";
+        revoke.addEventListener("click", async () => {
+          revoke.disabled=true;
+          try { await api("/api/v1/account/auth/sessions/" + encodeURIComponent(item.id), {method:"DELETE"}); await loadDeviceSessions(); setStatus("loginStatus","Selected device has been signed out.","success"); }
+          catch(error) { revoke.disabled=false; setStatus("loginStatus",error.message,"error"); }
+        });
+        card.append(revoke);
+      } else { const current=document.createElement("small"); current.textContent="Current browser session"; card.append(current); }
+      container.append(card);
     }
-    const previous = card.querySelector(".scan-history");
-    if (previous) previous.remove();
-    history.className = "reports scan-history"; card.append(history);
+    if (!(data.items || []).length) { const note=document.createElement("p"); note.className="muted"; note.textContent="No active devices found."; container.append(note); }
   }
-  async function loadWebsites() {
-    const container = $("websiteList");
-    try {
-      const response = await api("/api/v1/websites");
-      const data = await response.json();
-      const items = Array.isArray(data.items) ? data.items : [];
-      container.replaceChildren();
-      if (!items.length) {
-        const empty = document.createElement("p"); empty.className = "muted";
-        empty.textContent = "No websites registered yet. Add a public storefront above to queue your first scan.";
-        container.append(empty);
-      }
-      for (const website of items) {
-        const card = document.createElement("article"); card.className = "report";
-        const info = document.createElement("div");
-        const title = document.createElement("strong"); title.textContent = String(website.display_name || "Website");
-        const url = document.createElement("small"); url.textContent = String(website.website_url || "");
-        const last = document.createElement("small");
-        last.textContent = website.last_scan_at ? "Last scan: " + new Date(website.last_scan_at).toLocaleString() : "No completed scans yet";
-        info.append(title, url, last);
-        const actions = document.createElement("div"); actions.className = "report-actions";
-        const scan = document.createElement("button"); scan.type = "button"; scan.textContent = "Queue scan";
-        scan.addEventListener("click", async () => {
-          scan.disabled = true;
-          try {
-            const queued = await api("/api/v1/websites/" + encodeURIComponent(website.id) + "/scans", {method:"POST"});
-            const job = await queued.json();
-            setStatus("websiteStatus", "Scan queued. Job ID: " + job.job_id + ". Refresh scan history to follow progress.", "success");
-            await loadWebsiteScans(website, card);
-          } catch (error) { setStatus("websiteStatus", error.message, "error"); }
-          finally { scan.disabled = false; }
-        });
-        const history = document.createElement("button"); history.type = "button"; history.className = "secondary"; history.textContent = "Scan history";
-        history.addEventListener("click", async () => {
-          history.disabled = true;
-          try { await loadWebsiteScans(website, card); }
-          catch (error) { setStatus("websiteStatus", error.message, "error"); }
-          finally { history.disabled = false; }
-        });
-        const archive = document.createElement("button"); archive.type = "button"; archive.className = "secondary"; archive.textContent = "Archive";
-        archive.addEventListener("click", async () => {
-          if (!window.confirm("Archive this website? Existing scan history will be retained.")) return;
-          archive.disabled = true;
-          try { await api("/api/v1/websites/" + encodeURIComponent(website.id), {method:"DELETE"}); await loadWebsites(); setStatus("websiteStatus", "Website archived. Existing scan history is retained.", "success"); }
-          catch (error) { setStatus("websiteStatus", error.message, "error"); }
-          finally { archive.disabled = false; }
-        });
-        actions.append(scan, history, archive); card.append(info, actions); container.append(card);
-      }
-      setStatus("websiteStatus", "Loaded " + items.length + " registered website(s).", "success");
-    } catch (error) {
-      container.replaceChildren();
-      const message = document.createElement("p"); message.className = "muted"; message.textContent = "Website inventory is unavailable. " + error.message;
-      container.append(message); setStatus("websiteStatus", error.message, "error");
-      throw error;
+
+  async function loadWordPressSites() {
+    const container = $("wordpressSites");
+    const response = await api("/api/v1/account/wordpress-sites");
+    const data = await response.json();
+    container.replaceChildren();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
+      container.append(empty);
     }
+    for (const site of items) {
+      const card = document.createElement("div"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = site.site_url || site.site_host || "WordPress site";
+      const meta = document.createElement("small");
+      const health = site.connection_health || site.status || "unknown";
+      meta.textContent = "Status: " + health + " · WP user " + (site.wordpress_user_login || "not linked") + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
+      info.append(title, meta);
+      if (health === "stale") {
+        const recovery = document.createElement("small");
+        recovery.className = "muted";
+        recovery.textContent = "No plugin heartbeat received for over " + (site.stale_after_days || 7) + " days. Open WordPress Admin → Plugins, confirm the Ecommerce Audit Agent plugin is active, then use its connection settings to reconnect with this license.";
+        info.append(recovery);
+      }
+      card.append(info);
+      if (site.status === "active") {
+        const button = document.createElement("button"); button.className = "secondary"; button.type = "button"; button.textContent = "Disconnect site";
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Disconnect " + (site.site_host || "this WordPress site") + " from the currently selected license? Existing reports and billing history will remain available.")) return;
+          button.disabled = true;
+          try {
+            await api("/api/v1/account/wordpress-sites/" + encodeURIComponent(site.site_id) + "/disconnect", {method:"POST"});
+            setStatus("wordpressSitesStatus", "WordPress site disconnected. License and audit reports were not deleted.", "success");
+            await loadWordPressSites();
+          } catch (error) {
+            setStatus("wordpressSitesStatus", error.message, "error"); button.disabled = false;
+          }
+        });
+        card.append(button);
+      }
+      container.append(card);
+    }
+    setStatus("wordpressSitesStatus", items.length + " WordPress installation(s) found for this license.", "success");
   }
   async function loadProfile() {
     const response = await api("/api/v1/account/profile");
@@ -561,38 +605,387 @@
     $("profileTier").value = profile.tier || "—";
     const created = profile.created_at ? new Date(profile.created_at).toLocaleDateString() : "unknown";
     const expires = profile.expires_at ? new Date(profile.expires_at).toLocaleDateString() : "no expiry set";
-    $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · Expiry: " + expires;
+    const billingPeriodEnd = profile.billing_period_ends_at ? new Date(profile.billing_period_ends_at).toLocaleDateString() : "not available";
+    $("profileMeta").textContent = "Status: " + (profile.account_status || "unknown") + " · Created: " + created + " · License expiry: " + expires + " · Current billing period ends: " + billingPeriodEnd;
     setStatus("profileStatus", "Account profile loaded.", "success");
     return profile;
   }
-  async function loadCustomerSessions() {
-    const response = await api("/api/v1/account/sessions");
-    const payload = await response.json();
-    const container = $("sessionList");
+  async function loadBranding() {
+    const response = await api("/api/v1/account/branding");
+    const branding = await response.json();
+    $("brandName").value = branding.brand_name || "";
+    $("brandLogoUrl").value = branding.logo_url || "";
+    $("brandColor").value = /^#[0-9a-fA-F]{6}$/.test(branding.primary_color || "") ? branding.primary_color : "#155a8a";
+    setStatus("brandingStatus", branding.configured ? "Saved white-label settings loaded." : "No custom branding saved yet. Set your brand details and save.", "success");
+    return branding;
+  }
+  async function saveBranding() {
+    if (!credential) { setStatus("brandingStatus", "Connect your account first.", "error"); return; }
+    const brandName = $("brandName").value.trim();
+    const primaryColor = $("brandColor").value;
+    const logoUrl = $("brandLogoUrl").value.trim();
+    if (!brandName) { setStatus("brandingStatus", "Enter a brand name.", "error"); return; }
+    if (logoUrl && (!/^https:\/\//i.test(logoUrl) || !/^https:\/\/[^\s]+$/i.test(logoUrl))) {
+      setStatus("brandingStatus", "Logo URL must be a valid HTTPS URL.", "error"); return;
+    }
+    const button = $("saveBranding"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/branding", {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({brand_name: brandName, logo_url: logoUrl || null, primary_color: primaryColor})
+      });
+      const saved = await response.json();
+      $("brandName").value = saved.brand_name || brandName;
+      $("brandLogoUrl").value = saved.logo_url || "";
+      $("brandColor").value = saved.primary_color || primaryColor;
+      setStatus("brandingStatus", "White-label branding saved.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message, "error");
+    } finally { button.disabled = !credential; }
+  }
+  async function loadAgencyUsage() {
+    const response = await api("/api/v1/account/agency/usage");
+    const data = await response.json();
+    const container = $("agencyUsage"); container.replaceChildren();
+    const summary = document.createElement("p");
+    summary.textContent = "Shared monthly allowance: " + data.monthly_limit +
+      " · Account used / pending: " + data.account_used_and_pending +
+      " · Remaining: " + data.account_remaining +
+      " · Active concurrency: " + data.active_concurrent_audits + " / " + data.concurrent_limit;
+    container.append(summary);
+    const agencyTotal = document.createElement("p"); agencyTotal.className = "muted";
+    agencyTotal.textContent = "Completed agency client audits this month: " + data.agency_completed +
+      " · Period: " + data.period_start + " to " + data.period_end;
+    container.append(agencyTotal);
+    for (const item of (Array.isArray(data.items) ? data.items : [])) {
+      const row = document.createElement("div"); row.className = "report";
+      const name = document.createElement("strong"); name.textContent = item.workspace_name;
+      const count = document.createElement("small"); count.textContent = item.completed_audits + " completed audits · " + item.status;
+      row.append(name, count); container.append(row);
+    }
+  }
+  async function loadAgencyDashboard() {
+    const provision = await api("/api/v1/account/agency", {method: "POST"});
+    const agency = await provision.json();
+    const response = await api("/api/v1/account/agency/clients");
+    const data = await response.json();
+    await loadAgencyUsage();
+    const workspaceSelect = $("agencyAuditWorkspace");
+    const selectedWorkspace = workspaceSelect.value;
+    workspaceSelect.replaceChildren();
+    const personalOption = document.createElement("option");
+    personalOption.value = "";
+    personalOption.textContent = "Personal account (not assigned to a client)";
+    workspaceSelect.append(personalOption);
+    for (const workspace of (Array.isArray(data.items) ? data.items : [])) {
+      if (workspace.status !== "active") continue;
+      const option = document.createElement("option");
+      option.value = workspace.id;
+      option.textContent = workspace.display_name;
+      workspaceSelect.append(option);
+    }
+    workspaceSelect.value = selectedWorkspace;
+    const teamWorkspaceSelect = $("agencyTeamWorkspaces");
+    const selectedTeamWorkspaces = new Set(Array.from(teamWorkspaceSelect.selectedOptions).map(option => option.value));
+    teamWorkspaceSelect.replaceChildren();
+    for (const workspace of (Array.isArray(data.items) ? data.items : [])) {
+      if (workspace.status !== "active") continue;
+      const option = document.createElement("option");
+      option.value = workspace.id;
+      option.textContent = workspace.display_name;
+      option.selected = selectedTeamWorkspaces.has(workspace.id);
+      teamWorkspaceSelect.append(option);
+    }
+    $("agencyAuditWorkspaceField").hidden = false;
+    await loadAgencyTeam();
+    const container = $("agencyClients");
     container.replaceChildren();
-    const items = Array.isArray(payload.items) ? payload.items : [];
+    const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) {
-      const empty = document.createElement("p"); empty.className = "muted";
-      empty.textContent = "No active customer portal sessions were found.";
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No client workspaces yet. Add your first client above.";
       container.append(empty);
     }
-    let otherCount = 0;
-    for (const session of items) {
-      if (!session.current) otherCount += 1;
-      const card = document.createElement("div"); card.className = "report";
-      const details = document.createElement("div");
+    for (const item of items) {
+      const card = document.createElement("article");
+      card.className = "report";
+      const info = document.createElement("div");
       const title = document.createElement("strong");
-      title.textContent = session.current ? "This session" : "Other active session";
-      const meta = document.createElement("small");
-      const created = new Date(session.created_at), expires = new Date(session.expires_at);
-      meta.textContent = "Signed in: " + (Number.isNaN(created.getTime()) ? "unknown" : created.toLocaleString()) +
-        " · Expires: " + (Number.isNaN(expires.getTime()) ? "unknown" : expires.toLocaleString());
-      details.append(title, meta); card.append(details); container.append(card);
+      title.textContent = item.display_name;
+      const detail = document.createElement("small");
+      detail.textContent = "Status: " + item.status + (item.external_reference ? " · Reference: " + item.external_reference : "");
+      info.append(title, detail);
+      const actions = document.createElement("div");
+      actions.className = "report-actions";
+      const auditHistory = document.createElement("button");
+      auditHistory.type = "button"; auditHistory.className = "secondary"; auditHistory.textContent = "View audit history";
+      const auditHistoryPanel = document.createElement("div"); auditHistoryPanel.className = "reports";
+      auditHistory.addEventListener("click", () => loadAgencyClientAudits(item.id, auditHistoryPanel));
+      actions.append(auditHistory);
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "secondary";
+      toggle.textContent = item.status === "active" ? "Archive client" : "Reactivate client";
+      toggle.addEventListener("click", async () => {
+        toggle.disabled = true;
+        try {
+          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
+            method: "PATCH", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({status: item.status === "active" ? "archived" : "active"})
+          });
+          await loadAgencyDashboard();
+        } catch (error) {
+          setStatus("agencyStatus", error.message, "error");
+        } finally { toggle.disabled = false; }
+      });
+      actions.append(toggle);
+      const websitePanel = document.createElement("div"); websitePanel.className = "reports";
+      const websiteStatus = document.createElement("small"); websiteStatus.textContent = "Checking WordPress connection…";
+      const connectWebsite = document.createElement("button"); connectWebsite.type = "button";
+      connectWebsite.className = "secondary"; connectWebsite.textContent = "Generate WordPress connection token";
+      const tokenPanel = document.createElement("div"); tokenPanel.className = "reports";
+      connectWebsite.addEventListener("click", async () => {
+        connectWebsite.disabled = true;
+        try {
+          const tokenResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website-connection-token", {method:"POST"});
+          const tokenData = await tokenResponse.json();
+          tokenPanel.replaceChildren();
+          const instruction = document.createElement("p");
+          instruction.textContent = "Copy this one-time token into the Ecommerce Audit Agent plugin on the client's WordPress site. It expires " + tokenData.expires_at + " and is shown only once.";
+          const token = document.createElement("input"); token.type = "text"; token.readOnly = true;
+          token.value = tokenData.connection_token; token.autocomplete = "off"; token.spellcheck = false;
+          const copy = document.createElement("button"); copy.type = "button"; copy.className = "secondary"; copy.textContent = "Copy token";
+          copy.addEventListener("click", async () => {
+            try { await navigator.clipboard.writeText(token.value); copy.textContent = "Copied"; }
+            catch (_) { token.select(); document.execCommand("copy"); copy.textContent = "Copied"; }
+          });
+          tokenPanel.append(instruction, token, copy);
+          websiteStatus.textContent = "Connection token generated; awaiting WordPress plugin registration.";
+          connectWebsite.textContent = "Token issued — awaiting connection";
+        } catch (error) {
+          setStatus("agencyStatus", error.message, "error");
+        } finally { if (!tokenPanel.childElementCount) connectWebsite.disabled = false; else connectWebsite.disabled = true; }
+      });
+      const disconnectWebsite = document.createElement("button"); disconnectWebsite.type = "button";
+      disconnectWebsite.className = "secondary"; disconnectWebsite.textContent = "Disconnect website"; disconnectWebsite.hidden = true;
+      disconnectWebsite.addEventListener("click", async () => {
+        disconnectWebsite.disabled = true;
+        try {
+          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website/disconnect", {method:"POST"});
+          websiteStatus.textContent = "Website disconnected. Generate a new token to connect a replacement.";
+          disconnectWebsite.hidden = true; connectWebsite.hidden = false; tokenPanel.replaceChildren();
+        } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+        finally { disconnectWebsite.disabled = false; }
+      });
+      websitePanel.append(websiteStatus, connectWebsite, disconnectWebsite, tokenPanel);
+      if (item.status !== "active") connectWebsite.disabled = true;
+      if (item.status === "active") {
+        (async () => {
+          try {
+            const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
+            const website = await websiteResponse.json();
+            if (website.connected) {
+              websiteStatus.textContent = "Connected: " + website.site_url + " · Last seen: " + (website.last_seen_at || "not reported");
+              connectWebsite.hidden = true; disconnectWebsite.hidden = false;
+            } else { websiteStatus.textContent = "No WordPress website connected to this client."; }
+          } catch (error) { websiteStatus.textContent = error.message; }
+        })();
+      }
+      card.append(info, actions, websitePanel, auditHistoryPanel);
+      container.append(card);
     }
-    $("revokeOtherSessions").disabled = !credential || headerName !== "X-Customer-Session" || otherCount === 0;
-    $("refreshSessions").disabled = !credential || headerName !== "X-Customer-Session";
-    setStatus("sessionStatus", "Showing " + items.length + " active session(s), including this session.", "success");
-    return payload;
+    setStatus("agencyStatus", "Agency workspace ready · " + items.length + " client workspace(s).", "success");
+    return agency;
+  }
+  async function loadAgencyClientAuditResults(workspaceId, batchId, target) {
+    target.replaceChildren();
+    const loading = document.createElement("p"); loading.className = "muted";
+    loading.textContent = "Loading saved audit findings and evidence…"; target.append(loading);
+    try {
+      const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(workspaceId) +
+        "/audit-results?batch_id=" + encodeURIComponent(batchId) + "&limit=25");
+      const data = await response.json();
+      target.replaceChildren();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No completed audit results are available for this batch yet."; target.append(empty); return;
+      }
+      for (const item of items) {
+        const card = document.createElement("article"); card.className = "report";
+        const heading = document.createElement("strong"); heading.textContent = item.url + " · " + item.status;
+        card.append(heading);
+        if (item.result) {
+          const summary = document.createElement("p");
+          summary.textContent = "Score: " + (item.result.overall_score ?? "N/A") +
+            " · Findings: " + item.result.finding_count + " · Saved: " + (item.result.created_at || "");
+          card.append(summary);
+          for (const finding of (Array.isArray(item.result.findings) ? item.result.findings : [])) {
+            const detail = document.createElement("details");
+            const label = document.createElement("summary");
+            label.textContent = finding.title || finding.name || finding.check_id || "Audit finding";
+            const body = document.createElement("pre"); body.style.whiteSpace = "pre-wrap";
+            body.textContent = JSON.stringify(finding, null, 2);
+            detail.append(label, body); card.append(detail);
+          }
+        } else {
+          const pending = document.createElement("p"); pending.className = "muted";
+          pending.textContent = "This URL has no saved result yet."; card.append(pending);
+        }
+        target.append(card);
+      }
+    } catch (error) {
+      target.replaceChildren();
+      const message = document.createElement("p"); message.className = "status error";
+      message.textContent = error.message; target.append(message);
+    }
+  }
+  async function loadAgencyClientAudits(workspaceId, target) {
+    target.replaceChildren();
+    const loading = document.createElement("p"); loading.className = "muted";
+    loading.textContent = "Loading client audit history…"; target.append(loading);
+    try {
+      const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(workspaceId) + "/audits?limit=100");
+      const data = await response.json();
+      target.replaceChildren();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No audit batches have been assigned to this client yet."; target.append(empty); return;
+      }
+      for (const item of items) {
+        const row = document.createElement("div"); row.className = "report";
+        const label = document.createElement("strong");
+        label.textContent = "Batch " + item.batch_number + " · " + item.status;
+        const detail = document.createElement("small");
+        detail.textContent = item.total_urls + " URLs · " + item.completed + " completed · " + item.failed + " failed · " + (item.created_at || "");
+        const resultsButton = document.createElement("button"); resultsButton.type = "button";
+        resultsButton.className = "secondary"; resultsButton.textContent = "View saved findings";
+        const resultsPanel = document.createElement("div"); resultsPanel.className = "reports";
+        resultsButton.addEventListener("click", () => loadAgencyClientAuditResults(workspaceId, item.id, resultsPanel));
+        row.append(label, detail, resultsButton, resultsPanel); target.append(row);
+      }
+    } catch (error) {
+      target.replaceChildren();
+      const message = document.createElement("p"); message.className = "status error";
+      message.textContent = error.message; target.append(message);
+    }
+  }
+  async function loadAgencyTeam() {
+    const response = await api("/api/v1/account/agency/team");
+    const data = await response.json();
+    const container = $("agencyTeam");
+    container.replaceChildren();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No team invitations or members yet."; container.append(empty);
+    }
+    for (const item of items) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = item.email;
+      const detail = document.createElement("small"); detail.textContent = item.role + " · " + item.status + ((item.workspaces || []).length ? " · Clients: " + item.workspaces.map(workspace => workspace.workspace_name + " (" + workspace.role + ")").join(", ") : " · No client workspace assigned");
+      info.append(title, detail);
+      const accessEditor = document.createElement("div"); accessEditor.className = "reports";
+      if (item.status === "active") {
+        const accessLabel = document.createElement("label"); accessLabel.textContent = "Assigned client workspaces";
+        const accessSelect = document.createElement("select"); accessSelect.multiple = true; accessSelect.size = 4;
+        accessSelect.style.width = "100%";
+        const existingAccess = new Map((item.workspaces || []).map(workspace => [workspace.workspace_id, workspace]));
+        for (const option of Array.from($("agencyTeamWorkspaces").options)) {
+          if (!option.value) continue;
+          const copy = document.createElement("option"); copy.value = option.value;
+          copy.textContent = option.textContent; copy.selected = existingAccess.has(option.value);
+          accessSelect.append(copy);
+        }
+        const roleLabel = document.createElement("label"); roleLabel.textContent = "Role for selected workspaces";
+        const accessRole = document.createElement("select");
+        for (const role of ["viewer", "analyst", "admin"]) {
+          const option = document.createElement("option"); option.value = role; option.textContent = role[0].toUpperCase() + role.slice(1);
+          accessRole.append(option);
+        }
+        const roles = new Set((item.workspaces || []).map(workspace => workspace.role));
+        if (roles.size === 1) accessRole.value = Array.from(roles)[0];
+        const saveAccess = document.createElement("button"); saveAccess.type = "button";
+        saveAccess.className = "secondary"; saveAccess.textContent = "Save workspace access";
+        saveAccess.addEventListener("click", async () => {
+          saveAccess.disabled = true;
+          try {
+            const selected = new Set(Array.from(accessSelect.selectedOptions).map(option => option.value));
+            for (const workspace of (item.workspaces || [])) {
+              if (!selected.has(workspace.workspace_id)) {
+                await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id) +
+                  "/workspaces/" + encodeURIComponent(workspace.workspace_id), {method:"DELETE"});
+              }
+            }
+            for (const workspaceId of selected) {
+              await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id) +
+                "/workspaces/" + encodeURIComponent(workspaceId), {
+                  method:"PUT", headers:{"Content-Type":"application/json"},
+                  body:JSON.stringify({role:accessRole.value})
+                });
+            }
+            await loadAgencyTeam();
+            setStatus("agencyStatus", "Workspace access updated for " + item.email + ".", "success");
+          } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          finally { saveAccess.disabled = false; }
+        });
+        accessEditor.append(accessLabel, accessSelect, roleLabel, accessRole, saveAccess);
+      }
+      const actions = document.createElement("div"); actions.className = "report-actions";
+      if (item.status !== "revoked") {
+        const revoke = document.createElement("button"); revoke.type = "button";
+        revoke.className = "secondary"; revoke.textContent = "Revoke";
+        revoke.addEventListener("click", async () => {
+          revoke.disabled = true;
+          try { await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id), {method:"DELETE"}); await loadAgencyTeam(); }
+          catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          finally { revoke.disabled = false; }
+        });
+        actions.append(revoke);
+      }
+      card.append(info, accessEditor, actions); container.append(card);
+    }
+  }
+  async function inviteAgencyTeam() {
+    const email = $("agencyTeamEmail").value.trim();
+    const role = $("agencyTeamRole").value;
+    if (!email) { setStatus("agencyStatus", "Enter a team member email address.", "error"); return; }
+    const button = $("inviteAgencyTeam"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/agency/team/invitations", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          email, role,
+          workspace_ids:Array.from($("agencyTeamWorkspaces").selectedOptions).map(option => option.value).filter(Boolean)
+        })
+      });
+      $("agencyTeamEmail").value = "";
+      await loadAgencyTeam();
+      setStatus("agencyStatus", "Invitation email sent to " + email + ".", "success");
+    } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+    finally { button.disabled = !credential; }
+  }
+  async function createAgencyClient() {
+    const name = $("agencyClientName").value.trim();
+    const reference = $("agencyClientReference").value.trim();
+    if (!name) { setStatus("agencyStatus", "Enter a client or workspace name.", "error"); return; }
+    const button = $("createAgencyClient");
+    button.disabled = true;
+    try {
+      await api("/api/v1/account/agency/clients", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({display_name: name, external_reference: reference || null})
+      });
+      $("agencyClientName").value = "";
+      $("agencyClientReference").value = "";
+      await loadAgencyDashboard();
+      setStatus("agencyStatus", "Client workspace created.", "success");
+    } catch (error) {
+      setStatus("agencyStatus", error.message, "error");
+    } finally { button.disabled = !credential; }
   }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
@@ -615,6 +1008,14 @@
     $("usageFill").style.width = percent + "%";
     $("usageBar").setAttribute("aria-valuenow", String(Math.round(percent)));
     $("usageRemaining").textContent = "Remaining: " + Math.max(0, Number(usage.remaining) || 0);
+    const brandingEnabled = usage.features && usage.features.white_label_branding === true;
+    $("brandingPanel").hidden = !brandingEnabled;
+    if (!brandingEnabled) setStatus("brandingStatus", "White-label branding is not included in this plan.");
+    const agencyEnabled = usage.features && usage.features.agency_management === true;
+    $("agencyPanel").hidden = !agencyEnabled;
+    const featureLabels = {standard_audits:"Standard website audits",conversion_dossier:"Conversion opportunity dossier",white_label_branding:"White-label branding",agency_management:"Agency / multiple-client management",direct_api_access:"Direct API access"};
+    const enabledFeatures = Object.entries(usage.features || {}).filter(([, enabled]) => enabled === true).map(([key]) => featureLabels[key] || key);
+    $("planFeatures").textContent = enabledFeatures.length ? enabledFeatures.join(" · ") : "No premium features are enabled for this plan.";
     const reset = usage.period_resets_at ? new Date(usage.period_resets_at) : null;
     $("usageReset").textContent = "Period resets: " + (reset && !Number.isNaN(reset.getTime()) ? reset.toLocaleDateString() : "not available");
     if (!usage.is_active) $("usageSummary").textContent += " · Account inactive";
@@ -815,8 +1216,7 @@
         empty.textContent = "No saved records on this page."; $("savedEvidenceItems").append(empty);
       }
       for (const record of items) {
-        const card = document.createElement("article"); card.className = "report";
-        const body = document.createElement("div");
+        const card = document.createElement("article"); card.className = "report";        const body = document.createElement("div");
         const heading = document.createElement("strong");
         heading.textContent = String(record.title || record.check_name || record.check_id || record.category || record.outcome || "Evidence record");
         const details = document.createElement("small");
@@ -857,6 +1257,8 @@
   });
   $("closeEvidence").addEventListener("click", () => {
     $("savedEvidence").hidden = true;
+    $("agencyAuditWorkspaceField").hidden = true;
+    $("agencyAuditWorkspace").replaceChildren(Object.assign(document.createElement("option"), {value:"", textContent:"Personal account (not assigned to a client)"}));
     activeEvidenceReportId = null;
     $("savedEvidenceItems").replaceChildren();
   });
@@ -883,6 +1285,295 @@
     try { await loadReports({reset:false}); }
     catch (e) { setStatus("connectStatus", e.message, "error"); }
   });
+
+  async function loadWebsites(reset = true) {
+    if (websitesLoading) return;
+    websitesLoading = true;
+    try {
+    const container = $("websiteInventory");
+    const requestedOffset = reset ? 0 : websiteOffset;
+    const response = await api("/api/v1/websites?limit=100&offset=" + requestedOffset);
+    if (!response.ok) {
+      let message = "Website inventory could not be loaded.";
+      try {
+        const body = await response.json();
+        if (typeof body.detail === "string") message = body.detail;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const data = await response.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (reset) {
+      websiteOffset = 0;
+      container.replaceChildren();
+    }
+    websiteOffset += items.length;
+    websiteHasMore = Boolean(data.page && data.page.has_more);
+    $("loadMoreWebsites").hidden = !websiteHasMore;
+    if (!items.length && reset) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No websites have been saved for this account yet.";
+      container.append(empty);
+    }
+    for (const site of items) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = site.host || site.url;
+      const detail = document.createElement("small");
+      detail.textContent = "Status: " + site.status + " · Added " +
+        (site.created_at ? new Date(site.created_at).toLocaleString() : "time unavailable");
+      const url = document.createElement("small"); url.textContent = site.url;
+      info.append(title, detail, url); card.append(info);
+      const view = document.createElement("button"); view.type = "button";
+      view.className = "secondary"; view.textContent = "Site scan history";
+      view.addEventListener("click", async () => {
+        view.disabled = true;
+        try {
+          const response = await api("/api/v1/websites/" + encodeURIComponent(site.id));
+          if (!response.ok) throw new Error("Website scan history could not be loaded.");
+          const detailData = await response.json();
+          const panel = $("scanBatchDetail"); panel.replaceChildren();
+          const heading = document.createElement("h3"); heading.textContent = "Website history · " + detailData.host;
+          panel.append(heading);
+          const jobs = Array.isArray(detailData.scan_history) ? detailData.scan_history : [];
+          if (!jobs.length) {
+            const empty = document.createElement("p"); empty.className = "muted";
+            empty.textContent = "No scan history is available for this website yet.";
+            panel.append(empty);
+          }
+          for (const job of jobs) {
+            const row = document.createElement("p"); row.className = "muted";
+            row.textContent = job.status + " · " + new Date(job.created_at).toLocaleString() +
+              (job.last_error_code ? " · " + job.last_error_code : "");
+            panel.append(row);
+          }
+          panel.scrollIntoView({behavior:"smooth", block:"nearest"});
+        } catch (error) {
+          setStatus("connectStatus", error.message || "Website scan history could not be loaded.", "error");
+        } finally {
+          view.disabled = false;
+        }
+      });
+      const label = document.createElement("input");
+      label.type = "text";
+      label.maxLength = 160;
+      label.value = site.label || "";
+      label.placeholder = "Website label";
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "secondary";
+      save.textContent = "Save label";
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({label: label.value})
+          });
+          if (!result.ok) {
+            let message = "Website label update failed.";
+            try { const body = await result.json(); if (typeof body.detail === "string") message = body.detail; } catch (_) {}
+            throw new Error(message);
+          }
+          setStatus("connectStatus", "Website label saved.", "success");
+          await loadWebsites();
+        } catch (error) {
+          setStatus("connectStatus", error.message || "Website label update failed.", "error");
+        } finally {
+          save.disabled = false;
+        }
+      });
+      const archive = document.createElement("button");
+      archive.type = "button";
+      archive.className = "secondary";
+      archive.textContent = "Archive";
+      archive.disabled = site.status === "archived";
+      archive.addEventListener("click", async () => {
+        if (!window.confirm("Archive this website from your inventory? Existing scan history will be preserved.")) return;
+        archive.disabled = true;
+        try {
+          const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
+          if (!result.ok) {
+            let message = "Website archive failed.";
+            try { const body = await result.json(); if (typeof body.detail === "string") message = body.detail; } catch (_) {}
+            throw new Error(message);
+          }
+          setStatus("connectStatus", "Website archived. Existing scan history is preserved.", "success");
+          await loadWebsites();
+        } catch (error) {
+          setStatus("connectStatus", error.message || "Website archive failed.", "error");
+        } finally {
+          archive.disabled = site.status === "archived";
+        }
+      });
+      card.append(label, view, save, archive);
+      container.append(card);
+    }
+    } finally {
+      websitesLoading = false;
+    }
+  }
+
+  async function loadScanBatches() {
+    const container = $("scanBatches");
+    const response = await api("/api/v1/scan-batches?limit=100&offset=0");
+    const data = await response.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    container.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No bulk scan batches have been submitted for this account.";
+      container.append(empty);
+    }
+    for (const batch of items) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = "Batch " + batch.batch_number + " · " + String(batch.status || "unknown").replaceAll("_", " ");
+      const detail = document.createElement("small");
+      detail.textContent = batch.total_urls + " websites · " + batch.completed + " completed · " +
+        batch.processing + " processing · " + batch.queued + " queued · " + batch.failed + " failed · " +
+        (batch.cancelled || 0) + " cancelled";
+      const created = document.createElement("small");
+      created.textContent = "Created " + (batch.created_at ? new Date(batch.created_at).toLocaleString() : "time unavailable") +
+        " · Package " + (batch.package_tier || "unknown");
+      info.append(title, detail, created);
+      const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View URLs";
+      view.addEventListener("click", () => loadScanBatchDetail(batch.id));
+      card.append(info, view);
+      if (["queued", "processing", "cancel_requested"].includes(batch.status)) {
+        const cancel = document.createElement("button");
+        cancel.type = "button"; cancel.className = "secondary";
+        cancel.textContent = batch.status === "cancel_requested" ? "Cancellation pending" : "Cancel batch";
+        cancel.disabled = batch.status === "cancel_requested";
+        cancel.addEventListener("click", async () => {
+          const result = await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
+          if (!result.ok) throw new Error("Batch cancellation could not be recorded.");
+          await loadScanBatches();
+        });
+        card.append(cancel);
+      }
+      container.append(card);
+    }
+    await loadWebsites();
+    setStatus("bulkScanStatus", "Loaded " + items.length + " scan batch(es).", "success");
+  }
+  async function loadScanBatchDetail(batchId) {
+    const container = $("scanBatchDetail");
+    container.replaceChildren();
+    const response = await api("/api/v1/scan-batches/" + encodeURIComponent(batchId));
+    const batch = await response.json();
+    const heading = document.createElement("h3");
+    heading.textContent = "Batch " + batch.batch_number + " · " + batch.status;
+    container.append(heading);
+    for (const job of (Array.isArray(batch.jobs) ? batch.jobs : [])) {
+      const card = document.createElement("article"); card.className = "report";
+      const info = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = job.url;
+      const detail = document.createElement("small");
+      detail.textContent = "Status: " + job.status + " · Attempts: " + job.attempts + "/" + job.max_attempts +
+        (job.last_error_code ? " · Last error: " + job.last_error_code : "");
+      info.append(title, detail); card.append(info);
+      if (job.status === "completed") {
+        const resultButton = document.createElement("button"); resultButton.type = "button";
+        resultButton.className = "secondary"; resultButton.textContent = "View scan results";
+        resultButton.addEventListener("click", () => loadScanJobResult(job.id));
+        card.append(resultButton);
+      } else if (job.status === "failed") {
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.className = "secondary";
+        retryButton.textContent = "Retry failed scan";
+        retryButton.disabled = batch.status !== "failed";
+        retryButton.title = batch.status !== "failed"
+          ? "Retry is available after the batch reaches failed status."
+          : "Queue this failed URL again without creating a duplicate job.";
+        retryButton.addEventListener("click", async () => {
+          if (retryButton.disabled) return;
+          retryButton.disabled = true;
+          retryButton.textContent = "Queuing retry…";
+          try {
+            await api("/api/v1/scan-jobs/" + encodeURIComponent(job.id) + "/retry", {method: "POST"});
+            setStatus("bulkScanStatus", "Retry queued for " + job.url + ". The existing job and batch were reused.", "success");
+            await loadScanBatches();
+            await loadScanBatchDetail(batch.id);
+          } catch (error) {
+            setStatus("bulkScanStatus", error.message, "error");
+            retryButton.disabled = batch.status !== "failed";
+            retryButton.textContent = "Retry failed scan";
+          }
+        });
+        card.append(retryButton);
+      }
+      container.append(card);
+    }
+    container.scrollIntoView({behavior:"smooth", block:"nearest"});
+  }
+  async function loadScanJobResult(jobId) {
+    const container = $("scanBatchDetail");
+    try {
+      const response = await api("/api/v1/scan-jobs/" + encodeURIComponent(jobId) + "/result");
+      const result = await response.json();
+      const heading = document.createElement("h3"); heading.textContent = "Scan results · " + result.url;
+      const summary = document.createElement("p"); summary.className = "muted";
+      summary.textContent = "Status: " + result.status + " · Findings: " + result.finding_count +
+        (result.overall_score === null ? "" : " · Score: " + result.overall_score);
+      const section = document.createElement("div"); section.className = "reports";
+      for (const finding of (Array.isArray(result.findings) ? result.findings : [])) {
+        const card = document.createElement("article"); card.className = "report";
+        const title = document.createElement("strong"); title.textContent = String(finding.title || finding.check_id || finding.category || "Finding");
+        const detail = document.createElement("small"); detail.textContent = [finding.severity, finding.status, finding.source_url].filter(Boolean).join(" · ");
+        const evidence = document.createElement("p"); evidence.className = "muted"; evidence.textContent = String(finding.evidence || finding.explanation || "");
+        card.append(title, detail, evidence); section.append(card);
+      }
+      container.replaceChildren(heading, summary, section);
+    } catch (error) {
+      setStatus("bulkScanStatus", "Unable to load scan result. " + error.message, "error");
+    }
+  }
+  async function submitBulkScans() {
+    if (!credential) { setStatus("bulkScanStatus", "Connect your license, API key, or customer account first.", "error"); return; }
+    const urls = $("bulkUrls").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    if (!urls.length) { setStatus("bulkScanStatus", "Enter at least one website URL, one per line.", "error"); return; }
+    if (urls.length > 1000) { setStatus("bulkScanStatus", "A single submission can contain at most 1,000 URLs.", "error"); return; }
+    const button = $("submitBulkScans"); button.disabled = true;
+    try {
+      const requestId = window.crypto && typeof window.crypto.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : "bulk-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+      const response = await api("/api/v1/scan-batches", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          urls, request_id:requestId, batch_size:Number($("bulkBatchSize").value),
+          ...($("agencyAuditWorkspaceField").hidden || !$("agencyAuditWorkspace").value
+            ? {} : {workspace_id:$("agencyAuditWorkspace").value})
+        })
+      });
+      const result = await response.json();
+      setStatus("bulkScanStatus",
+        result.new_jobs + " new website scan job(s) queued in " + result.batch_count +
+        " batch(es). Request ID: " + result.request_id +
+        (result.idempotent_replay ? " · Existing request returned without creating duplicate jobs." : ""),
+        "success");
+      await loadScanBatches();
+    } catch (error) {
+      setStatus("bulkScanStatus", error.message, "error");
+    } finally {
+      button.disabled = !credential;
+    }
+  }
+  $("submitBulkScans").addEventListener("click", submitBulkScans);
+  $("loadMoreWebsites").addEventListener("click", async () => {
+    try { await loadWebsites(false); }
+    catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
+  });
+  $("refreshScanBatches").addEventListener("click", async () => {
+    try { await loadScanBatches(); }
+    catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
+  });
+
   function clearAccountView() {
     loadedReports = [];
     reportsTotal = 0;
@@ -898,67 +1589,62 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("sessionList").replaceChildren(); const sessionEmpty = document.createElement("p"); sessionEmpty.className = "muted"; sessionEmpty.textContent = "Connect with passwordless sign-in to manage sessions."; $("sessionList").append(sessionEmpty); $("refreshSessions").disabled = true; $("revokeOtherSessions").disabled = true; setStatus("sessionStatus", "Customer session sign-in required.");
-    $("profileName").value = ""; $("profileTier").value = "—"; $("profileMeta").textContent = "Connect your account to view profile details."; $("emailChangeAddress").value = ""; $("emailChangeToken").value = ""; $("loginEmail").value = ""; $("loginToken").value = ""; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
+    $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
+    const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
+    $("bulkUrls").value = ""; setStatus("bulkScanStatus", "Connect your account to submit website batches.");
     $("usageFill").style.width = "0%";
     $("usageBar").setAttribute("aria-valuenow", "0");
     $("usageRemaining").textContent = "Remaining: —";
     $("usageReset").textContent = "Period reset: —";
     activityRows = []; activityTotal = 0; renderActivity();
-    $("websiteList").replaceChildren(); const websiteEmpty = document.createElement("p"); websiteEmpty.className = "muted"; websiteEmpty.textContent = "Connect your account to manage websites."; $("websiteList").append(websiteEmpty); setStatus("websiteStatus", "Account connection required.");
-    $("websiteName").value = ""; $("websiteUrl").value = "";
     $("billingAccount").textContent = "Connect your account to load billing status.";
     $("billingAttention").replaceChildren(); $("billingAttention").hidden = true;
     apiKeyCreationAllowed = false;
-    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required.");
+    $("billingEvents").replaceChildren(); billingOffset = 0; billingTotal = 0; $("loadMoreBillingHistory").disabled = true; setStatus("billingStatus", "Account connection required."); $("wordpressSites").replaceChildren(); const wpEmpty=document.createElement("p");wpEmpty.className="muted";wpEmpty.textContent="Connect your account to view WordPress installations."; $("wordpressSites").append(wpEmpty); setStatus("wordpressSitesStatus","Account connection required."); $("generateWordPressLinkCode").disabled = true; $("wordpressLinkCodePanel").hidden = true; $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodeExpiry").textContent = ""; setStatus("wordpressLinkCodeStatus", "Connect your account to generate a one-time code.");
     apiKeyRows = []; renderApiKeys(); newlyCreatedApiKey = ""; $("newApiKeyPanel").hidden = true; $("newApiKeyValue").textContent = "";
   }
-  $("requestLogin").addEventListener("click", async () => {
+  $("requestLoginCode").addEventListener("click", async () => {
     const email = $("loginEmail").value.trim();
-    if (!email) { setStatus("connectStatus", "Enter your account email address.", "error"); return; }
-    const button = $("requestLogin"); button.disabled = true;
+    if (!email) { setStatus("loginStatus", "Enter the email address used at checkout.", "error"); return; }
+    const button = $("requestLoginCode"); button.disabled = true;
     try {
-      const response = await fetch("/api/v1/account/login", {
-        method: "POST", cache: "no-store",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({email})
+      const response = await fetch("/api/v1/account/auth/request-code", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({email})
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Unable to request a sign-in token.");
-      setStatus("connectStatus", data.message || "If an account matches, a sign-in token has been sent.", "success");
-    } catch (error) {
-      setStatus("connectStatus", error.message, "error");
-    } finally {
-      button.disabled = false;
-    }
+      if (!response.ok) throw new Error(data.detail || "Unable to request a sign-in code.");
+      setStatus("loginStatus", data.message || "If an account exists for this email, a sign-in code will be sent.", "success");
+    } catch (error) { setStatus("loginStatus", error.message, "error"); }
+    finally { button.disabled = false; }
   });
-  $("verifyLogin").addEventListener("click", async () => {
-    const token = $("loginToken").value.trim();
-    if (!token) { setStatus("connectStatus", "Paste the one-time sign-in token from your email.", "error"); return; }
-    const button = $("verifyLogin"); button.disabled = true;
+  $("verifyLoginCode").addEventListener("click", async () => {
+    const email = $("loginEmail").value.trim();
+    const code = $("loginCode").value.trim();
+    if (!email || !/^[0-9]{6}$/.test(code)) { setStatus("loginStatus", "Enter your account email and six-digit code.", "error"); return; }
+    const button = $("verifyLoginCode"); button.disabled = true;
     try {
-      const response = await fetch("/api/v1/account/login/verify", {
-        method: "POST", cache: "no-store",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({token})
+      const response = await fetch("/api/v1/account/auth/verify-code", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({email, code})
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Sign-in token could not be verified.");
-      $("loginToken").value = "";
-      $("authType").value = "X-Customer-Session";
-      $("credential").value = data.session_token;
-      setStatus("connectStatus", "Sign-in verified. Loading your customer account…", "success");
+      if (!response.ok) throw new Error(data.detail || "The sign-in code could not be verified.");
+      sessionToken = String(data.access_token || "");
+      if (!sessionToken) throw new Error("The server did not return a customer session.");
+      credential = "customer-session";
+      headerName = "X-License-Key";
+      $("credential").value = credential;
+      $("loginCode").value = "";
+      setStatus("loginStatus", "Email verified. Your account is signing in…", "success");
       $("connect").click();
-    } catch (error) {
-      setStatus("connectStatus", error.message, "error");
-    } finally {
-      button.disabled = false;
-    }
+    } catch (error) { sessionToken = ""; credential = ""; setStatus("loginStatus", error.message, "error"); }
+    finally { button.disabled = false; }
   });
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
     const nextHeaderName = $("authType").value;
+    if (nextCredential !== "customer-session") sessionToken = "";
     if (!nextCredential) { setStatus("connectStatus", "Enter your issued credential first.", "error"); return; }
     // A new connection attempt invalidates responses from any earlier identity,
     // including when the new credential text happens to match a prior one.
@@ -970,23 +1656,44 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
-      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWebsites(), loadCustomerSessions()]);
-      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "website inventory", "customer sessions"];
+      const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
+      const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "WordPress sites", "scan batches"];
+      const brandingEnabled = results[1].status === "fulfilled" && results[1].value.features && results[1].value.features.white_label_branding === true;
+      $("brandingPanel").hidden = !brandingEnabled;
+      if (brandingEnabled) {
+        const brandingResult = await Promise.allSettled([loadBranding()]);
+        if (brandingResult[0].status === "rejected") names.push("white-label branding");
+        results.push(brandingResult[0]);
+      } else {
+        setStatus("brandingStatus", "White-label branding is not included in this plan.");
+      }
+      const agencyEnabled = results[1].status === "fulfilled" && results[1].value.features && results[1].value.features.agency_management === true;
+      $("agencyPanel").hidden = !agencyEnabled;
+      if (agencyEnabled) {
+        const agencyResult = await Promise.allSettled([loadAgencyDashboard()]);
+        if (agencyResult[0].status === "rejected") names.push("agency client management");
+        results.push(agencyResult[0]);
+      } else {
+        setStatus("agencyStatus", "Agency client management is available on the Business plan.");
+      }
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
       setAccountControls(true);
+      $("requestEmailChange").disabled = !sessionToken;
+      $("verifyEmailChange").disabled = true;
       $("runAudit").disabled = !auditAccess;
+      $("submitBulkScans").disabled = !auditAccess;
+      $("refreshScanBatches").disabled = !auditAccess;
       renderApiKeys();
       $("refreshApiKeys").disabled = results[2].status !== "fulfilled";
-      $("addWebsite").disabled = results[5].status !== "fulfilled";
-      $("refreshWebsites").disabled = false;
       setStatus("auditStatus", auditAccess ? "Ready. Enter a public URL to start an audit." : "Audit and report access is unavailable for this account. Billing management remains available.", auditAccess ? "" : "error");
       setStatus("connectStatus", unavailable.length ? "Connected for billing. Unavailable features: " + unavailable.join(", ") + ". Credential input cleared." : "Connected. Report history, quota, API keys, and billing history are loaded. Credential input cleared.", unavailable.length ? "error" : "success");
     } catch (e) {
       // An obsolete connection attempt must not clear or overwrite a newer session.
       if (attemptSessionVersion !== accountSessionVersion) return;
       clearAccountView();
+      sessionToken = "";
       credential = "";
       $("credential").value = "";
       setAccountControls(false);
@@ -995,10 +1702,27 @@
       if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
     }
   });
-  $("disconnectAccount").addEventListener("click", async () => {
-    const sessionToken = headerName === "X-Customer-Session" ? credential : "";
-    // Invalidate outstanding API responses and clear local credentials immediately.
+  $("logoutAllSessions").addEventListener("click", async () => {
+    if (!credential) { setStatus("loginStatus", "Sign in to manage customer sessions.", "error"); return; }
+    const button = $("logoutAllSessions"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/logout-all", {method:"POST"});
+      const data = await response.json();
+      accountSessionVersion += 1;
+      sessionToken = ""; credential = ""; headerName = "X-License-Key";
+      $("credential").value = "";
+      clearAccountView(); setAccountControls(false);
+      setStatus("connectStatus", "All customer sessions were revoked.", "success");
+      setStatus("loginStatus", "All devices have been signed out. Sign in again to continue.", "success");
+    } catch (error) { setStatus("loginStatus", error.message, "error"); }
+    finally { button.disabled = !credential; }
+  });
+  $("disconnectAccount").addEventListener("click", () => {
     accountSessionVersion += 1;
+    if (sessionToken) {
+      fetch("/api/v1/account/auth/logout", {method:"POST", headers:{Authorization:"Bearer " + sessionToken}}).catch(() => {});
+    }
+    sessionToken = "";
     credential = "";
     headerName = "X-License-Key";
     $("credential").value = "";
@@ -1006,26 +1730,93 @@
     clearAccountView();
     setAccountControls(false);
     $("target").value = "";
-    let serverRevocationConfirmed = !sessionToken;
-    if (sessionToken) {
-      try {
-        const response = await fetch("/api/v1/account/logout", {
-          method: "POST", cache: "no-store",
-          headers: {"X-Customer-Session": sessionToken}
-        });
-        serverRevocationConfirmed = response.ok;
-      } catch (error) {
-        // The page is cleared even if server-side revocation cannot be confirmed.
-      }
-    }
-    setStatus(
-      "connectStatus",
-      serverRevocationConfirmed
-        ? "Disconnected. Account data cleared and customer session revoked."
-        : "Account data cleared locally, but server session revocation could not be confirmed.",
-      serverRevocationConfirmed ? "success" : "error"
-    );
+    setStatus("connectStatus", "Disconnected. Account data and credentials cleared from this page.", "success");
     setStatus("auditStatus", "Connect your credential first.");
+  });
+  let emailChangeChallengeId = "";
+  $("requestEmailChange").addEventListener("click", async () => {
+    if (!sessionToken) { setStatus("emailChangeStatus", "Sign in with your verified email before changing it.", "error"); return; }
+    const newEmail = $("newAccountEmail").value.trim();
+    if (!newEmail) { setStatus("emailChangeStatus", "Enter the new email address.", "error"); return; }
+    const button = $("requestEmailChange"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/email-change/request-code", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({new_email: newEmail})
+      });
+      const data = await response.json();
+      emailChangeChallengeId = String(data.challenge_id || "");
+      if (!emailChangeChallengeId) throw new Error("The server did not return a verification challenge.");
+      $("emailChangeCode").value = "";
+      setStatus("emailChangeStatus", data.message || "Verification code sent to the new address.", "success");
+      $("verifyEmailChange").disabled = false;
+    } catch (error) {
+      emailChangeChallengeId = "";
+      setStatus("emailChangeStatus", error.message, "error");
+    } finally { button.disabled = !sessionToken; }
+  });
+  $("verifyEmailChange").addEventListener("click", async () => {
+    if (!sessionToken || !emailChangeChallengeId) { setStatus("emailChangeStatus", "Request a new email verification code first.", "error"); return; }
+    const code = $("emailChangeCode").value.trim();
+    if (!/^[0-9]{6}$/.test(code)) { setStatus("emailChangeStatus", "Enter the six-digit code sent to the new email.", "error"); return; }
+    const button = $("verifyEmailChange"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/auth/email-change/verify-code", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({challenge_id: emailChangeChallengeId, code})
+      });
+      const data = await response.json();
+      emailChangeChallengeId = "";
+      $("loginEmail").value = data.email || $("newAccountEmail").value.trim();
+      $("newAccountEmail").value = "";
+      $("emailChangeCode").value = "";
+      accountSessionVersion += 1;
+      await Promise.allSettled([loadDeviceSessions()]);
+      setStatus("emailChangeStatus", data.message || "Your account email has been updated.", "success");
+      setStatus("loginStatus", "Account email updated. Use the new email for future sign-ins.", "success");
+    } catch (error) {
+      setStatus("emailChangeStatus", error.message, "error");
+      button.disabled = false;
+    }
+  });
+
+  $("generateWordPressLinkCode").addEventListener("click", async () => {
+    if (!credential) { setStatus("wordpressLinkCodeStatus", "Connect your customer account first.", "error"); return; }
+    const button = $("generateWordPressLinkCode"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/wordpress-link/challenges", {method:"POST"});
+      const data = await response.json();
+      if (!data.token) throw new Error("The service did not return a one-time code.");
+      $("wordpressLinkCode").textContent = data.token;
+      $("wordpressLinkCodeExpiry").textContent = "Expires at " + new Date(data.expires_at).toLocaleString() + ". This code can be used once and is shown only here.";
+      $("wordpressLinkCodePanel").hidden = false;
+      setStatus("wordpressLinkCodeStatus", "Code generated. Paste it into the WordPress plugin identity-link form.", "success");
+    } catch (error) {
+      setStatus("wordpressLinkCodeStatus", error.message, "error");
+    } finally { button.disabled = !credential; }
+  });
+  $("copyWordPressLinkCode").addEventListener("click", async () => {
+    const value = $("wordpressLinkCode").textContent;
+    if (!value) return;
+    try { await navigator.clipboard.writeText(value); setStatus("wordpressLinkCodeStatus", "One-time code copied.", "success"); }
+    catch { setStatus("wordpressLinkCodeStatus", "Clipboard access was blocked. Copy the code manually.", "error"); }
+  });
+  $("hideWordPressLinkCode").addEventListener("click", () => {
+    $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodePanel").hidden = true;
+  });
+  $("createAgencyClient").addEventListener("click", createAgencyClient);
+  $("inviteAgencyTeam").addEventListener("click", inviteAgencyTeam);
+  $("refreshAgencyTeam").addEventListener("click", async () => {
+    try { await loadAgencyTeam(); } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
+  $("refreshAgencyClients").addEventListener("click", async () => {
+    try { await loadAgencyDashboard(); }
+    catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
+  $("saveBranding").addEventListener("click", saveBranding);
+  $("refreshBranding").addEventListener("click", async () => {
+    try { await loadBranding(); }
+    catch (error) { setStatus("brandingStatus", error.message, "error"); }
   });
   $("saveProfile").addEventListener("click", async () => {
     if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
@@ -1041,63 +1832,6 @@
       const data = await response.json();
       $("profileName").value = data.client_name || clientName;
       setStatus("profileStatus", "Account name saved.", "success");
-    } catch (error) {
-      setStatus("profileStatus", error.message, "error");
-    } finally {
-      button.disabled = !credential;
-    }
-  });
-  $("refreshSessions").addEventListener("click", async () => {
-    try { await loadCustomerSessions(); }
-    catch (error) { setStatus("sessionStatus", error.message + " Use passwordless sign-in to manage customer sessions.", "error"); }
-  });
-  $("revokeOtherSessions").addEventListener("click", async () => {
-    if (headerName !== "X-Customer-Session" || !credential) {
-      setStatus("sessionStatus", "Sign in with passwordless customer access before revoking sessions.", "error"); return;
-    }
-    if (!window.confirm("Revoke all other active sessions for this account? This current session will remain signed in.")) return;
-    const button = $("revokeOtherSessions"); button.disabled = true;
-    try {
-      const response = await api("/api/v1/account/sessions/revoke-others", {method:"POST"});
-      const result = await response.json();
-      await loadCustomerSessions();
-      setStatus("sessionStatus", "Revoked " + Number(result.revoked_count || 0) + " other session(s). This session remains active.", "success");
-    } catch (error) {
-      setStatus("sessionStatus", error.message, "error");
-    } finally {
-      button.disabled = !credential || headerName !== "X-Customer-Session";
-    }
-  });
-  $("requestEmailChange").addEventListener("click", async () => {
-    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
-    const email = $("emailChangeAddress").value.trim();
-    if (!email) { setStatus("profileStatus", "Enter the new email address first.", "error"); return; }
-    const button = $("requestEmailChange"); button.disabled = true;
-    try {
-      await api("/api/v1/account/email-change", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({email})
-      });
-      setStatus("profileStatus", "Verification token sent to the new email address. Your account email is unchanged until verification.", "success");
-    } catch (error) {
-      setStatus("profileStatus", error.message, "error");
-    } finally {
-      button.disabled = !credential;
-    }
-  });
-  $("confirmEmailChange").addEventListener("click", async () => {
-    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
-    const token = $("emailChangeToken").value.trim();
-    if (!token) { setStatus("profileStatus", "Paste the verification token from your email.", "error"); return; }
-    const button = $("confirmEmailChange"); button.disabled = true;
-    try {
-      const response = await api("/api/v1/account/email-change/confirm", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({token})
-      });
-      const data = await response.json();
-      $("emailChangeToken").value = "";
-      setStatus("profileStatus", "Email updated to " + data.email + ". Billing identity synchronization is " + data.billing_sync + ".", "success");
     } catch (error) {
       setStatus("profileStatus", error.message, "error");
     } finally {
@@ -1122,28 +1856,6 @@
   $("refreshBillingHistory").addEventListener("click", async () => {
     try { await loadBillingHistory(); }
     catch (error) { setStatus("billingStatus", error.message, "error"); }
-  });
-  $("websiteForm").addEventListener("submit", async event => {
-    event.preventDefault();
-    if (!credential) { setStatus("websiteStatus", "Connect your account first.", "error"); return; }
-    const button = $("addWebsite"); button.disabled = true;
-    try {
-      const response = await api("/api/v1/websites", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({website_url:$("websiteUrl").value.trim(), display_name:$("websiteName").value.trim() || null})
-      });
-      const website = await response.json();
-      $("websiteUrl").value = ""; $("websiteName").value = "";
-      await loadWebsites();
-      setStatus("websiteStatus", website.already_registered ? "This website is already registered." : "Website registered. You can now queue background scans.", "success");
-    } catch (error) { setStatus("websiteStatus", error.message, "error"); }
-    finally { button.disabled = false; }
-  });
-  $("refreshWebsites").addEventListener("click", async () => {
-    const button = $("refreshWebsites"); button.disabled = true;
-    try { await loadWebsites(); }
-    catch (error) { setStatus("websiteStatus", error.message, "error"); }
-    finally { button.disabled = false; }
   });
   $("createApiKey").addEventListener("click", createApiKey);
   $("refreshApiKeys").addEventListener("click", async () => {

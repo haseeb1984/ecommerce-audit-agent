@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
+import math
 
 from audit_checks import AuditFinding
 
@@ -118,6 +119,45 @@ def inspect_mobile_viewport(html: str, page_url: str) -> list[AuditFinding]:
             verification_steps=[
                 "Inspect the computed viewport and rendered layout in a mobile browser.",
                 "Test reflow at 320 CSS px and common mobile widths.",
+            ],
+            source_url=page_url,
+        ))
+
+    invalid_initial_scales: list[str] = []
+    for parsed in directives:
+        if "initial-scale" not in parsed:
+            continue
+        raw_scale = parsed.get("initial-scale", "").strip()
+        try:
+            scale = float(raw_scale)
+        except (TypeError, ValueError, OverflowError):
+            invalid_initial_scales.append("non-numeric or empty initial-scale")
+            continue
+        if not math.isfinite(scale) or scale < 0.1 or scale > 10:
+            invalid_initial_scales.append("initial-scale outside the supported 0.1–10 range")
+
+    if invalid_initial_scales:
+        findings.append(AuditFinding(
+            category="mobile_ux",
+            title="Viewport initial-scale value needs review",
+            status="manual_review_required",
+            severity="low",
+            evidence=(
+                f"Found {len(invalid_initial_scales)} invalid or out-of-range initial-scale directive(s) "
+                f"in returned HTML for {page_url}; directive values are not reproduced."
+            ),
+            explanation=(
+                "An empty, non-numeric, non-finite, or out-of-range initial-scale value may be ignored "
+                "or interpreted inconsistently by browsers. This source check does not establish the "
+                "rendered zoom behavior."
+            ),
+            recommendation=(
+                "Review the viewport declaration and use a valid initial-scale value appropriate to "
+                "the responsive layout. Preserve user zoom and verify the rendered result on mobile."
+            ),
+            verification_steps=[
+                "Inspect the final viewport declaration in the returned and rendered HTML.",
+                "Test initial page scale, pinch zoom, and text enlargement on mobile browsers.",
             ],
             source_url=page_url,
         ))

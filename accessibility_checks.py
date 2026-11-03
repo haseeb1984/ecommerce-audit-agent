@@ -35,6 +35,7 @@ class _AccessibilityParser(HTMLParser):
         self.inputs: list[dict[str, str]] = []
         self.element_labelledby: list[str] = []
         self.image_submit_inputs: list[dict[str, str]] = []
+        self.input_action_controls: list[dict[str, str]] = []
         self.links: list[dict[str, str | bool]] = []
         self.buttons: list[dict[str, str | bool]] = []
         self.images_missing_alt: int = 0
@@ -43,6 +44,7 @@ class _AccessibilityParser(HTMLParser):
         self._aria_hidden_stack: list[tuple[str, bool]] = []
         self._active_link: dict[str, str | bool] | None = None
         self._active_button: dict[str, str | bool] | None = None
+        self._role_control_stack: list[tuple[str, dict[str, str | bool]]] = []
         self._active_svg_control: dict[str, str | bool] | None = None
         self._inside_svg = 0
         self._in_svg_title = False
@@ -89,6 +91,15 @@ class _AccessibilityParser(HTMLParser):
                 "aria_labelledby": values.get("aria-labelledby", "").strip(),
                 "title": values.get("title", "").strip(),
             })
+        if tag == "input" and values.get("type", "text").lower() in {"button", "submit", "reset"}:
+            self.input_action_controls.append({
+                "type": values.get("type", "text").lower(),
+                "value": values.get("value", "").strip(),
+                "has_value": "true" if "value" in values else "false",
+                "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+                "title": values.get("title", "").strip(),
+            })
         if (
             (tag == "input" and values.get("type", "text").lower() not in {"hidden", "submit", "button", "reset", "image"})
             or tag in {"select", "textarea"}
@@ -118,6 +129,20 @@ class _AccessibilityParser(HTMLParser):
                 "svg_title": "",
             }
             self.buttons.append(self._active_button)
+        elif values.get("role", "").strip().lower() in {"button", "link"}:
+            role = values.get("role", "").strip().lower()
+            item = {
+                "text": "", "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+                "title": values.get("title", "").strip(), "has_image_alt": False,
+                "has_svg_title": bool(values.get("aria-label", "").strip()),
+                "svg_title": "",
+            }
+            if role == "button":
+                self.buttons.append(item)
+            else:
+                self.links.append(item)
+            self._role_control_stack.append((tag, item))
         if tag == "img":
             # Missing alt is a clear source-level review signal. An explicit empty
             # alt may be correct for decorative imagery, so it is not flagged here.
@@ -129,7 +154,10 @@ class _AccessibilityParser(HTMLParser):
                 self._active_button["has_image_alt"] = True
         if tag == "svg":
             self._inside_svg += 1
-            self._active_svg_control = self._active_link or self._active_button
+            self._active_svg_control = (
+                self._active_link or self._active_button
+                or (self._role_control_stack[-1][1] if self._role_control_stack else None)
+            )
             if self._active_svg_control is not None and values.get("aria-label", "").strip():
                 self._active_svg_control["has_svg_title"] = True
             if self._active_svg_control is not None and values.get("aria-labelledby", "").strip():
@@ -151,7 +179,11 @@ class _AccessibilityParser(HTMLParser):
             self._active_link = None
         elif tag == "button":
             self._active_button = None
-        elif tag == "title" and self._in_svg_title:
+        for index in range(len(self._role_control_stack) - 1, -1, -1):
+            if self._role_control_stack[index][0] == tag:
+                self._role_control_stack.pop(index)
+                break
+        if tag == "title" and self._in_svg_title:
             self._in_svg_title = False
             if self._active_svg_control is not None and str(self._active_svg_control.get("svg_title", "")).strip():
                 self._active_svg_control["has_svg_title"] = True
@@ -173,6 +205,9 @@ class _AccessibilityParser(HTMLParser):
             self._active_link["text"] = str(self._active_link["text"]) + data.strip()
         if self._active_button is not None and not self._in_svg_title:
             self._active_button["text"] = str(self._active_button["text"]) + data.strip()
+        if not self._in_svg_title:
+            for _tag, item in self._role_control_stack:
+                item["text"] = str(item["text"]) + data.strip()
 
 
 def inspect_static_accessibility_signals(html: str, page_url: str) -> list[AuditFinding]:
@@ -265,6 +300,39 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
         item for item in parser.image_submit_inputs
         if not (item["alt"] or item["aria_label"] or item["aria_labelledby"] or item["title"])
     ]
+    unnamed_input_actions = [
+        item for item in parser.input_action_controls
+        if not (
+            item["value"] or item["aria_label"] or has_resolvable_labelledby(item) or item["title"]
+        )
+    ]
+    if unnamed_input_actions:
+        types = ", ".join(sorted({item["type"] for item in unnamed_input_actions}))
+        findings.append(AuditFinding(
+            category="accessibility",
+            title="Input action controls may lack accessible names",
+            status="manual_review_required",
+            severity="medium",
+            evidence=(
+                f"Found {len(unnamed_input_actions)} input action control(s) of type {types} "
+                f"without a non-empty value, aria-label, aria-labelledby, or title in returned HTML for {page_url}."
+            ),
+            explanation=(
+                "Input button, submit, and reset controls use their value or another accessible-name "
+                "mechanism to communicate the action. An explicitly empty or missing value may leave "
+                "the control without a useful name; browser defaults and runtime changes require rendered review."
+            ),
+            recommendation=(
+                "Provide a concise, meaningful value or accessible name for each input action control, "
+                "and verify its computed name in the rendered accessibility tree."
+            ),
+            verification_steps=[
+                "Inspect each flagged input action control in the rendered DOM and accessibility tree.",
+                "Test keyboard activation and confirm the announced action matches the control's purpose.",
+            ],
+            source_url=page_url,
+        ))
+
     if unlabeled_image_submit_inputs:
         findings.append(AuditFinding(
             category="accessibility", title="Image submit controls may lack accessible names",

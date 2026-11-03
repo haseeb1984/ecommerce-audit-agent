@@ -1,0 +1,259 @@
+from types import SimpleNamespace
+
+import pytest
+
+from scan_queue import complete_scan_job, retry_failed_scan_job, _validate_standard_license_site_binding
+from hostinger_models import AgencyUsageEvent
+
+
+class FakeSession:
+    def __init__(self, *rows):
+        self.rows = list(rows)
+        self.committed = False
+        self.rolled_back = False
+        self.added = []
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+    async def commit(self):
+        self.committed = True
+
+    async def rollback(self):
+        self.rolled_back = True
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_requeues_job_and_reopens_failed_batch():
+    job = SimpleNamespace(
+        id="job-1",
+        batch_id="batch-1",
+        status="failed",
+        attempt_count=3,
+        next_attempt_at=None,
+        locked_at="old-lock",
+        locked_by="old-worker",
+        last_error_code="UPSTREAM_TIMEOUT",
+        result_reference="stale-result",
+        completed_at="completed",
+    )
+    batch = SimpleNamespace(
+        id="batch-1",
+        status="failed",
+        cancelled_count=0,
+        failed_count=1,
+        queued_count=0,
+        completed_at="completed",
+        available_at=None,
+    )
+    db = FakeSession(job, batch)
+
+    result = await retry_failed_scan_job(
+        db, job_id="job-1", license_key="license-1",
+    )
+
+    assert result["status"] == "retry_wait"
+    assert result["job_id"] == "job-1"
+    assert job.status == "retry_wait"
+    assert job.attempt_count == 0
+    assert job.locked_at is None and job.locked_by is None
+    assert job.last_error_code is None and job.result_reference is None
+    assert job.completed_at is None
+    assert job.next_attempt_at is not None
+    assert batch.status == "queued"
+    assert batch.failed_count == 0 and batch.queued_count == 1
+    assert batch.completed_at is None and batch.available_at is not None
+    assert db.committed and not db.rolled_back
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_does_not_reopen_cancelled_batch():
+    job = SimpleNamespace(id="job-2", batch_id="batch-2", status="failed")
+    batch = SimpleNamespace(
+        id="batch-2", status="cancelled", cancelled_count=1,
+        failed_count=1, queued_count=0,
+    )
+    db = FakeSession(job, batch)
+
+    result = await retry_failed_scan_job(
+        db, job_id="job-2", license_key="license-1",
+    )
+
+    assert result == {"job_id": "job-2", "status": "not_retryable"}
+    assert job.status == "failed"
+    assert batch.status == "cancelled"
+    assert db.rolled_back and not db.committed
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_rejects_non_failed_job():
+    job = SimpleNamespace(id="job-3", status="completed")
+    db = FakeSession(job)
+
+    result = await retry_failed_scan_job(
+        db, job_id="job-3", license_key="license-1",
+    )
+
+    assert result == {"job_id": "job-3", "status": "not_retryable"}
+    assert db.rolled_back and not db.committed
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_scan_job_does_not_disclose_other_license_jobs():
+    db = FakeSession(None)
+
+    result = await retry_failed_scan_job(
+        db, job_id="private-job", license_key="other-license",
+    )
+
+    assert result is None
+    assert db.rolled_back and not db.committed
+
+
+def test_standard_license_can_scan_multiple_pages_on_one_site():
+    _validate_standard_license_site_binding(
+        registered_hosts=["shop.example"],
+        submitted_urls=["https://shop.example/", "https://shop.example/products/item"],
+    )
+
+
+def test_standard_license_first_scan_binds_one_website():
+    _validate_standard_license_site_binding(
+        registered_hosts=[],
+        submitted_urls=["https://shop.example/", "https://shop.example/about"],
+    )
+
+
+def test_standard_license_cannot_switch_to_a_second_website():
+    with pytest.raises(ValueError, match="already bound"):
+        _validate_standard_license_site_binding(
+            registered_hosts=["shop.example"],
+            submitted_urls=["https://other.example/"],
+        )
+
+
+def test_standard_license_rejects_multiple_websites_in_one_submission():
+    with pytest.raises(ValueError, match="one ecommerce website"):
+        _validate_standard_license_site_binding(
+            registered_hosts=[],
+            submitted_urls=["https://shop.example/", "https://other.example/"],
+        )
+
+
+def test_standard_license_fails_closed_on_conflicting_historical_site_bindings():
+    with pytest.raises(ValueError, match="multiple historical"):
+        _validate_standard_license_site_binding(
+            registered_hosts=["shop.example", "other.example"],
+            submitted_urls=["https://shop.example/"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_scan_job_records_workspace_usage_once():
+    job = SimpleNamespace(
+        id="job-agency-1", batch_id="batch-agency-1", status="processing",
+        locked_by="worker-1", locked_at="locked", license_key="business-license",
+        result_reference=None, completed_at=None, quota_consumed=False,
+    )
+    batch = SimpleNamespace(
+        id="batch-agency-1", workspace_id="client-workspace-1",
+        status="processing", processing_count=1, completed_count=0,
+        failed_count=0, cancelled_count=0, total_urls=1,
+        completed_at=None, package_tier="business",
+    )
+    agency = SimpleNamespace(id="agency-1")
+    db = FakeSession(job, batch, None, agency, None)
+
+    completed = await complete_scan_job(
+        db, job_id=job.id, worker_id="worker-1",
+        result_reference="saved-result-1", quota_committed=True,
+    )
+
+    assert completed is True
+    assert job.status == "completed" and job.quota_consumed is True
+    assert batch.completed_count == 1 and batch.status == "completed"
+    events = [item for item in db.added if isinstance(item, AgencyUsageEvent)]
+    assert len(events) == 1
+    assert events[0].agency_id == "agency-1"
+    assert events[0].workspace_id == "client-workspace-1"
+    assert events[0].event_type == "audit_completed"
+    assert events[0].quantity == 1
+    assert events[0].source_reference == "scan-complete:job-agency-1"
+    assert db.committed
+
+
+@pytest.mark.asyncio
+async def test_complete_scan_job_does_not_create_duplicate_agency_usage_event():
+    job = SimpleNamespace(
+        id="job-agency-2", batch_id="batch-agency-2", status="processing",
+        locked_by="worker-1", locked_at="locked", license_key="business-license",
+        result_reference=None, completed_at=None, quota_consumed=False,
+    )
+    batch = SimpleNamespace(
+        id="batch-agency-2", workspace_id="client-workspace-1",
+        status="processing", processing_count=1, completed_count=0,
+        failed_count=0, cancelled_count=0, total_urls=1,
+        completed_at=None, package_tier="business",
+    )
+    agency = SimpleNamespace(id="agency-1")
+    db = FakeSession(job, batch, None, agency, "existing-usage-event")
+
+    completed = await complete_scan_job(
+        db, job_id=job.id, worker_id="worker-1",
+        result_reference="saved-result-2", quota_committed=True,
+    )
+
+    assert completed is True
+    assert not any(isinstance(item, AgencyUsageEvent) for item in db.added)
+    assert db.committed
+
+@pytest.mark.asyncio
+async def test_non_retryable_scan_failure_is_terminal_and_closes_batch():
+    from scan_queue import fail_or_retry_scan_job
+
+    job = SimpleNamespace(
+        id="job-terminal-1",
+        batch_id="batch-terminal-1",
+        status="processing",
+        locked_by="worker-1",
+        locked_at="locked",
+        attempt_count=1,
+        max_attempts=5,
+        last_error_code=None,
+        completed_at=None,
+    )
+    batch = SimpleNamespace(
+        id="batch-terminal-1",
+        status="processing",
+        processing_count=1,
+        queued_count=0,
+        failed_count=0,
+        completed_count=0,
+        cancelled_count=0,
+        total_urls=1,
+        completed_at=None,
+    )
+    db = FakeSession(job, batch)
+
+    outcome = await fail_or_retry_scan_job(
+        db,
+        job_id=job.id,
+        worker_id="worker-1",
+        error_code="LICENSE_INACTIVE",
+        retry_delay_seconds=300,
+        retryable=False,
+    )
+
+    assert outcome == "failed"
+    assert job.status == "failed"
+    assert job.last_error_code == "LICENSE_INACTIVE"
+    assert job.locked_at is None and job.locked_by is None
+    assert job.completed_at is not None
+    assert batch.processing_count == 0
+    assert batch.failed_count == 1
+    assert batch.status == "failed"
+    assert batch.completed_at is not None
+    assert db.committed and not db.rolled_back

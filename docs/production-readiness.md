@@ -14,15 +14,17 @@ For the exact operator steps to configure the missing admin secret without expos
 
 ## Verify database schema without changing it
 
-Run from the repository root in a controlled environment configured with the same `DATABASE_URL` and `DATABASE_SSL` as production:
+Run from the repository root in a controlled environment configured with the production-equivalent `DATABASE_URL`, `DATABASE_SSL`, `HOSTINGER_DATABASE_URL`, `HOSTINGER_DB_SSL`, and required integration settings:
 
 ```bash
 python scripts/check_production_readiness.py
 ```
 
-The script checks required tables/columns and reports only configuration-presence booleans. It does not print secret values or apply changes. A non-zero exit code means the schema or one or more required configuration groups need attention.
+The script independently checks the Supabase PostgreSQL licensing/audit schema and Hostinger MySQL operational schema, including mapped columns and indexes. It also requires verified TLS for both databases and checks worker, billing, email, and audit-provider configuration groups. It reports only configuration-presence booleans and schema identifiers; it does not print secret values or apply changes. A non-zero exit code means one or both schemas or a required configuration group needs attention.
 
 The key report-history and billing migration is `migrations/2026-10-22-audit-reports.sql`; the admin package/operations migration is `migrations/20261023_admin_packages_and_actions.sql`. Review each SQL file and confirm its prerequisites before applying it. Keep a backup and record the migration result. The admin migration expects `payment_webhook_events` to exist, so apply the audit-reports migration first on a database where it is not already present.
+
+The additive Phase 5 schema alignment is `migrations/20261101_saas_database_integrations.sql`. It provisions quota reservations, passwordless login challenges and sessions, email-change challenges, WordPress site links, support notes, and the billing-period end field/indexes expected by the current ORM models. Follow the complete ordered migration and environment setup in [Database and external integration rollout](database-integrations-rollout.md).
 
 ## Acceptance checks before calling the SaaS ready
 

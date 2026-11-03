@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
-from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense, CustomerLifecycleSyncOutbox
+from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
 from coverage_manifest import build_coverage_manifest
@@ -26,12 +26,13 @@ async def create_license(
     quota=10,
     active=True,
     expires_at=None,
+    tier="business",
 ):
     async with AsyncSessionLocal() as db:
         license_obj = SoftwareLicense(
             license_key=key,
             client_name="Automated Test",
-            tier="test",
+            tier=tier,
             max_monthly_audits=quota,
             is_active=active,
             expires_at=expires_at,
@@ -208,7 +209,7 @@ def test_coverage_manifest_redacts_credentials_query_and_fragment_from_all_urls(
 
 @pytest.mark.asyncio
 async def test_account_usage_reports_monthly_quota_without_exposing_license_key(client):
-    license_id = await create_license(key="usage-private-license", quota=5)
+    license_id = await create_license(key="usage-private-license", quota=5, tier="test")
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         db.add(AuditLead(
@@ -270,15 +271,26 @@ async def test_portal_pages_send_browser_security_headers_and_disable_caching(cl
 async def test_root_and_database_health(client):
     root = await client.get("/")
     assert root.status_code == 200
-    assert root.json()["status"] == "AI Agent Commercial Engine Operational"
+    assert root.headers["content-type"].startswith("text/html")
+    assert "Ecommerce Audit Agent" in root.text
+    assert 'id="pricing"' in root.text
 
     health = await client.get("/health-check")
     assert health.status_code == 200
     assert health.json() == {
         "status": "success",
-        "db_connected": True,
-        "schema_ready": True,
-        "result": 1,
+        "licensing_database": {
+            "engine": "postgresql",
+            "connected": True,
+            "schema_ready": True,
+            "result": 1,
+        },
+        "operational_database": {
+            "engine": "mysql",
+            "connected": True,
+            "schema_ready": True,
+            "result": 1,
+        },
     }
 
 
@@ -479,7 +491,7 @@ async def test_parallel_requests_with_one_slot_return_one_200_and_one_429(
 @pytest.mark.asyncio
 async def test_configured_concurrency_limit_rejects_extra_active_audit(client, monkeypatch):
     license_id = await create_license(key="concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "1")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_BUSINESS", "1")
     async with AsyncSessionLocal() as db:
         db.add(
             AuditQuotaReservation(
@@ -504,7 +516,7 @@ async def test_configured_concurrency_limit_rejects_extra_active_audit(client, m
 @pytest.mark.asyncio
 async def test_invalid_configured_concurrency_limit_fails_closed(client, monkeypatch):
     await create_license(key="invalid-concurrency-license", quota=10)
-    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_TEST", "not-a-number")
+    monkeypatch.setenv("LICENSE_MAX_CONCURRENT_AUDITS_BUSINESS", "not-a-number")
 
     response = await client.post(
         "/api/v1/audit-lead",
@@ -1423,15 +1435,63 @@ async def test_paddle_webhook_rejects_invalid_signature_without_provisioning(cli
 
 @pytest.mark.asyncio
 async def test_public_plans_only_show_configured_paddle_price_ids(client, monkeypatch):
+    import main
+
     for key, value in {"PADDLE_API_KEY": "pdl_sandbox_test_key", "PADDLE_WEBHOOK_SECRET": "test-webhook-secret",
         "SMTP_HOST": "smtp.example.com", "SMTP_FROM": "reports@example.com", "PADDLE_PRICE_ID_STARTER": "pri_01abc123"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("PADDLE_PRICE_ID_PRO", raising=False)
+    monkeypatch.setattr(main, "_public_paddle_price_details", lambda price_id: {
+        "amount_minor": "1200",
+        "currency_code": "USD",
+        "billing_cycle_interval": "month",
+        "billing_cycle_frequency": 1,
+    })
     response = await client.get("/api/v1/billing/plans")
     payload = response.json()
     assert response.status_code == 200 and payload["configured"] is True
     assert payload["checkout_provider"] == "Paddle" and [plan["tier"] for plan in payload["plans"]] == ["starter"]
     assert "price_id" not in payload["plans"][0]
+    assert payload["plans"][0]["price"] == {
+        "amount_minor": "1200",
+        "currency_code": "USD",
+        "billing_cycle_interval": "month",
+        "billing_cycle_frequency": 1,
+    }
+    assert payload["plans"][0]["features"] == {
+        "standard_audits": True,
+        "conversion_dossier": False,
+        "white_label_branding": False,
+        "agency_management": False,
+        "direct_api_access": False,
+    }
+
+
+def test_public_paddle_price_details_validate_and_cache_provider_catalogue_data(monkeypatch):
+    import main
+
+    main._PADDLE_PUBLIC_PRICE_CACHE.clear()
+    calls = []
+
+    def fake_paddle_request(path, method="GET", payload=None):
+        calls.append((path, method))
+        return {"data": {
+            "id": "pri_price_contract123",
+            "status": "active",
+            "unit_price": {"amount": "1299", "currency_code": "USD"},
+            "billing_cycle": {"interval": "month", "frequency": 1},
+        }}
+
+    monkeypatch.setenv("PADDLE_ENVIRONMENT", "sandbox")
+    monkeypatch.setattr(main, "_paddle_api_request", fake_paddle_request)
+    first = main._public_paddle_price_details("pri_price_contract123")
+    second = main._public_paddle_price_details("pri_price_contract123")
+
+    assert first == second
+    assert first["amount_minor"] == "1299"
+    assert first["currency_code"] == "USD"
+    assert first["billing_cycle_interval"] == "month"
+    assert calls == [("/prices/pri_price_contract123", "GET")]
 
 
 
@@ -1662,7 +1722,7 @@ async def test_paddle_webhook_claims_license_email_delivery_once_for_concurrent_
     def blocking_email(email, key, tier, quota):
         attempts.append(key)
         entered_send.set()
-        if not release_send.wait(timeout=5):
+        if not release_send.wait(timeout=30):
             raise RuntimeError("test email send timed out")
 
     monkeypatch.setattr(main, "_send_license_email", blocking_email)
@@ -1765,7 +1825,7 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-packages-key")
     headers = {"X-Admin-Key": "test-admin-packages-key"}
     payload = {
-        "tier": "qa-test-plan",
+        "tier": "business",
         "label": "QA Test Plan",
         "monthly_audit_allowance": 37,
         "max_concurrent_audits": 4,
@@ -1778,11 +1838,11 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
 
     created = await client.post("/api/v1/admin/packages", headers=headers, json=payload)
     assert created.status_code == 200, created.text
-    assert created.json() == {"status": "created", "tier": "qa-test-plan"}
+    assert created.json() == {"status": "created", "tier": "business"}
 
     listed = await client.get("/api/v1/admin/packages", headers=headers)
     assert listed.status_code == 200, listed.text
-    package = next(item for item in listed.json()["packages"] if item["tier"] == "qa-test-plan")
+    package = next(item for item in listed.json()["packages"] if item["tier"] == "business")
     assert package["monthly_audit_allowance"] == 37
     assert package["max_concurrent_audits"] == 4
     assert package["price_id"] == "pri_QaTestPlan123"
@@ -1796,21 +1856,21 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
         "paddle_price_id": None,
     }
     updated = await client.patch(
-        "/api/v1/admin/packages/qa-test-plan", headers=headers, json=updated_payload
+        "/api/v1/admin/packages/business", headers=headers, json=updated_payload
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json() == {"status": "updated", "tier": "qa-test-plan"}
+    assert updated.json() == {"status": "updated", "tier": "business"}
 
     deactivated = await client.delete(
-        "/api/v1/admin/packages/qa-test-plan", headers=headers
+        "/api/v1/admin/packages/business", headers=headers
     )
     assert deactivated.status_code == 200, deactivated.text
-    assert deactivated.json() == {"status": "deactivated", "tier": "qa-test-plan"}
+    assert deactivated.json() == {"status": "deactivated", "tier": "business"}
 
     final_list = await client.get("/api/v1/admin/packages", headers=headers)
     assert final_list.status_code == 200, final_list.text
     final_package = next(
-        item for item in final_list.json()["packages"] if item["tier"] == "qa-test-plan"
+        item for item in final_list.json()["packages"] if item["tier"] == "business"
     )
     assert final_package["label"] == "QA Test Plan Updated"
     assert final_package["monthly_audit_allowance"] == 73
@@ -2091,6 +2151,14 @@ async def test_admin_overview_search_and_pagination_are_bounded_and_keep_global_
     first_id = await create_license(key="admin-page-alpha", quota=5)
     await create_license(key="admin-page-beta", quota=5)
     await create_license(key="admin-page-gamma", quota=5)
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_admin_page_customer_email",
+            status="provisioned",
+            license_id=first_id,
+            recipient_email="searchable-customer@example.com",
+        ))
+        await db.commit()
     headers = {"X-Admin-Key": "test-admin-overview-page-key"}
 
     page = await client.get("/api/v1/admin/overview?limit=1&offset=0", headers=headers)
@@ -2110,7 +2178,16 @@ async def test_admin_overview_search_and_pagination_are_bounded_and_keep_global_
     search_payload = searched.json()
     assert [row["id"] for row in search_payload["clients"]] == [first_id]
     assert search_payload["client_page"]["total"] == 1
+    assert search_payload["clients"][0]["contact_email"] == "searchable-customer@example.com"
     assert search_payload["summary"]["clients_total"] >= 3
+
+    email_search = await client.get(
+        "/api/v1/admin/overview?limit=10&offset=0&search=searchable-customer%40example.com",
+        headers=headers,
+    )
+    assert email_search.status_code == 200, email_search.text
+    assert [row["id"] for row in email_search.json()["clients"]] == [first_id]
+    assert email_search.json()["clients"][0]["contact_email"] == "searchable-customer@example.com"
 
 
 @pytest.mark.asyncio
@@ -2132,96 +2209,122 @@ async def test_customer_portal_exposes_explicit_disconnect_and_clears_credential
     assert 'credential = "";' in response.text
     assert 'setAccountControls(false)' in response.text
     assert "Credentials were cleared; reconnect to continue." in response.text
-    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWebsites(), loadCustomerSessions()])" in response.text
+    assert "Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()])" in response.text
+    assert 'id="generateWordPressLinkCode"' in response.text
+    assert 'id="wordpressLinkCodePanel"' in response.text
+    assert "loadDeviceSessions()" in response.text
+    assert "loadAccountLicenses()" not in response.text
     assert 'setStatus("auditStatus", auditAccess ?' in response.text
     assert '$("runAudit").disabled = !auditAccess;' in response.text
     assert "Connected for billing. Unavailable features:" in response.text
 
 
-@pytest.mark.asyncio
-async def test_health_check_returns_not_ready_when_required_schema_tables_are_missing():
-    class IncompleteSchemaSession:
+def _health_schema_session(tables, columns, indexes, *, mysql=False):
+    class SchemaSession:
         async def execute(self, statement):
             sql = str(statement)
             if "SELECT 1" in sql:
                 return SimpleNamespace(scalar=lambda: 1)
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["software_licenses"]))
+            if "information_schema.tables" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(tables)))
+            if "information_schema.columns" in sql:
+                return SimpleNamespace(all=lambda: columns)
+            if "pg_indexes" in sql or "information_schema.statistics" in sql:
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: indexes))
+            raise AssertionError(f"Unexpected schema query: {sql}")
+    return SchemaSession()
 
+
+def _complete_health_schema_sessions():
+    from sqlalchemy import UniqueConstraint
+
+    pg_tables = {
+        "software_licenses", "api_keys", "audit_leads", "audit_quota_reservations",
+        "audit_reports", "saas_plan_packages", "payment_webhook_events",
+        "customer_lifecycle_sync_outbox", "billing_mirror_sync_outbox",
+    }
+    pg_columns = [
+        (table_name, column.name)
+        for table_name in pg_tables
+        for column in main.Base.metadata.tables[table_name].columns
+    ]
+    pg_indexes = {
+        index.name
+        for table_name in pg_tables
+        for index in main.Base.metadata.tables[table_name].indexes
+        if index.name
+    } | {"uq_saas_plan_packages_paddle_price_id"}
+    hostinger_tables = set(main.HostingerBase.metadata.tables)
+    hostinger_columns = [
+        (table_name, column.name)
+        for table_name, table in main.HostingerBase.metadata.tables.items()
+        for column in table.columns
+    ]
+    hostinger_indexes = {
+        index.name
+        for table in main.HostingerBase.metadata.tables.values()
+        for index in table.indexes
+        if index.name
+    } | {
+        constraint.name
+        for table in main.HostingerBase.metadata.tables.values()
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name
+    }
+    return (
+        _health_schema_session(pg_tables, pg_columns, sorted(pg_indexes)),
+        _health_schema_session(hostinger_tables, hostinger_columns, sorted(hostinger_indexes), mysql=True),
+        pg_tables, pg_columns, pg_indexes,
+    )
+
+
+@pytest.mark.asyncio
+async def test_health_check_returns_not_ready_when_required_schema_tables_are_missing():
+    _, operational_db, _, _, _ = _complete_health_schema_sessions()
+    licensing_db = _health_schema_session({"software_licenses"}, [], [])
     with pytest.raises(HTTPException) as raised:
-        await main.health_check(IncompleteSchemaSession())
+        await main.health_check(licensing_db, operational_db)
 
+    detail = raised.value.detail
     assert raised.value.status_code == 503
-    assert raised.value.detail["status"] == "not_ready"
-    assert raised.value.detail["db_connected"] is True
-    assert raised.value.detail["schema_ready"] is False
-    assert "audit_reports" in raised.value.detail["missing_tables"]
-    assert "payment_webhook_events" in raised.value.detail["missing_tables"]
+    assert detail["status"] == "not_ready"
+    assert detail["licensing_database"]["connected"] is True
+    assert detail["licensing_database"]["schema_ready"] is False
+    assert "audit_reports" in detail["licensing_database"]["missing_tables"]
+    assert "payment_webhook_events" in detail["licensing_database"]["missing_tables"]
+    assert detail["operational_database"]["schema_ready"] is True
+
 
 @pytest.mark.asyncio
 async def test_health_check_returns_not_ready_when_required_schema_columns_are_missing():
-    required_tables = set(main.Base.metadata.tables)
-    existing_columns = [
-        (table_name, column.name)
-        for table_name, table in main.Base.metadata.tables.items()
-        for column in table.columns
-        if not (table_name == "software_licenses" and column.name == "license_key")
+    _, operational_db, pg_tables, pg_columns, pg_indexes = _complete_health_schema_sessions()
+    incomplete_columns = [
+        item for item in pg_columns
+        if item != ("software_licenses", "license_key")
     ]
-
-    class IncompleteColumnSchemaSession:
-        async def execute(self, statement):
-            sql = str(statement)
-            if "SELECT 1" in sql:
-                return SimpleNamespace(scalar=lambda: 1)
-            if "information_schema.tables" in sql:
-                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
-            return SimpleNamespace(all=lambda: existing_columns)
-
+    licensing_db = _health_schema_session(pg_tables, incomplete_columns, sorted(pg_indexes))
     with pytest.raises(HTTPException) as raised:
-        await main.health_check(IncompleteColumnSchemaSession())
+        await main.health_check(licensing_db, operational_db)
 
+    detail = raised.value.detail
     assert raised.value.status_code == 503
-    assert raised.value.detail["status"] == "not_ready"
-    assert raised.value.detail["db_connected"] is True
-    assert raised.value.detail["schema_ready"] is False
-    assert raised.value.detail["missing_tables"] == []
-    assert "license_key" in raised.value.detail["missing_columns"]["software_licenses"]
+    assert detail["licensing_database"]["schema_ready"] is False
+    assert detail["licensing_database"]["missing_tables"] == []
+    assert "license_key" in detail["licensing_database"]["missing_columns"]["software_licenses"]
+
 
 @pytest.mark.asyncio
 async def test_health_check_returns_not_ready_when_required_database_indexes_are_missing():
-    required_tables = set(main.Base.metadata.tables)
-    existing_columns = [
-        (table_name, column.name)
-        for table_name, table in main.Base.metadata.tables.items()
-        for column in table.columns
-    ]
-    required_indexes = sorted({
-        index.name
-        for table_name in required_tables
-        for index in main.Base.metadata.tables[table_name].indexes
-        if index.name
-    })
-    assert required_indexes, "test fixture requires at least one mapped index"
-    existing_indexes = [name for name in required_indexes if name != required_indexes[0]]
-
-    class IncompleteIndexSchemaSession:
-        async def execute(self, statement):
-            sql = str(statement)
-            if "SELECT 1" in sql:
-                return SimpleNamespace(scalar=lambda: 1)
-            if "information_schema.tables" in sql:
-                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: sorted(required_tables)))
-            if "information_schema.columns" in sql:
-                return SimpleNamespace(all=lambda: existing_columns)
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: existing_indexes))
-
+    _, operational_db, pg_tables, pg_columns, pg_indexes = _complete_health_schema_sessions()
+    missing_index = sorted(pg_indexes)[0]
+    licensing_db = _health_schema_session(pg_tables, pg_columns, sorted(pg_indexes - {missing_index}))
     with pytest.raises(HTTPException) as raised:
-        await main.health_check(IncompleteIndexSchemaSession())
+        await main.health_check(licensing_db, operational_db)
 
+    detail = raised.value.detail
     assert raised.value.status_code == 503
-    assert raised.value.detail["status"] == "not_ready"
-    assert raised.value.detail["schema_ready"] is False
-    assert raised.value.detail["missing_indexes"] == [required_indexes[0]]
-
+    assert detail["licensing_database"]["schema_ready"] is False
+    assert detail["licensing_database"]["missing_indexes"] == [missing_index]
 
 
 @pytest.mark.asyncio
@@ -2252,7 +2355,7 @@ async def test_paddle_past_due_retries_until_subscription_is_linked_and_deduplic
     }
     early = await send(early_past_due)
     assert early.status_code == 503
-    assert early.json()["detail"] == "Payment-failure event is awaiting subscription reconciliation."
+    assert early.json()["detail"] == "Payment-failure event is awaiting subscription or transaction reconciliation."
 
     purchase = {
         "event_id": "evt_past_due_purchase",
@@ -2544,18 +2647,33 @@ async def test_customer_audit_activity_is_paginated_scoped_and_minimizes_sensiti
     owner_id = await create_license(key="activity-owner")
     other_id = await create_license(key="activity-other")
     now = datetime.now(timezone.utc)
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            AuditLead(license_id=owner_id, domain="first.example", mobile_score=80, speed_index_sec=2.2,
-                      contact_email="private@example.com", revenue_leak_hypothesis="private pitch", email_body="secret body",
-                      source_channel="customer_portal", created_at=now - timedelta(minutes=1)),
-            AuditLead(license_id=owner_id, domain="second.example", mobile_score=60, speed_index_sec=4.5,
-                      contact_email="other-private@example.com", revenue_leak_hypothesis="other pitch",
-                      source_channel="api", created_at=now),
-            AuditLead(license_id=other_id, domain="must-not-leak.example", mobile_score=99, speed_index_sec=1.0,
-                      created_at=now),
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.WebsiteScanResult(
+                id="activity-owner-first", job_id="activity-job-owner-first",
+                license_key="activity-owner", website_id="activity-site-first",
+                target_url="https://first.example/", overall_score=80,
+                summary_json=json.dumps({"pagespeed": {"mobile_score": 80, "speed_index_sec": 2.2}}),
+                findings_json='[{"contact_email":"private@example.com","note":"secret body"}]',
+                created_at=now - timedelta(minutes=1),
+            ),
+            main.WebsiteScanResult(
+                id="activity-owner-second", job_id="activity-job-owner-second",
+                license_key="activity-owner", website_id="activity-site-second",
+                target_url="https://second.example/", overall_score=60,
+                summary_json=json.dumps({"pagespeed": {"mobile_score": 60, "speed_index_sec": 4.5}}),
+                findings_json='[{"revenue_leak_hypothesis":"private pitch"}]',
+                created_at=now,
+            ),
+            main.WebsiteScanResult(
+                id="activity-other-private", job_id="activity-job-other",
+                license_key="activity-other", website_id="activity-site-other",
+                target_url="https://must-not-leak.example/", overall_score=99,
+                summary_json=json.dumps({"pagespeed": {"mobile_score": 99, "speed_index_sec": 1.0}}),
+                created_at=now,
+            ),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     response = await client.get(
         "/api/v1/account/activity?limit=1&offset=0",
@@ -2647,16 +2765,16 @@ async def test_customer_billing_history_is_paginated_scoped_and_validated(client
 @pytest.mark.asyncio
 async def test_admin_action_history_is_paginated_and_validated(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-pagination")
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            SaaSAdminActionLog(action="package_created", entity_type="package", entity_id="starter",
-                               details_json='{"tier":"starter"}'),
-            SaaSAdminActionLog(action="client_updated", entity_type="client", entity_id="12",
-                               details_json='{"field":"is_active"}'),
-            SaaSAdminActionLog(action="key_revoked", entity_type="api_key", entity_id="31",
-                               details_json='{"reason":"rotation"}'),
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.AdminActionLog(action="package_created", entity_type="package", entity_id="starter",
+                                details_json='{"tier":"starter"}'),
+            main.AdminActionLog(action="client_updated", entity_type="client", entity_id="12",
+                                details_json='{"field":"is_active"}'),
+            main.AdminActionLog(action="key_revoked", entity_type="api_key", entity_id="31",
+                                details_json='{"reason":"rotation"}'),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     headers = {"X-Admin-Key": "test-admin-actions-pagination"}
     first = await client.get("/api/v1/admin/actions?limit=2&offset=0", headers=headers)
@@ -2684,18 +2802,18 @@ async def test_admin_action_history_is_paginated_and_validated(client, monkeypat
 
 async def test_admin_action_history_tolerates_malformed_legacy_details_and_redacts_secrets(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-actions-legacy")
-    async with AsyncSessionLocal() as db:
-        db.add_all([
-            SaaSAdminActionLog(
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.AdminActionLog(
                 action="legacy_malformed", entity_type="system", entity_id="legacy-malformed",
                 details_json="{not valid json",
             ),
-            SaaSAdminActionLog(
+            main.AdminActionLog(
                 action="legacy_sensitive", entity_type="system", entity_id="legacy-sensitive",
                 details_json='{"api_key":"super-secret-value","note":"password=hunter2","nested":{"access_token":"abc123"}}',
             ),
         ])
-        await db.commit()
+        await operational_db.commit()
 
     response = await client.get(
         "/api/v1/admin/actions?limit=200&offset=0",
@@ -2796,15 +2914,15 @@ async def test_admin_client_api_key_lifecycle_is_scoped_auditable_and_secret_min
     assert after_revoke.status_code == 200
     assert after_revoke.json()["items"] == []
 
-    async with AsyncSessionLocal() as db:
-        actions = (await db.execute(
-            select(SaaSAdminActionLog).where(
-                SaaSAdminActionLog.entity_id == str(first_client_id),
-                SaaSAdminActionLog.action.in_([
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        actions = (await operational_db.execute(
+            select(main.AdminActionLog).where(
+                main.AdminActionLog.entity_id == str(first_client_id),
+                main.AdminActionLog.action.in_([
                     "client.api_key_created",
                     "client.api_key_revoked",
                 ]),
-            ).order_by(SaaSAdminActionLog.id.asc())
+            ).order_by(main.AdminActionLog.id.asc())
         )).scalars().all()
         assert [item.action for item in actions] == [
             "client.api_key_created",
@@ -2873,12 +2991,18 @@ async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypa
 async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names(client):
     owner_id = await create_license(key="profile-owner")
     other_id = await create_license(key="profile-other")
-    async with AsyncSessionLocal() as db:
-        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
-        owner.client_name = "Original Customer"
-        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
-        other.client_name = "Other Customer"
-        await db.commit()
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.CustomerAccount(
+                id="profile-owner-account", license_key="profile-owner",
+                email="profile-owner@example.com", display_name="Original Customer",
+            ),
+            main.CustomerAccount(
+                id="profile-other-account", license_key="profile-other",
+                email="profile-other@example.com", display_name="Other Customer",
+            ),
+        ])
+        await operational_db.commit()
 
     headers = {"X-License-Key": "profile-owner"}
     updated = await client.patch(
@@ -2912,11 +3036,15 @@ async def test_customer_profile_update_is_scoped_private_and_rejects_blank_names
     )
     assert too_long.status_code == 422
 
-    async with AsyncSessionLocal() as db:
-        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
-        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
-        assert owner.client_name == "Updated Store"
-        assert other.client_name == "Other Customer"
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        owner = await operational_db.scalar(select(main.CustomerAccount).where(
+            main.CustomerAccount.license_key == "profile-owner"
+        ))
+        other = await operational_db.scalar(select(main.CustomerAccount).where(
+            main.CustomerAccount.license_key == "profile-other"
+        ))
+        assert owner.display_name == "Updated Store"
+        assert other.display_name == "Other Customer"
 
     assert (await client.get("/api/v1/account/profile")).status_code == 401
 
@@ -3148,234 +3276,846 @@ async def test_admin_diagnostics_and_client_history_are_not_cached(client, monke
 
 
 @pytest.mark.asyncio
-async def test_customer_website_inventory_requires_account_authentication(client):
-    response = await client.get("/api/v1/websites")
-    assert response.status_code == 401
+async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unknown_price(client, monkeypatch):
+    from sqlalchemy import text
+
+    secret = "paddle-test-subscription-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_updatestarter123")
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_updatepro123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_PRO", "1000")
+
+    async with AsyncSessionLocal() as db:
+        license_obj = SoftwareLicense(
+            license_key="subscription-update-license", client_name="Plan Change Buyer",
+            tier="starter", max_monthly_audits=100, is_active=True,
+        )
+        await main._ensure_admin_tables(db)
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES ('pro', 'Test Pro', 1000, 5, 'pri_updatepro123', TRUE)
+            ON CONFLICT (tier) DO UPDATE SET
+                paddle_price_id = EXCLUDED.paddle_price_id,
+                monthly_audit_allowance = EXCLUDED.monthly_audit_allowance,
+                is_active = TRUE
+        """))
+        db.add(license_obj)
+        await db.flush()
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_subscription_update", status="provisioned",
+            license_id=license_obj.id, recipient_email="update@example.com",
+            subscription_id="sub_update123", paddle_customer_id="ctm_update123",
+        ))
+        await db.commit()
+        license_id = license_obj.id
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook", content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
+        "data": {"id": "sub_update123", "customer_id": "ctm_update123",
+        "items": [{"price": {"id": "pri_updatepro123"}, "quantity": 1}]}}
+    changed = await send(update)
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["status"] == "plan_reconciled"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.tier == "pro"
+        assert license_obj.max_monthly_audits == 1000
+        before_unknown = (license_obj.tier, license_obj.max_monthly_audits)
+
+    unknown = {"event_id": "evt_update_unknown", "event_type": "subscription.updated",
+        "data": {"id": "sub_update123", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
+    ignored = await send(unknown)
+    assert ignored.status_code == 200, ignored.text
+    assert ignored.json()["status"] == "unmapped_price_ignored"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert (license_obj.tier, license_obj.max_monthly_audits) == before_unknown
+        assert (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_update_unknown"))).scalar_one_or_none() is not None
+
+    duplicate = await send(update)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "already_processed"
 
 
 @pytest.mark.asyncio
-async def test_customer_website_registration_rejects_parameterized_targets_before_hostinger(client):
-    await create_license(key="website-validation-license")
+async def test_paddle_subscription_update_after_cancellation_is_sticky(client, monkeypatch):
+    secret = "paddle-test-canceled-plan-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_canceledpro123")
+    license_id = await create_license(key="canceled-plan-update-license", quota=100, active=False)
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_canceled_plan_update",
+            status="subscription_canceled",
+            license_id=license_id,
+            subscription_id="sub_canceled_plan_update",
+            recipient_email="canceled@example.com",
+        ))
+        await db.commit()
+
+    event = {
+        "event_id": "evt_late_plan_update",
+        "event_type": "subscription.updated",
+        "data": {
+            "id": "sub_canceled_plan_update",
+            "items": [{"price": {"id": "pri_canceledpro123"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
     response = await client.post(
-        "/api/v1/websites",
-        json={"website_url": "https://shop.example/products?source=campaign"},
-        headers={"X-License-Key": "website-validation-license"},
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
     )
-    assert response.status_code == 422
-    assert "Query strings are not accepted" in response.json()["detail"]
 
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ignored_after_cancellation"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.tier == "business"
+        assert license_obj.max_monthly_audits == 100
+        assert license_obj.is_active is False
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_late_plan_update"
+        ))).scalar_one()
+        assert stored.status == "subscription_canceled"
 
 
 @pytest.mark.asyncio
-async def test_admin_scan_queue_requires_operator_authentication(client, monkeypatch):
-    monkeypatch.setenv("ADMIN_API_KEY", "configured-admin-auth-test")
-    response = await client.get("/api/v1/admin/scan-jobs")
-    assert response.status_code == 401
-    retry = await client.post("/api/v1/admin/scan-jobs/not-a-job/retry")
-    assert retry.status_code == 401
-
-
-
-@pytest.mark.asyncio
-async def test_customer_email_change_requires_account_authentication(client):
+async def test_paddle_subscription_update_unlinked_license_returns_retryable_503(client, monkeypatch):
+    secret = "paddle-test-unlinked-plan-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    event = {
+        "event_id": "evt_unlinked_plan_update",
+        "event_type": "subscription.updated",
+        "data": {
+            "id": "sub_not_linked_yet",
+            "items": [{"price": {"id": "pri_unmapped123"}, "quantity": 1}],
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
     response = await client.post(
-        "/api/v1/account/email-change",
-        json={"email": "new-customer@example.com"},
-    )
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_customer_email_change_rejects_invalid_email_before_operational_database(client):
-    await create_license(key="email-change-invalid-address")
-    response = await client.post(
-        "/api/v1/account/email-change",
-        json={"email": "not-an-email"},
-        headers={"X-License-Key": "email-change-invalid-address"},
-    )
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Enter a valid email address."
-
-
-@pytest.mark.asyncio
-async def test_customer_email_change_confirmation_rejects_short_token(client):
-    response = await client.post(
-        "/api/v1/account/email-change/confirm",
-        json={"token": "too-short"},
-    )
-    assert response.status_code == 422
-
-
-
-@pytest.mark.asyncio
-async def test_customer_portal_exposes_passwordless_sign_in_and_session_logout(client):
-    response = await client.get("/app")
-    assert response.status_code == 200
-    assert 'value="X-Customer-Session"' in response.text
-    assert 'id="loginEmail"' in response.text
-    assert 'id="loginToken"' in response.text
-    assert 'id="requestLogin"' in response.text
-    assert 'id="verifyLogin"' in response.text
-    assert '/api/v1/account/logout' in response.text
-
-
-@pytest.mark.asyncio
-async def test_customer_session_header_authenticates_license(monkeypatch):
-    import auth
-    import hostinger_database
-    from datetime import timedelta
-
-    session_token = "session-token-for-unit-test"
-    session_row = SimpleNamespace(
-        token_hash=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
-        license_key="session-license",
-        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
-        revoked_at=None,
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
     )
 
-    class FakeOperationalSession:
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            return False
-        async def scalar(self, statement):
-            return session_row
-
-    class FakeLicensingResult:
-        def scalar_one_or_none(self):
-            return SimpleNamespace(
-                license_key="session-license",
-                is_active=True,
-                expires_at=datetime.now(timezone.utc) + timedelta(days=1),
-            )
-
-    class FakeLicensingSession:
-        async def execute(self, statement):
-            return FakeLicensingResult()
-
-    monkeypatch.setattr(hostinger_database, "HostingerAsyncSessionLocal", FakeOperationalSession)
-    license_obj = await auth.verify_license_or_api_key(
-        api_key=None,
-        license_key=None,
-        customer_session=session_token,
-        db=FakeLicensingSession(),
-    )
-    assert license_obj.license_key == "session-license"
-
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Subscription update is awaiting license reconciliation."
+    async with AsyncSessionLocal() as db:
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_unlinked_plan_update"
+        ))).scalar_one_or_none()
+        assert stored is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("revoked,expired", [(True, False), (False, True)])
-async def test_customer_session_auth_rejects_revoked_or_expired_tokens(monkeypatch, revoked, expired):
-    import auth
-    import hostinger_database
-    from datetime import timedelta
+async def test_paddle_billing_period_end_is_saved_on_purchase_and_renewal(client, monkeypatch):
+    secret = "paddle-billing-period-test-secret"
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_billingperiodstarter123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
 
-    session_token = "invalid-session-token-for-unit-test"
-    session_row = SimpleNamespace(
-        token_hash=hashlib.sha256(session_token.encode("utf-8")).hexdigest(),
-        license_key="session-license",
-        expires_at=(
-            datetime.now(timezone.utc) - timedelta(minutes=1)
-            if expired else datetime.now(timezone.utc) + timedelta(days=1)
-        ),
-        revoked_at=datetime.now(timezone.utc) if revoked else None,
-    )
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+        return await client.post("/api/v1/billing/paddle-webhook", content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"})
 
-    class FakeOperationalSession:
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            return False
-        async def scalar(self, statement):
-            return session_row
+    purchase = {
+        "event_id": "evt_billing_period_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_billingperiodpurchase123", "status": "completed",
+            "subscription_id": "sub_billingperiod123", "customer_id": "ctm_billingperiod123",
+            "customer": {"email": "billing-period@example.com", "name": "Billing Period"},
+            "items": [{"price": {"id": "pri_billingperiodstarter123"}, "quantity": 1}],
+            "billing_period": {"starts_at": "2026-10-01T00:00:00Z", "ends_at": "2026-11-01T00:00:00Z"},
+        },
+    }
+    created = await send(purchase)
+    assert created.status_code == 200, created.text
+    async with AsyncSessionLocal() as db:
+        record = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_billing_period_purchase"))).scalar_one()
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == record.license_id))).scalar_one()
+        license_id = license_obj.id
+        assert license_obj.billing_period_ends_at.isoformat() == "2026-11-01T00:00:00+00:00"
 
-    monkeypatch.setattr(hostinger_database, "HostingerAsyncSessionLocal", FakeOperationalSession)
-    with pytest.raises(HTTPException) as raised:
-        await auth._customer_session_license_key(session_token)
-    assert raised.value.status_code == 401
-
-
-
-@pytest.mark.asyncio
-async def test_customer_session_management_requires_passwordless_session_authentication(client):
-    listed = await client.get("/api/v1/account/sessions")
-    assert listed.status_code == 401
-
-    revoked = await client.post("/api/v1/account/sessions/revoke-others")
-    assert revoked.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_customer_portal_exposes_session_management_controls(client):
-    response = await client.get("/app")
-    assert response.status_code == 200
-    assert 'id="sessionList"' in response.text
-    assert 'id="refreshSessions"' in response.text
-    assert 'id="revokeOtherSessions"' in response.text
-    assert '/api/v1/account/sessions/revoke-others' in response.text
-
-
-
-@pytest.mark.asyncio
-async def test_admin_customer_session_endpoints_require_admin_key(client, monkeypatch):
-    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key")
-    listed = await client.get("/api/v1/admin/clients/1/sessions")
-    revoked = await client.post("/api/v1/admin/clients/1/sessions/revoke-all")
-    assert listed.status_code == 401
-    assert revoked.status_code == 401
+    renewal = {
+        "event_id": "evt_billing_period_renewal",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_billingperiodrenewal123", "status": "completed",
+            "subscription_id": "sub_billingperiod123", "customer_id": "ctm_billingperiod123",
+            "customer": {"email": "billing-period@example.com"},
+            "items": [{"price": {"id": "pri_billingperiodstarter123"}, "quantity": 1}],
+            "billing_period": {"starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z"},
+        },
+    }
+    renewed = await send(renewal)
+    assert renewed.status_code == 200, renewed.text
+    assert renewed.json()["status"] == "subscription_renewed"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.billing_period_ends_at.isoformat() == "2026-12-01T00:00:00+00:00"
 
 
 @pytest.mark.asyncio
-async def test_admin_portal_includes_customer_session_operations(client):
-    response = await client.get("/admin")
-    assert response.status_code == 200
-    assert 'id="clientSessions"' in response.text
-    assert 'id="refreshClientSessions"' in response.text
-    assert 'id="revokeClientSessions"' in response.text
-    assert '/sessions/revoke-all' in response.text
+async def test_paddle_subscription_update_refreshes_billing_period_end(client, monkeypatch):
+    secret = "paddle-subscription-period-update-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_PRO", "pri_periodupdatepro123")
+    license_id = await create_license(key="period-update-license", quota=100)
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(event_id="evt_period_update_seed", status="delivered",
+            license_id=license_id, recipient_email="period@example.com",
+            subscription_id="sub_period_update123", paddle_customer_id="ctm_period_update123"))
+        await db.commit()
 
-
-@pytest.mark.asyncio
-async def test_operational_health_check_reports_unconfigured_hostinger_without_secrets(client, monkeypatch):
-    import hostinger_database
-
-    monkeypatch.setattr(hostinger_database, "hostinger_engine", None)
-    response = await client.get("/health-check/operational")
-    assert response.status_code == 503
-    body = response.json()["detail"]
-    assert body["status"] == "not_ready"
-    assert body["components"]["operational_database"]["connected"] is False
-    assert body["components"]["operational_database"]["schema_ready"] is False
-    assert body["components"]["operational_database"]["error"] == "not_configured"
-    serialized = json.dumps(body).lower()
-    assert "password" not in serialized
-    assert "database_url" not in serialized
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("expiry_offset_days", "expected_action"),
-    [(-1, "suspend"), (30, "reactivate")],
-)
-async def test_admin_expiry_change_syncs_customer_lifecycle_and_session_state(
-    client, monkeypatch, expiry_offset_days, expected_action
-):
-    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-expiry-sync")
-    license_id = await create_license(key=f"admin-expiry-sync-{expected_action}")
-    expiry = datetime.now(timezone.utc) + timedelta(days=expiry_offset_days)
-    response = await client.patch(
-        f"/api/v1/admin/clients/{license_id}",
-        headers={"X-Admin-Key": "test-admin-expiry-sync"},
-        json={"expires_at": expiry.isoformat()},
-    )
+    event = {"event_id": "evt_period_update", "event_type": "subscription.updated",
+        "data": {"id": "sub_period_update123",
+            "items": [{"price": {"id": "pri_periodupdatepro123"}, "quantity": 1}],
+            "current_billing_period": {"starts_at": "2026-10-01T00:00:00Z",
+                "ends_at": "2026-11-15T00:00:00Z"}}}
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256).hexdigest()
+    response = await client.post("/api/v1/billing/paddle-webhook", content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"})
     assert response.status_code == 200, response.text
     async with AsyncSessionLocal() as db:
-        events = (await db.execute(
-            select(CustomerLifecycleSyncOutbox).where(
-                CustomerLifecycleSyncOutbox.license_key == f"admin-expiry-sync-{expected_action}"
-            )
-        )).scalars().all()
-        assert len(events) == 1
-        assert events[0].action == expected_action
-        assert events[0].status == "pending"
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id))).scalar_one()
+        assert license_obj.billing_period_ends_at.isoformat() == "2026-11-15T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_updated_reconciles_status_transitions_and_sticky_cancel(client, monkeypatch):
+    secret = "paddle-subscription-status-transition-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    license_id = await create_license(
+        key="subscription-status-transition-license",
+        quota=100,
+        active=True,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_subscription_status",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="status@example.com",
+            subscription_id="sub_status_transition123",
+            paddle_customer_id="ctm_status_transition123",
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        ))
+        await db.commit()
+
+    async def send(event_id, provider_status):
+        event = {
+            "event_id": event_id,
+            "event_type": "subscription.updated",
+            "data": {
+                "id": "sub_status_transition123",
+                "status": provider_status,
+                "items": [],
+            },
+        }
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(
+            secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+        ).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    paused = await send("evt_status_paused", "paused")
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["status"] == "subscription_paused"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is False
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_paused"
+        ))).scalar_one()
+        assert stored.status == "subscription_paused"
+
+    resumed = await send("evt_status_active", "active")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "subscription_active_unmapped_price"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_active"
+        ))).scalar_one()
+        assert stored.status == "subscription_updated_active"
+
+    past_due = await send("evt_status_past_due", "past_due")
+    assert past_due.status_code == 200, past_due.text
+    assert past_due.json()["status"] == "subscription_past_due"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_past_due"
+        ))).scalar_one()
+        assert stored.status == "subscription_updated_past_due"
+
+    canceled = await send("evt_status_canceled", "canceled")
+    assert canceled.status_code == 200, canceled.text
+    assert canceled.json()["status"] == "cancellation_applied"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is False
+        stored = (await db.execute(select(PaymentWebhookEvent).where(
+            PaymentWebhookEvent.event_id == "evt_status_canceled"
+        ))).scalar_one()
+        assert stored.status == "subscription_canceled"
+
+    late_active = await send("evt_status_late_active", "active")
+    assert late_active.status_code == 200, late_active.text
+    assert late_active.json()["status"] == "ignored_after_cancellation"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is False
+
+
+
+@pytest.mark.asyncio
+async def test_customer_passwordless_login_issues_and_revokes_session(client, monkeypatch):
+    secret = "customer-auth-test-secret-at-least-32-bytes"
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", secret)
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append((email, code)))
+    license_id = await create_license(key="passwordless-customer-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_passwordless_customer_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="customer-login@example.com",
+        ))
+        await db.commit()
+
+    requested = await client.post(
+        "/api/v1/account/auth/request-code",
+        json={"email": " Customer-Login@example.com "},
+    )
+    assert requested.status_code == 202, requested.text
+    assert requested.json()["status"] == "accepted"
+    assert sent and sent[0][0] == "customer-login@example.com"
+
+    verified = await client.post(
+        "/api/v1/account/auth/verify-code",
+        json={"email": "customer-login@example.com", "code": sent[0][1]},
+    )
+    assert verified.status_code == 200, verified.text
+    body = verified.json()
+    assert body["status"] == "authenticated"
+    token = body["access_token"]
+    assert body["token_type"] == "Bearer"
+
+    profile = await client.get(
+        "/api/v1/account/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["client_name"] == "Automated Test"
+    usage = await client.get(
+        "/api/v1/account/usage",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert usage.status_code == 200, usage.text
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        stored_session = (await operational_db.execute(select(main.CustomerSession).where(
+            main.CustomerSession.license_key == "passwordless-customer-license"
+        ))).scalar_one()
+        assert stored_session.token_hash == hashlib.sha256(token.encode()).hexdigest()
+        assert stored_session.token_hash != token
+
+    reused = await client.post(
+        "/api/v1/account/auth/verify-code",
+        json={"email": "customer-login@example.com", "code": sent[0][1]},
+    )
+    assert reused.status_code == 401
+
+    logged_out = await client.post(
+        "/api/v1/account/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert logged_out.status_code == 200, logged_out.text
+    rejected = await client.get(
+        "/api/v1/account/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rejected.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_passwordless_login_limits_code_attempts_and_hides_unknown_email(client, monkeypatch):
+    secret = "customer-auth-test-secret-at-least-32-bytes"
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", secret)
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append((email, code)))
+    unknown = await client.post(
+        "/api/v1/account/auth/request-code",
+        json={"email": "unknown-customer@example.com"},
+    )
+    assert unknown.status_code == 202
+    assert unknown.json()["status"] == "accepted"
+    assert sent == []
+
+    license_id = await create_license(key="passwordless-attempt-limit-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_passwordless_attempt_limit_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="attempt-limit@example.com",
+        ))
+        await db.commit()
+    requested = await client.post(
+        "/api/v1/account/auth/request-code",
+        json={"email": "attempt-limit@example.com"},
+    )
+    assert requested.status_code == 202, requested.text
+    wrong_code = "000001" if sent[-1][1] == "000000" else "000000"
+    for _ in range(5):
+        wrong = await client.post(
+            "/api/v1/account/auth/verify-code",
+            json={"email": "attempt-limit@example.com", "code": wrong_code},
+        )
+        assert wrong.status_code == 401
+    correct = await client.post(
+        "/api/v1/account/auth/verify-code",
+        json={"email": "attempt-limit@example.com", "code": sent[-1][1]},
+    )
+    assert correct.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
+    license_id = await create_license(key="passwordless-logout-all-license")
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_passwordless_logout_all_seed",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="logout-all@example.com",
+        ))
+        await db.commit()
+    await client.post("/api/v1/account/auth/request-code", json={"email": "logout-all@example.com"})
+    login = await client.post("/api/v1/account/auth/verify-code", json={
+        "email": "logout-all@example.com", "code": sent[0],
+    })
+    assert login.status_code == 200, login.text
+    token = login.json()["access_token"]
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.CustomerSession(
+                token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
+                license_key="passwordless-logout-all-license",
+                email="logout-all@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+            ),
+            main.CustomerSession(
+                token_hash=hashlib.sha256(b"linked-license-session").hexdigest(),
+                license_key="another-linked-license",
+                email="logout-all@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+            ),
+        ])
+        await operational_db.commit()
+
+    response = await client.post(
+        "/api/v1/account/auth/logout-all",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["revoked_count"] == 3
+    rejected = await client.get(
+        "/api/v1/account/profile",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rejected.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_admin_can_review_and_revoke_customer_browser_sessions(client, monkeypatch):
+    admin_key = "test-admin-customer-session-controls"
+    monkeypatch.setenv("ADMIN_API_KEY", admin_key)
+    license_id = await create_license(key="admin-session-controls-license")
+    now = datetime.now(timezone.utc)
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.CustomerSession(
+                token_hash=hashlib.sha256(b"active-admin-review-session").hexdigest(),
+                license_key="admin-session-controls-license",
+                email="admin-review@example.com",
+                expires_at=now + timedelta(days=10),
+                created_at=now - timedelta(days=1),
+                last_seen_at=now,
+            ),
+            main.CustomerSession(
+                token_hash=hashlib.sha256(b"already-revoked-admin-review-session").hexdigest(),
+                license_key="admin-session-controls-license",
+                email="admin-review@example.com",
+                expires_at=now + timedelta(days=10),
+                revoked_at=now - timedelta(hours=1),
+            ),
+        ])
+        await operational_db.commit()
+
+    headers = {"X-Admin-Key": admin_key}
+    listed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/sessions",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert len(items) == 2
+    assert {item["status"] for item in items} == {"active", "revoked"}
+    assert all("token_hash" not in item for item in items)
+    assert all("access_token" not in item for item in items)
+
+    revoked = await client.post(
+        f"/api/v1/admin/clients/{license_id}/sessions/revoke-all",
+        headers=headers,
+        json={"reason": "customer reported a lost device"},
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["revoked_count"] == 1
+
+    refreshed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/sessions",
+        headers=headers,
+    )
+    assert refreshed.status_code == 200
+    assert {item["status"] for item in refreshed.json()["items"]} == {"revoked"}
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        action = (await operational_db.execute(select(main.AdminActionLog).where(
+            main.AdminActionLog.action == "client.sessions_revoked",
+            main.AdminActionLog.entity_id == str(license_id),
+        ))).scalar_one()
+        assert "customer reported a lost device" in action.details_json
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_admin_can_review_and_disconnect_customer_wordpress_installations(client, monkeypatch):
+    admin_key = "test-admin-wordpress-operations"
+    monkeypatch.setenv("ADMIN_API_KEY", admin_key)
+    license_id = await create_license(key="admin-wordpress-operations-license")
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == license_id
+        ))).scalar_one()
+        license_key = license_obj.license_key
+    other_license_id = await create_license(key="other-admin-wordpress-operations-license")
+    async with AsyncSessionLocal() as db:
+        other_license = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == other_license_id
+        ))).scalar_one()
+        other_license_key = other_license.license_key
+    site_id = "wordpress-admin-operations-site-0001"
+    foreign_site_id = "wordpress-admin-operations-foreign-0001"
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.WordPressInstallation(
+                id=site_id,
+                license_key=license_key,
+                site_url="https://store.example.test",
+                site_host="store.example.test",
+                admin_email="owner@example.test",
+                customer_email="owner@example.test",
+                wordpress_version="6.8",
+                woocommerce_version="10.0",
+                plugin_version="1.2.3",
+                status="active",
+            ),
+            main.WordPressInstallation(
+                id=foreign_site_id,
+                license_key=other_license_key,
+                site_url="https://other.example.test",
+                site_host="other.example.test",
+                admin_email="other@example.test",
+                customer_email="other@example.test",
+                plugin_version="1.2.3",
+                status="active",
+            ),
+        ])
+        await operational_db.commit()
+
+    headers = {"X-Admin-Key": admin_key}
+    listed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.headers["cache-control"] == "no-store, private"
+    assert listed.json()["items"][0]["site_id"] == site_id
+    assert listed.json()["items"][0]["admin_email"] == "owner@example.test"
+    assert len(listed.json()["items"]) == 1
+    assert all(item["site_id"] != foreign_site_id for item in listed.json()["items"])
+
+    foreign_disconnect = await client.request(
+        "DELETE",
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+        json={"site_url": "https://other.example.test", "reason": "must not cross tenant"},
+    )
+    assert foreign_disconnect.status_code == 404
+
+    disconnected = await client.request(
+        "DELETE",
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+        json={"site_url": "https://store.example.test", "reason": "customer support request"},
+    )
+    assert disconnected.status_code == 200, disconnected.text
+    assert disconnected.json()["status"] == "disconnected"
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        site = await operational_db.get(main.WordPressInstallation, site_id)
+        assert site.status == "disconnected"
+        assert site.disconnected_at is not None
+
+    refreshed = await client.get(
+        f"/api/v1/admin/clients/{license_id}/wordpress-links",
+        headers=headers,
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["items"][0]["status"] == "disconnected"
+
+
+async def test_customer_sign_in_fails_closed_when_email_maps_to_multiple_licenses(client, monkeypatch):
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "customer-auth-test-secret-at-least-32-bytes")
+    sent = []
+    monkeypatch.setattr(main, "_send_account_login_code", lambda email, code: sent.append(code))
+    first_id = await create_license(key="ambiguous-email-first")
+    second_id = await create_license(key="ambiguous-email-second")
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            PaymentWebhookEvent(
+                event_id="evt_ambiguous_email_first",
+                status="provisioned",
+                license_id=first_id,
+                recipient_email="ambiguous-customer@example.com",
+            ),
+            PaymentWebhookEvent(
+                event_id="evt_ambiguous_email_second",
+                status="provisioned",
+                license_id=second_id,
+                recipient_email="AMBIGUOUS-CUSTOMER@example.com",
+            ),
+        ])
+        await db.commit()
+
+    requested = await client.post("/api/v1/account/auth/request-code", json={
+        "email": "ambiguous-customer@example.com",
+    })
+    assert requested.status_code == 202
+    assert sent == []
+
+    rejected = await client.post("/api/v1/account/auth/verify-code", json={
+        "email": "ambiguous-customer@example.com", "code": "000000",
+    })
+    assert rejected.status_code == 401
+
+
+@pytest.mark.parametrize("viewport", [
+    "width=device-width, initial-scale=",
+    "width=device-width, initial-scale=abc",
+    "width=device-width, initial-scale=0",
+    "width=device-width, initial-scale=11",
+    "width=device-width, initial-scale=nan",
+    "width=device-width, initial-scale=inf",
+])
+def test_mobile_viewport_flags_invalid_initial_scale(viewport):
+    from mobile_ux_checks import inspect_mobile_viewport
+
+    findings = inspect_mobile_viewport(
+        f'<html><head><meta name="viewport" content="{viewport}"></head></html>',
+        "https://shop.example/",
+    )
+    assert any(
+        finding.title == "Viewport initial-scale value needs review"
+        and finding.status == "manual_review_required"
+        for finding in findings
+    )
+
+
+@pytest.mark.parametrize("scale", ["0.1", "1", "2.5", "10"])
+def test_mobile_viewport_accepts_valid_initial_scale(scale):
+    from mobile_ux_checks import inspect_mobile_viewport
+
+    findings = inspect_mobile_viewport(
+        f'<html><head><meta name="viewport" content="width=device-width, initial-scale={scale}"></head></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        finding.title == "Viewport initial-scale value needs review"
+        for finding in findings
+    )
+
+
+@pytest.mark.asyncio
+async def test_agency_wordpress_connection_token_is_single_use_and_site_credential_is_revocable(client):
+    """Exercise the complete owner-token -> site-token -> disconnect lifecycle."""
+    owner_license_id = await create_license(key="agency-wp-token-lifecycle-license", tier="business")
+    async with AsyncSessionLocal() as db:
+        owner_license = (await db.execute(select(SoftwareLicense).where(
+            SoftwareLicense.id == owner_license_id
+        ))).scalar_one()
+        owner_license_key = owner_license.license_key
+
+    agency_id = "agency-wp-token-lifecycle-0001"
+    workspace_id = "agency-wp-token-workspace-0001"
+    raw_connect_token = "one-time-agency-connect-token-1234567890"
+    connect_token_hash = hashlib.sha256(raw_connect_token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            main.AgencyAccount(
+                id=agency_id,
+                owner_license_key=owner_license_key,
+                owner_email="agency-owner@example.test",
+                status="active",
+            ),
+            main.AgencyClientWorkspace(
+                id=workspace_id,
+                agency_id=agency_id,
+                display_name="Lifecycle client",
+                status="active",
+            ),
+            main.AgencyWebsiteConnectChallenge(
+                id="agency-wp-token-challenge-0001",
+                agency_id=agency_id,
+                workspace_id=workspace_id,
+                token_hash=connect_token_hash,
+                expires_at=now + timedelta(hours=1),
+                created_at=now,
+            ),
+        ])
+        await operational_db.commit()
+
+    registration = await client.post(
+        "/api/v1/integrations/wordpress/agency/sites/register",
+        headers={"X-Agency-Connect-Token": raw_connect_token},
+        json={
+            "site_url": "https://client-store.example.test/",
+            "admin_email": "wordpress-admin@example.test",
+            "wordpress_version": "6.8",
+            "woocommerce_version": "10.0",
+            "plugin_version": "1.2.3",
+        },
+    )
+    assert registration.status_code == 201, registration.text
+    assert registration.headers["cache-control"] == "no-store, private"
+    registered = registration.json()
+    assert registered["workspace_id"] == workspace_id
+    assert registered["site_url"] == "https://client-store.example.test/"
+    assert len(registered["agency_site_token"]) >= 32
+    site_token = registered["agency_site_token"]
+    site_token_hash = hashlib.sha256(site_token.encode("utf-8")).hexdigest()
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        challenge = await operational_db.get(
+            main.AgencyWebsiteConnectChallenge,
+            "agency-wp-token-challenge-0001",
+        )
+        site = await operational_db.get(main.AgencyClientWebsite, registered["site_id"])
+        assert challenge.consumed_at is not None
+        assert site.site_token_hash == site_token_hash
+        assert site_token not in site.site_token_hash
+        assert site.status == "active"
+
+    replay = await client.post(
+        "/api/v1/integrations/wordpress/agency/sites/register",
+        headers={"X-Agency-Connect-Token": raw_connect_token},
+        json={
+            "site_url": "https://attacker-store.example.test/",
+            "admin_email": "attacker@example.test",
+            "plugin_version": "1.2.3",
+        },
+    )
+    assert replay.status_code == 401
+
+    status = await client.get(
+        "/api/v1/integrations/wordpress/agency/sites/status",
+        headers={"X-Agency-Site-Token": site_token},
+    )
+    assert status.status_code == 200, status.text
+    assert status.headers["cache-control"] == "no-store, private"
+    assert status.json()["workspace_id"] == workspace_id
+    assert status.json()["agency_entitlement"] == "active"
+
+    disconnected = await client.post(
+        "/api/v1/integrations/wordpress/agency/sites/disconnect",
+        headers={"X-Agency-Site-Token": site_token},
+    )
+    assert disconnected.status_code == 200, disconnected.text
+    assert disconnected.json()["status"] == "disconnected"
+
+    stale_status = await client.get(
+        "/api/v1/integrations/wordpress/agency/sites/status",
+        headers={"X-Agency-Site-Token": site_token},
+    )
+    assert stale_status.status_code == 404
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        site = await operational_db.get(main.AgencyClientWebsite, registered["site_id"])
+        assert site.status == "disconnected"
+        assert site.disconnected_at is not None
+        assert site.site_token_hash is None

@@ -9,18 +9,26 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_, select, update, text
+from sqlalchemy import delete, func, inspect, or_, select, update
 
-from database import AsyncSessionLocal, Base
-from models import (AuditLead, CustomerLifecycleSyncOutbox, PaymentWebhookEvent, SoftwareLicense, BillingMirrorSyncOutbox)
+from database import AsyncSessionLocal, engine as licensing_engine
+from models import (
+    AuditLead,
+    AuditQuotaReservation,
+    BillingMirrorSyncOutbox,
+    CustomerLifecycleSyncOutbox,
+    PaymentWebhookEvent,
+    SaaSPlanPackage,
+    SoftwareLicense,
+)
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import run_phase_one_checks
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
-from hostinger_database import HostingerAsyncSessionLocal, ensure_hostinger_schema
-from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, CustomerWebsite, WebsiteScanResult
+from hostinger_database import HostingerAsyncSessionLocal, hostinger_engine
+from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, CustomerWebsite, ScanBatch, WebsiteScanJob, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -31,6 +39,165 @@ from scan_queue import (
 from ecommerce_agent import UniversalEcommerceAgent
 
 logger = logging.getLogger("scan_worker")
+
+_worker_schema_ready = False
+_worker_schema_lock = asyncio.Lock()
+
+
+_WORKER_REQUIRED_POSTGRES_MODELS = (
+    SoftwareLicense,
+    AuditLead,
+    AuditQuotaReservation,
+    SaaSPlanPackage,
+    CustomerLifecycleSyncOutbox,
+    PaymentWebhookEvent,
+    BillingMirrorSyncOutbox,
+)
+
+
+def _missing_worker_schema(models, table_names: set[str], columns_by_table: dict[str, set[str]]) -> dict:
+    """Describe missing tables and model columns without changing either database."""
+    missing_tables = sorted(model.__tablename__ for model in models if model.__tablename__ not in table_names)
+    missing_columns = {}
+    for model in models:
+        if model.__tablename__ not in table_names:
+            continue
+        actual = columns_by_table.get(model.__tablename__, set())
+        required = {column.name for column in model.__table__.columns}
+        absent = sorted(required - actual)
+        if absent:
+            missing_columns[model.__tablename__] = absent
+    return {"tables": missing_tables, "columns": missing_columns}
+
+
+_WORKER_REQUIRED_MODELS = (
+    CustomerAccount,
+    CustomerLoginChallenge,
+    CustomerSession,
+    CustomerEmailChangeChallenge,
+    CustomerEmailIdentitySyncOutbox,
+    CustomerBillingEvent,
+    CustomerWebsite,
+    WebsiteScanResult,
+    ScanBatch,
+    WebsiteScanJob,
+)
+
+
+async def ensure_scan_worker_schema() -> None:
+    """Validate operational tables required by every scan-worker entry point.
+
+    DDL remains migration-managed; this check never creates or alters production tables.
+    """
+    global _worker_schema_ready
+    if _worker_schema_ready:
+        return
+    if HostingerAsyncSessionLocal is None or hostinger_engine is None:
+        raise RuntimeError("Hostinger operational database is not configured.")
+
+    # The worker runs scan execution, customer lifecycle/session revocation,
+    # passwordless challenge cleanup, and verified-email identity outbox sync.
+    # Validate every Hostinger model touched by those paths before processing.
+    required_models = _WORKER_REQUIRED_MODELS
+    async with _worker_schema_lock:
+        if _worker_schema_ready:
+            return
+        async with hostinger_engine.connect() as connection:
+            table_names = await connection.run_sync(
+                lambda sync_connection: set(inspect(sync_connection).get_table_names())
+            )
+            missing_tables = sorted(
+                model.__tablename__ for model in required_models
+                if model.__tablename__ not in table_names
+            )
+            if missing_tables:
+                raise RuntimeError(
+                    "Operational scan schema is incomplete; apply the Hostinger migrations. "
+                    "Missing tables: " + ", ".join(missing_tables)
+                )
+            missing_columns = {}
+            for model in required_models:
+                actual = await connection.run_sync(
+                    lambda sync_connection, table=model.__tablename__: {
+                        column["name"]
+                        for column in inspect(sync_connection).get_columns(table)
+                    }
+                )
+                required = {column.name for column in model.__table__.columns}
+                missing = sorted(required - actual)
+                if missing:
+                    missing_columns[model.__tablename__] = missing
+            if missing_columns:
+                details = "; ".join(
+                    "{}: {}".format(table, ", ".join(columns))
+                    for table, columns in sorted(missing_columns.items())
+                )
+                raise RuntimeError(
+                    "Operational scan schema is incompatible; apply the latest Hostinger migrations. "
+                    "Missing columns: " + details
+                )
+        # PostgreSQL is the canonical licensing/billing database. Validate
+        # every table used by queue execution, quota reservations, and the three
+        # cross-database outboxes before a worker claims any customer work.
+        if licensing_engine is None:
+            raise RuntimeError("PostgreSQL licensing database is not configured.")
+        async with licensing_engine.connect() as connection:
+            pg_table_names = await connection.run_sync(
+                lambda sync_connection: set(inspect(sync_connection).get_table_names())
+            )
+            pg_columns = {}
+            for model in _WORKER_REQUIRED_POSTGRES_MODELS:
+                if model.__tablename__ not in pg_table_names:
+                    continue
+                pg_columns[model.__tablename__] = await connection.run_sync(
+                    lambda sync_connection, table=model.__tablename__: {
+                        column["name"]
+                        for column in inspect(sync_connection).get_columns(table)
+                    }
+                )
+        pg_missing = _missing_worker_schema(
+            _WORKER_REQUIRED_POSTGRES_MODELS, pg_table_names, pg_columns
+        )
+        if pg_missing["tables"] or pg_missing["columns"]:
+            details = []
+            if pg_missing["tables"]:
+                details.append("missing tables: " + ", ".join(pg_missing["tables"]))
+            if pg_missing["columns"]:
+                details.extend(
+                    f"{table} missing columns: {', '.join(columns)}"
+                    for table, columns in sorted(pg_missing["columns"].items())
+                )
+            raise RuntimeError(
+                "PostgreSQL worker schema is incomplete; apply the reviewed licensing database migrations. "
+                + "; ".join(details)
+            )
+        _worker_schema_ready = True
+
+
+def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bool:
+    """Ignore stale suspend/reactivate events when canonical license state has moved on."""
+    if action == "suspend":
+        return license_is_active is False
+    if action == "reactivate":
+        return license_is_active is True
+    return action == "revoke_sessions"
+
+
+def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
+    """Retain successful deliveries for bounded cleanup and operational visibility."""
+    item.status = "completed"
+    item.processed_at = processed_at
+    item.last_error = None
+
+
+def _customer_email_identity_update_statement(license_id: int, old_email: str, new_email: str):
+    """Build a tenant-scoped, case-insensitive billing-recipient identity update."""
+    return update(PaymentWebhookEvent).where(
+        PaymentWebhookEvent.license_id == license_id,
+        func.lower(PaymentWebhookEvent.recipient_email) == old_email.strip().lower(),
+    ).values(recipient_email=new_email.strip())
+
+
 
 
 def _json(value) -> str:
@@ -240,10 +407,6 @@ async def process_one_scan(worker_id: str) -> dict:
                 stored.check_outcomes_json = _json(result["check_outcomes"])
                 stored.coverage_json = _json(result["coverage"])
                 stored.summary_json = _json(result["summary"])
-            website = await operational_db.get(CustomerWebsite, website_id)
-            if website is not None and website.license_key == license_key:
-                website.last_scan_at = datetime.now(timezone.utc)
-                website.updated_at = website.last_scan_at
             await operational_db.commit()
             completed = await complete_scan_job(
                 operational_db,
@@ -285,8 +448,9 @@ async def process_one_scan(worker_id: str) -> dict:
         async with HostingerAsyncSessionLocal() as operational_db:
             outcome = await fail_or_retry_scan_job(
                 operational_db, job_id=job_id, worker_id=worker_id,
-                error_code=error_code, retry_delay_seconds=300,
-                retryable=False,
+                error_code=error_code,
+                retry_delay_seconds=300,
+                retryable=exc.status_code >= 500 or exc.status_code in (408, 425),
             )
         return {"status": outcome, "job_id": job_id, "error_code": error_code}
     except Exception as exc:
@@ -313,12 +477,6 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
     counts = {"processed": 0, "deferred": 0}
     async with AsyncSessionLocal() as licensing_db:
         for _ in range(batch_size):
-            # Serialize lifecycle projections so concurrent worker processes cannot
-            # apply a newer reactivate before an older suspend (or vice versa).
-            if licensing_db.get_bind().dialect.name == "postgresql":
-                await licensing_db.execute(text(
-                    "SELECT pg_advisory_xact_lock(hashtext('customer_lifecycle_sync_outbox'))"
-                ))
             event = (await licensing_db.execute(
                 select(CustomerLifecycleSyncOutbox)
                 .where(
@@ -335,15 +493,23 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
             license_key = event.license_key
             action = event.action
             try:
+                # Outbox retries can arrive after a newer admin transition. The
+                # canonical license row decides whether suspend/reactivate is
+                # still current, preventing an old retry from reversing state.
+                canonical_license = await licensing_db.scalar(select(SoftwareLicense).where(
+                    SoftwareLicense.license_key == license_key
+                ))
+                license_is_active = bool(canonical_license.is_active) if canonical_license is not None else None
+                action_applies = _lifecycle_action_applies(action, license_is_active)
                 async with HostingerAsyncSessionLocal() as operational_db:
-                    if action in {"suspend", "reactivate"}:
+                    if action_applies and action in {"suspend", "reactivate"}:
                         await operational_db.execute(update(CustomerAccount).where(
                             CustomerAccount.license_key == license_key
                         ).values(
                             status="suspended" if action == "suspend" else "active",
                             updated_at=datetime.now(timezone.utc),
                         ))
-                    if action in {"suspend", "revoke_sessions"}:
+                    if action_applies and action in {"suspend", "revoke_sessions"}:
                         await operational_db.execute(update(CustomerSession).where(
                             CustomerSession.license_key == license_key,
                             CustomerSession.revoked_at.is_(None),
@@ -406,18 +572,20 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 break
             event_id = event.id
             try:
-                # Reapplying the same recipient update is safe if PostgreSQL committed
-                # but the Hostinger acknowledgement was interrupted.
-                if not event.license_key:
-                    raise RuntimeError("EMAIL_IDENTITY_OUTBOX_LICENSE_MISSING")
+                # Email addresses are not globally unique identifiers. Resolve the
+                # canonical license and scope the billing-history rewrite to that
+                # tenant so a shared/previously-used email cannot cross-update accounts.
                 async with AsyncSessionLocal() as licensing_db:
-                    license_id_query = select(SoftwareLicense.id).where(
-                        SoftwareLicense.license_key == event.license_key
-                    ).scalar_subquery()
-                    await licensing_db.execute(update(PaymentWebhookEvent).where(
-                        PaymentWebhookEvent.license_id == license_id_query,
-                        func.lower(PaymentWebhookEvent.recipient_email) == event.old_email,
-                    ).values(recipient_email=event.new_email))
+                    license_id = await licensing_db.scalar(
+                        select(SoftwareLicense.id).where(
+                            SoftwareLicense.license_key == event.license_key
+                        )
+                    )
+                    if license_id is None:
+                        raise RuntimeError("LicenseReferenceUnavailable")
+                    await licensing_db.execute(_customer_email_identity_update_statement(
+                        license_id, event.old_email, event.new_email
+                    ))
                     await licensing_db.commit()
                 event.status = "completed"
                 event.processed_at = datetime.now(timezone.utc)
@@ -473,34 +641,14 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                     await licensing_db.commit()
                     counts["discarded"] += 1
                     continue
-                license_row = (await licensing_db.execute(
-                    select(SoftwareLicense).where(SoftwareLicense.id == event.license_id)
-                )).scalar_one_or_none()
-                if license_row is None or not license_row.license_key:
+                license_key = await licensing_db.scalar(
+                    select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
+                )
+                if not license_key:
                     raise RuntimeError("LicenseReferenceUnavailable")
-                license_key = license_row.license_key
                 if HostingerAsyncSessionLocal is None:
                     raise RuntimeError("HostingerUnavailable")
                 async with HostingerAsyncSessionLocal() as operational_db:
-                    account = (await operational_db.execute(
-                        select(CustomerAccount).where(CustomerAccount.license_key == license_key)
-                    )).scalar_one_or_none()
-                    if account is None:
-                        operational_db.add(CustomerAccount(
-                            license_key=license_key,
-                            email=(event.recipient_email or "")[:254] or None,
-                            display_name=(license_row.client_name or event.recipient_email or "Customer")[:255],
-                            status="active" if license_row.is_active else "suspended",
-                            created_at=event.created_at,
-                            updated_at=event.updated_at,
-                        ))
-                    else:
-                        if not account.email and event.recipient_email:
-                            account.email = event.recipient_email[:254]
-                        if not account.display_name and license_row.client_name:
-                            account.display_name = license_row.client_name[:255]
-                        account.status = "active" if license_row.is_active else "suspended"
-                        account.updated_at = event.updated_at
                     stored = await operational_db.get(CustomerBillingEvent, event_id)
                     if stored is None:
                         operational_db.add(CustomerBillingEvent(
@@ -523,7 +671,9 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                         stored.paddle_customer_id = event.paddle_customer_id
                         stored.updated_at = event.updated_at
                     await operational_db.commit()
-                await licensing_db.delete(item)
+                _mark_billing_mirror_outbox_completed(
+                    item, datetime.now(timezone.utc)
+                )
                 await licensing_db.commit()
                 counts["processed"] += 1
             except Exception as exc:
@@ -589,60 +739,12 @@ async def cleanup_expired_customer_auth_records(*, batch_size: int = 500) -> dic
             raise
     return counts
 
-_worker_schema_ready = False
-_worker_schema_lock = asyncio.Lock()
-
-
-async def ensure_scan_worker_schema() -> None:
-    """Apply additive schema upgrades once per warm worker process."""
-    global _worker_schema_ready
-    if _worker_schema_ready:
-        return
-    async with _worker_schema_lock:
-        if _worker_schema_ready:
-            return
-        from sqlalchemy import text
-
-        async with AsyncSessionLocal() as licensing_db:
-            dialect = licensing_db.get_bind().dialect.name
-            if dialect == "postgresql":
-                await licensing_db.execute(text(
-                    "ALTER TABLE audit_leads ADD COLUMN IF NOT EXISTS source_job_id VARCHAR(64)"
-                ))
-                await licensing_db.execute(text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_leads_source_job_id "
-                    "ON audit_leads (source_job_id) WHERE source_job_id IS NOT NULL"
-                ))
-            elif dialect == "sqlite":
-                columns = (await licensing_db.execute(text("PRAGMA table_info(audit_leads)"))).all()
-                if "source_job_id" not in {row[1] for row in columns}:
-                    await licensing_db.execute(text("ALTER TABLE audit_leads ADD COLUMN source_job_id VARCHAR(64)"))
-                await licensing_db.execute(text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_leads_source_job_id "
-                    "ON audit_leads (source_job_id)"
-                ))
-            else:
-                raise RuntimeError(f"Unsupported licensing database dialect: {dialect}")
-            await licensing_db.run_sync(
-                lambda sync_session: Base.metadata.create_all(
-                    bind=sync_session.connection(),
-                    tables=[
-                        CustomerLifecycleSyncOutbox.__table__,
-                        BillingMirrorSyncOutbox.__table__,
-                    ],
-                )
-            )
-            await licensing_db.commit()
-        await ensure_hostinger_schema()
-        _worker_schema_ready = True
-
 async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None) -> dict:
     if max_jobs < 1 or max_jobs > 10:
         raise ValueError("max_jobs must be between 1 and 10.")
     worker_id = worker_id or f"vercel-{uuid.uuid4().hex[:24]}"
-    import asyncio
-
     await ensure_scan_worker_schema()
+    import asyncio
 
     lifecycle_sync = {"status": "completed", "processed": 0, "deferred": 0}
     try:

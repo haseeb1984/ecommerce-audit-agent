@@ -58,34 +58,3 @@ async def get_hostinger_db():
         raise RuntimeError("Hostinger operational database is not configured.")
     async with HostingerAsyncSessionLocal() as session:
         yield session
-
-
-
-async def ensure_hostinger_schema() -> None:
-    """Create missing operational tables for deployments using this service's schema."""
-    if hostinger_engine is None:
-        raise RuntimeError("Hostinger operational database is not configured.")
-    # Importing the models registers all operational tables on HostingerBase.
-    import hostinger_models  # noqa: F401
-    from sqlalchemy import inspect, text
-
-    async with hostinger_engine.begin() as connection:
-        await connection.run_sync(HostingerBase.metadata.create_all)
-
-        def ensure_email_outbox_scope(sync_connection):
-            inspector = inspect(sync_connection)
-            table_name = "customer_email_identity_sync_outbox"
-            columns = {column["name"] for column in inspector.get_columns(table_name)}
-            if "license_key" not in columns:
-                sync_connection.execute(text(
-                    "ALTER TABLE customer_email_identity_sync_outbox "
-                    "ADD COLUMN license_key VARCHAR(100) NULL"
-                ))
-            indexes = {index["name"] for index in inspect(sync_connection).get_indexes(table_name)}
-            if "ix_customer_email_identity_outbox_license" not in indexes:
-                sync_connection.execute(text(
-                    "CREATE INDEX ix_customer_email_identity_outbox_license "
-                    "ON customer_email_identity_sync_outbox (license_key)"
-                ))
-
-        await connection.run_sync(ensure_email_outbox_scope)

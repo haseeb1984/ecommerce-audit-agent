@@ -1,0 +1,23 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_public_marketing_pricing_uses_live_operator_catalogue_values():
+    html = (ROOT / "marketing.html").read_text(encoding="utf-8")
+    assert 'fetch("/api/v1/billing/plans"' in html
+    assert "formatPrice(plan)" in html
+    assert "plan.monthly_audit_allowance" in html
+    assert "plan.max_concurrent_audits" in html
+    assert "plan.features[featureKey]===true" in html
+    assert "/api/v1/billing/checkout" in html
+
+
+def test_public_plan_comparison_does_not_hardcode_package_limits_or_entitlements():
+    html = (ROOT / "marketing.html").read_text(encoding="utf-8")
+    assert "<td>100</td>" not in html
+    assert "<td>500</td>" not in html
+    assert "<td>2,000</td>" not in html
+    assert 'id="planComparisonBody"' in html
+    assert "featureDefinitions.map" in html
