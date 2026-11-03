@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_async_db
 from hostinger_database import get_hostinger_db
-from hostinger_models import ScanBatch, WebsiteScanJob, CustomerEmailIdentitySyncOutbox
+from hostinger_models import CustomerWebsite, ScanBatch, WebsiteScanJob, CustomerEmailIdentitySyncOutbox
 from models import SoftwareLicense, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
 from scan_queue import retry_failed_scan_job
 
