@@ -51,7 +51,7 @@ async def test_admin_package_update_rejects_another_plans_paddle_price(client, m
     await _seed_package("pro", "pri_SecondUniquePrice")
 
     response = await client.patch(
-        "/api/v1/admin/packages/first-price-plan",
+        "/api/v1/admin/packages/starter",
         headers={"X-Admin-Key": "package-unique-update-key"},
         json=_payload("starter", "pri_SecondUniquePrice"),
     )
