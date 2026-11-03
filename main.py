@@ -4386,7 +4386,8 @@ def _configured_payment_plans() -> list[dict]:
 
 
 class PaddleCheckoutRequest(BaseModel):
-    tier: str
+    tier: str = Field(..., min_length=3, max_length=32)
+    email: str = Field(..., min_length=3, max_length=254)
 
 
 _PADDLE_PUBLIC_PRICE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
@@ -4481,6 +4482,35 @@ async def create_paddle_checkout(
 ):
     """Create a transaction using an active server-managed package price; the client cannot set amounts."""
     tier = payload.tier.strip().lower()
+    email = payload.email.strip().lower()
+    if not _is_valid_agency_team_email(email):
+        raise HTTPException(status_code=422, detail="Enter a valid customer email address.")
+    from sqlalchemy import select, func
+    await _lock_paddle_webhook_resource(db, email, "customer_email")
+    existing_account = await db.scalar(select(SoftwareLicense).where(
+        func.lower(SoftwareLicense.account_email) == email,
+    ).with_for_update())
+    if existing_account is None:
+        legacy_ids = (await db.execute(
+            select(PaymentWebhookEvent.license_id).where(
+                func.lower(PaymentWebhookEvent.recipient_email) == email,
+                PaymentWebhookEvent.license_id.is_not(None),
+            ).distinct()
+        )).scalars().all()
+        if len(legacy_ids) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="This email is linked to legacy duplicate licenses. Contact support to reconcile the account before checkout.",
+            )
+        if len(legacy_ids) == 1:
+            existing_account = await db.scalar(select(SoftwareLicense).where(
+                SoftwareLicense.id == legacy_ids[0],
+            ).with_for_update())
+    if existing_account is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="An account already exists for this email. Sign in and manage your existing subscription instead of purchasing another license.",
+        )
     plans = await _db_payment_plans(db, active_only=True)
     plan = next((p for p in plans if p["tier"] == tier), None)
     if plan is None:
@@ -4496,7 +4526,7 @@ async def create_paddle_checkout(
     if not smtp_status["configured"]:
         raise HTTPException(status_code=503, detail="License delivery is not configured.")
     transaction = {"items": [{"price_id": plan["price_id"], "quantity": 1}],
-                   "custom_data": {"license_tier": plan["tier"]}}
+                   "custom_data": {"license_tier": plan["tier"], "checkout_email": email}}
     checkout_url = os.getenv("PADDLE_CHECKOUT_URL", "").strip()
     if checkout_url:
         # Only forward configured hosted-checkout destinations on Paddle domains.
