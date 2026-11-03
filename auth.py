@@ -27,12 +27,32 @@ LICENSE_HEADER = APIKeyHeader(
 )
 
 CUSTOMER_BEARER = HTTPBearer(auto_error=False, scheme_name="CustomerSessionAuth")
+CUSTOMER_SESSION_HEADER = APIKeyHeader(
+    name="X-Customer-Session",
+    scheme_name="CustomerSessionHeaderAuth",
+    auto_error=False,
+    description="Backward-compatible customer portal session token",
+)
+
+
+def get_customer_session_credentials(
+    credentials: HTTPAuthorizationCredentials | None = Depends(get_customer_session_credentials),
+    customer_session: str = Security(CUSTOMER_SESSION_HEADER),
+) -> HTTPAuthorizationCredentials | None:
+    """Accept either the modern Bearer token or legacy X-Customer-Session header."""
+    if credentials is not None and customer_session:
+        raise HTTPException(status_code=400, detail="Provide only one customer session authentication method.")
+    if credentials is not None:
+        return credentials
+    if customer_session:
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=customer_session)
+    return None
 
 
 async def verify_license_or_api_key(
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
-    credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
+    credentials: HTTPAuthorizationCredentials | None = Depends(get_customer_session_credentials),
     db: AsyncSession = Depends(get_async_db),
 ) -> SoftwareLicense:
     """Authenticate a caller without holding a database lock during audit work."""
@@ -179,7 +199,7 @@ async def verify_account_credentials_for_billing(
 
 
 async def verify_customer_account(
-    credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
+    credentials: HTTPAuthorizationCredentials | None = Depends(get_customer_session_credentials),
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
     db: AsyncSession = Depends(get_async_db),
@@ -234,7 +254,7 @@ async def verify_customer_account(
 
 
 async def verify_customer_account_for_management(
-    credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
+    credentials: HTTPAuthorizationCredentials | None = Depends(get_customer_session_credentials),
     api_key: str = Security(API_KEY_HEADER),
     license_key: str = Security(LICENSE_HEADER),
     db: AsyncSession = Depends(get_async_db),
