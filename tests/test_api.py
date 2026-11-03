@@ -3750,12 +3750,20 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]
     async with main.HostingerAsyncSessionLocal() as operational_db:
-        operational_db.add(main.CustomerSession(
-            token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
-            license_key="passwordless-logout-all-license",
-            email="logout-all@example.com",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=5),
-        ))
+        operational_db.add_all([
+            main.CustomerSession(
+                token_hash=hashlib.sha256(b"second-device-session").hexdigest(),
+                license_key="passwordless-logout-all-license",
+                email="logout-all@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+            ),
+            main.CustomerSession(
+                token_hash=hashlib.sha256(b"linked-license-session").hexdigest(),
+                license_key="another-linked-license",
+                email="logout-all@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+            ),
+        ])
         await operational_db.commit()
 
     response = await client.post(
@@ -3763,7 +3771,7 @@ async def test_customer_can_revoke_all_active_sessions(client, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["revoked_count"] == 2
+    assert response.json()["revoked_count"] == 3
     rejected = await client.get(
         "/api/v1/account/profile",
         headers={"Authorization": f"Bearer {token}"},
