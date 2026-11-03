@@ -284,7 +284,7 @@
         const link = document.createElement("button"); link.type = "button"; link.textContent = "Continue to Paddle checkout";
         link.addEventListener("click", async () => {
           const checkoutEmail = $("checkoutEmail").value.trim();
-          if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(checkoutEmail)) {
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail)) {
             setStatus("connectStatus", "Enter a valid customer account email before checkout.", "error");
             return;
           }
