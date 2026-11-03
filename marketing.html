@@ -18,8 +18,7 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
 <main>
 <section class="hero"><div class="wrap"><h1>Find what is holding your ecommerce store back.</h1><p>Run evidence-based website audits, uncover conversion opportunities and turn technical findings into a practical improvement plan.</p><a class="cta primary" href="#pricing">Compare plans</a></div></section>
 <section class="section" id="pricing"><div class="wrap"><h2>Choose the plan that fits your business</h2><p class="lead">Compare audit allowances, concurrency and premium capabilities before purchasing. Checkout uses the current operator-managed Paddle price for each active package.</p><div id="plans" class="plans"><article class="plan"><h3>Loading plans…</h3><p class="muted">Retrieving the current package catalogue.</p></article></div><p id="plansStatus" class="status" role="status" aria-live="polite"></p><div class="notice">Subscription prices are confirmed on the secure Paddle checkout page. If a package is not available for purchase, its checkout configuration has not been enabled by the operator.</div></div></section>
-<section class="section" style="background:#eef3f8"><div class="wrap"><h2>Package comparison</h2><p class="lead">All packages include standard ecommerce audits. Higher tiers unlock advanced deliverables, branded experiences and agency operations.</p><div style="overflow:auto"><table class="compare"><thead><tr><th>Capability</th><th>Starter</th><th>Pro</th><th>Business</th></tr></thead><tbody>
-<tr><td>Monthly audit allowance</td><td>100</td><td>500</td><td>2,000</td></tr><tr><td>Concurrent audits</td><td>1</td><td>3</td><td>10</td></tr><tr><td>Standard ecommerce audits</td><td class="yes">Included</td><td class="yes">Included</td><td class="yes">Included</td></tr><tr><td>Conversion Dossier</td><td class="no">—</td><td class="yes">Included</td><td class="yes">Included</td></tr><tr><td>White-label branding</td><td class="no">—</td><td class="yes">Included</td><td class="yes">Included</td></tr><tr><td>Agency / multiple client workspaces</td><td class="no">—</td><td class="no">—</td><td class="yes">Included</td></tr><tr><td>Direct API access</td><td class="no">—</td><td class="no">—</td><td class="yes">Included</td></tr></tbody></table></div></div></section>
+<section class="section" style="background:#eef3f8"><div class="wrap"><h2>Package comparison</h2><p class="lead">All packages include standard ecommerce audits. Higher tiers unlock advanced deliverables, branded experiences and agency operations.</p><div style="overflow:auto"><table class="compare"><thead id="planComparisonHead"><tr><th>Capability</th><th>Loading catalogue…</th></tr></thead><tbody id="planComparisonBody"><tr><td colspan="2">Retrieving operator-managed package limits and entitlements.</td></tr></tbody></table></div></div></section>
 <section class="section" id="features"><div class="wrap"><h2>Premium capabilities</h2><p class="lead">Choose a plan based on how you work today and the level of client-facing capability you need.</p><div class="feature-grid">
 <article class="feature"><h3>Pro · White-label branding</h3><p>Configure your brand name, logo and primary color for supported customer-facing experiences. White-label settings are available on Pro and Business.</p></article>
 <article class="feature"><h3>Business · Agency management</h3><p>Organize multiple client workspaces under one Business agency account, manage client-level records and build a centralized agency workflow.</p></article>
@@ -31,7 +30,13 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
 <script>
 (async()=>{
  const plansNode=document.getElementById("plans"),status=document.getElementById("plansStatus");
- const features={starter:["Standard ecommerce audits","100 audits per month","1 concurrent audit"],pro:["Standard ecommerce audits","500 audits per month","3 concurrent audits","Conversion Dossier","White-label branding"],business:["Standard ecommerce audits","2,000 audits per month","10 concurrent audits","Conversion Dossier","White-label branding","Agency / multiple client management","Direct API access"]};
+ const featureDefinitions=[
+  ["standard_audits","Standard ecommerce audits"],
+  ["conversion_dossier","Conversion Dossier"],
+  ["white_label_branding","White-label branding"],
+  ["agency_management","Agency / multiple client workspaces"],
+  ["direct_api_access","Direct API access"]
+ ];
  const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n};
  try{
   const response=await fetch("/api/v1/billing/plans",{cache:"no-store"});if(!response.ok)throw Error("Package catalogue is temporarily unavailable.");
@@ -45,7 +50,9 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
    const card=el("article",undefined,"plan"+(tier==="pro"?" featured":""));
    card.append(el("h3",plan.label),el("p",tier==="starter"?"For individual store owners":tier==="pro"?"For growing ecommerce businesses":"For agencies managing multiple clients","tag"));
    card.append(el("div",Number(plan.monthly_audit_allowance).toLocaleString(),"quota"),el("div","audits per month · "+Number(plan.max_concurrent_audits)+" concurrent","sub"));
-   const list=el("ul");for(const feature of features[tier])list.append(el("li",feature));card.append(list);
+   const list=el("ul");
+   for(const [featureKey,featureLabel] of featureDefinitions){if(plan.features&&plan.features[featureKey]===true)list.append(el("li",featureLabel))}
+   card.append(list);
    const button=el("button","Continue to secure checkout","cta"+(tier==="pro"?" primary":""));button.addEventListener("click",async()=>{
     button.disabled=true;status.textContent="Preparing secure checkout…";
     try{
@@ -58,7 +65,23 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
    card.append(button);plansNode.append(card);
   }
   if(!plansNode.children.length)throw Error("No supported packages are currently configured.");
-  status.textContent="Package allowances and included capabilities are shown above. Final subscription price is displayed by Paddle before payment.";
+  const comparisonHead=document.getElementById("planComparisonHead");
+  const comparisonBody=document.getElementById("planComparisonBody");
+  comparisonHead.replaceChildren();comparisonBody.replaceChildren();
+  const header=el("tr");header.append(el("th","Capability"));
+  for(const plan of plans)header.append(el("th",plan.label));
+  comparisonHead.append(header);
+  const comparisonRows=[
+   ["Monthly audit allowance",plan=>Number(plan.monthly_audit_allowance).toLocaleString()],
+   ["Concurrent audits",plan=>String(Number(plan.max_concurrent_audits))],
+   ...featureDefinitions.map(([key,label])=>[label,plan=>plan.features&&plan.features[key]===true?"Included":"—"])
+  ];
+  for(const [label,valueForPlan] of comparisonRows){
+   const row=el("tr");row.append(el("td",label));
+   for(const plan of plans){const cell=el("td",valueForPlan(plan));if(featureDefinitions.some(([key,name])=>name===label))cell.className=plan.features&&plan.features[featureDefinitions.find(([key,name])=>name===label)[0]]===true?"yes":"no";row.append(cell)}
+   comparisonBody.append(row);
+  }
+  status.textContent="Package allowances and included capabilities are loaded from the active operator-managed catalogue. Final subscription price is displayed by Paddle before payment.";
  }catch(error){plansNode.replaceChildren(el("article",error.message,"plan"));status.textContent=error.message}
 })();
 </script>
