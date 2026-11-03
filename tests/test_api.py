@@ -2346,7 +2346,7 @@ async def test_paddle_past_due_retries_until_subscription_is_linked_and_deduplic
     }
     early = await send(early_past_due)
     assert early.status_code == 503
-    assert early.json()["detail"] == "Payment-failure event is awaiting subscription reconciliation."
+    assert early.json()["detail"] == "Payment-failure event is awaiting subscription or transaction reconciliation."
 
     purchase = {
         "event_id": "evt_past_due_purchase",
