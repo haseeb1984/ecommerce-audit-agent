@@ -31,7 +31,7 @@ Configure secrets in the Vercel project environment settings (and in the local s
 - `ACCOUNT_AUTH_SECRET`: unique random secret of at least 32 characters. Rotating it invalidates outstanding account authentication challenges/tokens that depend on the secret.
 
 ### Billing and administrator access
-- `PADDLE_ENVIRONMENT`, `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, and `PADDLE_CLIENT_TOKEN`.
+- `PADDLE_ENVIRONMENT`, `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, and `PADDLE_CLIENT_TOKEN`. The Paddle API key must include permission to read configured prices so the public pricing page can display the verified active catalogue amount; checkout still uses the server-managed Paddle price ID.
 - Optional `PADDLE_CHECKOUT_URL`.
 - `PADDLE_PRICE_ID_STARTER`, `PADDLE_PRICE_ID_PRO`, `PADDLE_PRICE_ID_BUSINESS` and the corresponding `LICENSE_MONTHLY_AUDITS_*` / `LICENSE_MAX_CONCURRENT_AUDITS_*` values used to bootstrap package records.
 - `ADMIN_API_KEY`: long random administrator secret.
