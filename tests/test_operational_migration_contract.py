@@ -84,3 +84,26 @@ def test_fresh_hostinger_schema_covers_every_registered_operational_model():
         if f"CREATE TABLE IF NOT EXISTS {table_name}" not in schema
     ]
     assert missing == []
+
+
+def test_customer_report_storage_key_uses_mysql_safe_fixed_width_uniqueness():
+    from hostinger_models import CustomerReportFile
+
+    columns = CustomerReportFile.__table__.columns
+    assert columns["storage_key"].type.length == 1024
+    assert columns["storage_key"].unique is not True
+    assert columns["storage_key_hash"].type.length == 64
+    assert columns["storage_key_hash"].unique is True
+
+
+def test_fresh_hostinger_schema_and_forward_migration_cover_storage_key_hash():
+    schema = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    migration = (
+        ROOT / "migrations" / "hostinger"
+        / "20261103_customer_report_storage_key_hash.sql"
+    ).read_text()
+    assert "storage_key VARCHAR(1024) NOT NULL," in schema
+    assert "storage_key_hash CHAR(64) NOT NULL UNIQUE" in schema
+    assert "SHA2(storage_key, 256)" in migration
+    assert "DROP INDEX storage_key" in migration
+    assert "uq_customer_report_files_storage_key_hash" in migration
