@@ -5336,19 +5336,9 @@ async def _ensure_admin_tables(db: AsyncSession) -> None:
         CREATE INDEX IF NOT EXISTS ix_saas_admin_action_logs_created
         ON saas_admin_action_logs (created_at DESC, id DESC)
     """))
-    # Keep billing references available when this code is upgraded against an existing database.
-    if dialect_name == "postgresql":
-        await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100)"))
-        await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"))
-    elif dialect_name == "sqlite":
-        columns = (await db.execute(text("PRAGMA table_info(payment_webhook_events)"))).all()
-        column_names = {row[1] for row in columns}
-        if "transaction_id" not in column_names:
-            await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN transaction_id VARCHAR(100)"))
-        if "subscription_id" not in column_names:
-            await db.execute(text("ALTER TABLE payment_webhook_events ADD COLUMN subscription_id VARCHAR(100)"))
-    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_transaction_id ON payment_webhook_events (transaction_id)"))
-    await db.execute(text("CREATE INDEX IF NOT EXISTS ix_payment_webhook_events_subscription_id ON payment_webhook_events (subscription_id)"))
+    # PaymentWebhookEvent columns and indexes are managed by the versioned schema
+    # migrations and ORM metadata. Never ALTER a hot billing table inside a request:
+    # concurrent webhook retries can hold row locks and deadlock with request-time DDL.
     # Migrate configured legacy plans without overwriting operator-managed values.
     for plan in _configured_payment_plans():
         tier = plan["tier"]
