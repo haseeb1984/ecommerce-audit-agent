@@ -1433,6 +1433,13 @@ async def test_public_plans_only_show_configured_paddle_price_ids(client, monkey
     assert response.status_code == 200 and payload["configured"] is True
     assert payload["checkout_provider"] == "Paddle" and [plan["tier"] for plan in payload["plans"]] == ["starter"]
     assert "price_id" not in payload["plans"][0]
+    assert payload["plans"][0]["features"] == {
+        "standard_audits": True,
+        "conversion_dossier": False,
+        "white_label_branding": False,
+        "agency_management": False,
+        "direct_api_access": False,
+    }
 
 
 
