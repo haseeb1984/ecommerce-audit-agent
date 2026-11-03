@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, ForeignKey, func, Index, LargeBinary, text
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -106,6 +106,14 @@ class AuditReport(Base):
 class SaaSPlanPackage(Base):
     """Operator-managed plan catalogue; raw SQL endpoints use the same table schema."""
     __tablename__ = "saas_plan_packages"
+    __table_args__ = (
+        Index(
+            "uq_saas_plan_packages_paddle_price_id",
+            "paddle_price_id",
+            unique=True,
+            postgresql_where=text("paddle_price_id IS NOT NULL"),
+        ),
+    )
 
     tier = Column(String(50), primary_key=True)
     label = Column(String(100), nullable=False)
