@@ -4343,13 +4343,16 @@ async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
     )
     plans = await _db_payment_plans(db, active_only=True) if ready else []
     plans = [p for p in plans if p.get("price_id")]
-    public_plans = []
-    for plan in plans:
-        price_details = None
+    async def load_price_details(plan):
         try:
-            price_details = await asyncio.to_thread(_public_paddle_price_details, plan["price_id"])
+            return await asyncio.to_thread(_public_paddle_price_details, plan["price_id"])
         except Exception as exc:
             logger.warning("Paddle public price lookup unavailable (error_type=%s)", type(exc).__name__)
+            return None
+
+    price_details_list = await asyncio.gather(*(load_price_details(plan) for plan in plans))
+    public_plans = []
+    for plan, price_details in zip(plans, price_details_list):
         public_plans.append({
             "tier": plan["tier"],
             "label": plan["label"],
