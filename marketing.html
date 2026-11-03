@@ -72,7 +72,7 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
    const button=el("button","Continue to secure checkout","cta"+(tier==="pro"?" primary":""));button.addEventListener("click",async()=>{
     button.disabled=true;status.textContent="Preparing secure checkout…";
     try{
-     const email=$("checkoutEmail").value.trim();if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email))throw Error("Enter a valid customer account email before checkout.");const checkout=await fetch("/api/v1/billing/checkout",{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({tier,email})});
+     const email=$("checkoutEmail").value.trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error("Enter a valid customer account email before checkout.");const checkout=await fetch("/api/v1/billing/checkout",{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({tier,email})});
      const result=await checkout.json().catch(()=>({}));if(!checkout.ok)throw Error(result.detail||"Unable to start checkout.");
      const url=new URL(result.checkout_url);if(url.protocol!=="https:"||url.username||url.password||!(url.hostname==="paddle.com"||url.hostname.endsWith(".paddle.com")))throw Error("Checkout destination failed security validation.");
      window.location.assign(url.href);
