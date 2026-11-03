@@ -44,10 +44,10 @@ def test_scan_operations_exposes_bounded_failed_job_pagination():
     route = next(route for route in router.routes if route.path == "/api/v1/admin/scan-operations")
     params = inspect.signature(route.endpoint).parameters
     assert params["failed_limit"].default.default == 25
-    assert params["failed_limit"].default.ge == 1
-    assert params["failed_limit"].default.le == 100
+    assert any(getattr(item, "ge", None) == 1 for item in params["failed_limit"].default.metadata)
+    assert any(getattr(item, "le", None) == 100 for item in params["failed_limit"].default.metadata)
     assert params["failed_offset"].default.default == 0
-    assert params["failed_offset"].default.ge == 0
+    assert any(getattr(item, "ge", None) == 0 for item in params["failed_offset"].default.metadata)
 
 
 def test_scan_operations_route_has_stable_pagination_metadata_contract():
@@ -160,8 +160,8 @@ def test_admin_all_scan_jobs_route_is_registered_with_pagination_and_filters():
     assert route.methods == {"GET"}
     params = inspect.signature(route.endpoint).parameters
     assert params["limit"].default.default == 50
-    assert params["limit"].default.ge == 1
-    assert params["limit"].default.le == 200
+    assert any(getattr(item, "ge", None) == 1 for item in params["limit"].default.metadata)
+    assert any(getattr(item, "le", None) == 200 for item in params["limit"].default.metadata)
     assert params["offset"].default.default == 0
     assert params["status_filter"].default.default == "all"
     assert params["license_id"].default.default is None
@@ -179,8 +179,8 @@ def test_admin_all_scan_jobs_endpoint_is_license_scoped_and_never_returns_licens
     assert '"license_id"' in source
     assert '"license_key"' not in source
     assert '"result_available"' in source
-    assert '".offset(offset)"' in source
-    assert '".limit(limit)"' in source
+    assert ".offset(offset)" in source
+    assert ".limit(limit)" in source
 
 
 def test_admin_scan_job_retry_alias_preserves_existing_guarded_retry_contract():
