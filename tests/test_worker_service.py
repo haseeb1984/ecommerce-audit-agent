@@ -157,3 +157,46 @@ def test_worker_service_no_longer_maintains_a_separate_queue_only_schema_contrac
 
     assert "ensure_scan_worker_schema" in source
     assert "WebsiteScanJob" not in source
+
+
+def test_legacy_worker_route_remains_registered_and_processes_one_job():
+    import inspect
+    import scan_worker_api
+
+    route = next(
+        route for route in scan_worker_api.router.routes
+        if route.path == "/api/v1/internal/scan-worker"
+    )
+    assert route.methods == {"GET"}
+    source = inspect.getsource(route.endpoint)
+    assert "SCAN_WORKER_SECRET" in source
+    assert "process_scan_queue(max_jobs=1)" in source
+
+
+@pytest.mark.asyncio
+async def test_legacy_worker_route_accepts_existing_scheduler_secret(monkeypatch):
+    import scan_worker_api
+
+    monkeypatch.setenv("SCAN_WORKER_SECRET", "legacy-cron-secret")
+    calls = []
+
+    async def fake_process_scan_queue(*, max_jobs):
+        calls.append(max_jobs)
+        return {"processed": max_jobs}
+
+    monkeypatch.setattr(scan_worker_api, "process_scan_queue", fake_process_scan_queue)
+    result = await scan_worker_api.run_legacy_scan_worker("Bearer legacy-cron-secret")
+
+    assert result == {"processed": 1}
+    assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_legacy_worker_route_rejects_invalid_scheduler_secret(monkeypatch):
+    import scan_worker_api
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("SCAN_WORKER_SECRET", "legacy-cron-secret")
+    with pytest.raises(HTTPException) as raised:
+        await scan_worker_api.run_legacy_scan_worker("Bearer wrong-secret")
+    assert raised.value.status_code == 401
