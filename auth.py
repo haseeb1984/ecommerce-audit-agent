@@ -36,7 +36,7 @@ CUSTOMER_SESSION_HEADER = APIKeyHeader(
 
 
 def get_customer_session_credentials(
-    credentials: HTTPAuthorizationCredentials | None = Depends(get_customer_session_credentials),
+    credentials: HTTPAuthorizationCredentials | None = Depends(CUSTOMER_BEARER),
     customer_session: str = Security(CUSTOMER_SESSION_HEADER),
 ) -> HTTPAuthorizationCredentials | None:
     """Accept either the modern Bearer token or legacy X-Customer-Session header."""
