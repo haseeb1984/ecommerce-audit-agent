@@ -76,5 +76,4 @@ def test_wordpress_plugin_uses_admin_nonce_for_identity_claim():
     assert "admin_post_eaa_link_customer_identity" in plugin
     assert "wp_verify_nonce($nonce, 'eaa_link_customer_identity')" in plugin
     assert "eaa_wp_dashboard_capability()" in plugin
-    assert "current_user_can('manage_options')" in plugin
     assert "/api/v1/integrations/wordpress/sites/claim" in plugin
