@@ -8,7 +8,7 @@
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:960px;margin:48px auto;padding:0 20px}
 header{margin-bottom:24px}h1{margin:0 0 8px;font-size:30px}p{color:#607187;line-height:1.55}
 .panel{background:#fff;border:1px solid #dce5ef;border-radius:14px;padding:24px;margin:16px 0;box-shadow:0 6px 22px #17324d0a}
-label{display:block;font-weight:650;margin:12px 0 6px}input{width:100%;max-width:420px;padding:12px;border:1px solid #b9c9da;border-radius:8px;font:inherit}
+label{display:block;font-weight:650;margin:12px 0 6px}input,textarea{width:100%;max-width:620px;padding:12px;border:1px solid #b9c9da;border-radius:8px;font:inherit}textarea{min-height:110px;resize:vertical}
 button{border:0;border-radius:8px;padding:11px 16px;background:#155a8a;color:#fff;font-weight:650;cursor:pointer;margin:12px 8px 0 0}
 button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cursor:not-allowed}
 .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.workspace{border:1px solid #e0e8f0;border-radius:10px;padding:16px;margin:12px 0}.workspace h3{margin:0 0 4px}
@@ -57,6 +57,29 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       const card=document.createElement("article");card.className="workspace";
       const heading=document.createElement("h3");heading.textContent=item.display_name;
       const role=document.createElement("p");role.className="muted";role.textContent="Your workspace role: "+item.role;
+      const canSubmit=["admin","analyst"].includes(item.role);
+      const submitForm=document.createElement("form");
+      const urlsLabel=document.createElement("label");urlsLabel.textContent="Client page URLs (one URL per line)";
+      const urlsInput=document.createElement("textarea");urlsInput.required=true;urlsInput.placeholder="https://client-store.example/\nhttps://client-store.example/products/example";
+      urlsLabel.append(urlsInput);
+      const submitButton=document.createElement("button");submitButton.type="submit";submitButton.textContent="Queue client audit";submitButton.disabled=!canSubmit;
+      const permission=document.createElement("p");permission.className="muted";permission.textContent=canSubmit?"Audits use the agency's shared Business quota and must match the connected client website.":"Viewer access is read-only. Ask the agency owner for Analyst or Admin workspace access to submit audits.";
+      submitForm.append(urlsLabel,submitButton,permission);
+      submitForm.addEventListener("submit",async event=>{
+        event.preventDefault();
+        const urls=urlsInput.value.split(/\\r?\\n/).map(value=>value.trim()).filter(Boolean);
+        if(!urls.length){$("workspaceStatus").textContent="Enter at least one client page URL.";return;}
+        submitButton.disabled=true;$("workspaceStatus").textContent="Queueing client audit…";
+        try{
+          const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);
+          const requestId="team-"+Array.from(bytes,value=>value.toString(16).padStart(2,"0")).join("");
+          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/scan-batches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,request_id:requestId})});
+          urlsInput.value="";
+          $("workspaceStatus").textContent="Queued "+result.submitted_urls+" URL(s) across "+result.batch_count+" batch(es) under the shared Business allowance.";
+          button.click();
+        }catch(error){$("workspaceStatus").textContent=error.message;}
+        finally{submitButton.disabled=!canSubmit;}
+      });
       const button=document.createElement("button");button.type="button";button.textContent="View audit history";
       const history=document.createElement("div");
       button.addEventListener("click",async()=>{
@@ -97,7 +120,7 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
         } catch(error){const p=document.createElement("p");p.className="status";p.textContent=error.message;history.append(p);}
         finally{button.disabled=false;}
       });
-      card.append(heading,role,button,history);$("workspaces").append(card);
+      card.append(heading,role,submitForm,button,history);$("workspaces").append(card);
     }
   }
   async function showSignedIn() {
