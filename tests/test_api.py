@@ -1542,7 +1542,7 @@ async def test_paddle_checkout_rejects_untrusted_configured_checkout_url(client,
         return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-invalid-url@example.com"})
     assert response.status_code == 503
     assert response.json()["detail"] == "Paddle checkout URL configuration is invalid."
     assert called is False
@@ -1560,13 +1560,13 @@ async def test_paddle_checkout_uses_server_configured_price(client, monkeypatch)
         captured.update({"path": path, "method": method, "payload": payload})
         return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-configured-price@example.com"})
     assert response.status_code == 200 and response.json()["checkout_url"] == "https://pay.paddle.com/checkout/test"
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
     assert captured["payload"]["items"] == [{"price_id": "pri_01abc123", "quantity": 1}]
     assert captured["payload"]["custom_data"]["license_tier"] == "starter"
-    assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up"})).status_code == 422
+    assert (await client.post("/api/v1/billing/checkout", json={"tier": "made-up", "email": "checkout-invalid-tier@example.com"})).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -1600,7 +1600,7 @@ async def test_paddle_checkout_fails_closed_when_purchase_fulfillment_is_not_rea
         }}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-readiness@example.com"})
     assert response.status_code == 503
     assert called is False
 
@@ -1620,7 +1620,7 @@ async def test_paddle_checkout_accepts_trusted_configured_checkout_url(client, m
         return {"data": {"id": "txn_01abc123", "checkout": {"url": "https://pay.paddle.com/checkout/test"}}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-trusted-url@example.com"})
     assert response.status_code == 200
     assert captured["payload"]["checkout"] == {"url": "https://pay.paddle.com/checkout"}
 
@@ -1647,7 +1647,7 @@ async def test_paddle_checkout_rejects_untrusted_checkout_destinations(client, m
         return {"data": {"id": "txn_01abc123", "checkout": {"url": checkout_url}}}
 
     monkeypatch.setattr(main, "_paddle_api_request", fake_request)
-    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter"})
+    response = await client.post("/api/v1/billing/checkout", json={"tier": "starter", "email": "checkout-untrusted-destination@example.com"})
     assert response.status_code == 502
     assert response.json()["detail"] == "Unable to start Paddle checkout; verify billing configuration."
 
