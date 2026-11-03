@@ -46,7 +46,7 @@ from scan_worker_api import router as scan_worker_router
 from wordpress_identity_api import router as wordpress_identity_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
-from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, CUSTOMER_BEARER
+from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, get_customer_session_credentials
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from report_generator import render_audit_pdf
@@ -1159,6 +1159,7 @@ async def customer_portal():
     return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
 
 
+@app.post("/api/v1/account/login", status_code=202)
 @app.post("/api/v1/account/auth/request-code", status_code=202)
 async def request_account_login_code(payload: AccountLoginRequest, response: Response, db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Send a short-lived sign-in code without disclosing whether an email owns an account."""
@@ -1236,6 +1237,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
 
 
+@app.post("/api/v1/account/login/verify")
 @app.post("/api/v1/account/auth/verify-code")
 async def verify_account_login_code(payload: AccountLoginVerify, request: Request, response: Response, db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Consume a one-time code and issue an opaque 30-day customer session."""
@@ -1340,11 +1342,12 @@ def _customer_email_change_operational_updates(
     )
 
 
+@app.post("/api/v1/account/email-change", status_code=202)
 @app.post("/api/v1/account/auth/email-change/request-code", status_code=202)
 async def request_customer_email_change(
     payload: AccountEmailChangeRequest,
     response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
+    credentials=Depends(get_customer_session_credentials),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -1419,11 +1422,12 @@ async def request_customer_email_change(
     }
 
 
+@app.post("/api/v1/account/email-change/confirm")
 @app.post("/api/v1/account/auth/email-change/verify-code")
 async def verify_customer_email_change(
     payload: AccountEmailChangeVerify,
     response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
+    credentials=Depends(get_customer_session_credentials),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -1524,10 +1528,11 @@ async def verify_customer_email_change(
     }
 
 
+@app.get("/api/v1/account/sessions")
 @app.get("/api/v1/account/auth/sessions")
 async def list_customer_device_sessions(
     response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
+    credentials=Depends(get_customer_session_credentials),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -1571,11 +1576,12 @@ async def list_customer_device_sessions(
     } for session in sessions]}
 
 
+@app.delete("/api/v1/account/sessions/{session_id}")
 @app.delete("/api/v1/account/auth/sessions/{session_id}")
 async def revoke_customer_device_session(
     session_id: str,
     response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
+    credentials=Depends(get_customer_session_credentials),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Revoke one other active device belonging to the same customer license."""
@@ -1606,10 +1612,11 @@ async def revoke_customer_device_session(
     return {"status": "revoked", "session_id": target.public_id}
 
 
+@app.post("/api/v1/account/logout")
 @app.post("/api/v1/account/auth/logout")
 async def logout_account_session(
     response: Response,
-    credentials=Depends(CUSTOMER_BEARER),
+    credentials=Depends(get_customer_session_credentials),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Revoke the current Hostinger-backed customer session immediately."""
@@ -1623,6 +1630,37 @@ async def logout_account_session(
         await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"status": "logged_out"}
+
+
+@app.post("/api/v1/account/sessions/revoke-others")
+async def revoke_other_customer_sessions(
+    response: Response,
+    credentials=Depends(get_customer_session_credentials),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Revoke other active devices while keeping the current customer session alive."""
+    from sqlalchemy import select, update
+
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Customer session is required.")
+    digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == digest,
+        CustomerSession.revoked_at.is_(None),
+    ))
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    now = datetime.now(timezone.utc)
+    result = await operational_db.execute(update(CustomerSession).where(
+        CustomerSession.license_key == current.license_key,
+        CustomerSession.email == current.email,
+        CustomerSession.token_hash != digest,
+        CustomerSession.revoked_at.is_(None),
+    ).values(revoked_at=now))
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "sessions_revoked", "revoked_count": int(result.rowcount or 0)}
 
 
 @app.post("/api/v1/account/auth/logout-all")
@@ -2030,7 +2068,7 @@ async def create_or_get_business_agency(
 
 
 async def require_agency_team_session(
-    credentials=Depends(CUSTOMER_BEARER),
+    credentials=Depends(get_customer_session_credentials),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
