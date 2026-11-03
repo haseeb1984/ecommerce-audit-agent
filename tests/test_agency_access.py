@@ -242,3 +242,125 @@ def test_agency_invitation_email_validation_rejects_malformed_addresses(email):
     from main import _is_valid_agency_team_email
 
     assert not _is_valid_agency_team_email(email)
+
+
+class AgencyTeamScanSession:
+    def __init__(self, *rows):
+        self.rows = list(rows)
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_agency_analyst_can_queue_connected_client_audits_under_shared_license(monkeypatch):
+    import scan_queue
+    from fastapi import Response
+    from main import AgencyTeamScanSubmission, submit_agency_team_workspace_scans
+
+    grant = SimpleNamespace(role="analyst")
+    workspace = SimpleNamespace(id="workspace-1", display_name="Client One")
+    site = SimpleNamespace(site_host="client.example")
+    db = AgencyTeamScanSession(grant, workspace, site)
+    owner_license = SimpleNamespace(license_key="business-owner-license", tier="business")
+    identity = {
+        "agency": SimpleNamespace(id="agency-1"),
+        "member": SimpleNamespace(id="member-1", email="analyst@example.com"),
+        "owner_license": owner_license,
+    }
+    captured = {}
+
+    async def enqueue(_db, **kwargs):
+        captured.update(kwargs)
+        return {
+            "request_id": kwargs["request_id"],
+            "submitted_urls": len(kwargs["urls"]),
+            "batch_count": 1,
+            "new_jobs": len(kwargs["urls"]),
+        }
+
+    monkeypatch.setattr(scan_queue, "enqueue_scan_request", enqueue)
+    response = Response()
+    result = await submit_agency_team_workspace_scans(
+        "workspace-1",
+        AgencyTeamScanSubmission(
+            urls=["https://client.example/", "https://client.example/products/item"],
+            request_id="team-scan-request-001",
+        ),
+        SimpleNamespace(),
+        response,
+        identity=identity,
+        operational_db=db,
+    )
+
+    assert result["status"] == "accepted"
+    assert result["workspace_id"] == "workspace-1"
+    assert captured["license_key"] == "business-owner-license"
+    assert captured["package_tier"] == "business"
+    assert captured["workspace_id"] == "workspace-1"
+    assert captured["requested_by"] == "analyst@example.com"
+    assert captured["batch_size"] == 10
+    assert len(captured["urls"]) == 2
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.asyncio
+async def test_agency_viewer_cannot_queue_client_audits():
+    from fastapi import HTTPException, Response
+    from main import AgencyTeamScanSubmission, submit_agency_team_workspace_scans
+
+    identity = {
+        "agency": SimpleNamespace(id="agency-1"),
+        "member": SimpleNamespace(id="member-1", email="viewer@example.com"),
+        "owner_license": SimpleNamespace(license_key="business-owner-license", tier="business"),
+    }
+    with pytest.raises(HTTPException) as error:
+        await submit_agency_team_workspace_scans(
+            "workspace-1",
+            AgencyTeamScanSubmission(
+                urls=["https://client.example/"],
+                request_id="team-scan-request-002",
+            ),
+            SimpleNamespace(),
+            Response(),
+            identity=identity,
+            operational_db=AgencyTeamScanSession(SimpleNamespace(role="viewer")),
+        )
+    assert error.value.status_code == 403
+    assert "read-only" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_agency_team_audit_submission_rejects_urls_outside_connected_site():
+    from fastapi import HTTPException, Response
+    from main import AgencyTeamScanSubmission, submit_agency_team_workspace_scans
+
+    identity = {
+        "agency": SimpleNamespace(id="agency-1"),
+        "member": SimpleNamespace(id="member-1", email="analyst@example.com"),
+        "owner_license": SimpleNamespace(license_key="business-owner-license", tier="business"),
+    }
+    with pytest.raises(HTTPException) as error:
+        await submit_agency_team_workspace_scans(
+            "workspace-1",
+            AgencyTeamScanSubmission(
+                urls=["https://other.example/"],
+                request_id="team-scan-request-003",
+            ),
+            SimpleNamespace(),
+            Response(),
+            identity=identity,
+            operational_db=AgencyTeamScanSession(
+                SimpleNamespace(role="analyst"),
+                SimpleNamespace(id="workspace-1", display_name="Client One"),
+                SimpleNamespace(site_host="client.example"),
+            ),
+        )
+    assert error.value.status_code == 422
+    assert "connected to this workspace" in error.value.detail
+
+
+def test_agency_team_scan_submission_route_is_registered():
+    import main
+
+    assert "/api/v1/agency/team/workspaces/{workspace_id}/scan-batches" in main.app.openapi()["paths"]
