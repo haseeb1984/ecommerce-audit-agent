@@ -2815,9 +2815,11 @@ async def submit_agency_team_workspace_scans(
         _validate_single_site_submission(normalized)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    submitted_host = (urlsplit(normalized[0]).hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
-    if submitted_host != site.site_host:
-        raise HTTPException(status_code=422, detail="Every audit URL must belong to the WordPress website connected to this workspace.")
+    for target in normalized:
+        parsed_target = urlsplit(target)
+        submitted_host = (parsed_target.hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
+        if parsed_target.scheme.lower() != "https" or submitted_host != site.site_host:
+            raise HTTPException(status_code=422, detail="Every audit URL must use HTTPS and belong to the WordPress website connected to this workspace.")
 
     owner_license = identity["owner_license"]
     try:
