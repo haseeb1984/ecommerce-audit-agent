@@ -4288,9 +4288,54 @@ class PaddleCheckoutRequest(BaseModel):
     tier: str
 
 
+_PADDLE_PUBLIC_PRICE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+_PADDLE_PUBLIC_PRICE_CACHE_TTL_SECONDS = 300
+
+
+def _public_paddle_price_details(price_id: str) -> dict:
+    """Read a validated active Paddle price, caching public display metadata briefly."""
+    cache_key = (os.getenv("PADDLE_ENVIRONMENT", "sandbox").strip().lower(), price_id)
+    now = time.monotonic()
+    cached = _PADDLE_PUBLIC_PRICE_CACHE.get(cache_key)
+    if cached and now - cached[0] < _PADDLE_PUBLIC_PRICE_CACHE_TTL_SECONDS:
+        return dict(cached[1])
+
+    provider_response = _paddle_api_request(f"/prices/{price_id}")
+    price = provider_response.get("data") if isinstance(provider_response, dict) else None
+    if not isinstance(price, dict) or price.get("id") != price_id or price.get("status") != "active":
+        raise RuntimeError("Paddle price is missing or inactive")
+    unit_price = price.get("unit_price")
+    if not isinstance(unit_price, dict):
+        raise RuntimeError("Paddle price has no public unit amount")
+    amount_minor = str(unit_price.get("amount", ""))
+    currency_code = str(unit_price.get("currency_code", "")).upper()
+    if not re.fullmatch(r"[0-9]{1,15}", amount_minor) or not re.fullmatch(r"[A-Z]{3}", currency_code):
+        raise RuntimeError("Paddle price amount or currency is invalid")
+
+    billing_cycle = price.get("billing_cycle")
+    interval = None
+    frequency = None
+    if billing_cycle is not None:
+        if not isinstance(billing_cycle, dict):
+            raise RuntimeError("Paddle billing cycle is invalid")
+        interval = billing_cycle.get("interval")
+        frequency = billing_cycle.get("frequency")
+        if interval not in {"day", "week", "month", "year"} or not isinstance(frequency, int) or not 1 <= frequency <= 999:
+            raise RuntimeError("Paddle billing cycle is invalid")
+
+    details = {
+        "amount_minor": amount_minor,
+        "currency_code": currency_code,
+        "billing_cycle_interval": interval,
+        "billing_cycle_frequency": frequency,
+    }
+    _PADDLE_PUBLIC_PRICE_CACHE[cache_key] = (now, details)
+    return dict(details)
+
+
 @app.get("/api/v1/billing/plans")
 async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
-    """Expose active operator-managed plans only when payment delivery is configured."""
+    """Expose active operator-managed plans and verified Paddle price details."""
     ready = bool(
         os.getenv("PADDLE_API_KEY", "").strip()
         and os.getenv("PADDLE_WEBHOOK_SECRET", "").strip()
@@ -4298,13 +4343,30 @@ async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
     )
     plans = await _db_payment_plans(db, active_only=True) if ready else []
     plans = [p for p in plans if p.get("price_id")]
-    return {"checkout_provider": "Paddle", "configured": bool(plans),
-        "plans": [{"tier": p["tier"], "label": p["label"],
-                   "monthly_audit_allowance": p["monthly_audit_allowance"],
-                   "max_concurrent_audits": p["max_concurrent_audits"],
-                   "features": plan_features(p["tier"])} for p in plans],
-        "configuration_needed": [] if plans else ["Paddle API key", "Paddle notification destination secret",
-            "SMTP host and sender", "Paddle price ID for each enabled plan"]}
+    public_plans = []
+    for plan in plans:
+        price_details = None
+        try:
+            price_details = await asyncio.to_thread(_public_paddle_price_details, plan["price_id"])
+        except Exception as exc:
+            logger.warning("Paddle public price lookup unavailable (error_type=%s)", type(exc).__name__)
+        public_plans.append({
+            "tier": plan["tier"],
+            "label": plan["label"],
+            "monthly_audit_allowance": plan["monthly_audit_allowance"],
+            "max_concurrent_audits": plan["max_concurrent_audits"],
+            "features": plan_features(plan["tier"]),
+            "price": price_details,
+        })
+    return {
+        "checkout_provider": "Paddle",
+        "configured": bool(plans),
+        "plans": public_plans,
+        "configuration_needed": [] if plans else [
+            "Paddle API key", "Paddle notification destination secret",
+            "SMTP host and sender", "Paddle price ID for each enabled plan",
+        ],
+    }
 
 
 @app.post("/api/v1/billing/checkout")
