@@ -4301,7 +4301,8 @@ async def public_billing_plans(db: AsyncSession = Depends(get_async_db)):
     return {"checkout_provider": "Paddle", "configured": bool(plans),
         "plans": [{"tier": p["tier"], "label": p["label"],
                    "monthly_audit_allowance": p["monthly_audit_allowance"],
-                   "max_concurrent_audits": p["max_concurrent_audits"]} for p in plans],
+                   "max_concurrent_audits": p["max_concurrent_audits"],
+                   "features": plan_features(p["tier"])} for p in plans],
         "configuration_needed": [] if plans else ["Paddle API key", "Paddle notification destination secret",
             "SMTP host and sender", "Paddle price ID for each enabled plan"]}
 
