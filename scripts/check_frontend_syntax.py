@@ -28,7 +28,7 @@ class InlineScriptParser(HTMLParser):
             return
         attributes = dict(attrs)
         script_type = (attributes.get("type") or "").strip().lower()
-        if "src" in attributes or script_type not in {"", "text/javascript", "application/javascript"}:
+        if "src" in attributes or script_type not in {"", "text/javascript", "application/javascript", "module"}:
             self._capture = False
             return
         self._capture = True
