@@ -79,12 +79,13 @@ Current branch additions:
 - Customer portal client workspace controls and admin portal agency inventory.
 - Public marketing and pricing entry point at `/` and `/pricing`, using the active package catalogue and the existing Paddle checkout endpoint.
 
-Not yet complete:
-- Agency workspace website ownership verification and official WordPress plugin connection.
-- Agency team invitation acceptance, authentication, and workspace-scoped authorization.
-- Client-specific audit execution/history and shared Business quota/concurrency enforcement.
-- Agency-aware branded deliverables and full admin lifecycle controls.
-- Actual end-to-end tests and runtime verification.
+Implementation status:
+- Agency client websites are connected through the official WordPress plugin using owner-issued, single-use tokens and dedicated per-site credentials.
+- Agency team invitations, OTP authentication, revocable sessions, and workspace-scoped role grants are implemented.
+- Client-specific audit submission, history, structured findings/evidence, and shared Business quota/concurrency accounting are implemented for owners and authorized team members.
+- Admin agency suspension/reactivation and team-session revocation are implemented.
+- Agency-specific PDF export and branded deliverable refinement remain deferred to the final reporting phase.
+- Production migrations have not been applied; live integration and release verification remain pending.
 
 The Hostinger migration is a repository artifact only. It has not been run against production. Apply it only through the approved deployment/migration process after review and backup.
 
@@ -100,11 +101,17 @@ Additional Business-plan functionality now present on the feature branch:
 - The owner continues to submit scans under the one Business license, so existing licensing quota/concurrency enforcement remains the shared agency allowance. Completed client-attributed jobs are recorded in the agency usage ledger and aggregated per workspace.
 - Customer portal now allows selecting a client workspace for bulk scans and choosing workspace scope when inviting team members.
 
-Still outstanding:
-- Full audit report/evidence access, verified WordPress client-site connections, usage aggregation, and team member write actions remain outstanding.
-- Agency WordPress connection has an initial owner-issued token/plugin registration and revocation flow; agency plugin audit execution and full client report access remain outstanding.
-- Client-specific audit result views and usage aggregation from actual completed jobs.
-- Runtime validation of the migration, API routes, browser interactions, and email flow.
+Completed in the current implementation:
+- Verified WordPress client-site connections use owner-issued tokens and dedicated credentials; the official plugin can submit client audits without receiving the agency owner's license key.
+- Owners and granted teammates can read workspace-scoped structured audit findings/evidence; the owner and the plugin can queue audits for the connected client site.
+- Analyst/Admin workspace grants can submit client audits through the agency team portal; Viewer grants remain read-only.
+- Completed client-attributed jobs create idempotent usage events, and the agency usage endpoint reports shared Business allowance, pending/consumed quota, concurrency, and workspace breakdowns.
+- Team members can read batch history and saved findings/evidence only for explicitly assigned workspaces.
+
+Remaining release work:
+- Agency-specific PDF export and full white-label PDF/report presentation remain deferred to the final reporting phase.
+- Run the complete CI suite on the final consolidated commit and verify migration/API/browser/email behavior in an isolated staging environment.
+- Production migrations and deployment remain operator-controlled and have not been performed.
 
 - Client workspace selector is now available on the bulk-scan form; submissions carry a workspace ID only when the Business owner selects an active client.
 - Scan batches store optional `workspace_id`; personal submissions remain unassigned. The owner can view client-specific batch status/history at `GET /api/v1/account/agency/clients/{workspace_id}/audits`.
@@ -119,7 +126,7 @@ Still outstanding:
 - The owner can revoke a teammate; revocation also revokes that member's active sessions. Sessions can also be ended by the member.
 - Dedicated team portal is served at `/agency`; it stores the opaque team session in browser session storage and offers assigned-workspace audit batch history.
 - New operational tables are included in the additive agency migration. The migration remains unapplied in production.
-- Team member access covers assigned-workspace audit batch status/history and structured saved findings/evidence. Client-level quota/usage details are currently owner-only, and team member write operations remain outstanding.
+- Team member access covers assigned-workspace audit batch status/history and structured saved findings/evidence. Analyst/Admin workspace grants can queue client audits; Viewer grants are read-only. Shared quota/usage management and workspace grants remain owner-managed.
 
 
 ### Business agency WordPress client-site connection
