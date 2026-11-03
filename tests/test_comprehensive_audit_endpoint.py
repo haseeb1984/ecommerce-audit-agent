@@ -115,7 +115,7 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
 @pytest.mark.asyncio
 async def test_comprehensive_audit_rejects_private_target_before_quota(monkeypatch):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=44)
+    license_obj = SimpleNamespace(id=44, tier="business")
     reserve = AsyncMock()
     monkeypatch.setattr(main, "reserve_audit_slot", reserve)
     main.app.dependency_overrides[main.verify_license_or_api_key] = lambda: license_obj
