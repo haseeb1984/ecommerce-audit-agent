@@ -128,7 +128,94 @@ async def admin_scan_operations(
     }
 
 
+@router.get("/api/v1/admin/scan-jobs")
+async def admin_list_scan_jobs(
+    request: Request,
+    response: Response,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=10000000),
+    status_filter: str = Query(
+        "all",
+        pattern="^(all|queued|processing|retry|retry_wait|completed|failed|cancelled)$",
+    ),
+    license_id: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Paginated admin view of all durable scan jobs, without exposing license keys."""
+    _require_scan_admin(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+
+    filters = []
+    effective_status = "retry_wait" if status_filter == "retry" else status_filter
+    if effective_status != "all":
+        filters.append(WebsiteScanJob.status == effective_status)
+    if license_id is not None:
+        license_key = await db.scalar(
+            select(SoftwareLicense.license_key).where(SoftwareLicense.id == license_id)
+        )
+        if not license_key:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        filters.append(WebsiteScanJob.license_key == license_key)
+
+    total = int((await operational_db.execute(
+        select(func.count(WebsiteScanJob.id)).where(*filters)
+    )).scalar_one() or 0)
+    rows = (await operational_db.execute(
+        select(WebsiteScanJob, CustomerWebsite.label, CustomerWebsite.url)
+        .outerjoin(
+            CustomerWebsite,
+            (CustomerWebsite.id == WebsiteScanJob.website_id)
+            & (CustomerWebsite.license_key == WebsiteScanJob.license_key),
+        )
+        .where(*filters)
+        .order_by(WebsiteScanJob.created_at.desc(), WebsiteScanJob.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )).all()
+
+    keys = {job.license_key for job, _, _ in rows}
+    license_ids = {
+        key: row_id for row_id, key in (await db.execute(
+            select(SoftwareLicense.id, SoftwareLicense.license_key)
+            .where(SoftwareLicense.license_key.in_(keys))
+        )).all()
+    } if keys else {}
+
+    items = []
+    for job, website_label, website_url in rows:
+        updated_at = job.completed_at or job.started_at or job.created_at
+        items.append({
+            "job_id": job.id,
+            "license_id": license_ids.get(job.license_key),
+            "website_id": job.website_id,
+            "website_name": website_label or urlsplit(job.target_url).hostname or "Archived website",
+            "website_url": website_url or job.target_url,
+            "status": job.status,
+            "attempts": job.attempt_count,
+            "max_attempts": job.max_attempts,
+            "error_code": job.last_error_code,
+            "result_available": bool(job.result_reference),
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        })
+    return {
+        "items": items,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(rows) < total,
+            "status": status_filter,
+            "license_id": license_id,
+        },
+    }
+
+
 @router.post("/api/v1/admin/scan-operations/jobs/{job_id}/retry")
+@router.post("/api/v1/admin/scan-jobs/{job_id}/retry")
 async def admin_retry_failed_scan_job(
     job_id: str,
     request: Request,
