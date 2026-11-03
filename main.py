@@ -168,6 +168,11 @@ class AgencyTeamLoginVerify(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
 
 
+class AgencyTeamScanSubmission(BaseModel):
+    urls: list[str] = Field(..., min_length=1, max_length=1000)
+    request_id: str = Field(..., min_length=8, max_length=128)
+
+
 class AgencyInvitationAccept(BaseModel):
     token: str = Field(..., min_length=32, max_length=200)
 
@@ -2108,7 +2113,7 @@ async def require_agency_team_session(
     ))
     if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
-    return {"session": session, "member": member, "agency": agency}
+    return {"session": session, "member": member, "agency": agency, "owner_license": owner_license}
 
 
 @app.get("/api/v1/account/agency/usage")
@@ -2752,6 +2757,93 @@ async def list_agency_team_workspace_audits(workspace_id: str, response: Respons
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "completed_at": item.completed_at.isoformat() if item.completed_at else None,
     } for item in batches], "limit": limit, "offset": offset}
+
+
+@app.post("/api/v1/agency/team/workspaces/{workspace_id}/scan-batches", status_code=202)
+async def submit_agency_team_workspace_scans(
+    workspace_id: str,
+    payload: AgencyTeamScanSubmission,
+    request: Request,
+    response: Response,
+    identity=Depends(require_agency_team_session),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Let assigned agency admins/analysts queue client scans under the shared Business allowance."""
+    from sqlalchemy import select
+    from scan_api import _normalize_bulk_target, _validate_single_site_submission
+    from scan_queue import enqueue_scan_request
+
+    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+        AgencyWorkspaceAccess.workspace_id == workspace_id,
+    ))
+    if grant is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
+    if grant.role not in {"admin", "analyst"}:
+        raise HTTPException(status_code=403, detail="Your workspace role is read-only and cannot submit audits.")
+
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == identity["agency"].id,
+        AgencyClientWorkspace.status == "active",
+    ))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace not found.")
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.agency_id == identity["agency"].id,
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.status == "active",
+    ))
+    if site is None:
+        raise HTTPException(status_code=409, detail="Connect and verify this client's WordPress website before submitting audits.")
+
+    normalized = []
+    invalid_indexes = []
+    for index, raw_url in enumerate(payload.urls):
+        try:
+            normalized.append(_normalize_bulk_target(raw_url))
+        except (ValueError, TypeError):
+            invalid_indexes.append(index)
+    if invalid_indexes:
+        raise HTTPException(status_code=422, detail={
+            "message": "One or more website URLs are invalid.",
+            "invalid_url_indexes": invalid_indexes[:100],
+            "invalid_count": len(invalid_indexes),
+        })
+    try:
+        _validate_single_site_submission(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    submitted_host = (urlsplit(normalized[0]).hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
+    if submitted_host != site.site_host:
+        raise HTTPException(status_code=422, detail="Every audit URL must belong to the WordPress website connected to this workspace.")
+
+    owner_license = identity["owner_license"]
+    try:
+        result = await enqueue_scan_request(
+            operational_db,
+            license_key=owner_license.license_key,
+            package_tier=owner_license.tier,
+            urls=normalized,
+            request_id=payload.request_id,
+            requested_by=identity["member"].email,
+            workspace_id=workspace.id,
+            batch_size=10,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Agency scan queue is temporarily unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "status": "accepted",
+        "workspace_id": workspace.id,
+        "workspace_name": workspace.display_name,
+        "message": "Client audit URLs have been queued under the shared Business allowance.",
+        **result,
+    }
 
 
 @app.get("/api/v1/account/agency/clients/{workspace_id}/audit-results")
