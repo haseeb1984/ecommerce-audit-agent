@@ -45,9 +45,11 @@ from starlette.requests import Request
 class AgencyRouteSession:
     def __init__(self, *rows):
         self.rows = list(rows)
+        self.scalar_statements = []
         self.committed = False
 
-    async def scalar(self, _statement):
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
         return self.rows.pop(0)
 
     async def commit(self):
@@ -123,7 +125,7 @@ async def test_agency_wordpress_audit_queues_only_its_connected_workspace(monkey
         license_key="business-license", is_active=True, expires_at=None,
         tier="business",
     )
-    operational = AgencyRouteSession(site, agency, workspace)
+    operational = AgencyRouteSession(site, agency, workspace, site)
     licensing = AgencyRouteSession(owner_license)
     queued = {}
 
@@ -151,6 +153,10 @@ async def test_agency_wordpress_audit_queues_only_its_connected_workspace(monkey
     assert queued["urls"] == ["https://shop.example/products/one"]
     assert operational.committed
     assert site.last_seen_at is not None
+    assert operational.scalar_statements[0]._for_update_arg is None
+    assert all(statement._for_update_arg is not None for statement in operational.scalar_statements[1:])
+    lock_tables = [str(statement).split("FROM ", 1)[1].split(" ", 1)[0] for statement in operational.scalar_statements[1:]]
+    assert lock_tables == ["agency_accounts", "agency_client_workspaces", "agency_client_websites"]
 
 
 @pytest.mark.asyncio
@@ -184,7 +190,7 @@ async def test_agency_wordpress_audit_rejects_another_clients_domain(monkeypatch
         await queue_agency_wordpress_site_audit(
             payload, _agency_request({"x-agency-site-token": "c" * 48}), Response(),
             licensing_db=AgencyRouteSession(owner_license),
-            operational_db=AgencyRouteSession(site, agency, workspace),
+            operational_db=AgencyRouteSession(site, agency, workspace, site),
         )
     assert error.value.status_code == 422
 

@@ -151,20 +151,32 @@ async def queue_agency_wordpress_site_audit(
     if len(raw_token) < 32 or len(raw_token) > 200:
         raise HTTPException(status_code=401, detail="Agency site authentication is required.")
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+    # Resolve the tenant without a row lock, then serialize the lifecycle check
+    # in the same agency -> workspace -> site order used by agency connection flows.
+    candidate = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.site_token_hash == token_hash,
         AgencyClientWebsite.status == "active",
     ))
-    if site is None:
+    if candidate is None:
         raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == site.agency_id, AgencyAccount.status == "active"
-    ))
+        AgencyAccount.id == candidate.agency_id,
+        AgencyAccount.status == "active",
+    ).with_for_update())
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
-        AgencyClientWorkspace.id == site.workspace_id,
-        AgencyClientWorkspace.agency_id == site.agency_id,
+        AgencyClientWorkspace.id == candidate.workspace_id,
+        AgencyClientWorkspace.agency_id == candidate.agency_id,
         AgencyClientWorkspace.status == "active",
-    ))
+    ).with_for_update())
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.id == candidate.id,
+        AgencyClientWebsite.agency_id == candidate.agency_id,
+        AgencyClientWebsite.workspace_id == candidate.workspace_id,
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ).with_for_update())
+    if site is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
     owner_license = await licensing_db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     )) if agency else None
