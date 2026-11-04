@@ -28,7 +28,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from hostinger_database import HostingerAsyncSessionLocal, hostinger_engine
-from hostinger_models import CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, CustomerWebsite, ScanBatch, WebsiteScanJob, WebsiteScanResult
+from hostinger_models import AgencyAccount, AgencyClientWorkspace, AgencyUsageEvent, CustomerAccount, CustomerBillingEvent, CustomerEmailChangeChallenge, CustomerEmailIdentitySyncOutbox, CustomerLoginChallenge, CustomerSession, CustomerWebsite, ScanBatch, WebsiteScanJob, WebsiteScanResult
 from scan_queue import (
     claim_next_scan_job,
     complete_scan_job,
@@ -78,6 +78,9 @@ _WORKER_REQUIRED_MODELS = (
     CustomerEmailIdentitySyncOutbox,
     CustomerBillingEvent,
     CustomerWebsite,
+    AgencyAccount,
+    AgencyClientWorkspace,
+    AgencyUsageEvent,
     WebsiteScanResult,
     ScanBatch,
     WebsiteScanJob,
@@ -95,8 +98,8 @@ async def ensure_scan_worker_schema() -> None:
     if HostingerAsyncSessionLocal is None or hostinger_engine is None:
         raise RuntimeError("Hostinger operational database is not configured.")
 
-    # The worker runs scan execution, customer lifecycle/session revocation,
-    # passwordless challenge cleanup, and verified-email identity outbox sync.
+    # The worker runs scan execution, agency usage-ledger writes, customer
+    # lifecycle/session revocation, passwordless cleanup, and identity outbox sync.
     # Validate every Hostinger model touched by those paths before processing.
     required_models = _WORKER_REQUIRED_MODELS
     async with _worker_schema_lock:
