@@ -96,6 +96,10 @@ def _configuration_status() -> tuple[list[str], list[str]]:
             ready = len(os.getenv("ACCOUNT_AUTH_SECRET", "")) >= 32
             if not ready:
                 details.append("ACCOUNT_AUTH_SECRET must contain at least 32 characters")
+        elif group == "public_app_url":
+            ready = _valid_public_app_url(os.getenv("PUBLIC_APP_URL", ""))
+            if not ready:
+                details.append("PUBLIC_APP_URL must be an HTTPS URL with a hostname and no embedded credentials")
         else:
             ready = all(os.getenv(name, "").strip() for name in names)
         print(f"configuration_{group}: {'PASS' if ready else 'FAIL'}")
