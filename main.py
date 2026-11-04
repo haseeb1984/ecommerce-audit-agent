@@ -7256,6 +7256,10 @@ async def admin_cancel_subscription(
     if not hmac.compare_digest(subscription_id, payload.confirm_subscription_id.strip()):
         raise HTTPException(status_code=422, detail="Subscription confirmation does not match.")
     from sqlalchemy import select
+    # Serialize operator cancellation with webhook lifecycle updates and admin
+    # reconciliation for this subscription. The provider remains authoritative
+    # for the eventual entitlement transition; this lock only orders the request.
+    await _lock_paddle_webhook_resource(db, subscription_id)
     event = await _get_paddle_subscription_license_event(db, subscription_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Subscription is not linked to a recorded customer billing event.")

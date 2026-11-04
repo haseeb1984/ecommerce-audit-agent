@@ -59,3 +59,13 @@ async def test_admin_billing_mirror_status_returns_safe_aggregate_diagnostics(mo
     assert len(db.statements) == 5
     assert "event_id" not in str(result)
     assert "last_error" not in str(result)
+
+
+def test_admin_paddle_cancellation_serializes_subscription_lifecycle():
+    import inspect
+
+    source = inspect.getsource(main.admin_cancel_subscription)
+    lock = source.index("await _lock_paddle_webhook_resource(db, subscription_id)")
+    linked_lookup = source.index("await _get_paddle_subscription_license_event(db, subscription_id)")
+    provider_request = source.index('f"/subscriptions/{subscription_id}/cancel"')
+    assert lock < linked_lookup < provider_request
