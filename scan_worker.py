@@ -260,10 +260,9 @@ async def _execute_audit(target_url: str) -> dict:
         browser_result = await run_browser_audit(target_url)
         result.findings.extend(AuditFinding(**item) for item in browser_result.get("findings", []))
         result.check_outcomes.extend(CheckOutcome(**item) for item in browser_result.get("check_outcomes", []))
-        result.summary = getattr(result, "summary", None)
-        modules["browser_rendered"] = "completed"
-        browser_audit_completed = True
         browser_summary = browser_result.get("summary") or {}
+        browser_audit_completed = not bool(browser_summary.get("navigation_error"))
+        modules["browser_rendered"] = "completed" if browser_audit_completed else "partial"
         result.limitations.append(
             "Rendered-browser diagnostics used a bounded Chromium run across viewport widths "
             + ", ".join(str(width) for width in browser_summary.get("viewports", []))
