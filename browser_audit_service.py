@@ -54,7 +54,7 @@ def _verify_signature(timestamp: str, signature: str, body: bytes) -> None:
 async def _public_http_url(value: str) -> bool:
     try:
         parts = urlsplit(value)
-        if parts.scheme not in {"http", "https"} or not parts.hostname:
+        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.port not in (None, 80, 443):
             return False
         if parts.username is not None or parts.password is not None:
             return False
@@ -73,6 +73,18 @@ async def _public_http_url(value: str) -> bool:
             addresses = [ipaddress.ip_address(record[4][0].split("%", 1)[0]) for record in records]
         return bool(addresses) and all(address.is_global for address in addresses)
     except (ValueError, OSError, asyncio.TimeoutError):
+        return False
+
+
+def _allowed_navigation_host(target_host: str, request_url: str) -> bool:
+    """Keep top-level navigations on the requested hostname or its www alias."""
+    try:
+        requested_host = urlsplit(request_url).hostname
+        original = target_host.rstrip(".").lower()
+        allowed = {original}
+        allowed.add(original[4:] if original.startswith("www.") else f"www.{original}")
+        return bool(requested_host) and requested_host.rstrip(".").lower() in allowed
+    except ValueError:
         return False
 
 
@@ -99,6 +111,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
         raise HTTPException(status_code=429, detail="Browser request replay cache is at capacity")
     _SEEN_REQUESTS[payload.request_id] = now + 300
     target = str(payload.target_url)
+    target_host = urlsplit(target).hostname or ""
     if not await _public_http_url(target):
         raise HTTPException(status_code=422, detail="Target URL is not a permitted public HTTP(S) address")
     try:
@@ -144,6 +157,10 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         await route.abort()
                         return
                     if not await _public_http_url(route.request.url):
+                        browser_blocked_requests += 1
+                        await route.abort()
+                        return
+                    if route.request.is_navigation_request() and route.request.frame == page.main_frame and not _allowed_navigation_host(target_host, route.request.url):
                         browser_blocked_requests += 1
                         await route.abort()
                         return
