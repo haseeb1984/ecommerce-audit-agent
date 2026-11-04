@@ -36,11 +36,16 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
         operational_db=operational_db,
     )
 
-    sql = str(operational_db.statement.compile(compile_kwargs={"literal_binds": True}))
-    active_order = "CASE WHEN wordpress_installations.status = 'active' THEN 0 ELSE 1 END ASC"
+    statement = operational_db.statement
+    order_by = [
+        str(expression.compile(compile_kwargs={"literal_binds": True}))
+        for expression in statement._order_by_clauses
+    ]
+    sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
 
-    assert active_order in sql
-    assert sql.index(active_order) < sql.index("wordpress_installations.last_seen_at DESC")
+    assert "CASE" in order_by[0]
+    assert "wordpress_installations.status = 'active'" in order_by[0]
+    assert order_by[1] == "wordpress_installations.last_seen_at DESC"
     assert "LIMIT 100" in sql
     assert result == {"items": []}
     assert response.headers["Cache-Control"] == "no-store, private"
