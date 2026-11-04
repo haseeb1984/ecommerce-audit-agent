@@ -479,3 +479,21 @@ CREATE TABLE IF NOT EXISTS agency_usage_events (
   KEY ix_agency_usage_events_period_start (period_start),
   KEY ix_agency_usage_tenant_period (agency_id, period_start, event_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- Add the scan-batch workspace relationship after agency tables exist.
+SET @scan_batch_workspace_fk_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.referential_constraints
+    WHERE constraint_schema = DATABASE()
+      AND table_name = 'scan_batches'
+      AND constraint_name = 'fk_scan_batches_workspace'
+);
+SET @scan_batch_workspace_fk_sql = IF(
+    @scan_batch_workspace_fk_exists = 0,
+    'ALTER TABLE scan_batches ADD CONSTRAINT fk_scan_batches_workspace FOREIGN KEY (workspace_id) REFERENCES agency_client_workspaces(id) ON DELETE SET NULL',
+    'SELECT 1'
+);
+PREPARE scan_batch_workspace_fk_stmt FROM @scan_batch_workspace_fk_sql;
+EXECUTE scan_batch_workspace_fk_stmt;
+DEALLOCATE PREPARE scan_batch_workspace_fk_stmt;
