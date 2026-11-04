@@ -7,9 +7,13 @@ def test_rendered_accessibility_evidence_describes_heuristic_not_wcag_verdict():
         "images_missing_alt": 2,
         "control_count": 8,
         "controls_without_name": 1,
+        "positive_tabindex_count": 2,
+        "negative_tabindex_count": 1,
     })
     assert "images missing an alt attribute: 2" in evidence
     assert "controls without a detectable accessible-name heuristic: 1" in evidence
+    assert "positive tabindex: 2" in evidence
+    assert "tabindex=-1: 1" in evidence
     assert "not a WCAG conformance verdict" in evidence
 
 
@@ -79,3 +83,13 @@ def test_successful_browser_run_does_not_append_browser_only_not_assessed_record
     assert "accessibility.rendered_images_alt" not in ids
     assert "accessibility.rendered_controls_name" not in ids
     assert "ecommerce.product_page_rendered_signals" not in ids
+
+
+def test_unavailable_keyboard_focus_order_is_not_assessed_without_browser():
+    from types import SimpleNamespace
+    from unavailable_checks import append_unavailable_check_outcomes
+
+    result = SimpleNamespace(check_outcomes=[], target_url="https://shop.example/", limitations=[])
+    append_unavailable_check_outcomes(result, browser_audit_completed=False)
+    by_id = {item.check_id: item for item in result.check_outcomes}
+    assert by_id["accessibility.keyboard_focus_order"].outcome == "not_assessed"
