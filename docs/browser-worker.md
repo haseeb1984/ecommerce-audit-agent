@@ -40,7 +40,7 @@ Keep browser worker logs free of customer credentials and request bodies.
 - Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels, plus fixed 390x844 portrait and 844x390 landscape overflow checks.
 - Rendered DOM presence, horizontal overflow, and interactive-element dimensions
   below a 24px heuristic threshold.
-- Browser console/page exceptions and failed or blocked network requests.
+- Browser console/page exceptions and failed or blocked network requests.\n- Short-run PerformanceObserver diagnostics for LCP, CLS session windows, and Long Tasks where Chromium exposes those APIs. Values are single-run lab observations and review triggers, not field Core Web Vitals, Lighthouse scores, or INP.
 - Rendered accessibility heuristics for image alt-attribute presence, accessible-name signals, and suspicious tabindex patterns on visible interactive controls; these are not WCAG conformance verdicts.
 - Product-page rendered-signal heuristic for visible H1, price candidates, Product JSON-LD, purchase controls, variant-selection controls, product-image candidates, and quantity controls; it is not a checkout test or product-data correctness verdict.
 - The rendered internal-page sample reports discovered links, rendered pages, navigation failures, and page/request-cap truncation; it is not a full-site crawl and does not recursively follow links.
@@ -53,7 +53,7 @@ Keep browser worker logs free of customer credentials and request bodies.
 - Screenshots are not captured or persisted until durable evidence storage is
   configured. Do not advertise screenshot evidence as available.
 - Product-page detection is heuristic and may not identify every theme or variant UI; missing selectors are warnings for review, not proof that a product cannot be purchased.
-- This worker does not measure Core Web Vitals or field INP/LCP/CLS. The fixed
+- This worker does not measure field Core Web Vitals or INP. Its LCP/CLS/Long Tasks values are short-run, single-render lab observations and are sensitive to page state, consent, viewport changes, browser support, and observation duration. The fixed
   portrait/landscape check measures viewport overflow only; it does not verify
   physical device rotation sensors. The tabindex heuristic does not prove actual
   keyboard operability, focus visibility, pinch-zoom behavior, or screen-reader
