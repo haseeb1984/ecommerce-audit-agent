@@ -15,7 +15,7 @@ class BrowserAuditUnavailable(RuntimeError):
     pass
 
 
-async def run_browser_audit(target_url: str, *, timeout_seconds: float = 55.0) -> dict:
+async def run_browser_audit(target_url: str, *, timeout_seconds: float = 70.0) -> dict:
     service_url = os.getenv("BROWSER_AUDIT_SERVICE_URL", "").strip().rstrip("/")
     secret = os.getenv("BROWSER_AUDIT_SHARED_SECRET", "")
     if not service_url or len(secret) < 32:
