@@ -96,6 +96,12 @@ class _VisibleProductSignals(HTMLParser):
             elif itemprop == "availability":
                 self._add(self.values["availability"], content)
 
+        # HTML void elements have no end tag; do not let them corrupt the
+        # inherited-hidden stack for the remaining document.
+        if tag.lower() in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            if self._hidden_stack:
+                self._hidden_stack.pop()
+
     def handle_data(self, data: str) -> None:
         if self._hidden_stack and self._hidden_stack[-1]:
             return
@@ -117,7 +123,7 @@ class _VisibleProductSignals(HTMLParser):
         self.handle_endtag(tag)
 
 
-def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[str]]]:
     parser = _VisibleProductSignals()
     try:
         parser.feed(html)
