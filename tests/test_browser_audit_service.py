@@ -51,3 +51,20 @@ def test_browser_service_authentication_is_time_limited_and_signed(monkeypatch):
     with pytest.raises(HTTPException) as error:
         browser_audit_service._verify_signature(timestamp, "sha256=bad", body)
     assert error.value.status_code == 401
+    monkeypatch.setattr(browser_audit_service.time, "time", lambda: int(timestamp) + 301)
+    with pytest.raises(HTTPException) as expired:
+        browser_audit_service._verify_signature(timestamp, f"sha256={signature}", body)
+    assert expired.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_browser_service_rejects_mixed_public_and_private_dns_answers(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, *args, **kwargs):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.20", 443)),
+            ]
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: FakeLoop())
+    assert not await browser_audit_service._public_http_url("https://shop.example/")
