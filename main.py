@@ -56,7 +56,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -1176,6 +1176,19 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
+    # A challenge-row lock is insufficient for first-time sign-in because no challenge
+    # exists yet. Create/lock a stable per-email row before reading either rate limit.
+    # MySQL's duplicate-key update waits for a concurrent request holding this row;
+    # the following locking read and challenge queries then observe its committed write.
+    from sqlalchemy.dialects.mysql import insert as mysql_insert
+    await operational_db.execute(
+        mysql_insert(CustomerLoginThrottle)
+        .values(email=email)
+        .on_duplicate_key_update(email=CustomerLoginThrottle.email)
+    )
+    await operational_db.scalar(select(CustomerLoginThrottle).where(
+        CustomerLoginThrottle.email == email,
+    ).with_for_update())
     recent_count = int((await operational_db.execute(select(func.count(CustomerLoginChallenge.id)).where(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.created_at >= now - timedelta(hours=1),
