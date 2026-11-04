@@ -1388,3 +1388,102 @@ def test_sitemap_seed_extraction_rejects_unsafe_xml_entity_declarations():
     )
     assert urls == []
     assert any("unsafe XML constructs" in item for item in limitations)
+
+
+def test_jsonld_object_walker_handles_deeply_nested_values_without_python_recursion():
+    nested = {"@type": "Product", "name": "Deep product"}
+    for _ in range(1500):
+        nested = {"nested": nested}
+
+    entities = list(audit_checks._iter_jsonld_objects(nested))
+    assert any(entity.get("@type") == "Product" for entity in entities)
+
+
+def test_nested_jsonld_product_entities_are_discovered_for_homepage_findings_and_outcomes():
+    import json
+
+    product = {
+        "@type": "https://schema.org/Product",
+        "name": "Nested Widget",
+        "description": "A product nested as the main entity.",
+        "image": "https://shop.example/widget.jpg",
+        "sku": "WIDGET-1",
+        "offers": {
+            "@type": "https://schema.org/Offer",
+            "price": "19.99",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock",
+        },
+    }
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "mainEntity": product,
+        "publisher": {"@type": "Organization", "name": "Example Store"},
+    }
+    html = (
+        "<html lang='en'><head><title>Nested product</title>"
+        f"<script type='application/ld+json'>{json.dumps(payload)}</script>"
+        "</head><body><main><h1>Nested product</h1></main></body></html>"
+    )
+
+    findings = audit_checks.inspect_homepage(html, "https://shop.example/", {})
+    assert not any(
+        finding.title == "Product structured data missing name"
+        for finding in findings
+    )
+
+    outcomes = {
+        item.check_id: item
+        for item in audit_checks.record_homepage_outcomes(
+            html,
+            "https://shop.example/",
+            {"content-type": "text/html; charset=utf-8"},
+            "2026-11-04T00:00:00+00:00",
+        )
+    }
+    assert outcomes["structured_data.product_name"].outcome == "pass"
+    assert outcomes["structured_data.product_description"].outcome == "pass"
+    assert outcomes["structured_data.product_image"].outcome == "pass"
+    assert outcomes["structured_data.product_identifiers"].outcome == "pass"
+    assert outcomes["structured_data.offer_price"].outcome == "pass"
+    assert outcomes["structured_data.offer_currency"].outcome == "pass"
+    assert outcomes["structured_data.offer_availability"].outcome == "pass"
+    assert outcomes["structured_data.organization_markup"].outcome == "pass"
+
+
+def test_nested_productgroup_entities_are_discovered_inside_jsonld_item_lists():
+    import json
+
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "itemListElement": [{
+            "@type": "ListItem",
+            "item": {
+                "@type": "ProductGroup",
+                "name": "Widget family",
+                "hasVariant": [{
+                    "@type": "Product",
+                    "name": "Widget blue",
+                    "@id": "https://shop.example/widget-blue",
+                }],
+            },
+        }],
+    }
+    html = (
+        "<html lang='en'><head><title>Catalog</title>"
+        f"<script type='application/ld+json'>{json.dumps(payload)}</script>"
+        "</head><body><main><h1>Catalog</h1></main></body></html>"
+    )
+    outcomes = {
+        item.check_id: item
+        for item in audit_checks.record_homepage_outcomes(
+            html,
+            "https://shop.example/",
+            {},
+            "2026-11-04T00:00:00+00:00",
+        )
+    }
+    assert outcomes["structured_data.product_group_variants"].outcome == "pass"
+    assert "ProductGroup entities: 1" in outcomes["structured_data.product_group_variants"].evidence
