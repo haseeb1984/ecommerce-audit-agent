@@ -38,3 +38,14 @@ def test_product_page_evidence_handles_non_product_page_without_inventing_signal
     })
     assert "Product-like page detected: False" in evidence
     assert "Product JSON-LD entities: 0" in evidence
+
+
+def test_orientation_evidence_names_both_fixed_viewports_and_limitations():
+    evidence = browser_audit_service._format_orientation_evidence({
+        "portrait_width": 390, "portrait_height": 844, "portrait_scroll_width": 390,
+        "landscape_width": 844, "landscape_height": 390, "landscape_scroll_width": 900,
+    })
+    assert "390x844" in evidence
+    assert "844x390" in evidence
+    assert "900px" in evidence
+    assert "does not verify device sensors" in evidence
