@@ -14,6 +14,9 @@ concurrency:
 
 jobs:
   process-scan-queue:
+    # Scheduled invocations remain idle until the deployment endpoint is configured.
+    # Once configured, a missing CRON_SECRET still fails visibly in the step below.
+    if: ${{ vars.SCAN_WORKER_URL != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
