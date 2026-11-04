@@ -23,6 +23,11 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "A controlled browser did not complete the agreed rendered viewport matrix for this run.",
     ),
     (
+        "performance.browser_navigation_timing",
+        "performance",
+        "A controlled browser did not collect Navigation Timing and Resource Timing diagnostics for this run.",
+    ),
+    (
         "performance.browser_console_errors",
         "performance",
         "Browser console errors and uncaught page exceptions were not collected for this run.",
@@ -88,7 +93,7 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
     }
     now = datetime.now(timezone.utc).isoformat()
     added = 0
-    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_errors", "performance.browser_network_failures"}
+    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing", "accessibility.rendered_images_alt", "accessibility.rendered_controls_name"}
     for check_id, category, evidence in UNAVAILABLE_CHECKS:
         if browser_audit_completed and check_id in browser_checks:
             continue
