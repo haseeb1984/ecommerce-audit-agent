@@ -205,6 +205,18 @@ def _availability_values(values: list[str]) -> set[str]:
             result.add(normalized)
     return result
 
+def _is_valid_gtin(value: str) -> bool:
+    """Validate supported GTIN lengths and the GS1 modulo-10 check digit."""
+    if len(value) not in {8, 12, 13, 14} or not value.isdigit():
+        return False
+    weighted_sum = sum(
+        int(digit) * (3 if position % 2 == 0 else 1)
+        for position, digit in enumerate(reversed(value[:-1]))
+    )
+    expected_check_digit = (10 - weighted_sum % 10) % 10
+    return expected_check_digit == int(value[-1])
+
+
 def _identifier_values(values: list[str], *, gtin: bool = False) -> set[str]:
     """Normalize explicitly visible product identifiers without guessing missing digits."""
     result: set[str] = set()
@@ -214,7 +226,7 @@ def _identifier_values(values: list[str], *, gtin: bool = False) -> set[str]:
             # Semantic attributes and visible text can repeat the same GTIN.
             if len(digits) in {16, 24, 26, 28} and digits[:len(digits) // 2] == digits[len(digits) // 2:]:
                 digits = digits[:len(digits) // 2]
-            if len(digits) in {8, 12, 13, 14}:
+            if _is_valid_gtin(digits):
                 result.add(digits)
         else:
             parts = re.sub(r"\\s+", " ", value).strip().upper().split()
@@ -315,6 +327,32 @@ def inspect_visible_product_consistency(
         )
 
 
+    # Product title is a customer-visible identity signal. Compare only one
+    # unambiguous H1 and one Product entity; do not normalize away meaningful text.
+    visible_names = {
+        re.sub(r"\\s+", " ", value).strip().casefold()
+        for value in visible["name"] if value.strip()
+    }
+    schema_names = {
+        re.sub(r"\\s+", " ", str(product.get("name"))).strip().casefold()
+        for product in products
+        if isinstance(product.get("name"), str) and product.get("name").strip()
+    }
+    if len(products) != 1 or len(schema_names) != 1 or len(visible_names) != 1:
+        record(
+            "structured_data.visible_name_consistency", "not_assessed",
+            f"Visible product names: {len(visible_names)}; Product JSON-LD names: {len(schema_names)}; Product entities: {len(products)}. Comparison not assessed because one clear name and Product entity were not available.",
+            "", "",
+        )
+    else:
+        matches = visible_names == schema_names
+        evidence = f"Visible product name: {next(iter(visible_names))}; Product JSON-LD name: {next(iter(schema_names))}."
+        record(
+            "structured_data.visible_name_consistency", "pass" if matches else "issue",
+            evidence, "Visible product name differs from structured product name",
+            "The initial HTML exposes a different product title from Product JSON-LD. Confirm the canonical product title and selected variant before changing the page or structured data.",
+        )
+
     # SKU and GTIN are useful catalogue identifiers, but pages often omit them
     # or expose several variant identifiers. Only compare one explicit value
     # on each side; never select a variant identifier arbitrarily.
@@ -329,7 +367,7 @@ def inspect_visible_product_consistency(
             if isinstance(product.get(key), (str, int)) and not isinstance(product.get(key), bool)
         ], gtin=is_gtin)
         visible_values = _identifier_values(visible[visible_key], gtin=is_gtin)
-        if not products or len(schema_values) != 1 or len(visible_values) != 1:
+        if len(products) != 1 or len(schema_values) != 1 or len(visible_values) != 1:
             record(
                 check_id, "not_assessed",
                 f"Visible {label} identifiers: {len(visible_values)}; Product JSON-LD {label} identifiers: {len(schema_values)}. Comparison not assessed because an explicit single identifier was not available on both sides or multiple variants were present.",

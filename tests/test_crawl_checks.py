@@ -2757,6 +2757,7 @@ async def test_crawl_records_visible_product_offer_consistency_per_product_url(m
         "structured_data.visible_price_consistency",
         "structured_data.visible_currency_consistency",
         "structured_data.visible_availability_consistency",
+        "structured_data.visible_name_consistency",
         "structured_data.visible_sku_consistency",
         "structured_data.visible_gtin_consistency",
     }
@@ -2769,6 +2770,7 @@ async def test_crawl_records_visible_product_offer_consistency_per_product_url(m
             "structured_data.visible_availability_consistency",
         )
     )
+    assert product_outcomes["structured_data.visible_name_consistency"].outcome == "pass"
     assert product_outcomes["structured_data.visible_sku_consistency"].outcome == "not_assessed"
     assert product_outcomes["structured_data.visible_gtin_consistency"].outcome == "not_assessed"
     assert len([item for item in findings if item.title in {
