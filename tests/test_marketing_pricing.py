@@ -21,3 +21,11 @@ def test_public_plan_comparison_does_not_hardcode_package_limits_or_entitlements
     assert "<td>2,000</td>" not in html
     assert 'id="planComparisonBody"' in html
     assert "featureDefinitions.map" in html
+
+
+
+def test_public_pricing_filters_only_supported_tiers_without_undefined_feature_map():
+    html = (ROOT / "marketing.html").read_text(encoding="utf-8")
+    assert 'const supportedTiers=new Set(order)' in html
+    assert 'if(!supportedTiers.has(tier))continue;' in html
+    assert 'if(!features[tier])continue;' not in html
