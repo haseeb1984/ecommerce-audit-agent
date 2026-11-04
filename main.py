@@ -6013,12 +6013,15 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
 @app.post("/api/v1/admin/billing/reconcile")
 async def admin_reconcile_billing_history(
     request: Request,
+    response: Response,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Repair a bounded page of Hostinger billing mirrors from canonical webhook records."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational billing storage is unavailable.")
     from sqlalchemy import select, func
