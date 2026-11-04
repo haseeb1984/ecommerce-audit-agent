@@ -38,6 +38,21 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "Rendered-page network failures were not collected for this run.",
     ),
     (
+        "accessibility.rendered_images_alt",
+        "accessibility",
+        "A controlled browser did not inspect image alt-attribute presence in the rendered DOM for this run.",
+    ),
+    (
+        "accessibility.rendered_controls_name",
+        "accessibility",
+        "A controlled browser did not inspect rendered interactive-control naming heuristics for this run.",
+    ),
+    (
+        "ecommerce.product_page_rendered_signals",
+        "ecommerce",
+        "A controlled browser did not inspect rendered product-page identity, price, and purchase-control signals for this run.",
+    ),
+    (
         "accessibility.manual_wcag_review",
         "accessibility",
         "Keyboard, screen-reader, zoom/reflow, and other manual WCAG review steps are not performed by this public automated scan.",
@@ -83,7 +98,7 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
     }
     now = datetime.now(timezone.utc).isoformat()
     added = 0
-    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing"}
+    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing", "accessibility.rendered_images_alt", "accessibility.rendered_controls_name", "ecommerce.product_page_rendered_signals"}
     for check_id, category, evidence in UNAVAILABLE_CHECKS:
         if browser_audit_completed and check_id in browser_checks:
             continue
