@@ -36,7 +36,7 @@ Keep browser worker logs free of customer credentials and request bodies.
 
 ## Implemented browser checks
 
-- One bounded Chromium page render with a 20-second navigation timeout.
+- One bounded Chromium page render with a 20-second navigation timeout; top-level redirects remain on the requested host or its `www` alias, and web requests are limited to ports 80/443.
 - Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels.
 - Rendered DOM presence, horizontal overflow, and interactive-element dimensions
   below a 24px heuristic threshold.
