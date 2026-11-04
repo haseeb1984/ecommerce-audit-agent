@@ -40,7 +40,8 @@ Keep browser worker logs free of customer credentials and request bodies.
 - Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels, plus fixed 390x844 portrait and 844x390 landscape overflow checks.
 - Rendered DOM presence, horizontal overflow, and interactive-element dimensions
   below a 24px heuristic threshold.
-- Browser console/page exceptions and failed or blocked network requests.\n- Short-run PerformanceObserver diagnostics for LCP, CLS session windows, and Long Tasks where Chromium exposes those APIs. Values are single-run lab observations and review triggers, not field Core Web Vitals, Lighthouse scores, or INP.
+- Browser console/page exceptions and failed or blocked network requests.
+- Short-run PerformanceObserver diagnostics for LCP, CLS session windows, and Long Tasks where Chromium exposes those APIs. Values are single-run lab observations and review triggers, not field Core Web Vitals, Lighthouse scores, or INP.
 - Rendered accessibility heuristics for image alt-attribute presence, accessible-name signals, and suspicious tabindex patterns on visible interactive controls; these are not WCAG conformance verdicts.
 - Product-page rendered-signal heuristic for visible H1, price candidates, Product JSON-LD, purchase controls, variant-selection controls, product-image candidates, and quantity controls; it is not a checkout test or product-data correctness verdict.
 - The rendered internal-page sample reports discovered links, rendered pages, navigation failures, and page/request-cap truncation; it is not a full-site crawl and does not recursively follow links.
