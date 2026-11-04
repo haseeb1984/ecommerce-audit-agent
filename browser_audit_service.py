@@ -300,7 +300,9 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         return !(aria || labelledByText || title || text || alt || labels);
                       }).length;
                       return {image_count: images.length, images_missing_alt: missingAlt,
-                        control_count: controls.length, controls_without_name: withoutName};
+                        control_count: controls.length, controls_without_name: withoutName,
+                        positive_tabindex_count: controls.filter(el => el.tabIndex > 0).length,
+                        negative_tabindex_count: controls.filter(el => el.getAttribute('tabindex') === '-1').length};
                     }""")
                     outcomes.extend([
                       {
@@ -311,6 +313,15 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "method": "Playwright rendered DOM image alt-attribute presence heuristic",
                         "evidence": _format_accessibility_evidence(accessibility_summary),
                         "evidence_ref": "browser.accessibility.images",
+                      },
+                      {
+                        "check_id": "accessibility.keyboard_focus_order",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if accessibility_summary["positive_tabindex_count"] or accessibility_summary["negative_tabindex_count"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM focus-order heuristic for visible interactive controls",
+                        "evidence": _format_accessibility_evidence(accessibility_summary),
+                        "evidence_ref": "browser.accessibility.focus_order",
                       },
                       {
                         "check_id": "accessibility.rendered_controls_name",
