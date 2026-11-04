@@ -161,10 +161,11 @@ def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[s
 def _decimal_values(values: list[str]) -> set[Decimal]:
     parsed: set[Decimal] = set()
     for value in values:
-        matches = _PRICE_TOKEN.findall(value.replace("\u00a0", " "))
+        # Attribute and visible text may repeat the same price; collapse identical tokens only.
+        matches = set(_PRICE_TOKEN.findall(value.replace("\\u00a0", " ")))
         if len(matches) != 1:
             continue
-        token = matches[0].replace(",", "")
+        token = next(iter(matches)).replace(",", "")
         try:
             number = Decimal(token)
         except (InvalidOperation, ValueError):
