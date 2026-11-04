@@ -469,3 +469,36 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     suspend_invite_revoke = suspend_source.index('AgencyTeamMember.status == "invited"')
     assert suspend_agency_lock < suspend_invite_revoke
     assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
+
+
+def test_agency_wordpress_connection_mutations_share_tenant_lock_order():
+    import inspect
+    import main
+
+    issue_token = inspect.getsource(main.create_agency_website_connection_token)
+    register_site = inspect.getsource(main.register_agency_wordpress_site)
+
+    issue_agency_lock = issue_token.index("AgencyAccount.owner_license_key")
+    issue_workspace_lock = issue_token.index("AgencyClientWorkspace.id")
+    assert ".with_for_update()" in issue_token[issue_agency_lock:issue_workspace_lock]
+    assert ".with_for_update()" in issue_token[issue_workspace_lock:]
+
+    candidate_lookup = register_site.index("candidate = await operational_db.scalar")
+    register_agency_lock = register_site.index("AgencyAccount.id == candidate.agency_id")
+    register_workspace_lock = register_site.index("AgencyClientWorkspace.id == candidate.workspace_id")
+    challenge_lock = register_site.index("AgencyWebsiteConnectChallenge.id == candidate.id")
+    assert candidate_lookup < register_agency_lock < register_workspace_lock < challenge_lock
+    assert ".with_for_update()" in register_site[register_agency_lock:register_workspace_lock]
+    assert ".with_for_update()" in register_site[register_workspace_lock:challenge_lock]
+    assert ".with_for_update()" in register_site[challenge_lock:]
+
+
+def test_agency_wordpress_site_registration_rechecks_single_active_workspace_after_lock():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.register_agency_wordpress_site)
+    workspace_lock = source.index("AgencyClientWorkspace.id == candidate.workspace_id")
+    active_site_check = source.index("active_site = await operational_db.scalar")
+    assert workspace_lock < active_site_check
+    assert "AgencyClientWebsite.status == \"active\"" in source[active_site_check:]
