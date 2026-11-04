@@ -357,7 +357,7 @@ async def test_customer_scan_read_endpoints_disable_shared_caching(handler_name)
             scalar_rows=[batch], execute_rows=[PrivateScanApiResult()],
         )
         await scan_api.get_scan_batch(
-            "batch-private", response, license_obj=license_obj, db=db,
+            response, "batch-private", license_obj=license_obj, db=db,
         )
     elif handler_name == "list_scan_history":
         db = PrivateScanApiSession(execute_rows=[PrivateScanApiResult()])
@@ -374,7 +374,7 @@ async def test_customer_scan_read_endpoints_disable_shared_caching(handler_name)
         )
         db = PrivateScanApiSession(scalar_rows=[job, result])
         await scan_api.get_scan_job_result(
-            "job-private", response, license_obj=license_obj, db=db,
+            response, "job-private", license_obj=license_obj, db=db,
         )
 
     assert response.headers["cache-control"] == "no-store, private"
