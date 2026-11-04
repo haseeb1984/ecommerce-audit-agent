@@ -17,8 +17,8 @@ The customer portal keeps the bearer token in page memory only. It is not writte
 
 - Set `ACCOUNT_AUTH_SECRET` to a unique random secret of at least 32 characters.
 - Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and the optional SMTP credentials/TLS mode.
-- Apply `migrations/20261030_customer_passwordless_auth.sql` before deploying the new application version.
-- The core SaaS baseline schema also includes the two authentication tables.
+- The Hostinger operational database must include `customer_login_challenges`, `customer_sessions`, and `customer_login_throttles`. Fresh installations receive these from `migrations/hostinger_operational_schema.sql`; existing installations must apply `migrations/20261110_customer_login_email_throttle.sql` before deploying this rate-limit change.
+- `migrations/20261030_customer_passwordless_auth.sql` is the legacy licensing-database schema and does not provision the current Hostinger operational authentication tables.
 
 ## Compatibility
 
