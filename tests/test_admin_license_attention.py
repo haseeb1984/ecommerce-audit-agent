@@ -90,3 +90,17 @@ async def test_admin_operations_reports_license_lifecycle_exceptions_without_sec
     assert "diagnostic-expired-license" not in response.text
     assert "diagnostic-inactive-license" not in response.text
     assert "license-diagnostics-test-key" not in response.text
+
+
+
+def test_admin_billing_history_reconciliation_disables_private_response_caching():
+    import inspect
+
+    from main import admin_reconcile_billing_history
+
+    parameters = inspect.signature(admin_reconcile_billing_history).parameters
+    assert "response" in parameters
+    source = inspect.getsource(admin_reconcile_billing_history)
+    assert 'response.headers["Cache-Control"] = "no-store, private"' in source
+    assert 'response.headers["Pragma"] = "no-cache"' in source
+    assert source.index("_require_admin_key(request)") < source.index("response.headers")
