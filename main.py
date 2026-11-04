@@ -6389,10 +6389,26 @@ async def admin_reconcile_payment(event_id: str, request: Request,
         raise HTTPException(status_code=404, detail="Payment event not found.")
     if not event.transaction_id:
         raise HTTPException(status_code=409, detail="This event has no recorded Paddle transaction ID; automatic reconciliation is unavailable.")
+    # Match the transaction-scoped lock used by webhook provisioning. A verified
+    # reconciliation must not race first-purchase delivery or overwrite identifiers
+    # while the same Paddle transaction is being processed.
+    transaction_id = event.transaction_id
+    await _lock_paddle_webhook_resource(db, transaction_id, "transaction_id")
+    event = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.event_id == event_id)
+        .with_for_update()
+    )).scalar_one_or_none()
+    if event is None:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Payment event no longer exists.")
+    if not event.transaction_id or not hmac.compare_digest(event.transaction_id, transaction_id):
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="The recorded transaction changed; reload the payment event before reconciling.")
     if not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Paddle API is not configured.")
     try:
-        response = await asyncio.to_thread(_paddle_api_request, f"/transactions/{event.transaction_id}")
+        response = await asyncio.to_thread(_paddle_api_request, f"/transactions/{transaction_id}")
         if not isinstance(response, dict):
             raise HTTPException(status_code=502, detail="Paddle returned an invalid transaction response.")
         data = response.get("data")
