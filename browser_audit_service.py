@@ -125,6 +125,16 @@ def _format_product_page_evidence(summary: dict) -> str:
         "This is not a checkout test or a product-data correctness verdict."
     )
 
+def _format_orientation_evidence(summary: dict) -> str:
+    return (
+        f"Portrait viewport {summary.get('portrait_width', 390)}x{summary.get('portrait_height', 844)}: "
+        f"document width {summary.get('portrait_scroll_width', 0)}px; landscape viewport "
+        f"{summary.get('landscape_width', 844)}x{summary.get('landscape_height', 390)}: "
+        f"document width {summary.get('landscape_scroll_width', 0)}px. "
+        "This checks horizontal overflow at two fixed viewport orientations; it does not verify device sensors or rotation behavior."
+    )
+
+
 async def _public_http_url(value: str) -> bool:
     try:
         parts = urlsplit(value)
@@ -436,6 +446,29 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                             "evidence": f"Visible interactive elements: {metrics['targetCount']}; elements below 24px in either dimension: {metrics['smallTargetCount']}.",
                             "evidence_ref": f"browser.targets.{width}",
                         })
+                    orientation_summary = {}
+                    orientation_overflow = False
+                    for orientation, width, height in (("portrait", 390, 844), ("landscape", 844, 390)):
+                        await page.set_viewport_size({"width": width, "height": height})
+                        await page.wait_for_timeout(150)
+                        orientation_metrics = await page.evaluate("""() => {
+                          const root = document.documentElement;
+                          const body = document.body;
+                          return Math.max(root ? root.scrollWidth : 0, body ? body.scrollWidth : 0);
+                        }""")
+                        orientation_summary[f"{orientation}_width"] = width
+                        orientation_summary[f"{orientation}_height"] = height
+                        orientation_summary[f"{orientation}_scroll_width"] = orientation_metrics
+                        orientation_overflow = orientation_overflow or orientation_metrics > width + 1
+                    outcomes.append({
+                        "check_id": "mobile_ux.rendered_orientation",
+                        "category": "mobile_ux", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "issue" if orientation_overflow else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright Chromium fixed portrait and landscape viewport overflow comparison",
+                        "evidence": _format_orientation_evidence(orientation_summary),
+                        "evidence_ref": "browser.orientation",
+                    })
                     outcomes.append({
                         "check_id": "mobile_ux.rendered_viewport_matrix", "category": "mobile_ux", "page_url": page.url,
                         "outcome": "issue" if viewport_overflow else "pass",
