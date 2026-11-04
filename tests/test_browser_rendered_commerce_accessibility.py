@@ -49,3 +49,33 @@ def test_orientation_evidence_names_both_fixed_viewports_and_limitations():
     assert "844x390" in evidence
     assert "900px" in evidence
     assert "does not verify device sensors" in evidence
+
+
+def test_unavailable_rendered_checks_are_not_assessed_when_browser_is_not_run():
+    from types import SimpleNamespace
+    from unavailable_checks import append_unavailable_check_outcomes
+
+    result = SimpleNamespace(check_outcomes=[], target_url="https://shop.example/", limitations=[])
+    added = append_unavailable_check_outcomes(result, browser_audit_completed=False)
+    by_id = {item.check_id: item for item in result.check_outcomes}
+    assert added > 0
+    for check_id in (
+        "mobile_ux.rendered_orientation",
+        "accessibility.rendered_images_alt",
+        "accessibility.rendered_controls_name",
+        "ecommerce.product_page_rendered_signals",
+    ):
+        assert by_id[check_id].outcome == "not_assessed"
+
+
+def test_successful_browser_run_does_not_append_browser_only_not_assessed_records():
+    from types import SimpleNamespace
+    from unavailable_checks import append_unavailable_check_outcomes
+
+    result = SimpleNamespace(check_outcomes=[], target_url="https://shop.example/", limitations=[])
+    append_unavailable_check_outcomes(result, browser_audit_completed=True)
+    ids = {item.check_id for item in result.check_outcomes}
+    assert "mobile_ux.rendered_orientation" not in ids
+    assert "accessibility.rendered_images_alt" not in ids
+    assert "accessibility.rendered_controls_name" not in ids
+    assert "ecommerce.product_page_rendered_signals" not in ids
