@@ -41,6 +41,8 @@ Keep browser worker logs free of customer credentials and request bodies.
 - Rendered DOM presence, horizontal overflow, and interactive-element dimensions
   below a 24px heuristic threshold.
 - Browser console/page exceptions and failed or blocked network requests.
+- Rendered accessibility heuristics for image alt-attribute presence and accessible-name signals on visible interactive controls; these are not WCAG conformance verdicts.
+- Product-page rendered-signal heuristic for visible H1, price candidates, Product JSON-LD, and purchase controls; it is not a checkout test or product-data correctness verdict.
 - Per-check outcomes and evidence summaries returned to the existing scan worker
   and persisted in the existing `WebsiteScanResult`; no second queue or billing path.
 
@@ -48,6 +50,7 @@ Keep browser worker logs free of customer credentials and request bodies.
 
 - Screenshots are not captured or persisted until durable evidence storage is
   configured. Do not advertise screenshot evidence as available.
+- Product-page detection is heuristic and may not identify every theme or variant UI; missing selectors are warnings for review, not proof that a product cannot be purchased.
 - This worker does not measure Core Web Vitals, field INP/LCP/CLS, orientation,
   pinch zoom, keyboard navigation, or screen-reader behavior.
 - The 24px target heuristic is a triage signal, not a WCAG conformance verdict.
