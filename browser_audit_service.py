@@ -83,6 +83,16 @@ def _safe_diagnostic_text(value: str) -> str:
     return text[:300]
 
 
+
+def _format_accessibility_evidence(summary: dict) -> str:
+    return (
+        f"Rendered images: {summary.get('image_count', 0)}; images missing an alt attribute: "
+        f"{summary.get('images_missing_alt', 0)}. Visible interactive controls: "
+        f"{summary.get('control_count', 0)}; controls without a detectable accessible-name heuristic: "
+        f"{summary.get('controls_without_name', 0)}. This automated DOM heuristic is not a WCAG conformance verdict."
+    )
+
+
 async def _public_http_url(value: str) -> bool:
     try:
         parts = urlsplit(value)
@@ -225,6 +235,46 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       elementCount: document.querySelectorAll('*').length,
                       bodyTextLength: (document.body ? document.body.innerText : '').trim().length
                     })""")
+                    accessibility_summary = await page.evaluate("""() => {
+                      const images = [...document.images];
+                      const missingAlt = images.filter(image => !image.hasAttribute('alt')).length;
+                      const controls = [...document.querySelectorAll('a,button,input,select,textarea,[role="button"],[role="link"]')]
+                        .filter(el => {
+                          const rect = el.getBoundingClientRect();
+                          const style = getComputedStyle(el);
+                          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                        });
+                      const withoutName = controls.filter(el => {
+                        const aria = (el.getAttribute('aria-label') || '').trim();
+                        const labelledBy = (el.getAttribute('aria-labelledby') || '').trim();
+                        const title = (el.getAttribute('title') || '').trim();
+                        const text = (el.innerText || el.value || '').trim();
+                        const alt = el.querySelector('img[alt]')?.getAttribute('alt')?.trim() || '';
+                        return !(aria || labelledBy || title || text || alt);
+                      }).length;
+                      return {image_count: images.length, images_missing_alt: missingAlt,
+                        control_count: controls.length, controls_without_name: withoutName};
+                    }""")
+                    outcomes.extend([
+                      {
+                        "check_id": "accessibility.rendered_images_alt",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if accessibility_summary["images_missing_alt"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM image alt-attribute presence heuristic",
+                        "evidence": _format_accessibility_evidence(accessibility_summary),
+                        "evidence_ref": "browser.accessibility.images",
+                      },
+                      {
+                        "check_id": "accessibility.rendered_controls_name",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if accessibility_summary["controls_without_name"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM accessible-name presence heuristic",
+                        "evidence": _format_accessibility_evidence(accessibility_summary),
+                        "evidence_ref": "browser.accessibility.controls",
+                      },
+                    ])
                     outcomes.append({
                         "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": _safe_evidence_url(page.url),
                         "outcome": "pass" if rendered_dom["elementCount"] > 0 else "warning",
