@@ -91,7 +91,8 @@ LAB_VITALS_INIT_SCRIPT = """(() => {
     state.longtask_supported = true;
   } catch (_) {}
   window.__auditLabVitals = state;
-}"""\nVIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
+})();"""
+VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 _SEEN_REQUESTS: dict[str, int] = {}
 
