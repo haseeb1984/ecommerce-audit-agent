@@ -59,10 +59,11 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
   const data=await response.json();if(!Array.isArray(data.plans))throw Error("Package catalogue returned an invalid response.");
   plansNode.replaceChildren();
   const order=["starter","pro","business"];
+  const supportedTiers=new Set(order);
   const plans=data.plans.slice().sort((a,b)=>order.indexOf(a.tier)-order.indexOf(b.tier));
   if(!plans.length){plansNode.append(el("article","Paddle checkout is not configured yet. Please check back soon.","plan"));status.textContent="Purchase is temporarily unavailable while payment and license delivery are configured.";return}
   for(const plan of plans){
-   const tier=String(plan.tier||"").toLowerCase();if(!features[tier])continue;
+   const tier=String(plan.tier||"").toLowerCase();if(!supportedTiers.has(tier))continue;
    const card=el("article",undefined,"plan"+(tier==="pro"?" featured":""));
    card.append(el("h3",plan.label),el("p",tier==="starter"?"For individual store owners":tier==="pro"?"For growing ecommerce businesses":"For agencies managing multiple clients","tag"));
    card.append(el("div",formatPrice(plan),"price"),el("div",Number(plan.monthly_audit_allowance).toLocaleString(),"quota"),el("div","audits per month · "+Number(plan.max_concurrent_audits)+" concurrent","sub"));
