@@ -535,6 +535,17 @@ def _finding(category: str, title: str, status: str, severity: str,
     )
 
 
+def _iter_jsonld_objects(value: Any):
+    """Walk JSON-LD object nodes at any nesting depth, not only @graph roots."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_jsonld_objects(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_jsonld_objects(child)
+
+
 def record_homepage_outcomes(
     html: str, final_url: str, headers: dict[str, str], observed_at_utc: str
 ) -> list[CheckOutcome]:
@@ -742,20 +753,15 @@ def record_homepage_outcomes(
     product_entities: list[dict[str, Any]] = []
 
     def collect_product_entities(value: Any) -> None:
-        if isinstance(value, list):
-            for child in value:
-                collect_product_entities(child)
-        elif isinstance(value, dict):
-            raw_type = value.get("@type", [])
+        for entity in _iter_jsonld_objects(value):
+            raw_type = entity.get("@type", [])
             types = raw_type if isinstance(raw_type, list) else [raw_type]
             if any(
                 isinstance(item, str)
                 and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "product"
                 for item in types
             ):
-                product_entities.append(value)
-            if "@graph" in value:
-                collect_product_entities(value["@graph"])
+                product_entities.append(entity)
 
     malformed_product_jsonld = 0
     for script in parser.jsonld_scripts:
@@ -918,19 +924,14 @@ def record_homepage_outcomes(
     jsonld_parse_failures = 0
 
     def collect_relevant_entity_types(value: Any) -> None:
-        if isinstance(value, list):
-            for child in value:
-                collect_relevant_entity_types(child)
-        elif isinstance(value, dict):
-            raw_type = value.get("@type", [])
+        for entity in _iter_jsonld_objects(value):
+            raw_type = entity.get("@type", [])
             types = raw_type if isinstance(raw_type, list) else [raw_type]
             for item in types:
                 if isinstance(item, str):
                     normalized_type = item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower()
                     if normalized_type in entity_type_counts:
                         entity_type_counts[normalized_type] += 1
-            if "@graph" in value:
-                collect_relevant_entity_types(value["@graph"])
 
     for script in parser.jsonld_scripts:
         try:
@@ -959,20 +960,15 @@ def record_homepage_outcomes(
     product_groups: list[dict[str, Any]] = []
 
     def collect_product_groups(value: Any) -> None:
-        if isinstance(value, list):
-            for child in value:
-                collect_product_groups(child)
-        elif isinstance(value, dict):
-            raw_type = value.get("@type", [])
+        for entity in _iter_jsonld_objects(value):
+            raw_type = entity.get("@type", [])
             types = raw_type if isinstance(raw_type, list) else [raw_type]
             if any(
                 isinstance(item, str)
                 and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "productgroup"
                 for item in types
             ):
-                product_groups.append(value)
-            if "@graph" in value:
-                collect_product_groups(value["@graph"])
+                product_groups.append(entity)
 
     for script in parser.jsonld_scripts:
         try:
@@ -1100,21 +1096,15 @@ def inspect_homepage(html: str, final_url: str, headers: dict[str, str]) -> list
     malformed_jsonld = 0
 
     def collect_products(value: Any) -> None:
-        if isinstance(value, list):
-            for child in value:
-                collect_products(child)
-        elif isinstance(value, dict):
-            raw_type = value.get("@type", [])
+        for entity in _iter_jsonld_objects(value):
+            raw_type = entity.get("@type", [])
             types = raw_type if isinstance(raw_type, list) else [raw_type]
             if any(
                 isinstance(item, str)
                 and item.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower() == "product"
                 for item in types
             ):
-                product_entities.append(value)
-            graph = value.get("@graph")
-            if graph is not None:
-                collect_products(graph)
+                product_entities.append(entity)
 
     for script in parser.jsonld_scripts:
         try:
