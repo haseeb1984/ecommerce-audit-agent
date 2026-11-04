@@ -247,10 +247,15 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       const withoutName = controls.filter(el => {
                         const aria = (el.getAttribute('aria-label') || '').trim();
                         const labelledBy = (el.getAttribute('aria-labelledby') || '').trim();
+                        const labelledByText = labelledBy.split(/\\s+/).map(id => {
+                          const ref = document.getElementById(id);
+                          return ref ? (ref.innerText || ref.textContent || '').trim() : '';
+                        }).filter(Boolean).join(' ');
                         const title = (el.getAttribute('title') || '').trim();
                         const text = (el.innerText || el.value || '').trim();
                         const alt = el.querySelector('img[alt]')?.getAttribute('alt')?.trim() || '';
-                        return !(aria || labelledBy || title || text || alt);
+                        const labels = el.labels ? [...el.labels].map(label => (label.innerText || label.textContent || '').trim()).filter(Boolean).join(' ') : '';
+                        return !(aria || labelledByText || title || text || alt || labels);
                       }).length;
                       return {image_count: images.length, images_missing_alt: missingAlt,
                         control_count: controls.length, controls_without_name: withoutName};
