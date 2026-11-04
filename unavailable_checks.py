@@ -18,6 +18,11 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "No controlled browser runner is invoked by this audit flow, so raw HTML is not compared with a JavaScript-rendered DOM.",
     ),
     (
+        "performance.browser_console_network",
+        "performance",
+        "Browser console errors and rendered-page network failures are not collected without a controlled browser run.",
+    ),
+    (
         "mobile_ux.rendered_viewport_matrix",
         "mobile_ux",
         "No real-browser viewport matrix is executed; static viewport declarations do not establish responsive layout quality.",
@@ -65,7 +70,7 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def append_unavailable_check_outcomes(result: Any) -> int:
+def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: bool = False) -> int:
     """Append one honest not-assessed outcome per unsupported verification method."""
     existing = {
         str(getattr(item, "check_id", "") or "")
@@ -73,7 +78,10 @@ def append_unavailable_check_outcomes(result: Any) -> int:
     }
     now = datetime.now(timezone.utc).isoformat()
     added = 0
+    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_network"}
     for check_id, category, evidence in UNAVAILABLE_CHECKS:
+        if browser_audit_completed and check_id in browser_checks:
+            continue
         if check_id in existing:
             continue
         result.check_outcomes.append(CheckOutcome(
