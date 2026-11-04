@@ -69,6 +69,10 @@ class _VisibleProductSignals(HTMLParser):
         if tag.lower() == "h1" or "name" in itemprops:
             capture_keys.append("name")
 
+        void_tags = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+        if tag.lower() in void_tags:
+            capture_keys = []
+
         for key in capture_keys:
             record = {"tag": tag.lower(), "key": key, "parts": []}
             self._captures.append(record)
@@ -82,19 +86,6 @@ class _VisibleProductSignals(HTMLParser):
                 attr_value = attrs_map.get("content") or attrs_map.get("data-availability") or attr_value
             if attr_value:
                 record["parts"].append(attr_value)
-
-        # Open Graph product metadata is machine-readable corroboration, not visible UI.
-        # Keep it separate from visible text by not treating meta values as visible captures.
-        if tag.lower() == "meta":
-            property_name = attrs_map.get("property", "").lower()
-            itemprop = attrs_map.get("itemprop", "").lower()
-            content = attrs_map.get("content", "")
-            if property_name in {"product:price:amount", "og:price:amount"} or itemprop == "price":
-                self._add(self.values["price"], content)
-            elif property_name in {"product:price:currency", "og:price:currency"} or itemprop == "pricecurrency":
-                self._add(self.values["currency"], content)
-            elif itemprop == "availability":
-                self._add(self.values["availability"], content)
 
         # HTML void elements have no end tag; do not let them corrupt the
         # inherited-hidden stack for the remaining document.
