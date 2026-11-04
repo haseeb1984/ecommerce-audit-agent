@@ -29,3 +29,11 @@ def test_public_pricing_filters_only_supported_tiers_without_undefined_feature_m
     assert 'const supportedTiers=new Set(order)' in html
     assert 'if(!supportedTiers.has(tier))continue;' in html
     assert 'if(!features[tier])continue;' not in html
+
+
+
+def test_public_pricing_checkout_uses_defined_dom_lookup():
+    html = (ROOT / "marketing.html").read_text(encoding="utf-8")
+    assert 'const byId=id=>document.getElementById(id);' in html
+    assert 'byId("checkoutEmail").value.trim()' in html
+    assert '$("checkoutEmail")' not in html
