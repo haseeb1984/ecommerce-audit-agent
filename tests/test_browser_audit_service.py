@@ -101,3 +101,29 @@ def test_browser_service_redacts_secret_values_from_diagnostics():
 def test_browser_service_navigation_timing_outcome_is_not_assessed_without_entries():
     evidence = browser_audit_service._format_navigation_timing({}, {})
     assert "timing fields unavailable" in evidence
+
+
+def test_browser_service_normalizes_only_same_site_internal_http_links():
+    normalize = browser_audit_service._normalize_internal_crawl_url
+    assert normalize(
+        "https://shop.example/", "/products/item?token=secret#details", "shop.example"
+    ) == "https://shop.example/products/item"
+    assert normalize(
+        "https://shop.example/", "https://www.shop.example/category/", "shop.example"
+    ) == "https://www.shop.example/category/"
+    assert normalize("https://shop.example/", "https://attacker.example/", "shop.example") is None
+    assert normalize("https://shop.example/", "mailto:support@shop.example", "shop.example") is None
+    assert normalize("https://shop.example/", "https://shop.example:8443/admin", "shop.example") is None
+    assert normalize("https://shop.example/", "https://user:pass@shop.example/private", "shop.example") is None
+
+
+def test_browser_internal_crawl_evidence_discloses_bounds_and_failures():
+    evidence = browser_audit_service._format_internal_crawl_evidence({
+        "rendered_pages": 6, "eligible_links": 12, "navigation_failures": 1,
+        "page_cap_reached": True, "request_cap_reached": False,
+    })
+    assert "Rendered pages: 6 of a maximum 6" in evidence
+    assert "eligible same-site links discovered: 12" in evidence
+    assert "navigation failures: 1" in evidence
+    assert "page-cap reached: True" in evidence
+    assert "not a full-site crawl" in evidence

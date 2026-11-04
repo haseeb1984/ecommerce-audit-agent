@@ -36,13 +36,14 @@ Keep browser worker logs free of customer credentials and request bodies.
 
 ## Implemented browser checks
 
-- One bounded Chromium page render with a 20-second navigation timeout; top-level redirects remain on the requested host or its `www` alias, and web requests are limited to ports 80/443.
+- A bounded Chromium render of up to six pages: the submitted URL plus a one-hop sample of up to five JavaScript-exposed same-site links discovered after hydration. Secondary navigation has an 8-second timeout; top-level redirects remain on the requested host or its `www` alias, and web requests are limited to ports 80/443.
 - Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels, plus fixed 390x844 portrait and 844x390 landscape overflow checks.
 - Rendered DOM presence, horizontal overflow, and interactive-element dimensions
   below a 24px heuristic threshold.
 - Browser console/page exceptions and failed or blocked network requests.
 - Rendered accessibility heuristics for image alt-attribute presence, accessible-name signals, and suspicious tabindex patterns on visible interactive controls; these are not WCAG conformance verdicts.
 - Product-page rendered-signal heuristic for visible H1, price candidates, Product JSON-LD, purchase controls, variant-selection controls, product-image candidates, and quantity controls; it is not a checkout test or product-data correctness verdict.
+- The rendered internal-page sample reports discovered links, rendered pages, navigation failures, and page/request-cap truncation; it is not a full-site crawl and does not recursively follow links.
 - Per-check outcomes and evidence summaries returned to the existing scan worker
   and persisted in the existing `WebsiteScanResult`; no second queue or billing path.
 
@@ -57,8 +58,9 @@ Keep browser worker logs free of customer credentials and request bodies.
   keyboard operability, focus visibility, pinch-zoom behavior, or screen-reader
   behavior.
 - The 24px target heuristic is a triage signal, not a WCAG conformance verdict.
-- A completed browser request does not establish full site crawl coverage. This
-  initial service renders the submitted page only; it does not crawl JS links.
+- A completed browser request does not establish full site crawl coverage. The
+  one-hop internal-page sample is capped at six pages total and 30 eligible
+  candidates; it does not recursively follow links or guarantee template coverage.
 - Browser service deployment and a live controlled-site acceptance run remain
   release tasks. CI tests authentication, client behavior and SSRF guards with
   mocks; it does not claim a deployed Chromium environment has been verified.
