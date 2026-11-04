@@ -42,7 +42,9 @@ def _browser_metadata_outcome():
         "evidence_ref": "browser.seo.rendered_metadata.homepage",
     }
 
-\n\ndef _browser_lab_vitals_outcome():
+
+
+def _browser_lab_vitals_outcome():
     return {
         "check_id": "performance.browser_lab_vitals",
         "category": "performance",
