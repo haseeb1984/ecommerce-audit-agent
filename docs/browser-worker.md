@@ -24,7 +24,7 @@ host mounts, Docker socket, or access to private service networks.
 **Enforce outbound network policy at the container/network layer.** Deny loopback,
 private, link-local, multicast, reserved, metadata-service and other non-public
 destinations for IPv4 and IPv6, including after redirects. Allow only DNS resolution
-and public web egress as required by the product. The in-process DNS/IP check and
+and outbound TCP 80/443 only; block arbitrary UDP, WebRTC/STUN, and WebSocket egress. The worker explicitly closes WebSockets. The in-process DNS/IP check and
 Playwright request interception are defense in depth; they are not a substitute
 for an egress firewall because Chromium performs its own DNS resolution and a
 host can change DNS answers between validation and connection.
