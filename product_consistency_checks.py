@@ -36,7 +36,7 @@ class _VisibleProductSignals(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.values: dict[str, list[str]] = {
-            "price": [], "currency": [], "availability": [], "name": []
+            "price": [], "currency": [], "availability": [], "name": [], "sku": [], "gtin": []
         }
         self._hidden_stack: list[bool] = []
         self._captures: list[dict[str, Any]] = []
@@ -70,6 +70,10 @@ class _VisibleProductSignals(HTMLParser):
             capture_keys.append("availability")
         if tag.lower() == "h1" or "name" in itemprops:
             capture_keys.append("name")
+        if "sku" in itemprops or classes.intersection({"sku", "product-sku", "item-sku"}):
+            capture_keys.append("sku")
+        if itemprops.intersection({"gtin", "gtin8", "gtin12", "gtin13", "gtin14"}) or classes.intersection({"gtin", "barcode", "product-barcode", "barcode-number"}):
+            capture_keys.append("gtin")
 
         void_tags = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
         if tag.lower() in void_tags:
@@ -86,6 +90,10 @@ class _VisibleProductSignals(HTMLParser):
                 attr_value = attrs_map.get("content") or attrs_map.get("data-currency") or attr_value
             elif key == "availability":
                 attr_value = attrs_map.get("content") or attrs_map.get("data-availability") or attr_value
+            elif key == "sku":
+                attr_value = attrs_map.get("content") or attrs_map.get("data-sku") or attrs_map.get("value") or attr_value
+            elif key == "gtin":
+                attr_value = attrs_map.get("content") or attrs_map.get("data-gtin") or attrs_map.get("data-barcode") or attrs_map.get("value") or attr_value
             if attr_value:
                 record["parts"].append(attr_value)
 
@@ -197,6 +205,24 @@ def _availability_values(values: list[str]) -> set[str]:
             result.add(normalized)
     return result
 
+def _identifier_values(values: list[str], *, gtin: bool = False) -> set[str]:
+    """Normalize explicitly visible product identifiers without guessing missing digits."""
+    result: set[str] = set()
+    for value in values:
+        if gtin:
+            digits = re.sub(r"[^0-9]", "", value)
+            # Semantic attributes and visible text can repeat the same GTIN.
+            if len(digits) in {16, 24, 26, 28} and digits[:len(digits) // 2] == digits[len(digits) // 2:]:
+                digits = digits[:len(digits) // 2]
+            if len(digits) in {8, 12, 13, 14}:
+                result.add(digits)
+        else:
+            parts = re.sub(r"\\s+", " ", value).strip().upper().split()
+            if not parts:
+                continue
+            result.add(parts[0] if len(set(parts)) == 1 else " ".join(parts))
+    return result
+
 
 def inspect_visible_product_consistency(
     html: str, page_url: str, checked_at_utc: str | None = None
@@ -288,4 +314,33 @@ def inspect_visible_product_consistency(
             "The initial HTML exposes different visible and structured availability states. This static check cannot verify real-time inventory, fulfillment eligibility, or the state after a customer selects another variant.",
         )
 
+
+    # SKU and GTIN are useful catalogue identifiers, but pages often omit them
+    # or expose several variant identifiers. Only compare one explicit value
+    # on each side; never select a variant identifier arbitrarily.
+    for visible_key, schema_keys, check_id, label, is_gtin in (
+        ("sku", ("sku",), "structured_data.visible_sku_consistency", "SKU", False),
+        ("gtin", ("gtin", "gtin8", "gtin12", "gtin13", "gtin14"), "structured_data.visible_gtin_consistency", "GTIN", True),
+    ):
+        schema_values = _identifier_values([
+            str(product.get(key))
+            for product in products
+            for key in schema_keys
+            if isinstance(product.get(key), (str, int)) and not isinstance(product.get(key), bool)
+        ], gtin=is_gtin)
+        visible_values = _identifier_values(visible[visible_key], gtin=is_gtin)
+        if not products or len(schema_values) != 1 or len(visible_values) != 1:
+            record(
+                check_id, "not_assessed",
+                f"Visible {label} identifiers: {len(visible_values)}; Product JSON-LD {label} identifiers: {len(schema_values)}. Comparison not assessed because an explicit single identifier was not available on both sides or multiple variants were present.",
+                "", "",
+            )
+        else:
+            matches = visible_values == schema_values
+            evidence = f"Visible {label}: {next(iter(visible_values))}; Product JSON-LD {label}: {next(iter(schema_values))}."
+            record(
+                check_id, "pass" if matches else "issue", evidence,
+                f"Visible product {label} differs from structured product {label}",
+                f"The initial HTML exposes a different visible {label} and Product JSON-LD identifier. Confirm the selected product variant and source catalogue record before changing identifiers.",
+            )
     return findings, outcomes

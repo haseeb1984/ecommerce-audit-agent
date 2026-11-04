@@ -90,3 +90,89 @@ def test_currency_symbol_alone_does_not_infer_ambiguous_currency():
     )
     by_id = {item.check_id: item for item in outcomes}
     assert by_id["structured_data.visible_currency_consistency"].outcome == "not_assessed"
+
+
+def test_visible_sku_and_gtin_match_product_jsonld_identifiers():
+    html = """
+    <html><body>
+      <h1>Widget</h1>
+      <span itemprop="sku">WID-100</span>
+      <span itemprop="gtin13">0123456789012</span>
+      <script type="application/ld+json">
+      {"@type":"Product","name":"Widget","sku":"WID-100","gtin13":"0123456789012",
+       "offers":{"@type":"Offer","price":"19.99","priceCurrency":"USD",
+        "availability":"https://schema.org/InStock"}}
+      </script>
+    </body></html>
+    """
+    _, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert by_id["structured_data.visible_sku_consistency"].outcome == "pass"
+    assert by_id["structured_data.visible_gtin_consistency"].outcome == "pass"
+
+
+def test_visible_product_identifier_mismatch_is_verified():
+    html = """
+    <html><body>
+      <h1>Widget</h1>
+      <span class="product-sku">WID-200</span>
+      <span class="barcode">0123456789012</span>
+      <script type="application/ld+json">
+      {"@type":"Product","sku":"WID-100","gtin13":"0123456789013"}
+      </script>
+    </body></html>
+    """
+    findings, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert by_id["structured_data.visible_sku_consistency"].outcome == "issue"
+    assert by_id["structured_data.visible_gtin_consistency"].outcome == "issue"
+    assert {item.title for item in findings} == {
+        "Visible product SKU differs from structured product SKU",
+        "Visible product GTIN differs from structured product GTIN",
+    }
+
+
+def test_variant_product_identifiers_are_not_arbitrarily_selected():
+    html = """
+    <html><body>
+      <h1>Widget</h1>
+      <span class="sku">WID-100</span>
+      <span class="gtin">0123456789012</span>
+      <script type="application/ld+json">
+      {"@type":"ProductGroup","hasVariant":[
+        {"@type":"Product","sku":"WID-100","gtin13":"0123456789012"},
+        {"@type":"Product","sku":"WID-200","gtin13":"0123456789013"}
+      ]}
+      </script>
+    </body></html>
+    """
+    _, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert by_id["structured_data.visible_sku_consistency"].outcome == "not_assessed"
+    assert by_id["structured_data.visible_gtin_consistency"].outcome == "not_assessed"
+
+
+def test_malformed_gtin_is_not_treated_as_a_verified_identifier():
+    html = """
+    <html><body>
+      <span class="barcode">12345</span>
+      <script type="application/ld+json">
+      {"@type":"Product","gtin13":"12345"}
+      </script>
+    </body></html>
+    """
+    _, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert by_id["structured_data.visible_gtin_consistency"].outcome == "not_assessed"
