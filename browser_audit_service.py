@@ -83,6 +83,18 @@ def _safe_diagnostic_text(value: str) -> str:
     return text[:300]
 
 
+def _format_product_page_evidence(summary: dict) -> str:
+    return (
+        f"Product-like page detected: {bool(summary.get('is_product_page'))}; "
+        f"Product JSON-LD entities: {summary.get('product_entities', 0)}; "
+        f"visible H1 elements: {summary.get('visible_h1', 0)}; "
+        f"visible price candidates: {summary.get('visible_price', 0)}; "
+        f"visible purchase controls: {summary.get('purchase_controls', 0)}. "
+        "Rendered selectors are heuristic diagnostics; themes, variants, consent, and inventory state can affect visibility. "
+        "This is not a checkout test or a product-data correctness verdict."
+    )
+
+
 async def _public_http_url(value: str) -> bool:
     try:
         parts = urlsplit(value)
@@ -225,6 +237,51 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       elementCount: document.querySelectorAll('*').length,
                       bodyTextLength: (document.body ? document.body.innerText : '').trim().length
                     })""")
+                    product_page_summary = await page.evaluate("""() => {
+                      const visible = el => {
+                        const r = el.getBoundingClientRect();
+                        const s = getComputedStyle(el);
+                        return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+                      };
+                      const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
+                      let productEntities = 0;
+                      let visited = 0;
+                      const stack = scripts.slice(0, 30).map(script => {
+                        try { return JSON.parse(script.textContent || 'null'); } catch (_) { return null; }
+                      }).filter(Boolean);
+                      while (stack.length && visited < 10000) {
+                        const node = stack.pop(); visited += 1;
+                        if (Array.isArray(node)) { stack.push(...node.slice(0, 1000)); continue; }
+                        if (!node || typeof node !== 'object') continue;
+                        const types = Array.isArray(node['@type']) ? node['@type'] : [node['@type']];
+                        if (types.some(type => typeof type === 'string' && type.toLowerCase().split(/[\\/#]/).pop() === 'product')) productEntities += 1;
+                        for (const value of Object.values(node)) if (value && typeof value === 'object') stack.push(value);
+                      }
+                      const h1 = [...document.querySelectorAll('h1')].filter(visible).length;
+                      const price = [...document.querySelectorAll('[itemprop="price"],[class*="price" i],[data-price],[aria-label*="price" i]')].filter(visible).length;
+                      const purchase = [...document.querySelectorAll('button,input[type="submit"], [role="button"]')].filter(visible).filter(el => {
+                        const label = [el.innerText, el.value, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').toLowerCase();
+                        return /add to cart|add to bag|add to basket|buy now|purchase/.test(label);
+                      }).length;
+                      const pathLooksProduct = /\\/(products?|items?)\\//i.test(location.pathname);
+                      const isProductPage = productEntities > 0 || pathLooksProduct || price > 0;
+                      return {is_product_page: isProductPage, product_entities: productEntities,
+                        visible_h1: h1, visible_price: price, purchase_controls: purchase};
+                    }""")
+                    product_page_missing = product_page_summary["is_product_page"] and (
+                        product_page_summary["visible_h1"] == 0
+                        or product_page_summary["visible_price"] == 0
+                        or product_page_summary["purchase_controls"] == 0
+                    )
+                    outcomes.append({
+                        "check_id": "ecommerce.product_page_rendered_signals",
+                        "category": "ecommerce", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "not_assessed" if not product_page_summary["is_product_page"] else ("warning" if product_page_missing else "pass"),
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM heuristics for product identity, visible price, and purchase controls",
+                        "evidence": _format_product_page_evidence(product_page_summary),
+                        "evidence_ref": "browser.ecommerce.product_page",
+                    })
                     outcomes.append({
                         "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": _safe_evidence_url(page.url),
                         "outcome": "pass" if rendered_dom["elementCount"] > 0 else "warning",
