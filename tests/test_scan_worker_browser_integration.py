@@ -99,4 +99,5 @@ async def test_scan_worker_marks_browser_checks_not_assessed_when_service_unavai
     assert outcomes["seo.javascript_rendered_metadata"]["outcome"] == "not_assessed"
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "not_assessed"
     assert outcomes["performance.browser_console_errors"]["outcome"] == "not_assessed"
-    assert outcomes["performance.browser_network_failures"]["outcome"] == "not_assessed"\n    assert outcomes["performance.browser_lab_vitals"]["outcome"] == "not_assessed"
+    assert outcomes["performance.browser_network_failures"]["outcome"] == "not_assessed"
+    assert outcomes["performance.browser_lab_vitals"]["outcome"] == "not_assessed"
