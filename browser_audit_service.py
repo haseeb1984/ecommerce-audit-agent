@@ -62,7 +62,8 @@ def _safe_evidence_url(value: str) -> str:
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         port = parts.port
-        netloc = f"{host}:{port}" if port and port not in (80, 443) else host
+        default_port = 80 if parts.scheme == "http" else 443
+        netloc = f"{host}:{port}" if port and port != default_port else host
         return parts._replace(netloc=netloc, query="", fragment="").geturl()
     except (TypeError, ValueError):
         return "browser"
