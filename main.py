@@ -6393,6 +6393,11 @@ async def admin_reconcile_payment(event_id: str, request: Request,
     # reconciliation must not race first-purchase delivery or overwrite identifiers
     # while the same Paddle transaction is being processed.
     transaction_id = event.transaction_id
+    subscription_id = event.subscription_id
+    # Webhook processing acquires subscription before transaction locks. Keep
+    # that same order here to avoid racing renewal/failure lifecycle events.
+    if subscription_id:
+        await _lock_paddle_webhook_resource(db, subscription_id)
     await _lock_paddle_webhook_resource(db, transaction_id, "transaction_id")
     event = (await db.execute(
         select(PaymentWebhookEvent)
@@ -6402,9 +6407,13 @@ async def admin_reconcile_payment(event_id: str, request: Request,
     if event is None:
         await db.rollback()
         raise HTTPException(status_code=404, detail="Payment event no longer exists.")
-    if not event.transaction_id or not hmac.compare_digest(event.transaction_id, transaction_id):
+    if (
+        not event.transaction_id
+        or not hmac.compare_digest(event.transaction_id, transaction_id)
+        or (event.subscription_id or None) != (subscription_id or None)
+    ):
         await db.rollback()
-        raise HTTPException(status_code=409, detail="The recorded transaction changed; reload the payment event before reconciling.")
+        raise HTTPException(status_code=409, detail="The recorded transaction or subscription changed; reload the payment event before reconciling.")
     if not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Paddle API is not configured.")
     try:
