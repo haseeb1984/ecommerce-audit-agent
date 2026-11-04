@@ -34,21 +34,34 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
   const $ = id => document.getElementById(id);
   const tokenKey = "eaa_agency_team_session";
   let token = sessionStorage.getItem(tokenKey) || "";
-  async function api(path, options = {}) {
+  let sessionVersion = 0;
+  function assertCurrentSession(version) {
+    if (version !== sessionVersion) throw new Error("Your agency session changed. Refresh the portal to continue.");
+  }
+  async function api(path, options = {}, expectedVersion = sessionVersion) {
+    assertCurrentSession(expectedVersion);
+    const requestToken = token;
     const response = await fetch(path, { ...options, cache:"no-store", headers:{
-      ...(options.headers || {}), ...(token ? {Authorization:"Bearer " + token} : {})
+      ...(options.headers || {}), ...(requestToken ? {Authorization:"Bearer " + requestToken} : {})
     }});
+    assertCurrentSession(expectedVersion);
     const data = await response.json().catch(() => ({}));
+    assertCurrentSession(expectedVersion);
     if (!response.ok) throw new Error(data.detail || "The request could not be completed.");
     return data;
   }
   function showSignedOut() {
+    sessionVersion += 1;
     token = ""; sessionStorage.removeItem(tokenKey);
     $("loginPanel").classList.remove("hidden"); $("workspacePanel").classList.add("hidden");
     $("verifyForm").classList.add("hidden");
+    $("identity").textContent = "";
+    $("workspaces").replaceChildren();
+    $("workspaceStatus").textContent = "";
   }
-  async function loadWorkspaces() {
-    const data = await api("/api/v1/agency/team/workspaces");
+  async function loadWorkspaces(expectedVersion = sessionVersion) {
+    const data = await api("/api/v1/agency/team/workspaces", {}, expectedVersion);
+    assertCurrentSession(expectedVersion);
     $("workspaces").replaceChildren();
     if (!data.items || !data.items.length) {
       const p=document.createElement("p");p.className="muted";p.textContent="No active client workspaces have been assigned to you."; $("workspaces").append(p);return;
@@ -67,25 +80,29 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       submitForm.append(urlsLabel,submitButton,permission);
       submitForm.addEventListener("submit",async event=>{
         event.preventDefault();
+        const actionVersion = sessionVersion;
         const urls=urlsInput.value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
         if(!urls.length){$("workspaceStatus").textContent="Enter at least one client page URL.";return;}
         submitButton.disabled=true;$("workspaceStatus").textContent="Queueing client audit…";
         try{
           const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);
           const requestId="team-"+Array.from(bytes,value=>value.toString(16).padStart(2,"0")).join("");
-          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/scan-batches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,request_id:requestId})});
+          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/scan-batches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,request_id:requestId})},actionVersion);
+          assertCurrentSession(actionVersion);
           urlsInput.value="";
           $("workspaceStatus").textContent="Queued "+result.submitted_urls+" URL(s) across "+result.batch_count+" batch(es) under the shared Business allowance.";
           button.click();
-        }catch(error){$("workspaceStatus").textContent=error.message;}
-        finally{submitButton.disabled=!canSubmit;}
+        }catch(error){if(actionVersion===sessionVersion)$("workspaceStatus").textContent=error.message;}
+        finally{if(actionVersion===sessionVersion)submitButton.disabled=!canSubmit;}
       });
       const button=document.createElement("button");button.type="button";button.textContent="View audit history";
       const history=document.createElement("div");
       button.addEventListener("click",async()=>{
+        const actionVersion = sessionVersion;
         button.disabled=true;history.replaceChildren();
         try {
-          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audits?limit=100");
+          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audits?limit=100",{},actionVersion);
+          assertCurrentSession(actionVersion);
           if (!result.items.length) {const empty=document.createElement("p");empty.className="muted";empty.textContent="No audit batches are available yet.";history.append(empty);}
           for(const batch of result.items){
             const row=document.createElement("div");row.className="batch";
@@ -94,9 +111,11 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
             const view=document.createElement("button");view.type="button";view.className="secondary";view.textContent="View saved findings";
             const evidence=document.createElement("div");
             view.addEventListener("click",async()=>{
+              const actionVersion = sessionVersion;
               view.disabled=true;evidence.replaceChildren();
               try {
-                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25");
+                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},actionVersion);
+                assertCurrentSession(actionVersion);
                 if(!saved.items.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="No saved audit results are available yet.";evidence.append(empty);}
                 for(const audit of saved.items){
                   const resultCard=document.createElement("div");resultCard.className="batch";
@@ -112,36 +131,38 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
                   }else{const pending=document.createElement("p");pending.className="muted";pending.textContent="No saved result for this URL yet.";resultCard.append(pending);}
                   evidence.append(resultCard);
                 }
-              }catch(error){const message=document.createElement("p");message.className="status";message.textContent=error.message;evidence.append(message);}
-              finally{view.disabled=false;}
+              }catch(error){if(actionVersion===sessionVersion){const message=document.createElement("p");message.className="status";message.textContent=error.message;evidence.append(message);}}
+              finally{if(actionVersion===sessionVersion)view.disabled=false;}
             });
             row.append(title,detail,view,evidence);history.append(row);
           }
-        } catch(error){const p=document.createElement("p");p.className="status";p.textContent=error.message;history.append(p);}
-        finally{button.disabled=false;}
+        } catch(error){if(actionVersion===sessionVersion){const p=document.createElement("p");p.className="status";p.textContent=error.message;history.append(p);}}
+        finally{if(actionVersion===sessionVersion)button.disabled=false;}
       });
       card.append(heading,role,submitForm,button,history);$("workspaces").append(card);
     }
   }
-  async function showSignedIn() {
+  async function showSignedIn(expectedVersion = sessionVersion) {
+    assertCurrentSession(expectedVersion);
     $("loginPanel").classList.add("hidden");$("workspacePanel").classList.remove("hidden");
     try {
-      const me=await api("/api/v1/agency/team/auth/me");
+      const me=await api("/api/v1/agency/team/auth/me",{},expectedVersion);
+      assertCurrentSession(expectedVersion);
       $("identity").textContent=me.email+" · "+me.role;
-      await loadWorkspaces();
-    } catch(error){$("workspaceStatus").textContent=error.message;showSignedOut();}
+      await loadWorkspaces(expectedVersion);
+    } catch(error){if(expectedVersion===sessionVersion){$("workspaceStatus").textContent=error.message;showSignedOut();}}
   }
   $("requestForm").addEventListener("submit",async event=>{
-    event.preventDefault();$("loginStatus").textContent="Sending code…";
-    try {await api("/api/v1/agency/team/auth/request-code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value.trim()})});$("verifyForm").classList.remove("hidden");$("loginStatus").textContent="If this email belongs to an accepted agency team member, a code has been sent.";}
-    catch(error){$("loginStatus").textContent=error.message;}
+    event.preventDefault();const actionVersion=sessionVersion;$("loginStatus").textContent="Sending code…";
+    try {await api("/api/v1/agency/team/auth/request-code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value.trim()})},actionVersion);assertCurrentSession(actionVersion);$("verifyForm").classList.remove("hidden");$("loginStatus").textContent="If this email belongs to an accepted agency team member, a code has been sent.";}
+    catch(error){if(actionVersion===sessionVersion)$("loginStatus").textContent=error.message;}
   });
   $("verifyForm").addEventListener("submit",async event=>{
-    event.preventDefault();$("loginStatus").textContent="Verifying code…";
-    try {const result=await api("/api/v1/agency/team/auth/verify-code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value.trim(),code:$("code").value.trim()})});token=result.access_token;sessionStorage.setItem(tokenKey,token);await showSignedIn();}
-    catch(error){$("loginStatus").textContent=error.message;}
+    event.preventDefault();const actionVersion=sessionVersion;$("loginStatus").textContent="Verifying code…";
+    try {const result=await api("/api/v1/agency/team/auth/verify-code",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("email").value.trim(),code:$("code").value.trim()})},actionVersion);assertCurrentSession(actionVersion);token=result.access_token;sessionStorage.setItem(tokenKey,token);await showSignedIn(actionVersion);}
+    catch(error){if(actionVersion===sessionVersion)$("loginStatus").textContent=error.message;}
   });
-  $("logout").addEventListener("click",async()=>{try{await api("/api/v1/agency/team/auth/logout");}catch(_){}showSignedOut();});
+  $("logout").addEventListener("click",async()=>{const logoutToken=token;showSignedOut();if(logoutToken){try{await fetch("/api/v1/agency/team/auth/logout",{method:"POST",cache:"no-store",headers:{Authorization:"Bearer "+logoutToken}});}catch(_){}}});
   if(token)showSignedIn();
 })();
 </script>
