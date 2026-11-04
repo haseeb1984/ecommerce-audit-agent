@@ -30,7 +30,7 @@ for an egress firewall because Chromium performs its own DNS resolution and a
 host can change DNS answers between validation and connection.
 
 Do not expose the service publicly without TLS, rate limiting, request-size limits,
-and network egress restrictions. The unauthenticated `/health` endpoint reveals
+container CPU/memory/process limits, and network egress restrictions. The unauthenticated `/health` endpoint reveals
 only service health and viewport count. The audit endpoint is HMAC-authenticated.
 Keep browser worker logs free of customer credentials and request bodies.
 
