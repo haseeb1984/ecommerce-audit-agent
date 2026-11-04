@@ -55,6 +55,8 @@ class _VisibleProductSignals(HTMLParser):
         hidden = parent_hidden or "hidden" in attrs_map or attrs_map.get("aria-hidden", "").lower() == "true" or "display:none" in style or "visibility:hidden" in style
         self._hidden_stack.append(hidden)
         if hidden:
+            if tag.lower() in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+                self._hidden_stack.pop()
             return
 
         itemprops = {token.lower() for token in re.split(r"\s+", attrs_map.get("itemprop", "").strip()) if token}
