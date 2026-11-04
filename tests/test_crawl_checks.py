@@ -2698,3 +2698,70 @@ async def test_product_page_records_property_level_structured_data_outcomes(monk
     assert product_outcomes["structured_data.offer_price"].outcome == "pass"
     assert product_outcomes["structured_data.offer_currency"].outcome == "pass"
     assert product_outcomes["structured_data.offer_availability"].outcome == "pass"
+
+
+@pytest.mark.asyncio
+async def test_crawl_records_visible_product_offer_consistency_per_product_url(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
+    pages = {
+        "https://shop.example/": (
+            200,
+            '<html><head><title>Store</title></head><body><a href="/products/widget">Widget</a></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/",
+        ),
+        "https://shop.example/products/widget": (
+            200,
+            """
+            <html><head><title>Widget</title></head><body>
+              <h1>Widget</h1>
+              <span class="product-price" data-price="24.99">$24.99</span>
+              <span class="currency-code" data-currency="EUR">EUR</span>
+              <span class="stock-status">Out of stock</span>
+              <script type="application/ld+json">
+              {"@type":"Product","name":"Widget","offers":{"@type":"Offer",
+               "price":"19.99","priceCurrency":"USD",
+               "availability":"https://schema.org/InStock"}}
+              </script>
+            </body></html>
+            """,
+            {"content-type": "text/html"},
+            "https://shop.example/products/widget",
+        ),
+    }
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        if url in pages:
+            return pages[url]
+        if url in {
+            "https://shop.example/robots.txt",
+            "https://shop.example/llms.txt",
+            "https://shop.example/sitemap.xml",
+        }:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    findings, checked, _ = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    product_outcomes = {
+        item.check_id: item for item in outcomes
+        if item.check_id.startswith("structured_data.visible_")
+    }
+    assert set(product_outcomes) == {
+        "structured_data.visible_price_consistency",
+        "structured_data.visible_currency_consistency",
+        "structured_data.visible_availability_consistency",
+    }
+    assert all(item.page_url == "https://shop.example/products/widget" for item in product_outcomes.values())
+    assert all(item.outcome == "issue" for item in product_outcomes.values())
+    assert len([item for item in findings if item.title in {
+        "Visible product price differs from structured offer price",
+        "Visible product currency differs from structured offer currency",
+        "Visible stock status differs from structured offer availability",
+    }]) == 3
