@@ -90,6 +90,7 @@ def test_successful_browser_run_does_not_append_browser_only_not_assessed_record
     assert "mobile_ux.rendered_orientation" not in ids
     assert "accessibility.rendered_images_alt" not in ids
     assert "accessibility.rendered_controls_name" not in ids
+    assert "accessibility.keyboard_focus_order" not in ids
     assert "ecommerce.product_page_rendered_signals" not in ids
 
 
