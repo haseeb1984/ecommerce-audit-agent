@@ -2630,3 +2630,71 @@ async def test_sitemap_discovery_enforces_one_global_document_fetch_budget(monke
     assert requested_sitemaps == sitemap_urls[:2]
     assert len(requested_sitemaps) <= crawl_checks.MAX_SITEMAP_DOCUMENTS
     assert any("global limit of 2 documents" in item for item in limitations)
+
+
+@pytest.mark.asyncio
+async def test_product_page_records_property_level_structured_data_outcomes(monkeypatch):
+    import json
+
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Widget",
+        "description": "A useful widget",
+        "image": "https://shop.example/widget.jpg",
+        "sku": "W-1",
+        "offers": {
+            "@type": "Offer",
+            "price": "24.95",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock",
+        },
+    }
+    pages = {
+        "https://shop.example/": (
+            200,
+            '<html><head><title>Store</title></head><body><a href="/products/widget">Widget</a></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/",
+        ),
+        "https://shop.example/products/widget": (
+            200,
+            '<html><head><title>Widget</title><script type="application/ld+json">'
+            + json.dumps(product)
+            + '</script></head><body><h1>Widget</h1></body></html>',
+            {"content-type": "text/html"},
+            "https://shop.example/products/widget",
+        ),
+    }
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        if url in pages:
+            return pages[url]
+        if url in {
+            "https://shop.example/robots.txt",
+            "https://shop.example/llms.txt",
+            "https://shop.example/sitemap.xml",
+        }:
+            return 404, "", {"content-type": "text/plain"}, url
+        raise AssertionError(f"Unexpected URL requested: {url}")
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/",
+        outcome_records=outcomes,
+    )
+
+    product_outcomes = {
+        item.check_id: item
+        for item in outcomes
+        if item.page_url == "https://shop.example/products/widget"
+    }
+    assert product_outcomes["structured_data.product_name"].outcome == "pass"
+    assert product_outcomes["structured_data.product_description"].outcome == "pass"
+    assert product_outcomes["structured_data.product_image"].outcome == "pass"
+    assert product_outcomes["structured_data.product_identifiers"].outcome == "pass"
+    assert product_outcomes["structured_data.offer_price"].outcome == "pass"
+    assert product_outcomes["structured_data.offer_currency"].outcome == "pass"
+    assert product_outcomes["structured_data.offer_availability"].outcome == "pass"
