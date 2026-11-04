@@ -7497,7 +7497,7 @@ async def admin_customer_account_detail(
             "created_at": item.created_at.isoformat() if item.created_at else None,
         } for item in notes],
         "wordpress_sites": [{
-            "site_id": item.id, "license_key": item.license_key, "site_url": item.site_url,
+            "site_id": item.id, "site_url": item.site_url,
             "site_host": item.site_host, "admin_email": item.admin_email,
             "wordpress_version": item.wordpress_version, "woocommerce_version": item.woocommerce_version,
             "plugin_version": item.plugin_version, "status": item.status,
