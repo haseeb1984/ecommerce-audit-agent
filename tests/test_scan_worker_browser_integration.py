@@ -66,6 +66,7 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "pass"
     assert "crawl.javascript_rendered_dom" not in outcomes
     assert "crawl.javascript_internal_pages" not in outcomes
+    assert "seo.javascript_rendered_metadata" in outcomes
 
 
 @pytest.mark.asyncio
@@ -82,6 +83,7 @@ async def test_scan_worker_marks_browser_checks_not_assessed_when_service_unavai
     assert result["summary"]["modules"]["browser_rendered"] == "unavailable"
     assert outcomes["crawl.javascript_rendered_dom"]["outcome"] == "not_assessed"
     assert outcomes["crawl.javascript_internal_pages"]["outcome"] == "not_assessed"
+    assert outcomes["seo.javascript_rendered_metadata"]["outcome"] == "not_assessed"
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "not_assessed"
     assert outcomes["performance.browser_console_errors"]["outcome"] == "not_assessed"
     assert outcomes["performance.browser_network_failures"]["outcome"] == "not_assessed"
