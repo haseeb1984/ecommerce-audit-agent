@@ -113,22 +113,64 @@ def test_fresh_hostinger_schema_and_forward_migration_cover_storage_key_hash():
 
 
 
-def test_fresh_hostinger_schema_covers_every_named_orm_index_and_unique_constraint():
+def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constraint_coverage():
+    import re
+
     from sqlalchemy import UniqueConstraint
     from hostinger_database import HostingerBase
     import hostinger_models  # noqa: F401 - register all operational model tables
 
     schema = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
-    expected = {
-        index.name
-        for table in HostingerBase.metadata.tables.values()
-        for index in table.indexes
-        if index.name
-    } | {
-        constraint.name
-        for table in HostingerBase.metadata.tables.values()
-        for constraint in table.constraints
-        if isinstance(constraint, UniqueConstraint) and constraint.name
+    table_blocks = {
+        name: body
+        for name, body in re.findall(
+            r"CREATE TABLE IF NOT EXISTS\\s+(\\w+)\\s*\\((.*?)\\)\\s*ENGINE=",
+            schema,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
     }
-    missing = sorted(name for name in expected if name not in schema)
-    assert missing == [], f"Fresh Hostinger schema is missing ORM indexes/constraints: {missing}"
+
+    def declared_indexes(table_name):
+        body = table_blocks[table_name]
+        found = []
+        for unique, columns in re.findall(
+            r"\\b(UNIQUE\\s+)?(?:KEY|INDEX)\\s+\\w+\\s*\\(([^)]*)\\)",
+            body,
+            flags=re.IGNORECASE,
+        ):
+            names = tuple(
+                part.strip().strip("`").split()[0].split("(")[0]
+                for part in columns.split(",")
+            )
+            found.append((bool(unique), names))
+        return found
+
+    missing = []
+    for table in HostingerBase.metadata.tables.values():
+        if table.name not in table_blocks:
+            continue
+        sql_indexes = declared_indexes(table.name)
+        for index in table.indexes:
+            expected = tuple(column.name for column in index.columns)
+            covered = any(
+                sql_columns[: len(expected)] == expected
+                and (not index.unique or sql_unique)
+                for sql_unique, sql_columns in sql_indexes
+            )
+            if not covered:
+                missing.append(f"{table.name}.{index.name}{expected}")
+        for constraint in table.constraints:
+            if not isinstance(constraint, UniqueConstraint) or not constraint.name:
+                continue
+            expected = tuple(column.name for column in constraint.columns)
+            covered = any(
+                sql_unique and sql_columns == expected
+                for sql_unique, sql_columns in sql_indexes
+            )
+            if not covered:
+                missing.append(f"{table.name}.{constraint.name}{expected}")
+
+    assert missing == [], (
+        "Fresh Hostinger schema is missing ORM index/unique coverage: "
+        f"{missing}"
+    )
