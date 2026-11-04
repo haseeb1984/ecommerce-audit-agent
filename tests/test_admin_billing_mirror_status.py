@@ -69,3 +69,19 @@ def test_admin_paddle_cancellation_serializes_subscription_lifecycle():
     linked_lookup = source.index("await _get_paddle_subscription_license_event(db, subscription_id)")
     provider_request = source.index('f"/subscriptions/{subscription_id}/cancel"')
     assert lock < linked_lookup < provider_request
+
+    
+def test_admin_payment_reconciliation_serializes_transaction_webhook_work():
+    import inspect
+
+    source = inspect.getsource(main.admin_reconcile_payment)
+    initial_lookup = source.index("PaymentWebhookEvent.event_id == event_id")
+    subscription_lock = source.index(
+        "await _lock_paddle_webhook_resource(db, subscription_id)"
+    )
+    transaction_lock = source.index(
+        'await _lock_paddle_webhook_resource(db, transaction_id, "transaction_id")'
+    )
+    locked_reload = source.index(".with_for_update()", transaction_lock)
+    provider_request = source.index('f"/transactions/{transaction_id}"')
+    assert initial_lookup < subscription_lock < transaction_lock < locked_reload < provider_request
