@@ -1421,49 +1421,87 @@
     }
   }
 
-  async function loadScanBatches() {
+  const scanBatchPageSize = 100;
+  let scanBatchOffset = 0;
+  let scanBatchesLoading = false;
+  async function loadScanBatches({append = false} = {}) {
+    if (scanBatchesLoading) return;
+    scanBatchesLoading = true;
     const container = $("scanBatches");
-    const response = await api("/api/v1/scan-batches?limit=100&offset=0");
-    const data = await response.json();
-    const items = Array.isArray(data.items) ? data.items : [];
-    container.replaceChildren();
-    if (!items.length) {
-      const empty = document.createElement("p"); empty.className = "muted";
-      empty.textContent = "No bulk scan batches have been submitted for this account.";
-      container.append(empty);
-    }
-    for (const batch of items) {
-      const card = document.createElement("article"); card.className = "report";
-      const info = document.createElement("div");
-      const title = document.createElement("strong");
-      title.textContent = "Batch " + batch.batch_number + " · " + String(batch.status || "unknown").replaceAll("_", " ");
-      const detail = document.createElement("small");
-      detail.textContent = batch.total_urls + " websites · " + batch.completed + " completed · " +
-        batch.processing + " processing · " + batch.queued + " queued · " + batch.failed + " failed · " +
-        (batch.cancelled || 0) + " cancelled";
-      const created = document.createElement("small");
-      created.textContent = "Created " + (batch.created_at ? new Date(batch.created_at).toLocaleString() : "time unavailable") +
-        " · Package " + (batch.package_tier || "unknown");
-      info.append(title, detail, created);
-      const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View URLs";
-      view.addEventListener("click", () => loadScanBatchDetail(batch.id));
-      card.append(info, view);
-      if (["queued", "processing", "cancel_requested"].includes(batch.status)) {
-        const cancel = document.createElement("button");
-        cancel.type = "button"; cancel.className = "secondary";
-        cancel.textContent = batch.status === "cancel_requested" ? "Cancellation pending" : "Cancel batch";
-        cancel.disabled = batch.status === "cancel_requested";
-        cancel.addEventListener("click", async () => {
-          const result = await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
-          if (!result.ok) throw new Error("Batch cancellation could not be recorded.");
-          await loadScanBatches();
-        });
-        card.append(cancel);
+    const previousLoadMore = container.querySelector("[data-load-more-scan-batches]");
+    if (append && previousLoadMore) previousLoadMore.disabled = true;
+    try {
+      const offset = append ? scanBatchOffset : 0;
+      const response = await api("/api/v1/scan-batches?limit=" + scanBatchPageSize + "&offset=" + offset);
+      const data = await response.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!append) {
+        scanBatchOffset = 0;
+        container.replaceChildren();
+      } else if (previousLoadMore) {
+        previousLoadMore.remove();
       }
-      container.append(card);
+      if (!append && !items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No bulk scan batches have been submitted for this account.";
+        container.append(empty);
+      }
+      for (const batch of items) {
+        const card = document.createElement("article"); card.className = "report";
+        const info = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = "Batch " + batch.batch_number + " · " + String(batch.status || "unknown").replaceAll("_", " ");
+        const detail = document.createElement("small");
+        detail.textContent = batch.total_urls + " websites · " + batch.completed + " completed · " +
+          batch.processing + " processing · " + batch.queued + " queued · " + batch.failed + " failed · " +
+          (batch.cancelled || 0) + " cancelled";
+        const created = document.createElement("small");
+        created.textContent = "Created " + (batch.created_at ? new Date(batch.created_at).toLocaleString() : "time unavailable") +
+          " · Package " + (batch.package_tier || "unknown");
+        info.append(title, detail, created);
+        const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View URLs";
+        view.addEventListener("click", () => loadScanBatchDetail(batch.id));
+        card.append(info, view);
+        if (["queued", "processing", "cancel_requested"].includes(batch.status)) {
+          const cancel = document.createElement("button");
+          cancel.type = "button"; cancel.className = "secondary";
+          cancel.textContent = batch.status === "cancel_requested" ? "Cancellation pending" : "Cancel batch";
+          cancel.disabled = batch.status === "cancel_requested";
+          cancel.addEventListener("click", async () => {
+            const result = await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
+            if (!result.ok) throw new Error("Batch cancellation could not be recorded.");
+            await loadScanBatches();
+          });
+          card.append(cancel);
+        }
+        container.append(card);
+      }
+      scanBatchOffset = offset + items.length;
+      if (items.length === scanBatchPageSize) {
+        const loadMore = document.createElement("button");
+        loadMore.type = "button"; loadMore.className = "secondary";
+        loadMore.dataset.loadMoreScanBatches = "true";
+        loadMore.textContent = "Load older scan batches";
+        loadMore.addEventListener("click", async () => {
+          loadMore.disabled = true;
+          loadMore.textContent = "Loading…";
+          try { await loadScanBatches({append: true}); }
+          catch (error) {
+            loadMore.disabled = false;
+            loadMore.textContent = "Load older scan batches";
+            setStatus("bulkScanStatus", error.message || "Older scan batches could not be loaded.", "error");
+          }
+        });
+        container.append(loadMore);
+      }
+      if (!append) await loadWebsites();
+      setStatus("bulkScanStatus", "Loaded " + scanBatchOffset + " scan batch(es).", "success");
+    } catch (error) {
+      if (append && previousLoadMore && previousLoadMore.isConnected) previousLoadMore.disabled = false;
+      throw error;
+    } finally {
+      scanBatchesLoading = false;
     }
-    await loadWebsites();
-    setStatus("bulkScanStatus", "Loaded " + items.length + " scan batch(es).", "success");
   }
   async function loadScanBatchDetail(batchId) {
     const container = $("scanBatchDetail");
