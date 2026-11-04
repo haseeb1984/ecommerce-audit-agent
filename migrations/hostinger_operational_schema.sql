@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS scan_batches (
   requested_by VARCHAR(254) NULL,
   package_tier VARCHAR(50) NOT NULL,
   request_id VARCHAR(128) NOT NULL,
+  workspace_id VARCHAR(64) NULL,
   request_hash CHAR(64) NOT NULL,
   batch_number INT NOT NULL,
   batch_size INT NOT NULL DEFAULT 10,
