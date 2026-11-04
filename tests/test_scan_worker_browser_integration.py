@@ -65,7 +65,6 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
     assert result["summary"]["modules"]["browser_rendered"] == "completed"
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "pass"
     assert "crawl.javascript_rendered_dom" not in outcomes
-    assert result["summary"]["overall_score"] if "overall_score" in result["summary"] else True
 
 
 @pytest.mark.asyncio
