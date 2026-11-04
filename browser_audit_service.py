@@ -63,7 +63,35 @@ RENDERED_METADATA_SCRIPT = """() => {
     product_schema_count: productSchemaCount
   };
 }"""
-VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
+LAB_VITALS_INIT_SCRIPT = """() => {
+  const state = { lcp_supported: false, cls_supported: false, longtask_supported: false,
+    lcp_ms: null, cls: null, long_task_count: null, long_task_total_ms: null, long_task_max_ms: null,
+    _cls_entries: [], _long_tasks: [] };
+  try {
+    const lcp = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) state.lcp_ms = Math.round(entry.startTime);
+    });
+    lcp.observe({type: 'largest-contentful-paint', buffered: true});
+    state.lcp_supported = true;
+  } catch (_) {}
+  try {
+    const cls = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) {
+        if (!entry.hadRecentInput) state._cls_entries.push({start: entry.startTime, value: entry.value});
+      }
+    });
+    cls.observe({type: 'layout-shift', buffered: true});
+    state.cls_supported = true;
+  } catch (_) {}
+  try {
+    const longTasks = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) state._long_tasks.push(entry.duration);
+    });
+    longTasks.observe({type: 'longtask', buffered: true});
+    state.longtask_supported = true;
+  } catch (_) {}
+  window.__auditLabVitals = state;
+}"""\nVIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 _SEEN_REQUESTS: dict[str, int] = {}
 
@@ -343,7 +371,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
 
                 await context.route_web_socket("**/*", block_websocket)
                 page = await context.new_page()
-                page.set_default_navigation_timeout(20_000)
+                page.set_default_navigation_timeout(20_000)\n                await page.add_init_script(LAB_VITALS_INIT_SCRIPT)
                 page.set_default_timeout(5_000)
     
                 async def guard(route):
@@ -511,6 +539,22 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         }
                       };
                     }""")
+                    raw_lab_vitals = await page.evaluate("""() => {
+                      const state = window.__auditLabVitals;
+                      if (!state) return {};
+                      return {...state};
+                    }""")
+                    lab_vitals = _summarize_lab_vitals(raw_lab_vitals)
+                    vitals_supported = lab_vitals["lcp_supported"] or lab_vitals["cls_supported"] or lab_vitals["longtask_supported"]
+                    outcomes.append({
+                        "check_id": "performance.browser_lab_vitals",
+                        "category": "performance", "page_url": _safe_evidence_url(page.url),
+                        "outcome": ("warning" if _lab_vitals_needs_review(lab_vitals) else "pass") if vitals_supported else "not_assessed",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Chromium PerformanceObserver for largest-contentful-paint, layout-shift session windows, and longtask; short single-run render",
+                        "evidence": _format_lab_vitals_evidence(lab_vitals),
+                        "evidence_ref": "browser.performance.lab_vitals",
+                    })
                     outcomes.append({
                         "check_id": "performance.browser_navigation_timing",
                         "category": "performance", "page_url": _safe_evidence_url(page.url),
@@ -689,6 +733,13 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                             "evidence_ref": "browser.viewport_matrix",
                         },
                     ])
+                    outcomes.append({
+                        "check_id": "performance.browser_lab_vitals", "category": "performance", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Chromium PerformanceObserver lab diagnostics",
+                        "evidence": f"LCP, CLS and Long Tasks observations were unavailable because homepage navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.performance.lab_vitals",
+                    })
                     outcomes.append({
                         "check_id": "seo.javascript_rendered_metadata", "category": "technical_seo", "page_url": target,
                         "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
