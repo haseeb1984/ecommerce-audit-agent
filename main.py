@@ -2329,17 +2329,19 @@ async def create_agency_website_connection_token(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website connections are available on the Business plan.")
     from sqlalchemy import select, update
+    # Serialize token issuance with other workspace connection mutations and
+    # agency suspension. All agency-site lifecycle writers lock agency first.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key,
         AgencyAccount.status == "active",
-    ))
+    ).with_for_update())
     if agency is None:
         raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
         AgencyClientWorkspace.id == workspace_id,
         AgencyClientWorkspace.agency_id == agency.id,
         AgencyClientWorkspace.status == "active",
-    ))
+    ).with_for_update())
     if workspace is None:
         raise HTTPException(status_code=404, detail="Active client workspace not found.")
     existing_site = await operational_db.scalar(select(AgencyClientWebsite).where(
@@ -2384,11 +2386,34 @@ async def register_agency_wordpress_site(
     if len(raw_token) < 32 or len(raw_token) > 200:
         raise HTTPException(status_code=401, detail="A valid agency client connection token is required.")
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    # Resolve the token's tenant without taking its row lock, then use the
+    # same agency -> workspace -> challenge lock order as owner token issuance.
+    # This serializes competing tokens for one workspace and avoids deadlocks
+    # with issuance, which revokes any previously pending challenge.
+    candidate = await operational_db.scalar(select(AgencyWebsiteConnectChallenge).where(
+        AgencyWebsiteConnectChallenge.token_hash == token_hash,
+        AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+    ))
+    now = datetime.now(timezone.utc)
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Agency connection token is invalid or already used.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == candidate.agency_id, AgencyAccount.status == "active"
+    ).with_for_update())
+    if agency is None:
+        raise HTTPException(status_code=409, detail="Agency or client workspace is no longer active.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == candidate.workspace_id,
+        AgencyClientWorkspace.agency_id == candidate.agency_id,
+        AgencyClientWorkspace.status == "active",
+    ).with_for_update())
+    if workspace is None:
+        raise HTTPException(status_code=409, detail="Agency or client workspace is no longer active.")
     challenge = await operational_db.scalar(select(AgencyWebsiteConnectChallenge).where(
+        AgencyWebsiteConnectChallenge.id == candidate.id,
         AgencyWebsiteConnectChallenge.token_hash == token_hash,
         AgencyWebsiteConnectChallenge.consumed_at.is_(None),
     ).with_for_update())
-    now = datetime.now(timezone.utc)
     if challenge is None:
         raise HTTPException(status_code=401, detail="Agency connection token is invalid or already used.")
     expires = challenge.expires_at
@@ -2397,14 +2422,6 @@ async def register_agency_wordpress_site(
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=401, detail="Agency connection token has expired.")
-    agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == challenge.agency_id, AgencyAccount.status == "active"
-    ))
-    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
-        AgencyClientWorkspace.id == challenge.workspace_id,
-        AgencyClientWorkspace.agency_id == challenge.agency_id,
-        AgencyClientWorkspace.status == "active",
-    ))
     if agency is None or workspace is None:
         challenge.consumed_at = now
         await operational_db.commit()
