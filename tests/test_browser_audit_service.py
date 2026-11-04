@@ -127,3 +127,30 @@ def test_browser_internal_crawl_evidence_discloses_bounds_and_failures():
     assert "navigation failures: 1" in evidence
     assert "page-cap reached: True" in evidence
     assert "not a full-site crawl" in evidence
+
+
+def test_rendered_metadata_evidence_discloses_presence_signals_without_claiming_validity():
+    evidence = browser_audit_service._format_rendered_metadata_evidence({
+        "title_length": 42, "description_count": 1, "description_length": 120,
+        "canonical_count": 1, "canonical_same_origin": True, "robots_noindex": False,
+        "visible_h1_count": 1, "product_schema_count": 1,
+    })
+    assert "Rendered title characters: 42" in evidence
+    assert "canonical tags: 1" in evidence
+    assert "Product/ProductGroup JSON-LD entities: 1" in evidence
+    assert "not a complete SEO or structured-data validity verdict" in evidence
+
+
+def test_rendered_metadata_review_is_conservative_and_detects_malformed_shapes():
+    assert browser_audit_service._rendered_metadata_needs_review({
+        "title_length": 20, "description_count": 1, "canonical_count": 1,
+        "canonical_same_origin": True, "visible_h1_count": 1,
+    }) is False
+    assert browser_audit_service._rendered_metadata_needs_review({
+        "title_length": 0, "description_count": 0, "canonical_count": 2,
+        "canonical_same_origin": None, "visible_h1_count": 0,
+    }) is True
+    assert browser_audit_service._rendered_metadata_needs_review({
+        "title_length": 20, "description_count": 1, "canonical_count": 1,
+        "canonical_same_origin": False, "visible_h1_count": 1,
+    }) is True

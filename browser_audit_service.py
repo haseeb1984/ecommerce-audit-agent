@@ -25,6 +25,44 @@ MAX_REQUEST_BYTES = 16_384
 MAX_BROWSER_REQUESTS = 180
 MAX_RENDERED_PAGES = 6
 MAX_RENDERED_LINKS = 30
+RENDERED_METADATA_SCRIPT = """() => {
+  const descriptions = [...document.querySelectorAll('meta[name="description" i]')];
+  const canonicals = [...document.querySelectorAll('link[rel~="canonical" i]')];
+  let canonicalSameOrigin = null;
+  if (canonicals.length === 1) {
+    try { canonicalSameOrigin = new URL(canonicals[0].href, location.href).origin === location.origin; }
+    catch (_) { canonicalSameOrigin = false; }
+  }
+  const robots = [...document.querySelectorAll('meta[name="robots" i],meta[name="googlebot" i]')]
+    .map(meta => meta.content || '').join(',').toLowerCase();
+  const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
+  const stack = scripts.slice(0, 30).map(script => {
+    try { return JSON.parse(script.textContent || 'null'); } catch (_) { return null; }
+  }).filter(Boolean);
+  let productSchemaCount = 0, visited = 0;
+  while (stack.length && visited < 10000) {
+    const node = stack.pop(); visited += 1;
+    if (Array.isArray(node)) { stack.push(...node.slice(0, 1000)); continue; }
+    if (!node || typeof node !== 'object') continue;
+    const types = Array.isArray(node['@type']) ? node['@type'] : [node['@type']];
+    if (types.some(type => typeof type === 'string' &&
+      ['product', 'productgroup'].includes(type.toLowerCase().split('/').pop().split('#').pop()))) productSchemaCount += 1;
+    for (const value of Object.values(node)) if (value && typeof value === 'object') stack.push(value);
+  }
+  return {
+    title_length: (document.title || '').trim().length,
+    description_count: descriptions.length,
+    description_length: descriptions.length === 1 ? (descriptions[0].content || '').trim().length : 0,
+    canonical_count: canonicals.length,
+    canonical_same_origin: canonicalSameOrigin,
+    robots_noindex: /(^|[,\\s])noindex([,\\s]|$)/.test(robots),
+    visible_h1_count: [...document.querySelectorAll('h1')].filter(el => {
+      const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    }).length,
+    product_schema_count: productSchemaCount
+  };
+}"""
 VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 _SEEN_REQUESTS: dict[str, int] = {}
@@ -105,6 +143,31 @@ def _format_navigation_timing(timing: dict, resource_summary: dict) -> str:
         "These are single-run diagnostics, not field Core Web Vitals or a representative performance score."
     )
 
+
+
+
+def _format_rendered_metadata_evidence(summary: dict) -> str:
+    return (
+        f"Rendered title characters: {summary.get('title_length', 0)}; "
+        f"meta description tags: {summary.get('description_count', 0)} "
+        f"(content characters: {summary.get('description_length', 0)}); "
+        f"canonical tags: {summary.get('canonical_count', 0)}; "
+        f"single canonical same-origin: {summary.get('canonical_same_origin')}; "
+        f"robots noindex: {bool(summary.get('robots_noindex'))}; "
+        f"visible H1 elements: {summary.get('visible_h1_count', 0)}; "
+        f"Product/ProductGroup JSON-LD entities: {summary.get('product_schema_count', 0)}. "
+        "These are rendered-page presence/shape signals, not a complete SEO or structured-data validity verdict."
+    )
+
+
+def _rendered_metadata_needs_review(summary: dict) -> bool:
+    return bool(
+        not summary.get("title_length")
+        or summary.get("description_count", 0) != 1
+        or summary.get("canonical_count", 0) > 1
+        or (summary.get("canonical_count", 0) == 1 and summary.get("canonical_same_origin") is False)
+        or not summary.get("visible_h1_count")
+    )
 
 
 def _format_accessibility_evidence(summary: dict) -> str:
@@ -423,6 +486,16 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence": _format_product_page_evidence(product_page_summary),
                         "evidence_ref": "browser.ecommerce.product_page",
                     })
+                    rendered_metadata = await page.evaluate(RENDERED_METADATA_SCRIPT)
+                    outcomes.append({
+                        "check_id": "seo.javascript_rendered_metadata",
+                        "category": "technical_seo", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if _rendered_metadata_needs_review(rendered_metadata) else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright hydrated DOM metadata presence/shape inspection",
+                        "evidence": _format_rendered_metadata_evidence(rendered_metadata),
+                        "evidence_ref": "browser.seo.rendered_metadata.homepage",
+                    })
                     performance_data = await page.evaluate("""() => {
                       const nav = performance.getEntriesByType('navigation')[0];
                       const resources = performance.getEntriesByType('resource');
@@ -567,9 +640,19 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                               elementCount: document.querySelectorAll('*').length,
                               bodyTextLength: (document.body ? document.body.innerText : '').trim().length
                             })""")
+                            secondary_metadata = await page.evaluate(RENDERED_METADATA_SCRIPT)
                             safe_page_url = _safe_evidence_url(page.url)
                             rendered_page_urls.append(safe_page_url)
                             internal_crawl_summary["rendered_pages"] += 1
+                            outcomes.append({
+                                "check_id": "seo.javascript_rendered_metadata", "category": "technical_seo",
+                                "page_url": safe_page_url,
+                                "outcome": "warning" if _rendered_metadata_needs_review(secondary_metadata) else "pass",
+                                "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "method": "Playwright hydrated DOM metadata presence/shape inspection",
+                                "evidence": _format_rendered_metadata_evidence(secondary_metadata),
+                                "evidence_ref": f"browser.seo.rendered_metadata.page_{page_index}",
+                            })
                             outcomes.append({
                                 "check_id": "crawl.javascript_rendered_dom", "category": "crawlability",
                                 "page_url": safe_page_url,
@@ -606,6 +689,12 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                             "evidence_ref": "browser.viewport_matrix",
                         },
                     ])
+                    outcomes.append({
+                        "check_id": "seo.javascript_rendered_metadata", "category": "technical_seo", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright Chromium navigation", "evidence": f"Rendered SEO metadata inspection was not run because homepage navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.seo.rendered_metadata.homepage",
+                    })
                     outcomes.append({
                         "check_id": "crawl.javascript_internal_pages", "category": "crawlability", "page_url": target,
                         "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

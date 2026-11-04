@@ -23,6 +23,11 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "A controlled browser did not discover and render a bounded sample of JavaScript-exposed same-site internal pages for this run.",
     ),
     (
+        "seo.javascript_rendered_metadata",
+        "technical_seo",
+        "A controlled browser did not inspect hydrated title, description, canonical, robots, heading, and Product JSON-LD signals for this run.",
+    ),
+    (
         "mobile_ux.rendered_orientation",
         "mobile_ux",
         "A controlled browser did not compare rendered horizontal overflow in portrait and landscape viewports for this run.",
@@ -113,7 +118,7 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
     }
     now = datetime.now(timezone.utc).isoformat()
     added = 0
-    browser_checks = {"crawl.javascript_rendered_dom", "crawl.javascript_internal_pages", "mobile_ux.rendered_viewport_matrix", "mobile_ux.rendered_orientation", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing", "accessibility.rendered_images_alt", "accessibility.rendered_controls_name", "accessibility.keyboard_focus_order", "ecommerce.product_page_rendered_signals"}
+    browser_checks = {"seo.javascript_rendered_metadata", "crawl.javascript_rendered_dom", "crawl.javascript_internal_pages", "mobile_ux.rendered_viewport_matrix", "mobile_ux.rendered_orientation", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing", "accessibility.rendered_images_alt", "accessibility.rendered_controls_name", "accessibility.keyboard_focus_order", "ecommerce.product_page_rendered_signals"}
     for check_id, category, evidence in UNAVAILABLE_CHECKS:
         if browser_audit_completed and check_id in browser_checks:
             continue

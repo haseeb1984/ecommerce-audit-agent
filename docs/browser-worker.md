@@ -44,6 +44,7 @@ Keep browser worker logs free of customer credentials and request bodies.
 - Rendered accessibility heuristics for image alt-attribute presence, accessible-name signals, and suspicious tabindex patterns on visible interactive controls; these are not WCAG conformance verdicts.
 - Product-page rendered-signal heuristic for visible H1, price candidates, Product JSON-LD, purchase controls, variant-selection controls, product-image candidates, and quantity controls; it is not a checkout test or product-data correctness verdict.
 - The rendered internal-page sample reports discovered links, rendered pages, navigation failures, and page/request-cap truncation; it is not a full-site crawl and does not recursively follow links.
+- Each rendered homepage/internal page also records title length, meta-description count/length, canonical count and same-origin signal, robots noindex presence, visible H1 count, and Product/ProductGroup JSON-LD entity count. These are presence/shape heuristics, not full metadata, canonical, indexing, or schema validity checks.
 - Per-check outcomes and evidence summaries returned to the existing scan worker
   and persisted in the existing `WebsiteScanResult`; no second queue or billing path.
 
