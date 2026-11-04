@@ -1910,10 +1910,18 @@ async def list_account_wordpress_sites(
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List WordPress installations linked to the currently selected customer license."""
-    from sqlalchemy import select
+    from sqlalchemy import case, select
+    # Keep the currently connected installation visible even when it is an
+    # older record that has been reactivated after many historical connections.
+    site_order = (
+        case((WordPressInstallation.status == "active", 0), else_=1),
+        WordPressInstallation.last_seen_at.desc(),
+        WordPressInstallation.created_at.desc(),
+        WordPressInstallation.id.desc(),
+    )
     rows = (await operational_db.execute(
         select(WordPressInstallation).where(WordPressInstallation.license_key == license_obj.license_key)
-        .order_by(WordPressInstallation.created_at.desc(), WordPressInstallation.id.desc()).limit(100)
+        .order_by(*site_order).limit(100)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
