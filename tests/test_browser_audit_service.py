@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import socket
+
+import pytest
+from fastapi import HTTPException
+
+import browser_audit_service
+
+
+@pytest.mark.asyncio
+async def test_browser_service_rejects_local_and_private_addresses():
+    assert not await browser_audit_service._public_http_url("http://127.0.0.1/")
+    assert not await browser_audit_service._public_http_url("http://[::1]/")
+    assert not await browser_audit_service._public_http_url("https://localhost/")
+    assert not await browser_audit_service._public_http_url("file:///etc/passwd")
+
+
+@pytest.mark.asyncio
+async def test_browser_service_rejects_hostname_with_private_dns_answer(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.8", 443))]
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: FakeLoop())
+    assert not await browser_audit_service._public_http_url("https://shop.example/")
+
+
+@pytest.mark.asyncio
+async def test_browser_service_accepts_hostname_with_only_public_dns_answers(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: FakeLoop())
+    assert await browser_audit_service._public_http_url("https://shop.example/")
+
+
+def test_browser_service_authentication_is_time_limited_and_signed(monkeypatch):
+    secret = "x" * 40
+    monkeypatch.setenv("BROWSER_AUDIT_SHARED_SECRET", secret)
+    timestamp = "1793832000"
+    body = b'{"target_url":"https://shop.example/","request_id":"12345678"}'
+    signature = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
+    # The timestamp must be within five minutes of the test clock.
+    monkeypatch.setattr(browser_audit_service.time, "time", lambda: int(timestamp))
+    browser_audit_service._verify_signature(timestamp, f"sha256={signature}", body)
+    with pytest.raises(HTTPException) as error:
+        browser_audit_service._verify_signature(timestamp, "sha256=bad", body)
+    assert error.value.status_code == 401
+    monkeypatch.setattr(browser_audit_service.time, "time", lambda: int(timestamp) + 301)
+    with pytest.raises(HTTPException) as expired:
+        browser_audit_service._verify_signature(timestamp, f"sha256={signature}", body)
+    assert expired.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_browser_service_rejects_mixed_public_and_private_dns_answers(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, *args, **kwargs):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.20", 443)),
+            ]
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: FakeLoop())
+    assert not await browser_audit_service._public_http_url("https://shop.example/")
+
+
+def test_browser_service_restricts_top_level_navigation_to_requested_host():
+    assert browser_audit_service._allowed_navigation_host("shop.example", "https://shop.example/products")
+    assert browser_audit_service._allowed_navigation_host("shop.example", "https://www.shop.example/products")
+    assert not browser_audit_service._allowed_navigation_host("shop.example", "https://attacker.example/")
+
+
+@pytest.mark.asyncio
+async def test_browser_service_rejects_non_web_ports():
+    assert not await browser_audit_service._public_http_url("https://93.184.216.34:8443/")
+    assert not await browser_audit_service._public_http_url("http://93.184.216.34:3306/")
+
+
+def test_browser_service_redacts_query_and_fragment_from_evidence_urls():
+    safe = browser_audit_service._safe_evidence_url(
+        "https://user:pass@shop.example/products/item?token=secret&campaign=x#details"
+    )
+    assert safe == "https://shop.example/products/item"
+
+
+def test_browser_service_redacts_secret_values_from_diagnostics():
+    safe = browser_audit_service._safe_diagnostic_text(
+        "Request failed https://shop.example/api?api_key=secret token=abc123"
+    )
+    assert "secret" not in safe
+    assert "abc123" not in safe
+    assert "api_key" not in safe
