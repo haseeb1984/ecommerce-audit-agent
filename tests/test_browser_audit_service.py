@@ -154,14 +154,16 @@ def test_rendered_metadata_review_is_conservative_and_detects_malformed_shapes()
         "title_length": 20, "description_count": 1, "canonical_count": 1,
         "canonical_same_origin": False, "visible_h1_count": 1,
     }) is True
-\n\ndef test_lab_vitals_summary_calculates_cls_session_window_and_long_tasks():
+
+
+def test_lab_vitals_summary_calculates_cls_session_window_and_long_tasks():
     summary = browser_audit_service._summarize_lab_vitals({
         "lcp_supported": True, "cls_supported": True, "longtask_supported": True,
         "lcp_ms": 2800,
         "_cls_entries": [
             {"start": 100, "value": 0.04},
             {"start": 500, "value": 0.03},
-            {"start": 1800, "value": 0.08},
+            {"start": 1200, "value": 0.08},
             {"start": 7000, "value": 0.02},
         ],
         "_long_tasks": [55, 80],
