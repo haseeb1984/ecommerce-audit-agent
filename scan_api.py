@@ -92,24 +92,26 @@ async def submit_scan_batches(
     if payload.workspace_id:
         if not plan_features(license_obj.tier)["agency_management"]:
             raise HTTPException(status_code=403, detail="Client workspace audits are available on the Business plan.")
+        # Serialize workspace submissions with agency suspension and WordPress
+        # connection lifecycle changes using the shared agency -> workspace -> site lock order.
         agency = await db.scalar(select(AgencyAccount).where(
             AgencyAccount.owner_license_key == license_obj.license_key,
             AgencyAccount.status == "active",
-        ))
+        ).with_for_update())
         if agency is None:
             raise HTTPException(status_code=404, detail="Business agency workspace was not found.")
         workspace = await db.scalar(select(AgencyClientWorkspace).where(
             AgencyClientWorkspace.id == payload.workspace_id,
             AgencyClientWorkspace.agency_id == agency.id,
             AgencyClientWorkspace.status == "active",
-        ))
+        ).with_for_update())
         if workspace is None:
             raise HTTPException(status_code=404, detail="Client workspace was not found in this agency.")
         client_site = await db.scalar(select(AgencyClientWebsite).where(
             AgencyClientWebsite.agency_id == agency.id,
             AgencyClientWebsite.workspace_id == workspace.id,
             AgencyClientWebsite.status == "active",
-        ))
+        ).with_for_update())
         if client_site is None:
             raise HTTPException(status_code=409, detail="Connect and verify this client's WordPress website before assigning audits to the workspace.")
         submitted_host = (urlsplit(normalized[0]).hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
