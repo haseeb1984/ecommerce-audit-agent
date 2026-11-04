@@ -2703,6 +2703,8 @@ async def test_product_page_records_property_level_structured_data_outcomes(monk
 @pytest.mark.asyncio
 async def test_crawl_records_visible_product_offer_consistency_per_product_url(monkeypatch):
     monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(crawl_checks, "probe_common_exposure_paths", _empty_exposure)
+    monkeypatch.setattr(crawl_checks, "inspect_transport_security", _empty_transport)
     pages = {
         "https://shop.example/": (
             200,
