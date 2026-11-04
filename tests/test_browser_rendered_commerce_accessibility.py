@@ -14,6 +14,8 @@ def test_rendered_accessibility_evidence_describes_heuristic_not_wcag_verdict():
     assert "controls without a detectable accessible-name heuristic: 1" in evidence
     assert "positive tabindex: 2" in evidence
     assert "tabindex=-1: 1" in evidence
+    assert "positive tabindex: 2" in evidence
+    assert "tabindex=-1: 1" in evidence
     assert "not a WCAG conformance verdict" in evidence
 
 
