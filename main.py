@@ -2528,9 +2528,11 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     if member is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
+    # Serialize code issuance with administrator suspension so no fresh challenge
+    # can be inserted after the suspension transaction has revoked outstanding codes.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.id == member.agency_id, AgencyAccount.status == "active"
-    ))
+    ).with_for_update())
     if agency is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
@@ -2592,10 +2594,28 @@ async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Requ
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Agency team sign-in is temporarily unavailable.")
     now = datetime.now(timezone.utc)
-    challenge = await operational_db.scalar(select(AgencyTeamLoginChallenge).where(
+    # Read the challenge only to identify its tenant, then acquire locks in the
+    # same agency -> challenge order used by admin suspension. This prevents a
+    # verification transaction from creating a session after suspension has
+    # already enumerated and revoked the agency's active sessions.
+    candidate = await operational_db.scalar(select(AgencyTeamLoginChallenge).where(
         AgencyTeamLoginChallenge.email == email,
         AgencyTeamLoginChallenge.consumed_at.is_(None),
-    ).order_by(AgencyTeamLoginChallenge.created_at.desc()).limit(1).with_for_update())
+    ).order_by(AgencyTeamLoginChallenge.created_at.desc()).limit(1))
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == candidate.agency_id
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        candidate.consumed_at = now
+        await operational_db.commit()
+        raise HTTPException(status_code=401, detail="Agency team account is unavailable.")
+    challenge = await operational_db.scalar(select(AgencyTeamLoginChallenge).where(
+        AgencyTeamLoginChallenge.id == candidate.id,
+        AgencyTeamLoginChallenge.email == email,
+        AgencyTeamLoginChallenge.consumed_at.is_(None),
+    ).with_for_update())
     if challenge is None:
         raise HTTPException(status_code=401, detail="Sign-in code is invalid or expired.")
     expiry = challenge.expires_at
@@ -2616,10 +2636,7 @@ async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Requ
         AgencyTeamMember.normalized_email == email,
         AgencyTeamMember.status == "active",
     ))
-    agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == challenge.agency_id, AgencyAccount.status == "active"
-    ))
-    if member is None or agency is None:
+    if member is None:
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=401, detail="Agency team account is unavailable.")
