@@ -104,3 +104,17 @@ def test_admin_billing_history_reconciliation_disables_private_response_caching(
     assert 'response.headers["Cache-Control"] = "no-store, private"' in source
     assert 'response.headers["Pragma"] = "no-cache"' in source
     assert source.index("_require_admin_key(request)") < source.index("response.headers")
+
+
+
+def test_admin_single_payment_reconciliation_disables_private_response_caching():
+    import inspect
+
+    from main import admin_reconcile_payment
+
+    parameters = inspect.signature(admin_reconcile_payment).parameters
+    assert "response" in parameters
+    source = inspect.getsource(admin_reconcile_payment)
+    assert 'response.headers["Cache-Control"] = "no-store, private"' in source
+    assert 'response.headers["Pragma"] = "no-cache"' in source
+    assert source.index("_require_admin_key(request)") < source.index("response.headers")
