@@ -33,6 +33,16 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "Rendered-page network failures were not collected for this run.",
     ),
     (
+        "accessibility.rendered_images_alt",
+        "accessibility",
+        "A controlled browser did not inspect image alt-attribute presence in the rendered DOM for this run.",
+    ),
+    (
+        "accessibility.rendered_controls_name",
+        "accessibility",
+        "A controlled browser did not inspect rendered interactive-control naming heuristics for this run.",
+    ),
+    (
         "accessibility.manual_wcag_review",
         "accessibility",
         "Keyboard, screen-reader, zoom/reflow, and other manual WCAG review steps are not performed by this public automated scan.",
