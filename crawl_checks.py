@@ -40,6 +40,7 @@ from audit_checks import (
     _PageParser,
     CheckOutcome,
 )
+from audit_checks import record_homepage_outcomes
 
 
 MAX_CRAWL_PAGES = 12
@@ -2638,6 +2639,31 @@ async def run_bounded_site_crawl(
         # each successfully fetched HTML page. An empty finding list is a pass only
         # for that executed source check; manual-review findings remain warnings.
         if outcome_records is not None:
+            # Product detail pages need the same property-level Product/Offer
+            # checks as the entry page. Keep this bounded to the product route
+            # family and preserve existing phase-one outcomes for the homepage.
+            try:
+                is_product_page = bool(PRODUCT_DETAIL_PATH.search(urlsplit(final_url).path))
+            except (ValueError, UnicodeError):
+                is_product_page = False
+            if is_product_page:
+                detailed_structured_outcomes = record_homepage_outcomes(
+                    body,
+                    final_url,
+                    page_headers,
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                for specialized in detailed_structured_outcomes:
+                    if not specialized.check_id.startswith("structured_data."):
+                        continue
+                    already_recorded = any(
+                        item.check_id == specialized.check_id
+                        and _canonical_page_url(item.page_url) == _canonical_page_url(final_url)
+                        for item in outcome_records
+                    )
+                    if not already_recorded:
+                        outcome_records.append(specialized)
+
             page_check_families = (
                 ("security.headers_and_forms", "security", "HTTP security headers and sensitive GET-form source inspection"),
                 ("mobile_ux.viewport", "mobile_ux", "Mobile viewport source inspection"),
