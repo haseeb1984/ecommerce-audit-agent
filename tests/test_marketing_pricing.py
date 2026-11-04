@@ -37,3 +37,10 @@ def test_public_pricing_checkout_uses_defined_dom_lookup():
     assert 'const byId=id=>document.getElementById(id);' in html
     assert 'byId("checkoutEmail").value.trim()' in html
     assert '$("checkoutEmail")' not in html
+
+
+
+def test_public_pricing_comparison_uses_only_supported_package_tiers():
+    html = (ROOT / "marketing.html").read_text(encoding="utf-8")
+    assert 'data.plans.filter(plan=>supportedTiers.has(String(plan.tier||"").toLowerCase()))' in html
+    assert 'for(const plan of plans)header.append(el("th",plan.label))' in html
