@@ -466,6 +466,6 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     assert ".with_for_update()" in accept_source[accept_agency_lock:accept_member_lock]
 
     suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
-    suspend_invite_revoke = suspend_source.index("AgencyTeamMember.status == \\"invited\\"")
+    suspend_invite_revoke = suspend_source.index('AgencyTeamMember.status == "invited"')
     assert suspend_agency_lock < suspend_invite_revoke
     assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
