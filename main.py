@@ -6010,6 +6010,53 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
 
 
 
+@app.get("/api/v1/admin/billing/mirror-status")
+async def admin_billing_mirror_status(
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Expose safe aggregate diagnostics for cross-database billing delivery."""
+    _require_admin_key(request)
+    from sqlalchemy import func, select
+
+    now = datetime.now(timezone.utc)
+    pending = int((await db.execute(
+        select(func.count(BillingMirrorSyncOutbox.event_id)).where(
+            BillingMirrorSyncOutbox.status == "pending"
+        )
+    )).scalar_one() or 0)
+    due = int((await db.execute(
+        select(func.count(BillingMirrorSyncOutbox.event_id)).where(
+            BillingMirrorSyncOutbox.status == "pending",
+            BillingMirrorSyncOutbox.next_attempt_at <= now,
+        )
+    )).scalar_one() or 0)
+    completed = int((await db.execute(
+        select(func.count(BillingMirrorSyncOutbox.event_id)).where(
+            BillingMirrorSyncOutbox.status == "completed"
+        )
+    )).scalar_one() or 0)
+    oldest_due = await db.scalar(
+        select(func.min(BillingMirrorSyncOutbox.next_attempt_at)).where(
+            BillingMirrorSyncOutbox.status == "pending",
+            BillingMirrorSyncOutbox.next_attempt_at <= now,
+        )
+    )
+    max_attempts = int((await db.execute(
+        select(func.coalesce(func.max(BillingMirrorSyncOutbox.attempts), 0)).where(
+            BillingMirrorSyncOutbox.status == "pending"
+        )
+    )).scalar_one() or 0)
+    return {
+        "pending": pending,
+        "due": due,
+        "completed": completed,
+        "max_attempts": max_attempts,
+        "oldest_due_at": oldest_due.isoformat() if oldest_due else None,
+        "checked_at": now.isoformat(),
+    }
+
+
 @app.post("/api/v1/admin/billing/reconcile")
 async def admin_reconcile_billing_history(
     request: Request,
