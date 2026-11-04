@@ -247,7 +247,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       const withoutName = controls.filter(el => {
                         const aria = (el.getAttribute('aria-label') || '').trim();
                         const labelledBy = (el.getAttribute('aria-labelledby') || '').trim();
-                        const labelledByText = labelledBy.split(/\\s+/).map(id => {
+                        const labelledByText = labelledBy.split(/\s+/).map(id => {
                           const ref = document.getElementById(id);
                           return ref ? (ref.innerText || ref.textContent || '').trim() : '';
                         }).filter(Boolean).join(' ');
