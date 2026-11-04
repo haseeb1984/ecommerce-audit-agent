@@ -51,8 +51,11 @@ Keep browser worker logs free of customer credentials and request bodies.
 - Screenshots are not captured or persisted until durable evidence storage is
   configured. Do not advertise screenshot evidence as available.
 - Product-page detection is heuristic and may not identify every theme or variant UI; missing selectors are warnings for review, not proof that a product cannot be purchased.
-- This worker does not measure Core Web Vitals, field INP/LCP/CLS, orientation,
-  pinch zoom, keyboard navigation, or screen-reader behavior.
+- This worker does not measure Core Web Vitals or field INP/LCP/CLS. The fixed
+  portrait/landscape check measures viewport overflow only; it does not verify
+  physical device rotation sensors. The tabindex heuristic does not prove actual
+  keyboard operability, focus visibility, pinch-zoom behavior, or screen-reader
+  behavior.
 - The 24px target heuristic is a triage signal, not a WCAG conformance verdict.
 - A completed browser request does not establish full site crawl coverage. This
   initial service renders the submitted page only; it does not crawl JS links.
