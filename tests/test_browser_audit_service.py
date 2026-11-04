@@ -68,3 +68,15 @@ async def test_browser_service_rejects_mixed_public_and_private_dns_answers(monk
 
     monkeypatch.setattr(asyncio, "get_running_loop", lambda: FakeLoop())
     assert not await browser_audit_service._public_http_url("https://shop.example/")
+
+
+def test_browser_service_restricts_top_level_navigation_to_requested_host():
+    assert browser_audit_service._allowed_navigation_host("shop.example", "https://shop.example/products")
+    assert browser_audit_service._allowed_navigation_host("shop.example", "https://www.shop.example/products")
+    assert not browser_audit_service._allowed_navigation_host("shop.example", "https://attacker.example/")
+
+
+@pytest.mark.asyncio
+async def test_browser_service_rejects_non_web_ports():
+    assert not await browser_audit_service._public_http_url("https://93.184.216.34:8443/")
+    assert not await browser_audit_service._public_http_url("http://93.184.216.34:3306/")
