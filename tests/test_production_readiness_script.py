@@ -82,3 +82,35 @@ def test_public_app_url_readiness_requires_https_host_without_userinfo() -> None
     assert validate("https:///missing-host") is False
     assert validate("https://user:password@app.example.com") is False
     assert validate("") is False
+
+
+
+def test_configuration_gate_uses_public_app_url_validator() -> None:
+    from unittest.mock import patch
+
+    namespace = runpy.run_path(str(SCRIPT))
+    configured = {
+        "ADMIN_API_KEY": "admin-test",
+        "PADDLE_API_KEY": "paddle-test",
+        "PADDLE_WEBHOOK_SECRET": "webhook-test",
+        "PADDLE_CLIENT_TOKEN": "client-test",
+        "PADDLE_PRICE_ID_STARTER": "pri_starter",
+        "PADDLE_PRICE_ID_PRO": "pri_pro",
+        "PADDLE_PRICE_ID_BUSINESS": "pri_business",
+        "SMTP_HOST": "smtp.example.com",
+        "SMTP_FROM": "audit@example.com",
+        "GOOGLE_PAGESPEED_API_KEY": "pagespeed-test",
+        "GROQ_API_KEY": "groq-test",
+        "ACCOUNT_AUTH_SECRET": "a" * 32,
+        "HOSTINGER_DATABASE_URL": "mysql+asyncmy://test",
+        "PUBLIC_APP_URL": "http://app.example.com",
+        "SCAN_WORKER_TOKEN": "worker-test",
+        "PADDLE_ENVIRONMENT": "sandbox",
+        "SMTP_PORT": "587",
+        "SMTP_TLS_MODE": "starttls",
+    }
+    with patch.dict(os.environ, configured, clear=True):
+        failed, details = namespace["_configuration_status"]()
+
+    assert "public_app_url" in failed
+    assert any("PUBLIC_APP_URL must be an HTTPS URL" in detail for detail in details)

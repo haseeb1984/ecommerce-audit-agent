@@ -304,3 +304,78 @@ async def test_customer_website_archive_is_license_scoped_and_preserves_record()
     assert result["status"] == "archived"
     assert db.committed
     assert response.headers["cache-control"] == "no-store, private"
+
+
+class PrivateScanApiResult:
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class PrivateScanApiSession:
+    def __init__(self, *, scalar_rows=None, execute_rows=None):
+        self.scalar_rows = list(scalar_rows or [])
+        self.execute_rows = list(execute_rows or [])
+
+    async def scalar(self, _statement):
+        return self.scalar_rows.pop(0)
+
+    async def execute(self, _statement):
+        return self.execute_rows.pop(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_name", [
+    "list_scan_batches",
+    "get_scan_batch",
+    "list_scan_history",
+    "get_scan_job_result",
+])
+async def test_customer_scan_read_endpoints_disable_shared_caching(handler_name):
+    import scan_api
+
+    license_obj = SimpleNamespace(license_key="private-license")
+    response = Response()
+    if handler_name == "list_scan_batches":
+        db = PrivateScanApiSession(execute_rows=[PrivateScanApiResult()])
+        await scan_api.list_scan_batches(
+            response, limit=50, offset=0, license_obj=license_obj, db=db,
+        )
+    elif handler_name == "get_scan_batch":
+        batch = SimpleNamespace(
+            id="batch-private", request_id="request-private", batch_number=1,
+            package_tier="starter", status="queued", total_urls=0,
+            queued_count=0, processing_count=0, completed_count=0,
+            failed_count=0, cancelled_count=0,
+        )
+        db = PrivateScanApiSession(
+            scalar_rows=[batch], execute_rows=[PrivateScanApiResult()],
+        )
+        await scan_api.get_scan_batch(
+            response, "batch-private", license_obj=license_obj, db=db,
+        )
+    elif handler_name == "list_scan_history":
+        db = PrivateScanApiSession(execute_rows=[PrivateScanApiResult()])
+        await scan_api.list_scan_history(
+            response, limit=50, offset=0, license_obj=license_obj, db=db,
+        )
+    else:
+        job = SimpleNamespace(id="job-private")
+        result = SimpleNamespace(
+            id="result-private", job_id="job-private", website_id="website-private",
+            target_url="https://shop.example/", status="completed", overall_score=90,
+            finding_count=0, findings_json="[]", check_outcomes_json="[]",
+            coverage_json="{}", summary_json="{}", created_at=None,
+        )
+        db = PrivateScanApiSession(scalar_rows=[job, result])
+        await scan_api.get_scan_job_result(
+            response, "job-private", license_obj=license_obj, db=db,
+        )
+
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"

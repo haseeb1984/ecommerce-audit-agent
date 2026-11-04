@@ -222,11 +222,14 @@ async def queue_agency_wordpress_site_audit(
 
 @router.get("/api/v1/scan-batches")
 async def list_scan_batches(
+    response: Response,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     batches = (await db.execute(
         select(ScanBatch)
         .where(ScanBatch.license_key == license_obj.license_key)
@@ -308,10 +311,13 @@ async def retry_customer_scan_job(
 
 @router.get("/api/v1/scan-batches/{batch_id}")
 async def get_scan_batch(
+    response: Response,
     batch_id: str,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     batch = await db.scalar(select(ScanBatch).where(
         ScanBatch.id == batch_id,
         ScanBatch.license_key == license_obj.license_key,
@@ -361,11 +367,14 @@ async def get_scan_batch(
 
 @router.get("/api/v1/scan-history")
 async def list_scan_history(
+    response: Response,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     rows = (await db.execute(
         select(WebsiteScanResult)
         .where(WebsiteScanResult.license_key == license_obj.license_key)
@@ -395,10 +404,13 @@ async def list_scan_history(
 
 @router.get("/api/v1/scan-jobs/{job_id}/result")
 async def get_scan_job_result(
+    response: Response,
     job_id: str,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     job = await db.scalar(select(WebsiteScanJob).where(
         WebsiteScanJob.id == job_id,
         WebsiteScanJob.license_key == license_obj.license_key,
