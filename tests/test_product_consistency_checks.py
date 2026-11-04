@@ -121,7 +121,7 @@ def test_visible_product_identifier_mismatch_is_verified():
       <span class="product-sku">WID-200</span>
       <span class="barcode">0123456789012</span>
       <script type="application/ld+json">
-      {"@type":"Product","sku":"WID-100","gtin13":"0123456789013"}
+      {"@type":"Product","sku":"WID-100","gtin13":"1234567890128"}
       </script>
     </body></html>
     """
@@ -176,3 +176,30 @@ def test_malformed_gtin_is_not_treated_as_a_verified_identifier():
     by_id = {item.check_id: item for item in outcomes}
 
     assert by_id["structured_data.visible_gtin_consistency"].outcome == "not_assessed"
+
+
+
+def test_gtin_with_invalid_check_digit_is_not_assessed():
+    html = """
+    <html><body>
+      <span itemprop="gtin13">0123456789013</span>
+      <script type="application/ld+json">
+      {"@type":"Product","gtin13":"0123456789013"}
+      </script>
+    </body></html>
+    """
+    _, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["structured_data.visible_gtin_consistency"].outcome == "not_assessed"
+
+
+def test_gtin_supported_lengths_validate_gs1_check_digit():
+    from product_consistency_checks import _is_valid_gtin
+
+    assert _is_valid_gtin("12345670")
+    assert _is_valid_gtin("123456789012")
+    assert _is_valid_gtin("0123456789012")
+    assert _is_valid_gtin("10012345000017")
+    assert not _is_valid_gtin("0123456789013")
