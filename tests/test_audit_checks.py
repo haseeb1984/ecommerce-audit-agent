@@ -1390,6 +1390,15 @@ def test_sitemap_seed_extraction_rejects_unsafe_xml_entity_declarations():
     assert any("unsafe XML constructs" in item for item in limitations)
 
 
+def test_jsonld_object_walker_handles_deeply_nested_values_without_python_recursion():
+    nested = {"@type": "Product", "name": "Deep product"}
+    for _ in range(1500):
+        nested = {"nested": nested}
+
+    entities = list(audit_checks._iter_jsonld_objects(nested))
+    assert any(entity.get("@type") == "Product" for entity in entities)
+
+
 def test_nested_jsonld_product_entities_are_discovered_for_homepage_findings_and_outcomes():
     import json
 
