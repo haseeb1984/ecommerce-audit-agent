@@ -86,14 +86,14 @@ def _safe_diagnostic_text(value: str) -> str:
 
 def _format_navigation_timing(timing: dict, resource_summary: dict) -> str:
     """Describe browser-observed navigation timings without calling them Core Web Vitals."""
-    fields = {
-        "response_start_ms": timing.get("responseStart"),
-        "dom_content_loaded_ms": timing.get("domContentLoadedEventEnd"),
-        "load_event_end_ms": timing.get("loadEventEnd"),
-    }
+    fields = (
+        ("responseStart", timing.get("responseStart")),
+        ("domContentLoadedEventEnd", timing.get("domContentLoadedEventEnd")),
+        ("loadEventEnd", timing.get("loadEventEnd")),
+    )
     rendered = ", ".join(
-        f"{name.replace('_ms', '')}={round(float(value))}ms"
-        for name, value in fields.items()
+        f"{name}={round(float(value))}ms"
+        for name, value in fields
         if isinstance(value, (int, float)) and value > 0
     )
     return (
