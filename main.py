@@ -6217,10 +6217,12 @@ async def admin_payment_events(
     }
 
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
-async def admin_reconcile_payment(event_id: str, request: Request,
+async def admin_reconcile_payment(event_id: str, request: Request, response: Response,
                                   db: AsyncSession = Depends(get_async_db)):
     """Reconcile a recorded payment and safely backfill missing provider identifiers."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
     from sqlalchemy import select
     event = (await db.execute(select(PaymentWebhookEvent).where(
