@@ -61,7 +61,7 @@ header{background:#102b46;color:#fff}nav{height:76px;display:flex;align-items:ce
   plansNode.replaceChildren();
   const order=["starter","pro","business"];
   const supportedTiers=new Set(order);
-  const plans=data.plans.slice().sort((a,b)=>order.indexOf(a.tier)-order.indexOf(b.tier));
+  const plans=data.plans.filter(plan=>supportedTiers.has(String(plan.tier||"").toLowerCase())).sort((a,b)=>order.indexOf(String(a.tier||"").toLowerCase())-order.indexOf(String(b.tier||"").toLowerCase()));
   if(!plans.length){plansNode.append(el("article","Paddle checkout is not configured yet. Please check back soon.","plan"));status.textContent="Purchase is temporarily unavailable while payment and license delivery are configured.";return}
   for(const plan of plans){
    const tier=String(plan.tier||"").toLowerCase();if(!supportedTiers.has(tier))continue;
