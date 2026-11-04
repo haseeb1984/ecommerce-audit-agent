@@ -536,14 +536,17 @@ def _finding(category: str, title: str, status: str, severity: str,
 
 
 def _iter_jsonld_objects(value: Any):
-    """Walk JSON-LD object nodes at any nesting depth, not only @graph roots."""
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from _iter_jsonld_objects(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _iter_jsonld_objects(child)
+    """Walk nested JSON-LD object nodes iteratively to avoid recursion-depth failures."""
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            yield current
+            # JSON-LD is parsed from bounded remote HTML. Iterative traversal avoids
+            # turning deeply nested but parseable input into a Python RecursionError.
+            pending.extend(reversed(tuple(current.values())))
+        elif isinstance(current, list):
+            pending.extend(reversed(current))
 
 
 def record_homepage_outcomes(
