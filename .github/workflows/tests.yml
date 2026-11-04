@@ -56,7 +56,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements*.txt
+          cache-dependency-path: |
+            requirements*.txt
+            browser-worker/requirements.txt
       - name: Verify production dependencies are fully pinned and hashed
         run: python -m pip install --require-hashes -r requirements.txt
       - name: Install development dependencies
@@ -65,6 +67,7 @@ jobs:
         run: |
           python -m pip install pip-audit
           pip-audit --format json --output pip-audit.json
+          pip-audit --requirement browser-worker/requirements.txt
       - name: Record resolved Python dependency versions
         if: always()
         run: python -m pip freeze > resolved-dependencies.txt
