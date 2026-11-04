@@ -205,6 +205,18 @@ def _availability_values(values: list[str]) -> set[str]:
             result.add(normalized)
     return result
 
+def _is_valid_gtin(value: str) -> bool:
+    """Validate supported GTIN lengths and the GS1 modulo-10 check digit."""
+    if len(value) not in {8, 12, 13, 14} or not value.isdigit():
+        return False
+    weighted_sum = sum(
+        int(digit) * (3 if position % 2 == 0 else 1)
+        for position, digit in enumerate(reversed(value[:-1]))
+    )
+    expected_check_digit = (10 - weighted_sum % 10) % 10
+    return expected_check_digit == int(value[-1])
+
+
 def _identifier_values(values: list[str], *, gtin: bool = False) -> set[str]:
     """Normalize explicitly visible product identifiers without guessing missing digits."""
     result: set[str] = set()
@@ -214,7 +226,7 @@ def _identifier_values(values: list[str], *, gtin: bool = False) -> set[str]:
             # Semantic attributes and visible text can repeat the same GTIN.
             if len(digits) in {16, 24, 26, 28} and digits[:len(digits) // 2] == digits[len(digits) // 2:]:
                 digits = digits[:len(digits) // 2]
-            if len(digits) in {8, 12, 13, 14}:
+            if _is_valid_gtin(digits):
                 result.add(digits)
         else:
             parts = re.sub(r"\\s+", " ", value).strip().upper().split()
