@@ -84,6 +84,26 @@ def _safe_diagnostic_text(value: str) -> str:
 
 
 
+def _format_navigation_timing(timing: dict, resource_summary: dict) -> str:
+    """Describe browser-observed navigation timings without calling them Core Web Vitals."""
+    fields = (
+        ("responseStart", timing.get("responseStart")),
+        ("domContentLoadedEventEnd", timing.get("domContentLoadedEventEnd")),
+        ("loadEventEnd", timing.get("loadEventEnd")),
+    )
+    rendered = ", ".join(
+        f"{name}={round(float(value))}ms"
+        for name, value in fields
+        if isinstance(value, (int, float)) and value > 0
+    )
+    return (
+        f"Navigation timing (browser lab observation): {rendered or 'timing fields unavailable'}; "
+        f"resource entries: {resource_summary.get('count', 0)}; "
+        f"transfer bytes reported by Resource Timing: {resource_summary.get('transfer_bytes', 0)}. "
+        "These are single-run diagnostics, not field Core Web Vitals or a representative performance score."
+    )
+
+
 def _format_accessibility_evidence(summary: dict) -> str:
     return (
         f"Rendered images: {summary.get('image_count', 0)}; images missing an alt attribute: "
@@ -247,7 +267,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       const withoutName = controls.filter(el => {
                         const aria = (el.getAttribute('aria-label') || '').trim();
                         const labelledBy = (el.getAttribute('aria-labelledby') || '').trim();
-                        const labelledByText = labelledBy.split(/\s+/).map(id => {
+                        const labelledByText = labelledBy.split(/\\s+/).map(id => {
                           const ref = document.getElementById(id);
                           return ref ? (ref.innerText || ref.textContent || '').trim() : '';
                         }).filter(Boolean).join(' ');
@@ -280,6 +300,30 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence_ref": "browser.accessibility.controls",
                       },
                     ])
+                    performance_data = await page.evaluate("""() => {
+                      const nav = performance.getEntriesByType('navigation')[0];
+                      const resources = performance.getEntriesByType('resource');
+                      return {
+                        navigation: nav ? {
+                          responseStart: nav.responseStart,
+                          domContentLoadedEventEnd: nav.domContentLoadedEventEnd,
+                          loadEventEnd: nav.loadEventEnd
+                        } : {},
+                        resources: {
+                          count: resources.length,
+                          transfer_bytes: resources.reduce((sum, item) => sum + (item.transferSize || 0), 0)
+                        }
+                      };
+                    }""")
+                    outcomes.append({
+                        "check_id": "performance.browser_navigation_timing",
+                        "category": "performance", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "pass" if performance_data["navigation"] else "not_assessed",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Chromium Performance Navigation Timing and Resource Timing API; single page render",
+                        "evidence": _format_navigation_timing(performance_data["navigation"], performance_data["resources"]),
+                        "evidence_ref": "browser.navigation_timing",
+                    })
                     outcomes.append({
                         "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": _safe_evidence_url(page.url),
                         "outcome": "pass" if rendered_dom["elementCount"] > 0 else "warning",
@@ -414,5 +458,6 @@ async def audit(payload: BrowserAuditRequest, request: Request,
             "navigation_error": navigation_error,
             "screenshots": "not_captured: durable evidence storage is not configured",
             "core_web_vitals": "not_measured: no field-data source or stable lab metric collection configured",
+            "navigation_timing": "single-run browser diagnostics only; not field Core Web Vitals",
         },
     }
