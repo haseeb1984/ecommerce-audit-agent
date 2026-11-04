@@ -15,7 +15,7 @@ import os
 import re
 import socket
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl
@@ -23,6 +23,8 @@ from pydantic import BaseModel, Field, HttpUrl
 app = FastAPI(title="Ecommerce Audit Browser Worker", docs_url=None, redoc_url=None)
 MAX_REQUEST_BYTES = 16_384
 MAX_BROWSER_REQUESTS = 180
+MAX_RENDERED_PAGES = 6
+MAX_RENDERED_LINKS = 30
 VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 _SEEN_REQUESTS: dict[str, int] = {}
@@ -176,6 +178,39 @@ def _allowed_navigation_host(target_host: str, request_url: str) -> bool:
         return False
 
 
+
+def _normalize_internal_crawl_url(base_url: str, href: str, target_host: str) -> str | None:
+    """Return a same-site HTTP(S) URL without credentials, query strings or fragments."""
+    try:
+        candidate = urljoin(base_url, href)
+        parts = urlsplit(candidate)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            return None
+        if parts.username is not None or parts.password is not None:
+            return None
+        if parts.port not in (None, 80, 443) or not _allowed_navigation_host(target_host, candidate):
+            return None
+        host = parts.hostname.lower().rstrip(".")
+        netloc = f"[{host}]" if ":" in host else host
+        default_port = 80 if parts.scheme == "http" else 443
+        if parts.port and parts.port != default_port:
+            netloc = f"{netloc}:{parts.port}"
+        return urlunsplit((parts.scheme.lower(), netloc, parts.path or "/", "", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_internal_crawl_evidence(summary: dict) -> str:
+    return (
+        f"Rendered pages: {summary.get('rendered_pages', 1)} of a maximum {MAX_RENDERED_PAGES}; "
+        f"eligible same-site links discovered: {summary.get('eligible_links', 0)}; "
+        f"navigation failures: {summary.get('navigation_failures', 0)}; "
+        f"page-cap reached: {bool(summary.get('page_cap_reached'))}; "
+        f"browser request cap reached: {bool(summary.get('request_cap_reached'))}. "
+        "This is a one-hop, JavaScript-discovered sample, not a full-site crawl."
+    )
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "browser": "playwright", "viewport_count": len(VIEWPORTS)}
@@ -216,6 +251,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
     navigation_error = None
     viewport_overflow: list[int] = []
     rendered_dom = None
+    rendered_page_urls = [_safe_evidence_url(target)]
+    internal_crawl_summary = {"rendered_pages": 1, "eligible_links": 0, "navigation_failures": 0, "page_cap_reached": False, "request_cap_reached": False}
 
     try:
         await asyncio.wait_for(_BROWSER_SEMAPHORE.acquire(), timeout=2.0)
@@ -496,6 +533,63 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence": f"Completed {len(VIEWPORTS)} viewport widths; horizontal overflow observed at: {', '.join(str(width) for width in viewport_overflow) if viewport_overflow else 'none'}.",
                         "evidence_ref": "browser.viewport_matrix",
                     })
+                    # Discover links after client-side hydration, then render a bounded
+                    # one-hop sample. The route guard validates every navigation and request.
+                    raw_links = await page.evaluate("""() => Array.from(document.querySelectorAll('a[href]'))
+                      .map(anchor => anchor.href).slice(0, 500)""")
+                    candidates = []
+                    seen_candidates = set()
+                    for href in raw_links:
+                        candidate = _normalize_internal_crawl_url(page.url, href, target_host)
+                        if candidate and candidate not in seen_candidates:
+                            seen_candidates.add(candidate)
+                            candidates.append(candidate)
+                        if len(candidates) >= MAX_RENDERED_LINKS:
+                            break
+                    if candidates:
+                        public_results = await asyncio.gather(*(_public_http_url(candidate) for candidate in candidates))
+                        candidates = [candidate for candidate, is_public in zip(candidates, public_results) if is_public]
+                    internal_crawl_summary["eligible_links"] = len(candidates)
+                    selected_pages = candidates[:MAX_RENDERED_PAGES - 1]
+                    internal_crawl_summary["page_cap_reached"] = len(candidates) > len(selected_pages)
+                    for page_index, candidate in enumerate(selected_pages, start=2):
+                        if request_count >= MAX_BROWSER_REQUESTS:
+                            internal_crawl_summary["request_cap_reached"] = True
+                            break
+                        try:
+                            secondary_response = await page.goto(candidate, wait_until="domcontentloaded", timeout=8_000)
+                            await page.wait_for_timeout(400)
+                            if secondary_response is not None and secondary_response.status >= 400:
+                                internal_crawl_summary["navigation_failures"] += 1
+                                continue
+                            secondary_dom = await page.evaluate("""() => ({
+                              elementCount: document.querySelectorAll('*').length,
+                              bodyTextLength: (document.body ? document.body.innerText : '').trim().length
+                            })""")
+                            safe_page_url = _safe_evidence_url(page.url)
+                            rendered_page_urls.append(safe_page_url)
+                            internal_crawl_summary["rendered_pages"] += 1
+                            outcomes.append({
+                                "check_id": "crawl.javascript_rendered_dom", "category": "crawlability",
+                                "page_url": safe_page_url,
+                                "outcome": "pass" if secondary_dom["elementCount"] > 0 else "warning",
+                                "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "method": "Playwright Chromium post-JavaScript DOM inspection on a bounded internal page",
+                                "evidence": f"Rendered DOM element count: {secondary_dom['elementCount']}; visible body text length: {secondary_dom['bodyTextLength']} characters.",
+                                "evidence_ref": f"browser.rendered_dom.page_{page_index}",
+                            })
+                        except Exception:
+                            internal_crawl_summary["navigation_failures"] += 1
+                    internal_crawl_summary["request_cap_reached"] = internal_crawl_summary["request_cap_reached"] or request_count >= MAX_BROWSER_REQUESTS
+                    outcomes.append({
+                        "check_id": "crawl.javascript_internal_pages", "category": "crawlability",
+                        "page_url": _safe_evidence_url(target),
+                        "outcome": "warning" if internal_crawl_summary["navigation_failures"] or internal_crawl_summary["page_cap_reached"] or internal_crawl_summary["request_cap_reached"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright one-hop discovery from hydrated same-site anchor elements; bounded to six pages",
+                        "evidence": _format_internal_crawl_evidence(internal_crawl_summary),
+                        "evidence_ref": "browser.internal_crawl",
+                    })
                 else:
                     outcomes.extend([
                         {
@@ -511,6 +605,12 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                             "evidence_ref": "browser.viewport_matrix",
                         },
                     ])
+                    outcomes.append({
+                        "check_id": "crawl.javascript_internal_pages", "category": "crawlability", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright Chromium navigation", "evidence": f"Internal rendered-page discovery was not run because homepage navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.internal_crawl",
+                    })
                     outcomes.append({
                         "check_id": "browser.navigation", "category": "crawlability", "page_url": target,
                         "outcome": "error", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -562,6 +662,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
         "check_outcomes": outcomes,
         "summary": {
             "viewports": [width for width, _ in VIEWPORTS],
+            "rendered_pages": rendered_page_urls,
+            "internal_crawl": internal_crawl_summary,
             "browser_requests": min(request_count, MAX_BROWSER_REQUESTS),
             "blocked_requests": browser_blocked_requests,
             "navigation_error": navigation_error,
