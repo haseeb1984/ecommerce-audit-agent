@@ -26,11 +26,17 @@ def test_product_page_evidence_reports_rendered_signals_and_limitations():
         "visible_h1": 1,
         "visible_price": 2,
         "purchase_controls": 1,
+        "variant_controls": 3,
+        "product_images": 4,
+        "quantity_controls": 1,
     })
     assert "Product-like page detected: True" in evidence
     assert "Product JSON-LD entities: 1" in evidence
     assert "visible price candidates: 2" in evidence
     assert "visible purchase controls: 1" in evidence
+    assert "visible variant-selection controls: 3" in evidence
+    assert "product image candidates: 4" in evidence
+    assert "quantity controls: 1" in evidence
     assert "not a checkout test" in evidence
 
 
