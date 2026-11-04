@@ -37,6 +37,12 @@ class CustomerLoginThrottle(HostingerBase):
     email = Column(String(254), primary_key=True)
 
 
+class CustomerEmailChangeThrottle(HostingerBase):
+    """Per-license serialization row for email-change request and verification."""
+    __tablename__ = "customer_email_change_throttles"
+    license_key = Column(String(100), primary_key=True)
+
+
 class CustomerLoginChallenge(HostingerBase):
     __tablename__ = "customer_login_challenges"
     id = Column(String(64), primary_key=True)

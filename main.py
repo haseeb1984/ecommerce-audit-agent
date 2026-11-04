@@ -56,7 +56,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -1361,6 +1361,23 @@ def _customer_email_change_operational_updates(
     )
 
 
+async def _lock_customer_email_change_license(operational_db: AsyncSession, license_key: str) -> None:
+    """Serialize email-change requests/verifications across every device for one license."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects.mysql import insert as mysql_insert
+
+    # A stable per-license row exists even when a customer has multiple active
+    # sessions. The upsert creates it on first use and obtains the MySQL row lock.
+    await operational_db.execute(
+        mysql_insert(CustomerEmailChangeThrottle)
+        .values(license_key=license_key)
+        .on_duplicate_key_update(license_key=CustomerEmailChangeThrottle.license_key)
+    )
+    await operational_db.scalar(select(CustomerEmailChangeThrottle).where(
+        CustomerEmailChangeThrottle.license_key == license_key,
+    ).with_for_update())
+
+
 @app.post("/api/v1/account/email-change", status_code=202)
 @app.post("/api/v1/account/auth/email-change/request-code", status_code=202)
 async def request_customer_email_change(
@@ -1378,8 +1395,16 @@ async def request_customer_email_change(
     if not _is_valid_agency_team_email(new_email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
+    candidate = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
+    ))
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    await _lock_customer_email_change_license(operational_db, candidate.license_key)
     current = (await operational_db.execute(select(CustomerSession).where(
         CustomerSession.token_hash == token_hash,
+        CustomerSession.license_key == candidate.license_key,
         CustomerSession.revoked_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
     if current is None:
@@ -1461,8 +1486,16 @@ async def verify_customer_email_change(
         raise HTTPException(status_code=503, detail="Customer account security is temporarily unavailable.")
     token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
     now = datetime.now(timezone.utc)
+    candidate = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.revoked_at.is_(None),
+    ))
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    await _lock_customer_email_change_license(operational_db, candidate.license_key)
     current = (await operational_db.execute(select(CustomerSession).where(
         CustomerSession.token_hash == token_hash,
+        CustomerSession.license_key == candidate.license_key,
         CustomerSession.revoked_at.is_(None),
     ).with_for_update())).scalar_one_or_none()
     if current is None:
