@@ -126,7 +126,7 @@ def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[s
     offers: list[dict[str, Any]] = []
     products: list[dict[str, Any]] = []
     for script_match in re.finditer(
-        r"<script\b[^>]*type\s*=\s*['\\"]application/ld\+json['\\"][^>]*>(.*?)</script\s*>",
+        r"""<script\b[^>]*type\s*=\s*['"]application/ld\+json['"][^>]*>(.*?)</script\s*>""",
         html,
         re.I | re.S,
     ):
