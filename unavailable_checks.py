@@ -18,6 +18,11 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "A controlled browser did not complete a rendered DOM inspection for this run.",
     ),
     (
+        "mobile_ux.rendered_orientation",
+        "mobile_ux",
+        "A controlled browser did not compare rendered horizontal overflow in portrait and landscape viewports for this run.",
+    ),
+    (
         "mobile_ux.rendered_viewport_matrix",
         "mobile_ux",
         "A controlled browser did not complete the agreed rendered viewport matrix for this run.",
@@ -36,6 +41,26 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "performance.browser_network_failures",
         "performance",
         "Rendered-page network failures were not collected for this run.",
+    ),
+    (
+        "accessibility.rendered_images_alt",
+        "accessibility",
+        "A controlled browser did not inspect image alt-attribute presence in the rendered DOM for this run.",
+    ),
+    (
+        "accessibility.rendered_controls_name",
+        "accessibility",
+        "A controlled browser did not inspect rendered interactive-control naming heuristics for this run.",
+    ),
+    (
+        "ecommerce.product_page_rendered_signals",
+        "ecommerce",
+        "A controlled browser did not inspect rendered product-page identity, price, and purchase-control signals for this run.",
+    ),
+    (
+        "accessibility.keyboard_focus_order",
+        "accessibility",
+        "A controlled browser did not inspect rendered interactive-control tabindex patterns for this run.",
     ),
     (
         "accessibility.manual_wcag_review",
@@ -83,7 +108,7 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
     }
     now = datetime.now(timezone.utc).isoformat()
     added = 0
-    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing"}
+    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "mobile_ux.rendered_orientation", "performance.browser_console_errors", "performance.browser_network_failures", "performance.browser_navigation_timing", "accessibility.rendered_images_alt", "accessibility.rendered_controls_name", "accessibility.keyboard_focus_order", "ecommerce.product_page_rendered_signals"}
     for check_id, category, evidence in UNAVAILABLE_CHECKS:
         if browser_audit_completed and check_id in browser_checks:
             continue

@@ -37,10 +37,12 @@ Keep browser worker logs free of customer credentials and request bodies.
 ## Implemented browser checks
 
 - One bounded Chromium page render with a 20-second navigation timeout; top-level redirects remain on the requested host or its `www` alias, and web requests are limited to ports 80/443.
-- Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels.
+- Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels, plus fixed 390x844 portrait and 844x390 landscape overflow checks.
 - Rendered DOM presence, horizontal overflow, and interactive-element dimensions
   below a 24px heuristic threshold.
 - Browser console/page exceptions and failed or blocked network requests.
+- Rendered accessibility heuristics for image alt-attribute presence, accessible-name signals, and suspicious tabindex patterns on visible interactive controls; these are not WCAG conformance verdicts.
+- Product-page rendered-signal heuristic for visible H1, price candidates, Product JSON-LD, purchase controls, variant-selection controls, product-image candidates, and quantity controls; it is not a checkout test or product-data correctness verdict.
 - Per-check outcomes and evidence summaries returned to the existing scan worker
   and persisted in the existing `WebsiteScanResult`; no second queue or billing path.
 
@@ -48,8 +50,12 @@ Keep browser worker logs free of customer credentials and request bodies.
 
 - Screenshots are not captured or persisted until durable evidence storage is
   configured. Do not advertise screenshot evidence as available.
-- This worker does not measure Core Web Vitals, field INP/LCP/CLS, orientation,
-  pinch zoom, keyboard navigation, or screen-reader behavior.
+- Product-page detection is heuristic and may not identify every theme or variant UI; missing selectors are warnings for review, not proof that a product cannot be purchased.
+- This worker does not measure Core Web Vitals or field INP/LCP/CLS. The fixed
+  portrait/landscape check measures viewport overflow only; it does not verify
+  physical device rotation sensors. The tabindex heuristic does not prove actual
+  keyboard operability, focus visibility, pinch-zoom behavior, or screen-reader
+  behavior.
 - The 24px target heuristic is a triage signal, not a WCAG conformance verdict.
 - A completed browser request does not establish full site crawl coverage. This
   initial service renders the submitted page only; it does not crawl JS links.

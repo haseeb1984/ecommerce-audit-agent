@@ -104,6 +104,41 @@ def _format_navigation_timing(timing: dict, resource_summary: dict) -> str:
     )
 
 
+
+def _format_accessibility_evidence(summary: dict) -> str:
+    return (
+        f"Rendered images: {summary.get('image_count', 0)}; images missing an alt attribute: "
+        f"{summary.get('images_missing_alt', 0)}. Visible interactive controls: "
+        f"{summary.get('control_count', 0)}; controls without a detectable accessible-name heuristic: "
+        f"{summary.get('controls_without_name', 0)}; visible controls with positive tabindex: "
+        f"{summary.get('positive_tabindex_count', 0)}; visible controls with tabindex=-1: "
+        f"{summary.get('negative_tabindex_count', 0)}. This automated DOM heuristic is not a WCAG conformance verdict."
+    )
+
+
+def _format_product_page_evidence(summary: dict) -> str:
+    return (
+        f"Product-like page detected: {bool(summary.get('is_product_page'))}; "
+        f"Product JSON-LD entities: {summary.get('product_entities', 0)}; "
+        f"visible H1 elements: {summary.get('visible_h1', 0)}; "
+        f"visible price candidates: {summary.get('visible_price', 0)}; "
+        f"visible purchase controls: {summary.get('purchase_controls', 0)}; visible variant-selection controls: "
+        f"{summary.get('variant_controls', 0)}; product image candidates: {summary.get('product_images', 0)}; "
+        f"quantity controls: {summary.get('quantity_controls', 0)}. "
+        "Rendered selectors are heuristic diagnostics; themes, variants, consent, and inventory state can affect visibility. "
+        "This is not a checkout test or a product-data correctness verdict."
+    )
+
+def _format_orientation_evidence(summary: dict) -> str:
+    return (
+        f"Portrait viewport {summary.get('portrait_width', 390)}x{summary.get('portrait_height', 844)}: "
+        f"document width {summary.get('portrait_scroll_width', 0)}px; landscape viewport "
+        f"{summary.get('landscape_width', 844)}x{summary.get('landscape_height', 390)}: "
+        f"document width {summary.get('landscape_scroll_width', 0)}px. "
+        "This checks horizontal overflow at two fixed viewport orientations; it does not verify device sensors or rotation behavior."
+    )
+
+
 async def _public_http_url(value: str) -> bool:
     try:
         parts = urlsplit(value)
@@ -246,6 +281,111 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       elementCount: document.querySelectorAll('*').length,
                       bodyTextLength: (document.body ? document.body.innerText : '').trim().length
                     })""")
+                    accessibility_summary = await page.evaluate("""() => {
+                      const images = [...document.images];
+                      const missingAlt = images.filter(image => !image.hasAttribute('alt')).length;
+                      const controls = [...document.querySelectorAll('a,button,input,select,textarea,[role="button"],[role="link"]')]
+                        .filter(el => {
+                          const rect = el.getBoundingClientRect();
+                          const style = getComputedStyle(el);
+                          return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                        });
+                      const withoutName = controls.filter(el => {
+                        const aria = (el.getAttribute('aria-label') || '').trim();
+                        const labelledBy = (el.getAttribute('aria-labelledby') || '').trim();
+                        const labelledByText = labelledBy.split(/\s+/).map(id => {
+                          const ref = document.getElementById(id);
+                          return ref ? (ref.innerText || ref.textContent || '').trim() : '';
+                        }).filter(Boolean).join(' ');
+                        const title = (el.getAttribute('title') || '').trim();
+                        const text = (el.innerText || el.value || '').trim();
+                        const alt = el.querySelector('img[alt]')?.getAttribute('alt')?.trim() || '';
+                        const labels = el.labels ? [...el.labels].map(label => (label.innerText || label.textContent || '').trim()).filter(Boolean).join(' ') : '';
+                        return !(aria || labelledByText || title || text || alt || labels);
+                      }).length;
+                      return {image_count: images.length, images_missing_alt: missingAlt,
+                        control_count: controls.length, controls_without_name: withoutName,
+                        positive_tabindex_count: controls.filter(el => el.tabIndex > 0).length,
+                        negative_tabindex_count: controls.filter(el => el.getAttribute('tabindex') === '-1').length};
+                    }""")
+                    outcomes.extend([
+                      {
+                        "check_id": "accessibility.rendered_images_alt",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if accessibility_summary["images_missing_alt"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM image alt-attribute presence heuristic",
+                        "evidence": _format_accessibility_evidence(accessibility_summary),
+                        "evidence_ref": "browser.accessibility.images",
+                      },
+                      {
+                        "check_id": "accessibility.keyboard_focus_order",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if accessibility_summary["positive_tabindex_count"] or accessibility_summary["negative_tabindex_count"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM focus-order heuristic for visible interactive controls",
+                        "evidence": _format_accessibility_evidence(accessibility_summary),
+                        "evidence_ref": "browser.accessibility.focus_order",
+                      },
+                      {
+                        "check_id": "accessibility.rendered_controls_name",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "warning" if accessibility_summary["controls_without_name"] else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM accessible-name presence heuristic",
+                        "evidence": _format_accessibility_evidence(accessibility_summary),
+                        "evidence_ref": "browser.accessibility.controls",
+                      },
+                    ])
+                    product_page_summary = await page.evaluate("""() => {
+                      const visible = el => {
+                        const r = el.getBoundingClientRect();
+                        const s = getComputedStyle(el);
+                        return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+                      };
+                      const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')];
+                      let productEntities = 0;
+                      let visited = 0;
+                      const stack = scripts.slice(0, 30).map(script => {
+                        try { return JSON.parse(script.textContent || 'null'); } catch (_) { return null; }
+                      }).filter(Boolean);
+                      while (stack.length && visited < 10000) {
+                        const node = stack.pop(); visited += 1;
+                        if (Array.isArray(node)) { stack.push(...node.slice(0, 1000)); continue; }
+                        if (!node || typeof node !== 'object') continue;
+                        const types = Array.isArray(node['@type']) ? node['@type'] : [node['@type']];
+                        if (types.some(type => typeof type === 'string' && type.toLowerCase().split('/').pop().split('#').pop() === 'product')) productEntities += 1;
+                        for (const value of Object.values(node)) if (value && typeof value === 'object') stack.push(value);
+                      }
+                      const h1 = [...document.querySelectorAll('h1')].filter(visible).length;
+                      const price = [...document.querySelectorAll('[itemprop="price"],[class*="price" i],[data-price],[aria-label*="price" i]')].filter(visible).length;
+                      const purchase = [...document.querySelectorAll('button,input[type="submit"], [role="button"]')].filter(visible).filter(el => {
+                        const label = [el.innerText, el.value, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').toLowerCase();
+                        return /add to cart|add to bag|add to basket|buy now|purchase/.test(label);
+                      }).length;
+                      const variantControls = [...document.querySelectorAll('select,input[type="radio"],[role="radio"],[name*="size" i],[name*="color" i],[name*="variant" i],[aria-label*="size" i],[aria-label*="color" i]')].filter(visible).length;
+                      const productImages = [...document.querySelectorAll('[itemprop="image"],[class*="product" i] img,img[alt*="product" i]')].filter(visible).length;
+                      const quantityControls = [...document.querySelectorAll('input[type="number"],input[name*="quantity" i],[aria-label*="quantity" i]')].filter(visible).length;
+                      const pathSegments = location.pathname.toLowerCase().split('/').filter(Boolean);
+                      const isProductPage = productEntities > 0 || pathSegments.some(part => part === 'product' || part === 'products' || part === 'item' || part === 'items') || price > 0;
+                      return {is_product_page: isProductPage, product_entities: productEntities,
+                        visible_h1: h1, visible_price: price, purchase_controls: purchase,
+                        variant_controls: variantControls, product_images: productImages, quantity_controls: quantityControls};
+                    }""")
+                    product_page_missing = product_page_summary["is_product_page"] and (
+                        product_page_summary["visible_h1"] == 0
+                        or product_page_summary["visible_price"] == 0
+                        or product_page_summary["purchase_controls"] == 0
+                    )
+                    outcomes.append({
+                        "check_id": "ecommerce.product_page_rendered_signals",
+                        "category": "ecommerce", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "not_assessed" if not product_page_summary["is_product_page"] else ("warning" if product_page_missing else "pass"),
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright rendered DOM heuristics for product identity, visible price, and purchase controls",
+                        "evidence": _format_product_page_evidence(product_page_summary),
+                        "evidence_ref": "browser.ecommerce.product_page",
+                    })
                     performance_data = await page.evaluate("""() => {
                       const nav = performance.getEntriesByType('navigation')[0];
                       const resources = performance.getEntriesByType('resource');
@@ -325,6 +465,29 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                             "evidence": f"Visible interactive elements: {metrics['targetCount']}; elements below 24px in either dimension: {metrics['smallTargetCount']}.",
                             "evidence_ref": f"browser.targets.{width}",
                         })
+                    orientation_summary = {}
+                    orientation_overflow = False
+                    for orientation, width, height in (("portrait", 390, 844), ("landscape", 844, 390)):
+                        await page.set_viewport_size({"width": width, "height": height})
+                        await page.wait_for_timeout(150)
+                        orientation_metrics = await page.evaluate("""() => {
+                          const root = document.documentElement;
+                          const body = document.body;
+                          return Math.max(root ? root.scrollWidth : 0, body ? body.scrollWidth : 0);
+                        }""")
+                        orientation_summary[f"{orientation}_width"] = width
+                        orientation_summary[f"{orientation}_height"] = height
+                        orientation_summary[f"{orientation}_scroll_width"] = orientation_metrics
+                        orientation_overflow = orientation_overflow or orientation_metrics > width + 1
+                    outcomes.append({
+                        "check_id": "mobile_ux.rendered_orientation",
+                        "category": "mobile_ux", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "issue" if orientation_overflow else "pass",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright Chromium fixed portrait and landscape viewport overflow comparison",
+                        "evidence": _format_orientation_evidence(orientation_summary),
+                        "evidence_ref": "browser.orientation",
+                    })
                     outcomes.append({
                         "check_id": "mobile_ux.rendered_viewport_matrix", "category": "mobile_ux", "page_url": page.url,
                         "outcome": "issue" if viewport_overflow else "pass",
