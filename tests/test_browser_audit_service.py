@@ -80,3 +80,19 @@ def test_browser_service_restricts_top_level_navigation_to_requested_host():
 async def test_browser_service_rejects_non_web_ports():
     assert not await browser_audit_service._public_http_url("https://93.184.216.34:8443/")
     assert not await browser_audit_service._public_http_url("http://93.184.216.34:3306/")
+
+
+def test_browser_service_redacts_query_and_fragment_from_evidence_urls():
+    safe = browser_audit_service._safe_evidence_url(
+        "https://user:pass@shop.example/products/item?token=secret&campaign=x#details"
+    )
+    assert safe == "https://shop.example/products/item"
+
+
+def test_browser_service_redacts_secret_values_from_diagnostics():
+    safe = browser_audit_service._safe_diagnostic_text(
+        "Request failed https://shop.example/api?api_key=secret token=abc123"
+    )
+    assert "secret" not in safe
+    assert "abc123" not in safe
+    assert "api_key" not in safe
