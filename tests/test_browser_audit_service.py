@@ -154,3 +154,29 @@ def test_rendered_metadata_review_is_conservative_and_detects_malformed_shapes()
         "title_length": 20, "description_count": 1, "canonical_count": 1,
         "canonical_same_origin": False, "visible_h1_count": 1,
     }) is True
+\n\ndef test_lab_vitals_summary_calculates_cls_session_window_and_long_tasks():
+    summary = browser_audit_service._summarize_lab_vitals({
+        "lcp_supported": True, "cls_supported": True, "longtask_supported": True,
+        "lcp_ms": 2800,
+        "_cls_entries": [
+            {"start": 100, "value": 0.04},
+            {"start": 500, "value": 0.03},
+            {"start": 1800, "value": 0.08},
+            {"start": 7000, "value": 0.02},
+        ],
+        "_long_tasks": [55, 80],
+    })
+    assert summary["cls"] == 0.15
+    assert summary["long_task_count"] == 2
+    assert summary["long_task_total_ms"] == 135
+    assert summary["long_task_max_ms"] == 80
+    assert browser_audit_service._lab_vitals_needs_review(summary) is True
+
+
+def test_lab_vitals_are_not_assessed_when_browser_apis_are_unavailable():
+    summary = browser_audit_service._summarize_lab_vitals({})
+    assert summary["lcp_ms"] is None
+    assert summary["cls"] is None
+    assert summary["long_task_count"] is None
+    assert browser_audit_service._format_lab_vitals_evidence(summary).startswith("Observed LCP: unavailable")
+    assert browser_audit_service._lab_vitals_needs_review(summary) is False
