@@ -209,15 +209,18 @@ def _identifier_values(values: list[str], *, gtin: bool = False) -> set[str]:
     """Normalize explicitly visible product identifiers without guessing missing digits."""
     result: set[str] = set()
     for value in values:
-        token = re.sub(r"\s+", "", value).strip()
-        if not token:
-            continue
         if gtin:
-            digits = re.sub(r"[^0-9]", "", token)
+            digits = re.sub(r"[^0-9]", "", value)
+            # Semantic attributes and visible text can repeat the same GTIN.
+            if len(digits) in {16, 24, 26, 28} and digits[:len(digits) // 2] == digits[len(digits) // 2:]:
+                digits = digits[:len(digits) // 2]
             if len(digits) in {8, 12, 13, 14}:
                 result.add(digits)
         else:
-            result.add(token.upper())
+            parts = re.sub(r"\\s+", " ", value).strip().upper().split()
+            if not parts:
+                continue
+            result.add(parts[0] if len(set(parts)) == 1 else " ".join(parts))
     return result
 
 
