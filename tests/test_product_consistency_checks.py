@@ -132,7 +132,10 @@ def test_visible_product_identifier_mismatch_is_verified():
 
     assert by_id["structured_data.visible_sku_consistency"].outcome == "issue"
     assert by_id["structured_data.visible_gtin_consistency"].outcome == "issue"
-    assert {item.title for item in findings} == {\n        "Visible product SKU differs from structured product SKU",\n        "Visible product GTIN differs from structured product GTIN",\n    }
+    assert {item.title for item in findings} == {
+        "Visible product SKU differs from structured product SKU",
+        "Visible product GTIN differs from structured product GTIN",
+    }
 
 
 def test_variant_product_identifiers_are_not_arbitrarily_selected():
