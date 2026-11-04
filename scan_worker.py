@@ -22,7 +22,8 @@ from models import (
     SoftwareLicense,
 )
 from quota import reserve_audit_slot, release_audit_reservation
-from audit_checks import run_phase_one_checks
+from audit_checks import AuditFinding, CheckOutcome, run_phase_one_checks
+from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
@@ -215,6 +216,7 @@ async def _execute_audit(target_url: str) -> dict:
         "pagespeed": "unavailable",
         "bounded_crawl": "not_started",
         "conversion_paid_traffic": "not_started",
+        "browser_rendered": "unavailable",
     }
     metrics = None
     try:
@@ -253,7 +255,32 @@ async def _execute_audit(target_url: str) -> dict:
             f"Conversion and paid-traffic checks were unavailable ({type(exc).__name__}); no checkout or attribution outcome is inferred."
         )
 
-    append_unavailable_check_outcomes(result)
+    browser_audit_completed = False
+    try:
+        browser_result = await run_browser_audit(target_url)
+        result.findings.extend(AuditFinding(**item) for item in browser_result.get("findings", []))
+        result.check_outcomes.extend(CheckOutcome(**item) for item in browser_result.get("check_outcomes", []))
+        result.summary = getattr(result, "summary", None)
+        modules["browser_rendered"] = "completed"
+        browser_audit_completed = True
+        browser_summary = browser_result.get("summary") or {}
+        result.limitations.append(
+            "Rendered-browser diagnostics used a bounded Chromium run across viewport widths "
+            + ", ".join(str(width) for width in browser_summary.get("viewports", []))
+            + "px. Browser screenshots are not persisted because durable evidence storage is not configured; Core Web Vitals are not measured by this browser worker."
+        )
+    except BrowserAuditUnavailable as exc:
+        modules["browser_rendered"] = "unavailable"
+        result.limitations.append(
+            f"Rendered-browser diagnostics were not assessed ({str(exc)}); static HTML signals do not establish rendered mobile behavior."
+        )
+    except Exception as exc:
+        modules["browser_rendered"] = "error"
+        result.limitations.append(
+            f"Rendered-browser diagnostics failed safely ({type(exc).__name__}); no browser pass is inferred."
+        )
+
+    append_unavailable_check_outcomes(result, browser_audit_completed=browser_audit_completed)
     coverage = build_coverage_manifest(
         target_url=target_url,
         pages_checked=result.pages_checked,
