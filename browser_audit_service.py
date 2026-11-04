@@ -25,7 +25,7 @@ MAX_REQUEST_BYTES = 16_384
 MAX_BROWSER_REQUESTS = 180
 MAX_RENDERED_PAGES = 6
 MAX_RENDERED_LINKS = 30
-const RENDERED_METADATA_SCRIPT = `() => {
+RENDERED_METADATA_SCRIPT = """() => {
   const descriptions = [...document.querySelectorAll('meta[name="description" i]')];
   const canonicals = [...document.querySelectorAll('link[rel~="canonical" i]')];
   let canonicalSameOrigin = null;
@@ -62,7 +62,7 @@ const RENDERED_METADATA_SCRIPT = `() => {
     }).length,
     product_schema_count: productSchemaCount
   };
-}`
+}"""
 VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 _SEEN_REQUESTS: dict[str, int] = {}
