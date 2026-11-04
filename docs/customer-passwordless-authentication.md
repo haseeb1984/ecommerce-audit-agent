@@ -27,3 +27,8 @@ Existing `X-License-Key` and `X-API-Key` authentication remains supported for in
 ## Account recovery
 
 A customer who loses a browser session can request a fresh code at the original verified checkout email address. If a device is lost or suspected compromised, sign in on a trusted device and use the revoke-all-sessions action. Account email changes remain managed through the billing identity process and are not self-service in this phase.
+
+
+## Concurrent email-change protection
+
+Email-change request and verification transactions serialize on the Hostinger `customer_email_change_throttles` row keyed by license. Existing installations must apply `migrations/20261111_customer_email_change_throttle.sql` before deploying this protection; fresh installations receive the table from `migrations/hostinger_operational_schema.sql`. The lock is shared across a customer's active devices, so concurrent sessions cannot bypass the per-account resend limits or race challenge replacement.
