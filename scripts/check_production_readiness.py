@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 import sys
+from urllib.parse import urlsplit
 
 
 # This is an additional PostgreSQL partial index not represented by SQLAlchemy's
@@ -51,8 +52,26 @@ REQUIRED_ENV_GROUPS = {
     "ai_provider": ("GROQ_API_KEY",),
     "customer_account_auth": ("ACCOUNT_AUTH_SECRET",),
     "hostinger_operational_database": ("HOSTINGER_DATABASE_URL",),
+    "public_app_url": ("PUBLIC_APP_URL",),
     "scheduled_scan_worker": ("SCAN_WORKER_TOKEN",),
 }
+
+
+def _valid_public_app_url(value: str) -> bool:
+    """Match the application requirement for secure agency invitation URLs."""
+    candidate = value.strip().rstrip("/")
+    if not candidate:
+        return False
+    try:
+        parsed = urlsplit(candidate)
+        return bool(
+            parsed.scheme == "https"
+            and parsed.hostname
+            and not parsed.username
+            and not parsed.password
+        )
+    except ValueError:
+        return False
 
 
 def _configuration_status() -> tuple[list[str], list[str]]:

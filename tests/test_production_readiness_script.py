@@ -69,3 +69,16 @@ def test_schema_gate_requires_critical_operational_indexes() -> None:
     assert "ix_payment_webhook_events_transaction_id" in required_indexes
     assert "ix_payment_webhook_events_subscription_id" in required_indexes
 
+
+
+def test_public_app_url_readiness_requires_https_host_without_userinfo() -> None:
+    namespace = runpy.run_path(str(SCRIPT))
+    validate = namespace["_valid_public_app_url"]
+    assert namespace["REQUIRED_ENV_GROUPS"]["public_app_url"] == ("PUBLIC_APP_URL",)
+
+    assert validate("https://app.example.com") is True
+    assert validate("https://app.example.com/") is True
+    assert validate("http://app.example.com") is False
+    assert validate("https:///missing-host") is False
+    assert validate("https://user:password@app.example.com") is False
+    assert validate("") is False
