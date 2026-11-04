@@ -538,7 +538,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                     raw_links = await page.evaluate("""() => Array.from(document.querySelectorAll('a[href]'))
                       .map(anchor => anchor.href).slice(0, 500)""")
                     candidates = []
-                    seen_candidates = set()
+                    current_page_url = _normalize_internal_crawl_url(page.url, page.url, target_host)
+                    seen_candidates = {current_page_url} if current_page_url else set()
                     for href in raw_links:
                         candidate = _normalize_internal_crawl_url(page.url, href, target_host)
                         if candidate and candidate not in seen_candidates:
