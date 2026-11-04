@@ -41,6 +41,7 @@ from audit_checks import (
     CheckOutcome,
 )
 from audit_checks import record_homepage_outcomes
+from product_consistency_checks import inspect_visible_product_consistency
 
 
 MAX_CRAWL_PAGES = 12
@@ -2663,6 +2664,12 @@ async def run_bounded_site_crawl(
                     )
                     if not already_recorded:
                         outcome_records.append(specialized)
+
+                consistency_findings, consistency_outcomes = inspect_visible_product_consistency(
+                    body, final_url, datetime.now(timezone.utc).isoformat()
+                )
+                findings.extend(consistency_findings)
+                outcome_records.extend(consistency_outcomes)
 
             page_check_families = (
                 ("security.headers_and_forms", "security", "HTTP security headers and sensitive GET-form source inspection"),
