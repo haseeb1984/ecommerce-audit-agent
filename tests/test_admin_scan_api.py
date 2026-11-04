@@ -205,3 +205,19 @@ def test_admin_portal_exposes_paginated_all_status_scan_queue():
     assert 'id="scanJobsPageInfo"' in portal
     assert "/api/v1/admin/scan-jobs?" in portal
     assert "Retry failed scan" in portal
+
+
+def test_admin_disconnect_clears_scan_and_cross_database_sync_diagnostics():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+    start = portal.index("function clearAdminData(")
+    end = portal.index('$("createClientApiKey").addEventListener', start)
+    clear_handler = portal[start:end]
+
+    assert "failedScanJobsOffset=0" in clear_handler
+    assert '$("scanQueueMetrics").replaceChildren' in clear_handler
+    assert '$("syncOutboxMetrics").replaceChildren' in clear_handler
+    assert '$("failedScanJobs").replaceChildren' in clear_handler
+    assert '$("failedScanJobsPrev").disabled=true' in clear_handler
+    assert '$("failedScanJobsNext").disabled=true' in clear_handler
