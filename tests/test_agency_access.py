@@ -364,3 +364,48 @@ def test_agency_team_scan_submission_route_is_registered():
     import main
 
     assert "/api/v1/agency/team/workspaces/{workspace_id}/scan-batches" in main.app.openapi()["paths"]
+
+
+
+@pytest.mark.asyncio
+async def test_agency_team_login_request_locks_membership_before_cooldown_check(monkeypatch):
+    import os
+    import main
+    from fastapi import Response
+    from main import AgencyTeamLoginRequest, request_agency_team_login
+
+    now = datetime.now(timezone.utc)
+    member = SimpleNamespace(id="member-1", agency_id="agency-1")
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license")
+    recent = SimpleNamespace(created_at=now - timedelta(seconds=10))
+
+    class OperationalSession:
+        def __init__(self):
+            self.calls = []
+        async def scalar(self, statement):
+            self.calls.append(statement)
+            return [member, agency, recent][len(self.calls) - 1]
+        async def execute(self, _statement):
+            raise AssertionError("A recent challenge must stop OTP issuance.")
+        async def commit(self):
+            raise AssertionError("A cooldown response must not issue a new challenge.")
+
+    class LicenseSession:
+        async def scalar(self, _statement):
+            return SimpleNamespace(license_key="business-license", is_active=True, tier="business")
+
+    operational = OperationalSession()
+    monkeypatch.setenv("ACCOUNT_AUTH_SECRET", "x" * 40)
+    monkeypatch.setattr(main, "_license_is_current", lambda _license: True)
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await request_agency_team_login(
+        AgencyTeamLoginRequest(email="teammate@example.com"),
+        Response(),
+        db=LicenseSession(),
+        operational_db=operational,
+    )
+
+    assert result["status"] == "accepted"
+    assert len(operational.calls) == 3
+    assert operational.calls[0]._for_update_arg is not None

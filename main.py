@@ -2505,10 +2505,13 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     generic = {"status": "accepted", "message": "If an active agency team account exists, a sign-in code will be sent."}
+    # Lock the selected active membership while checking and issuing the email cooldown.
+    # Concurrent requests for the same email resolve to this same latest membership,
+    # so the second request waits and then observes the first request's committed challenge.
     member = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.normalized_email == email,
         AgencyTeamMember.status == "active",
-    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1))
+    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1).with_for_update())
     if member is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
