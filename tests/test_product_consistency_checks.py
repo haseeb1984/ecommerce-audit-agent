@@ -1,0 +1,92 @@
+from product_consistency_checks import inspect_visible_product_consistency
+
+
+def _page(price="19.99", currency="USD", availability="In stock"):
+    return f"""
+    <html><body>
+      <h1>Widget</h1>
+      <span class="product-price" data-price="{price}">$ {price}</span>
+      <span class="currency-code" data-currency="{currency}">{currency}</span>
+      <span class="stock-status">{availability}</span>
+      <script type="application/ld+json">
+      {{
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Widget",
+        "offers": {{
+          "@type": "Offer",
+          "price": "19.99",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        }}
+      }}
+      </script>
+    </body></html>
+    """
+
+
+def test_visible_product_offer_values_matching_jsonld_record_passes():
+    findings, outcomes = inspect_visible_product_consistency(
+        _page(), "https://shop.example/products/widget", "2026-11-04T00:00:00+00:00"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert not findings
+    assert by_id["structured_data.visible_price_consistency"].outcome == "pass"
+    assert by_id["structured_data.visible_currency_consistency"].outcome == "pass"
+    assert by_id["structured_data.visible_availability_consistency"].outcome == "pass"
+
+
+def test_visible_price_currency_and_stock_mismatches_are_verified_issues():
+    findings, outcomes = inspect_visible_product_consistency(
+        _page(price="24.99", currency="EUR", availability="Out of stock"),
+        "https://shop.example/products/widget",
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert by_id["structured_data.visible_price_consistency"].outcome == "issue"
+    assert by_id["structured_data.visible_currency_consistency"].outcome == "issue"
+    assert by_id["structured_data.visible_availability_consistency"].outcome == "issue"
+    assert len(findings) == 3
+    assert all(item.status == "verified" for item in findings)
+
+
+def test_hidden_price_and_ambiguous_multiple_offer_values_are_not_passed():
+    html = """
+    <html><body>
+      <span class="price" style="display:none">$19.99</span>
+      <span class="price">$19.99 - $29.99</span>
+      <script type="application/ld+json">
+      {"@type":"Product","offers":[
+        {"@type":"Offer","price":"19.99","priceCurrency":"USD","availability":"https://schema.org/InStock"},
+        {"@type":"Offer","price":"29.99","priceCurrency":"USD","availability":"https://schema.org/OutOfStock"}
+      ]}
+      </script>
+    </body></html>
+    """
+    findings, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+
+    assert not findings
+    assert by_id["structured_data.visible_price_consistency"].outcome == "not_assessed"
+    assert by_id["structured_data.visible_availability_consistency"].outcome == "not_assessed"
+
+
+def test_currency_symbol_alone_does_not_infer_ambiguous_currency():
+    html = """
+    <html><body>
+      <span class="price">$19.99</span>
+      <span class="stock-status">In stock</span>
+      <script type="application/ld+json">
+      {"@type":"Product","offers":{"@type":"Offer","price":"19.99",
+       "priceCurrency":"USD","availability":"https://schema.org/InStock"}}
+      </script>
+    </body></html>
+    """
+    _, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["structured_data.visible_currency_consistency"].outcome == "not_assessed"
