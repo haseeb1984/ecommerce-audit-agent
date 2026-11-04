@@ -95,6 +95,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
             _SEEN_REQUESTS.pop(seen_id, None)
     if payload.request_id in _SEEN_REQUESTS:
         raise HTTPException(status_code=409, detail="Duplicate browser audit request")
+    if len(_SEEN_REQUESTS) >= 10_000:
+        raise HTTPException(status_code=429, detail="Browser request replay cache is at capacity")
     _SEEN_REQUESTS[payload.request_id] = now + 300
     target = str(payload.target_url)
     if not await _public_http_url(target):
