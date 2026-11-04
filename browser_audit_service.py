@@ -110,7 +110,9 @@ def _format_accessibility_evidence(summary: dict) -> str:
         f"Rendered images: {summary.get('image_count', 0)}; images missing an alt attribute: "
         f"{summary.get('images_missing_alt', 0)}. Visible interactive controls: "
         f"{summary.get('control_count', 0)}; controls without a detectable accessible-name heuristic: "
-        f"{summary.get('controls_without_name', 0)}. This automated DOM heuristic is not a WCAG conformance verdict."
+        f"{summary.get('controls_without_name', 0)}; visible controls with positive tabindex: "
+        f"{summary.get('positive_tabindex_count', 0)}; visible controls with tabindex=-1: "
+        f"{summary.get('negative_tabindex_count', 0)}. This automated DOM heuristic is not a WCAG conformance verdict."
     )
 
 
