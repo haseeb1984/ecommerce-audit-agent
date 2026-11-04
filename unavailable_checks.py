@@ -15,22 +15,22 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
     (
         "crawl.javascript_rendered_dom",
         "crawlability",
-        "No controlled browser runner is invoked by this audit flow, so raw HTML is not compared with a JavaScript-rendered DOM.",
-    ),
-    (
-        "performance.browser_console_network",
-        "performance",
-        "Browser console errors and rendered-page network failures are not collected without a controlled browser run.",
+        "A controlled browser did not complete a rendered DOM inspection for this run.",
     ),
     (
         "mobile_ux.rendered_viewport_matrix",
         "mobile_ux",
-        "No real-browser viewport matrix is executed; static viewport declarations do not establish responsive layout quality.",
+        "A controlled browser did not complete the agreed rendered viewport matrix for this run.",
     ),
     (
-        "performance.browser_console_network",
+        "performance.browser_console_errors",
         "performance",
-        "Browser console errors, JavaScript exceptions, and rendered-page network failures are not collected without a controlled browser run.",
+        "Browser console errors and uncaught page exceptions were not collected for this run.",
+    ),
+    (
+        "performance.browser_network_failures",
+        "performance",
+        "Rendered-page network failures were not collected for this run.",
     ),
     (
         "accessibility.manual_wcag_review",
@@ -78,7 +78,7 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
     }
     now = datetime.now(timezone.utc).isoformat()
     added = 0
-    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_network"}
+    browser_checks = {"crawl.javascript_rendered_dom", "mobile_ux.rendered_viewport_matrix", "performance.browser_console_errors", "performance.browser_network_failures"}
     for check_id, category, evidence in UNAVAILABLE_CHECKS:
         if browser_audit_completed and check_id in browser_checks:
             continue
