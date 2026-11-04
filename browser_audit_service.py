@@ -426,7 +426,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
 
                 await context.route_web_socket("**/*", block_websocket)
                 page = await context.new_page()
-                page.set_default_navigation_timeout(20_000)\n                await page.add_init_script(LAB_VITALS_INIT_SCRIPT)
+                page.set_default_navigation_timeout(20_000)
+                await page.add_init_script(LAB_VITALS_INIT_SCRIPT)
                 page.set_default_timeout(5_000)
     
                 async def guard(route):
