@@ -19,6 +19,12 @@ def test_scan_batch_workspace_foreign_key_matches_orm_and_is_idempotent():
     migration = (
         ROOT / "migrations" / "20261109_scan_batch_workspace_foreign_key.sql"
     ).read_text()
+    fresh_schema = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    assert "fk_scan_batches_workspace" in fresh_schema
+    assert (
+        "FOREIGN KEY (workspace_id) "
+        "REFERENCES agency_client_workspaces(id) ON DELETE SET NULL"
+    ) in fresh_schema
     assert "information_schema.referential_constraints" in migration
     assert "fk_scan_batches_workspace" in migration
     assert (
