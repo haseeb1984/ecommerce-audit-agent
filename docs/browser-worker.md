@@ -1,0 +1,58 @@
+# Isolated Playwright browser worker
+
+The main SaaS API and scan worker do not install or launch Chromium. The optional
+browser worker is a separately deployable service built from the repository root:
+
+```sh
+docker build -f browser-worker/Dockerfile -t ecommerce-audit-browser-worker .
+```
+
+Run one worker process per container. Set `BROWSER_AUDIT_SHARED_SECRET` to a
+random secret of at least 32 characters. Set the same secret and
+`BROWSER_AUDIT_SERVICE_URL=https://<private-browser-service-host>` on the
+existing scan worker. The scan worker refuses non-HTTPS service URLs and does not
+send audit requests unless both settings are present. Requests use HMAC-SHA256
+over the timestamp and exact request body; signatures expire after five minutes.
+
+## Network and isolation requirements
+
+This service opens untrusted public websites in Chromium. Deploy it in a separate
+container/network from the SaaS API, database credentials, and internal services.
+The browser container must have no database credentials, cloud metadata access,
+host mounts, Docker socket, or access to private service networks.
+
+**Enforce outbound network policy at the container/network layer.** Deny loopback,
+private, link-local, multicast, reserved, metadata-service and other non-public
+destinations for IPv4 and IPv6, including after redirects. Allow only DNS resolution
+and public web egress as required by the product. The in-process DNS/IP check and
+Playwright request interception are defense in depth; they are not a substitute
+for an egress firewall because Chromium performs its own DNS resolution and a
+host can change DNS answers between validation and connection.
+
+Do not expose the service publicly without TLS, rate limiting, request-size limits,
+and network egress restrictions. The unauthenticated `/health` endpoint reveals
+only service health and viewport count. The audit endpoint is HMAC-authenticated.
+Keep browser worker logs free of customer credentials and request bodies.
+
+## Implemented browser checks
+
+- One bounded Chromium page render with a 20-second navigation timeout.
+- Viewport widths 320, 360, 375, 390, 414, 768 and 1365 CSS pixels.
+- Rendered DOM presence, horizontal overflow, and interactive-element dimensions
+  below a 24px heuristic threshold.
+- Browser console/page exceptions and failed or blocked network requests.
+- Per-check outcomes and evidence summaries returned to the existing scan worker
+  and persisted in the existing `WebsiteScanResult`; no second queue or billing path.
+
+## Explicit limitations
+
+- Screenshots are not captured or persisted until durable evidence storage is
+  configured. Do not advertise screenshot evidence as available.
+- This worker does not measure Core Web Vitals, field INP/LCP/CLS, orientation,
+  pinch zoom, keyboard navigation, or screen-reader behavior.
+- The 24px target heuristic is a triage signal, not a WCAG conformance verdict.
+- A completed browser request does not establish full site crawl coverage. This
+  initial service renders the submitted page only; it does not crawl JS links.
+- Browser service deployment and a live controlled-site acceptance run remain
+  release tasks. CI tests authentication, client behavior and SSRF guards with
+  mocks; it does not claim a deployed Chromium environment has been verified.
