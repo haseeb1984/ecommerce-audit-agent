@@ -81,7 +81,7 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
         "run_browser_audit",
         AsyncMock(return_value={
             "findings": [],
-            "check_outcomes": [_browser_outcome(), _browser_metadata_outcome()],
+            "check_outcomes": [_browser_outcome(), _browser_metadata_outcome(), _browser_lab_vitals_outcome()],
             "summary": {"viewports": [320, 360, 375, 390, 414, 768, 1365]},
         }),
     )
