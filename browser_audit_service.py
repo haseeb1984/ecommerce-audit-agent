@@ -254,7 +254,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         if (Array.isArray(node)) { stack.push(...node.slice(0, 1000)); continue; }
                         if (!node || typeof node !== 'object') continue;
                         const types = Array.isArray(node['@type']) ? node['@type'] : [node['@type']];
-                        if (types.some(type => typeof type === 'string' && type.toLowerCase().split(/[\\/#]/).pop() === 'product')) productEntities += 1;
+                        if (types.some(type => typeof type === 'string' && type.toLowerCase().split('/').pop().split('#').pop() === 'product')) productEntities += 1;
                         for (const value of Object.values(node)) if (value && typeof value === 'object') stack.push(value);
                       }
                       const h1 = [...document.querySelectorAll('h1')].filter(visible).length;
@@ -263,8 +263,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         const label = [el.innerText, el.value, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').toLowerCase();
                         return /add to cart|add to bag|add to basket|buy now|purchase/.test(label);
                       }).length;
-                      const pathLooksProduct = /\\/(products?|items?)\\//i.test(location.pathname);
-                      const isProductPage = productEntities > 0 || pathLooksProduct || price > 0;
+                      const pathSegments = location.pathname.toLowerCase().split('/').filter(Boolean);
+                      const isProductPage = productEntities > 0 || pathSegments.some(part => part === 'product' || part === 'products' || part === 'item' || part === 'items') || price > 0;
                       return {is_product_page: isProductPage, product_entities: productEntities,
                         visible_h1: h1, visible_price: price, purchase_controls: purchase};
                     }""")
