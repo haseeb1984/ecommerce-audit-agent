@@ -70,12 +70,12 @@ def _safe_evidence_url(value: str) -> str:
 
 def _safe_diagnostic_text(value: str) -> str:
     text = re.sub(
-        r"(?i)(token|api[_-]?key|secret|password|authorization|code)=([^&\\s]+)",
-        r"\\1=[redacted]",
+        r"(?i)(token|api[_-]?key|secret|password|authorization|code)=([^&\s]+)",
+        r"\1=[redacted]",
         str(value),
     )
     text = re.sub(
-        r"https?://[^\\s\"<>]+",
+        r"https?://[^\s\"<>]+",
         lambda match: _safe_evidence_url(match.group(0)),
         text,
     )
