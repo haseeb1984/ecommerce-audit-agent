@@ -76,9 +76,12 @@ def test_admin_payment_reconciliation_serializes_transaction_webhook_work():
 
     source = inspect.getsource(main.admin_reconcile_payment)
     initial_lookup = source.index("PaymentWebhookEvent.event_id == event_id")
+    subscription_lock = source.index(
+        "await _lock_paddle_webhook_resource(db, subscription_id)"
+    )
     transaction_lock = source.index(
         'await _lock_paddle_webhook_resource(db, transaction_id, "transaction_id")'
     )
     locked_reload = source.index(".with_for_update()", transaction_lock)
     provider_request = source.index('f"/transactions/{transaction_id}"')
-    assert initial_lookup < transaction_lock < locked_reload < provider_request
+    assert initial_lookup < subscription_lock < transaction_lock < locked_reload < provider_request
