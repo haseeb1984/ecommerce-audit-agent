@@ -327,6 +327,32 @@ def inspect_visible_product_consistency(
         )
 
 
+    # Product title is a customer-visible identity signal. Compare only one
+    # unambiguous H1 and one Product entity; do not normalize away meaningful text.
+    visible_names = {
+        re.sub(r"\\s+", " ", value).strip().casefold()
+        for value in visible["name"] if value.strip()
+    }
+    schema_names = {
+        re.sub(r"\\s+", " ", str(product.get("name"))).strip().casefold()
+        for product in products
+        if isinstance(product.get("name"), str) and product.get("name").strip()
+    }
+    if len(products) != 1 or len(schema_names) != 1 or len(visible_names) != 1:
+        record(
+            "structured_data.visible_name_consistency", "not_assessed",
+            f"Visible product names: {len(visible_names)}; Product JSON-LD names: {len(schema_names)}; Product entities: {len(products)}. Comparison not assessed because one clear name and Product entity were not available.",
+            "", "",
+        )
+    else:
+        matches = visible_names == schema_names
+        evidence = f"Visible product name: {next(iter(visible_names))}; Product JSON-LD name: {next(iter(schema_names))}."
+        record(
+            "structured_data.visible_name_consistency", "pass" if matches else "issue",
+            evidence, "Visible product name differs from structured product name",
+            "The initial HTML exposes a different product title from Product JSON-LD. Confirm the canonical product title and selected variant before changing the page or structured data.",
+        )
+
     # SKU and GTIN are useful catalogue identifiers, but pages often omit them
     # or expose several variant identifiers. Only compare one explicit value
     # on each side; never select a variant identifier arbitrarily.
