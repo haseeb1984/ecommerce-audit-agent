@@ -3069,9 +3069,11 @@ async def invite_business_agency_team_member(
         raise HTTPException(status_code=403, detail="Agency team invitations are available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Match the admin suspension lock order: agency first, then member/grants.
+    # A concurrent suspension therefore commits before a new invite can be persisted.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
     email = payload.email.strip().lower()
