@@ -113,7 +113,8 @@ class _VisibleProductSignals(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs) -> None:
         self.handle_starttag(tag, attrs)
-        self.handle_endtag(tag)
+        if tag.lower() not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.handle_endtag(tag)
 
 
 def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[str]]]:
