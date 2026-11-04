@@ -385,3 +385,46 @@ async def test_customer_scan_read_endpoints_disable_shared_caching(handler_name)
 
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
+
+
+@pytest.mark.asyncio
+async def test_customer_workspace_scan_serializes_agency_workspace_and_site_lifecycle(monkeypatch):
+    import scan_api
+    from scan_api import BulkScanSubmission, submit_scan_batches
+
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
+    workspace = SimpleNamespace(id="workspace-1", agency_id="agency-1", status="active")
+    client_site = SimpleNamespace(site_host="shop.example", status="active")
+    db = AgencyRouteSession(agency, workspace, client_site)
+    license_obj = SimpleNamespace(license_key="business-license", tier="business")
+    queued = {}
+
+    async def fake_enqueue(_db, **kwargs):
+        queued.update(kwargs)
+        return {"batch_ids": ["batch-1"], "total_urls": 1}
+
+    monkeypatch.setattr(scan_api, "enqueue_scan_request", fake_enqueue)
+    monkeypatch.setattr(scan_api, "plan_features", lambda _tier: {
+        "agency_management": True, "standard_audits": True,
+    })
+    result = await submit_scan_batches(
+        BulkScanSubmission(
+            urls=["https://shop.example/products/one"],
+            request_id="customer-workspace-lock-123",
+            workspace_id="workspace-1",
+        ),
+        license_obj=license_obj,
+        db=db,
+    )
+
+    assert result["status"] == "accepted"
+    assert queued["workspace_id"] == "workspace-1"
+    assert queued["license_key"] == "business-license"
+    assert all(statement._for_update_arg is not None for statement in db.scalar_statements)
+    lock_tables = [
+        str(statement).split("FROM ", 1)[1].split(" ", 1)[0]
+        for statement in db.scalar_statements
+    ]
+    assert lock_tables == [
+        "agency_accounts", "agency_client_workspaces", "agency_client_websites",
+    ]
