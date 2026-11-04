@@ -31,6 +31,12 @@ class CustomerAccount(HostingerBase):
     )
 
 
+class CustomerLoginThrottle(HostingerBase):
+    """Per-email serialization row for passwordless login rate-limit decisions."""
+    __tablename__ = "customer_login_throttles"
+    email = Column(String(254), primary_key=True)
+
+
 class CustomerLoginChallenge(HostingerBase):
     __tablename__ = "customer_login_challenges"
     id = Column(String(64), primary_key=True)
