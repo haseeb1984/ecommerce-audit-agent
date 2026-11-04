@@ -96,3 +96,8 @@ def test_browser_service_redacts_secret_values_from_diagnostics():
     assert "secret" not in safe
     assert "abc123" not in safe
     assert "api_key" not in safe
+
+
+def test_browser_service_navigation_timing_outcome_is_not_assessed_without_entries():
+    evidence = browser_audit_service._format_navigation_timing({}, {})
+    assert "timing fields unavailable" in evidence
