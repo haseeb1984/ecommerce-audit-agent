@@ -203,3 +203,37 @@ def test_gtin_supported_lengths_validate_gs1_check_digit():
     assert _is_valid_gtin("0123456789012")
     assert _is_valid_gtin("10012345000017")
     assert not _is_valid_gtin("0123456789013")
+
+
+
+def test_visible_product_name_matches_product_jsonld():
+    html = """
+    <html><body>
+      <h1>Blue Widget</h1>
+      <script type="application/ld+json">
+      {"@type":"Product","name":"Blue Widget"}
+      </script>
+    </body></html>
+    """
+    _, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["structured_data.visible_name_consistency"].outcome == "pass"
+
+
+def test_visible_product_name_mismatch_is_reported():
+    html = """
+    <html><body>
+      <h1>Blue Widget</h1>
+      <script type="application/ld+json">
+      {"@type":"Product","name":"Red Widget"}
+      </script>
+    </body></html>
+    """
+    findings, outcomes = inspect_visible_product_consistency(
+        html, "https://shop.example/products/widget"
+    )
+    by_id = {item.check_id: item for item in outcomes}
+    assert by_id["structured_data.visible_name_consistency"].outcome == "issue"
+    assert any("product name differs" in finding.title.lower() for finding in findings)
