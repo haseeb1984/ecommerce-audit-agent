@@ -110,3 +110,25 @@ def test_fresh_hostinger_schema_and_forward_migration_cover_storage_key_hash():
     assert "DROP INDEX storage_key" in migration
     assert "uq_customer_report_files_storage_key_hash" in migration
     assert "SELECT 1" in migration
+
+
+
+def test_fresh_hostinger_schema_covers_every_named_orm_index_and_unique_constraint():
+    from sqlalchemy import UniqueConstraint
+    from hostinger_database import HostingerBase
+    import hostinger_models  # noqa: F401 - register all operational model tables
+
+    schema = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    expected = {
+        index.name
+        for table in HostingerBase.metadata.tables.values()
+        for index in table.indexes
+        if index.name
+    } | {
+        constraint.name
+        for table in HostingerBase.metadata.tables.values()
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name
+    }
+    missing = sorted(name for name in expected if name not in schema)
+    assert missing == [], f"Fresh Hostinger schema is missing ORM indexes/constraints: {missing}"
