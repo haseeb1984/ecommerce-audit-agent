@@ -177,6 +177,15 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                     java_script_enabled=True,
                     service_workers="block",
                 )
+                async def block_websocket(websocket_route):
+                    nonlocal browser_blocked_requests
+                    browser_blocked_requests += 1
+                    await websocket_route.close(
+                        code=1008,
+                        reason="WebSocket connections are disabled during public audits",
+                    )
+
+                await context.route_web_socket("**/*", block_websocket)
                 page = await context.new_page()
                 page.set_default_navigation_timeout(20_000)
                 page.set_default_timeout(5_000)
