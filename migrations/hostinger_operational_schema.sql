@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS scan_batches (
   completed_at DATETIME(6) NULL,
   created_at DATETIME(6) NOT NULL,
   KEY ix_scan_batches_claim (status, available_at, created_at),
+  KEY ix_scan_batches_workspace_id (workspace_id),
+  KEY ix_scan_batches_available_at (available_at),
   KEY ix_scan_batches_license_key (license_key),
   KEY ix_scan_batches_license_sequence (license_key, batch_number),
   UNIQUE KEY uq_scan_batches_request_sequence (license_key, request_id, batch_number),
@@ -134,6 +136,7 @@ CREATE TABLE IF NOT EXISTS website_scan_jobs (
   completed_at DATETIME(6) NULL,
   KEY ix_scan_jobs_batch_status (batch_id, status),
   KEY ix_scan_jobs_claim (status, next_attempt_at, created_at),
+  KEY ix_website_scan_jobs_next_attempt_at (next_attempt_at),
   KEY ix_scan_jobs_license_created (license_key, created_at),
   KEY ix_scan_jobs_website_id (website_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -194,7 +197,8 @@ CREATE TABLE IF NOT EXISTS wordpress_site_link_challenges (
   created_at DATETIME(6) NOT NULL,
   KEY ix_wp_site_link_challenges_license (license_key),
   KEY ix_wp_site_link_challenges_expiry (expires_at),
-  KEY ix_wp_site_link_challenges_created (created_at)
+  KEY ix_wp_site_link_challenges_created (created_at),
+  KEY ix_wp_site_link_challenges_license_created (license_key, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS customer_branding (
@@ -293,7 +297,8 @@ CREATE TABLE IF NOT EXISTS customer_email_identity_sync_outbox (
   KEY ix_customer_email_identity_outbox_license (license_key),
   KEY ix_email_identity_outbox_old_email (old_email),
   KEY ix_email_identity_outbox_new_email (new_email),
-  KEY ix_email_identity_outbox_due (status, next_attempt_at, created_at)
+  KEY ix_email_identity_outbox_due (status, next_attempt_at, created_at),
+  KEY ix_customer_email_identity_sync_outbox_next_attempt_at (next_attempt_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS operational_diagnostic_events (
