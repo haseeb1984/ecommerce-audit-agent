@@ -3019,9 +3019,11 @@ async def list_business_agency_team(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
+    # Match the admin suspension lock order: agency first, then member/grants.
+    # A concurrent suspension therefore commits before a new invite can be persisted.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     members = (await operational_db.execute(select(AgencyTeamMember).where(
@@ -3067,9 +3069,11 @@ async def invite_business_agency_team_member(
         raise HTTPException(status_code=403, detail="Agency team invitations are available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Match the admin suspension lock order: agency first, then member/grants.
+    # A concurrent suspension therefore commits before a new invite can be persisted.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
     email = payload.email.strip().lower()
@@ -3159,7 +3163,23 @@ async def accept_business_agency_invitation(
     """Accept an invitation only with its unexpired, single-use emailed token and active Business agency."""
     from sqlalchemy import select
     token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    # Resolve the invitation tenant without locking, then lock agency -> member.
+    # This matches invitation creation and admin suspension and avoids a lock-order
+    # inversion while making suspension authoritative for concurrent acceptance.
+    candidate = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.invitation_token_hash == token_hash,
+        AgencyTeamMember.status == "invited",
+    ))
+    if candidate is None:
+        raise HTTPException(status_code=400, detail="Invitation is invalid, expired, or already used.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == candidate.agency_id,
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=403, detail="The agency Business subscription is inactive; contact the agency owner.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == candidate.id,
+        AgencyTeamMember.agency_id == agency.id,
         AgencyTeamMember.invitation_token_hash == token_hash,
         AgencyTeamMember.status == "invited",
     ).with_for_update())
@@ -3169,13 +3189,9 @@ async def accept_business_agency_invitation(
         expires = expires.replace(tzinfo=timezone.utc)
     if member is None or expires is None or expires <= now:
         raise HTTPException(status_code=400, detail="Invitation is invalid, expired, or already used.")
-    agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == member.agency_id,
-        AgencyAccount.status == "active",
-    ))
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
-    )) if agency is not None else None
+    ))
     if agency is None or not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="The agency Business subscription is inactive; contact the agency owner.")
     member.status = "active"
@@ -5915,6 +5931,14 @@ async def admin_update_business_agency(
         ))).scalars().all()
         for challenge in challenges:
             challenge.consumed_at = now
+        invitations = (await operational_db.execute(select(AgencyTeamMember).where(
+            AgencyTeamMember.agency_id == agency.id,
+            AgencyTeamMember.status == "invited",
+        ).with_for_update())).scalars().all()
+        for member in invitations:
+            member.status = "revoked"
+            member.invitation_token_hash = None
+            member.invitation_expires_at = None
     agency.updated_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
