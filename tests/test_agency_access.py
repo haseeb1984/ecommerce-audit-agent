@@ -30,9 +30,9 @@ from types import SimpleNamespace
 
 
 class AdminAgencySession:
-    def __init__(self, agency, sessions=(), challenges=()):
+    def __init__(self, agency, sessions=(), challenges=(), invitations=()):
         self.agency = agency
-        self.rows = [list(sessions), list(challenges)]
+        self.rows = [list(sessions), list(challenges), list(invitations)]
         self.committed = False
 
     async def scalar(self, _statement):
@@ -71,7 +71,14 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
     challenges = [
         SimpleNamespace(agency_id="agency-1", consumed_at=None),
     ]
-    db = AdminAgencySession(agency, sessions, challenges)
+    invitations = [
+        SimpleNamespace(
+            agency_id="agency-1", status="invited",
+            invitation_token_hash="one-time-hash",
+            invitation_expires_at=now + timedelta(hours=1),
+        ),
+    ]
+    db = AdminAgencySession(agency, sessions, challenges, invitations)
     monkeypatch.setattr(main, "_require_admin_key", lambda _request: None)
 
     result = await admin_update_business_agency(
@@ -83,6 +90,9 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
     assert result["team_sessions_revoked"] is True
     assert all(item.revoked_at is not None for item in sessions)
     assert all(item.consumed_at is not None for item in challenges)
+    assert all(item.status == "revoked" for item in invitations)
+    assert all(item.invitation_token_hash is None for item in invitations)
+    assert all(item.invitation_expires_at is None for item in invitations)
     assert agency.updated_at is not None and db.committed
 
 
@@ -202,7 +212,7 @@ async def test_invitation_acceptance_handles_naive_mysql_expiry_timestamp():
     )
     agency = SimpleNamespace(id="agency-2", owner_license_key="business-license", status="active")
     license_obj = SimpleNamespace(is_active=True, expires_at=None, tier="business")
-    operational = AgencyInvitationSession(member, agency)
+    operational = AgencyInvitationSession(member, agency, member)
     result = await accept_business_agency_invitation(
         AgencyInvitationAccept(token="t" * 40), Response(),
         db=AgencyInvitationSession(license_obj),
@@ -409,3 +419,28 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     assert result["status"] == "accepted"
     assert len(operational.calls) == 3
     assert operational.calls[0]._for_update_arg is not None
+
+
+
+def test_agency_invitation_mutations_follow_agency_first_lock_order():
+    import inspect
+    import main
+
+    invite_source = inspect.getsource(main.invite_business_agency_team_member)
+    accept_source = inspect.getsource(main.accept_business_agency_invitation)
+    suspend_source = inspect.getsource(main.admin_update_business_agency)
+
+    invite_agency_lock = invite_source.index("AgencyAccount.owner_license_key")
+    invite_member_lock = invite_source.index("AgencyTeamMember.normalized_email")
+    assert ".with_for_update()" in invite_source[invite_agency_lock:invite_member_lock]
+
+    accept_candidate = accept_source.index("candidate = await operational_db.scalar")
+    accept_agency_lock = accept_source.index("AgencyAccount.id == candidate.agency_id")
+    accept_member_lock = accept_source.index("AgencyTeamMember.id == candidate.id")
+    assert accept_candidate < accept_agency_lock < accept_member_lock
+    assert ".with_for_update()" in accept_source[accept_agency_lock:accept_member_lock]
+
+    suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
+    suspend_invite_revoke = suspend_source.index("AgencyTeamMember.status == \"invited\"")
+    assert suspend_agency_lock < suspend_invite_revoke
+    assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
