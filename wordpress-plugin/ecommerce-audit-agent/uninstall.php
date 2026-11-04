@@ -77,7 +77,7 @@ if (is_array($settings) && !empty($settings['site_id']) && !empty($settings['lic
                 'X-License-Key' => $license,
                 'X-WordPress-Site-ID' => sanitize_text_field($settings['site_id']),
             ),
-            'body' => wp_json_encode(array('site_id' => sanitize_text_field($settings['site_id'])),
+            'body' => wp_json_encode(array('site_id' => sanitize_text_field($settings['site_id']))),
         ));
     }
 }
