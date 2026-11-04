@@ -124,7 +124,7 @@ def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constrain
     table_blocks = {
         name: body
         for name, body in re.findall(
-            r"CREATE TABLE IF NOT EXISTS\\s+(\\w+)\\s*\\((.*?)\\)\\s*ENGINE=",
+            r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\)\s*ENGINE=",
             schema,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -134,7 +134,7 @@ def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constrain
         body = table_blocks[table_name]
         found = []
         for unique, columns in re.findall(
-            r"\\b(UNIQUE\\s+)?(?:KEY|INDEX)\\s+\\w+\\s*\\(([^)]*)\\)",
+            r"\b(UNIQUE\s+)?(?:KEY|INDEX)\s+\w+\s*\(([^)]*)\)",
             body,
             flags=re.IGNORECASE,
         ):
