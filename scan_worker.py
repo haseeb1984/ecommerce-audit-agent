@@ -263,11 +263,16 @@ async def _execute_audit(target_url: str) -> dict:
         browser_summary = browser_result.get("summary") or {}
         browser_audit_completed = not bool(browser_summary.get("navigation_error"))
         modules["browser_rendered"] = "completed" if browser_audit_completed else "partial"
-        result.limitations.append(
-            "Rendered-browser diagnostics used a bounded Chromium run across viewport widths "
-            + ", ".join(str(width) for width in browser_summary.get("viewports", []))
-            + "px. Browser screenshots are not persisted because durable evidence storage is not configured; Core Web Vitals are not measured by this browser worker."
-        )
+        if browser_audit_completed:
+            result.limitations.append(
+                "Rendered-browser diagnostics completed across viewport widths "
+                + ", ".join(str(width) for width in browser_summary.get("viewports", []))
+                + "px. Browser screenshots are not persisted because durable evidence storage is not configured; Core Web Vitals are not measured by this browser worker."
+            )
+        else:
+            result.limitations.append(
+                "The browser service responded but could not complete page navigation; rendered DOM and viewport checks remain not assessed."
+            )
     except BrowserAuditUnavailable as exc:
         modules["browser_rendered"] = "unavailable"
         result.limitations.append(
