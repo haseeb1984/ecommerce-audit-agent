@@ -367,7 +367,7 @@ def inspect_visible_product_consistency(
             if isinstance(product.get(key), (str, int)) and not isinstance(product.get(key), bool)
         ], gtin=is_gtin)
         visible_values = _identifier_values(visible[visible_key], gtin=is_gtin)
-        if not products or len(schema_values) != 1 or len(visible_values) != 1:
+        if len(products) != 1 or len(schema_values) != 1 or len(visible_values) != 1:
             record(
                 check_id, "not_assessed",
                 f"Visible {label} identifiers: {len(visible_values)}; Product JSON-LD {label} identifiers: {len(schema_values)}. Comparison not assessed because an explicit single identifier was not available on both sides or multiple variants were present.",
