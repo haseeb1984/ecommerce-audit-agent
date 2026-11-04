@@ -143,6 +143,14 @@ def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constrain
                 for part in columns.split(",")
             )
             found.append((bool(unique), names))
+        # Column-level UNIQUE also creates a unique MySQL index.
+        for column_name, definition in re.findall(
+            r"^\s*(\w+)\s+([^,\n]+)",
+            body,
+            flags=re.MULTILINE,
+        ):
+            if re.search(r"\bUNIQUE\b", definition, flags=re.IGNORECASE):
+                found.append((True, (column_name,)))
         return found
 
     missing = []
