@@ -102,6 +102,8 @@ async def audit(payload: BrowserAuditRequest, request: Request,
     request_count = 0
     browser_blocked_requests = 0
     navigation_error = None
+    viewport_overflow: list[int] = []
+    rendered_dom = None
 
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
@@ -145,6 +147,18 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                 navigation_error = type(exc).__name__
 
             if navigation_error is None:
+                rendered_dom = await page.evaluate("""() => ({
+                  elementCount: document.querySelectorAll('*').length,
+                  bodyTextLength: (document.body ? document.body.innerText : '').trim().length
+                })""")
+                outcomes.append({
+                    "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": page.url,
+                    "outcome": "pass" if rendered_dom["elementCount"] > 0 else "warning",
+                    "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "method": "Playwright Chromium post-JavaScript DOM inspection",
+                    "evidence": f"Rendered DOM element count: {rendered_dom['elementCount']}; visible body text length: {rendered_dom['bodyTextLength']} characters.",
+                    "evidence_ref": "browser.rendered_dom",
+                })
                 for width, height in VIEWPORTS:
                     await page.set_viewport_size({"width": width, "height": height})
                     await page.wait_for_timeout(150)
@@ -172,6 +186,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence_ref": f"browser.viewport.{width}",
                     })
                     if overflow:
+                        viewport_overflow.append(width)
                         findings.append({
                             "category": "mobile_ux", "title": f"Horizontal page overflow at {width}px viewport",
                             "status": "verified", "severity": "medium",
@@ -191,7 +206,29 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence": f"Visible interactive elements: {metrics['targetCount']}; elements below 24px in either dimension: {metrics['smallTargetCount']}.",
                         "evidence_ref": f"browser.targets.{width}",
                     })
+                outcomes.append({
+                    "check_id": "mobile_ux.rendered_viewport_matrix", "category": "mobile_ux", "page_url": page.url,
+                    "outcome": "issue" if viewport_overflow else "pass",
+                    "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "method": "Playwright Chromium responsive viewport matrix",
+                    "evidence": f"Completed {len(VIEWPORTS)} viewport widths; horizontal overflow observed at: {', '.join(str(width) for width in viewport_overflow) if viewport_overflow else 'none'}.",
+                    "evidence_ref": "browser.viewport_matrix",
+                })
             else:
+                outcomes.extend([
+                    {
+                        "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright Chromium navigation", "evidence": f"Rendered DOM unavailable because navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.rendered_dom",
+                    },
+                    {
+                        "check_id": "mobile_ux.rendered_viewport_matrix", "category": "mobile_ux", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright Chromium navigation", "evidence": f"Viewport matrix not run because navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.viewport_matrix",
+                    },
+                ])
                 outcomes.append({
                     "check_id": "browser.navigation", "category": "crawlability", "page_url": target,
                     "outcome": "error", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
