@@ -24,6 +24,7 @@ MAX_REQUEST_BYTES = 16_384
 MAX_BROWSER_REQUESTS = 180
 VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
+_SEEN_REQUESTS: dict[str, int] = {}
 
 
 class BrowserAuditRequest(BaseModel):
@@ -88,6 +89,13 @@ async def audit(payload: BrowserAuditRequest, request: Request,
     if len(body) > MAX_REQUEST_BYTES:
         raise HTTPException(status_code=413, detail="Request too large")
     _verify_signature(x_audit_timestamp, x_audit_signature, body)
+    now = int(time.time())
+    for seen_id, expires_at in list(_SEEN_REQUESTS.items()):
+        if expires_at <= now:
+            _SEEN_REQUESTS.pop(seen_id, None)
+    if payload.request_id in _SEEN_REQUESTS:
+        raise HTTPException(status_code=409, detail="Duplicate browser audit request")
+    _SEEN_REQUESTS[payload.request_id] = now + 300
     target = str(payload.target_url)
     if not await _public_http_url(target):
         raise HTTPException(status_code=422, detail="Target URL is not a permitted public HTTP(S) address")
