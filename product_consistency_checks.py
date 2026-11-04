@@ -16,7 +16,7 @@ from audit_checks import AuditFinding, CheckOutcome, _finding
 
 
 _PRICE_TOKEN = re.compile(
-    r"(?<![\\w.])(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?(?![\\w.])"
+    r"(?<![\w.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?![\w.])"
 )
 _CURRENCY_TOKEN = re.compile(r"(?<![A-Za-z])([A-Z]{3})(?![A-Za-z])")
 _AVAILABILITY_MAP = {
@@ -44,7 +44,7 @@ class _VisibleProductSignals(HTMLParser):
     @staticmethod
     def _add(values: list[str], value: Any) -> None:
         if isinstance(value, str) and value.strip():
-            cleaned = re.sub(r"\\s+", " ", value).strip()
+            cleaned = re.sub(r"\s+", " ", value).strip()
             if cleaned and cleaned not in values:
                 values.append(cleaned)
 
@@ -57,7 +57,7 @@ class _VisibleProductSignals(HTMLParser):
         if hidden:
             return
 
-        itemprops = {token.lower() for token in re.split(r"\\s+", attrs_map.get("itemprop", "").strip()) if token}
+        itemprops = {token.lower() for token in re.split(r"\s+", attrs_map.get("itemprop", "").strip()) if token}
         classes = set(re.split(r"[^a-z0-9]+", (attrs_map.get("class", "") + " " + attrs_map.get("id", "")).lower()))
         capture_keys: list[str] = []
         if "price" in itemprops or "price" in classes or ({"product", "sale", "current"} & classes and "price" in classes):
@@ -133,7 +133,7 @@ def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[s
     offers: list[dict[str, Any]] = []
     products: list[dict[str, Any]] = []
     for script_match in re.finditer(
-        r"<script\\b[^>]*type\\s*=\\s*['\\\"]application/ld\\+json['\\\"][^>]*>(.*?)</script\\s*>",
+        r"<script\b[^>]*type\s*=\s*['\\"]application/ld\+json['\\"][^>]*>(.*?)</script\s*>",
         html,
         re.I | re.S,
     ):
@@ -167,7 +167,7 @@ def _jsonld_product_offers(html: str) -> tuple[list[dict[str, Any]], list[dict[s
 def _decimal_values(values: list[str]) -> set[Decimal]:
     parsed: set[Decimal] = set()
     for value in values:
-        matches = _PRICE_TOKEN.findall(value.replace("\\u00a0", " "))
+        matches = _PRICE_TOKEN.findall(value.replace("\u00a0", " "))
         if len(matches) != 1:
             continue
         token = matches[0].replace(",", "")
@@ -195,7 +195,7 @@ def _availability_values(values: list[str]) -> set[str]:
     result: set[str] = set()
     for value in values:
         token = value.strip().lower().rstrip("/").rsplit("/", 1)[-1]
-        token = re.sub(r"([a-z])([A-Z])", r"\\1 \\2", token).replace("_", " ")
+        token = re.sub(r"([a-z])([A-Z])", r"\1 \2", token).replace("_", " ")
         compact = re.sub(r"[^a-z]", "", token)
         normalized = _AVAILABILITY_MAP.get(token) or _AVAILABILITY_MAP.get(compact)
         if normalized:
