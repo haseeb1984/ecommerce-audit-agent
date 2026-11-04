@@ -122,7 +122,9 @@ def _format_product_page_evidence(summary: dict) -> str:
         f"Product JSON-LD entities: {summary.get('product_entities', 0)}; "
         f"visible H1 elements: {summary.get('visible_h1', 0)}; "
         f"visible price candidates: {summary.get('visible_price', 0)}; "
-        f"visible purchase controls: {summary.get('purchase_controls', 0)}. "
+        f"visible purchase controls: {summary.get('purchase_controls', 0)}; visible variant-selection controls: "
+        f"{summary.get('variant_controls', 0)}; product image candidates: {summary.get('product_images', 0)}; "
+        f"quantity controls: {summary.get('quantity_controls', 0)}. "
         "Rendered selectors are heuristic diagnostics; themes, variants, consent, and inventory state can affect visibility. "
         "This is not a checkout test or a product-data correctness verdict."
     )
@@ -361,10 +363,14 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         const label = [el.innerText, el.value, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').toLowerCase();
                         return /add to cart|add to bag|add to basket|buy now|purchase/.test(label);
                       }).length;
+                      const variantControls = [...document.querySelectorAll('select,input[type="radio"],[role="radio"],[name*="size" i],[name*="color" i],[name*="variant" i],[aria-label*="size" i],[aria-label*="color" i]')].filter(visible).length;
+                      const productImages = [...document.querySelectorAll('[itemprop="image"],[class*="product" i] img,img[alt*="product" i]')].filter(visible).length;
+                      const quantityControls = [...document.querySelectorAll('input[type="number"],input[name*="quantity" i],[aria-label*="quantity" i]')].filter(visible).length;
                       const pathSegments = location.pathname.toLowerCase().split('/').filter(Boolean);
                       const isProductPage = productEntities > 0 || pathSegments.some(part => part === 'product' || part === 'products' || part === 'item' || part === 'items') || price > 0;
                       return {is_product_page: isProductPage, product_entities: productEntities,
-                        visible_h1: h1, visible_price: price, purchase_controls: purchase};
+                        visible_h1: h1, visible_price: price, purchase_controls: purchase,
+                        variant_controls: variantControls, product_images: productImages, quantity_controls: quantityControls};
                     }""")
                     product_page_missing = product_page_summary["is_product_page"] and (
                         product_page_summary["visible_h1"] == 0
