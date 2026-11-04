@@ -12,6 +12,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import socket
 import time
 from urllib.parse import urlsplit
@@ -49,6 +50,36 @@ def _verify_signature(timestamp: str, signature: str, body: bytes) -> None:
     expected = hmac.new(_secret(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature.removeprefix("sha256=")):
         raise HTTPException(status_code=401, detail="Invalid request authentication")
+
+
+def _safe_evidence_url(value: str) -> str:
+    """Remove credentials, query strings and fragments before storing browser evidence."""
+    try:
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            return parts.scheme or "browser"
+        host = parts.hostname
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        port = parts.port
+        netloc = f"{host}:{port}" if port and port not in (80, 443) else host
+        return parts._replace(netloc=netloc, query="", fragment="").geturl()
+    except (TypeError, ValueError):
+        return "browser"
+
+
+def _safe_diagnostic_text(value: str) -> str:
+    text = re.sub(
+        r"(?i)(token|api[_-]?key|secret|password|authorization|code)=([^&\\s]+)",
+        r"\\1=[redacted]",
+        str(value),
+    )
+    text = re.sub(
+        r"https?://[^\\s\"<>]+",
+        lambda match: _safe_evidence_url(match.group(0)),
+        text,
+    )
+    return text[:300]
 
 
 async def _public_http_url(value: str) -> bool:
@@ -167,9 +198,9 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                     await route.continue_()
     
                 await page.route("**/*", guard)
-                page.on("console", lambda message: console_errors.add(message.text[:300]) if message.type == "error" and len(console_errors) < 30 else None)
-                page.on("pageerror", lambda error: console_errors.add(str(error)[:300]) if len(console_errors) < 30 else None)
-                page.on("requestfailed", lambda req: failed_requests.add((req.url[:220] + " — " + str(req.failure or "failed"))[:300]) if len(failed_requests) < 30 else None)
+                page.on("console", lambda message: console_errors.add(_safe_diagnostic_text(message.text)) if message.type == "error" and len(console_errors) < 30 else None)
+                page.on("pageerror", lambda error: console_errors.add(_safe_diagnostic_text(str(error))) if len(console_errors) < 30 else None)
+                page.on("requestfailed", lambda req: failed_requests.add((_safe_evidence_url(req.url) + " — " + str(req.failure or "failed"))[:300]) if len(failed_requests) < 30 else None)
     
                 try:
                     response = await page.goto(target, wait_until="domcontentloaded", timeout=20_000)
@@ -185,7 +216,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                       bodyTextLength: (document.body ? document.body.innerText : '').trim().length
                     })""")
                     outcomes.append({
-                        "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": page.url,
+                        "check_id": "crawl.javascript_rendered_dom", "category": "crawlability", "page_url": _safe_evidence_url(page.url),
                         "outcome": "pass" if rendered_dom["elementCount"] > 0 else "warning",
                         "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "method": "Playwright Chromium post-JavaScript DOM inspection",
@@ -227,7 +258,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                                 "explanation": "The rendered page has horizontal overflow at this viewport. This can make content harder to reach on narrow screens; inspect the overflowing element before remediation.",
                                 "recommendation": "Identify the overflowing element in the affected template and correct its responsive sizing; retest all supported viewport widths.",
                                 "verification_steps": ["Open the page at the recorded viewport width.", "Inspect elements extending beyond the viewport.", "Retest after the responsive layout change."],
-                                "source_url": page_url, "test_method": "Playwright Chromium rendered viewport measurement",
+                                "source_url": _safe_evidence_url(page_url), "test_method": "Playwright Chromium rendered viewport measurement",
                                 "evidence_confidence": "high",
                             })
                         outcomes.append({
