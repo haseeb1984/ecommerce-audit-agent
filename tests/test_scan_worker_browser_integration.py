@@ -30,6 +30,19 @@ def _browser_outcome():
     }
 
 
+def _browser_metadata_outcome():
+    return {
+        "check_id": "seo.javascript_rendered_metadata",
+        "category": "technical_seo",
+        "page_url": "https://shop.example/",
+        "outcome": "pass",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "method": "Playwright hydrated DOM metadata presence/shape inspection",
+        "evidence": "Rendered title characters: 42; meta description tags: 1; canonical tags: 1.",
+        "evidence_ref": "browser.seo.rendered_metadata.homepage",
+    }
+
+
 def _install_static_audit_mocks(monkeypatch):
     from ecommerce_agent import StoreAuditMetrics
 
@@ -54,7 +67,7 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
         "run_browser_audit",
         AsyncMock(return_value={
             "findings": [],
-            "check_outcomes": [_browser_outcome()],
+            "check_outcomes": [_browser_outcome(), _browser_metadata_outcome()],
             "summary": {"viewports": [320, 360, 375, 390, 414, 768, 1365]},
         }),
     )
@@ -64,9 +77,9 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
 
     assert result["summary"]["modules"]["browser_rendered"] == "completed"
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "pass"
+    assert outcomes["seo.javascript_rendered_metadata"]["outcome"] == "pass"
     assert "crawl.javascript_rendered_dom" not in outcomes
     assert "crawl.javascript_internal_pages" not in outcomes
-    assert "seo.javascript_rendered_metadata" in outcomes
 
 
 @pytest.mark.asyncio
