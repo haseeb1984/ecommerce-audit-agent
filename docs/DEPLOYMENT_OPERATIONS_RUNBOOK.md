@@ -172,3 +172,9 @@ Agency team invitation lifecycle:
 
 - Batch cancellation is an explicit confirmation action. It requests cancellation of queued/not-yet-started work; already completed jobs remain completed and in-progress work may finish before the batch settles.
 - The portal reports cancellation and batch-detail request failures inline and restores the action when a cancellation request fails, allowing the customer to retry safely.
+
+
+### Customer passwordless sign-in race handling
+
+- Login-code request and verification responses are scoped to the account-session generation active when the action began.
+- If the customer disconnects or starts a newer account connection while an OTP request is pending, its late response is ignored and cannot install a stale session token or overwrite the current login status.
