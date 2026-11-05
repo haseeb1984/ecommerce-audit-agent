@@ -23,7 +23,7 @@ def test_agency_portal_protects_workspace_and_saved_audit_requests():
 
     assert '"/api/v1/agency/team/workspaces", {}, expectedVersion' in script
     assert '"/api/v1/agency/team/auth/me",{},expectedVersion' in script
-    assert '"/audits?limit=100",{},actionVersion' in script
+    assert '"/audits?limit="+historyPageSize+"&offset="+offset,{},actionVersion' in script
     assert '"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},actionVersion' in script
     assert '},actionVersion);' in script
 
