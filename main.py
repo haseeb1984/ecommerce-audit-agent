@@ -8029,6 +8029,12 @@ async def admin_create_client_api_key(
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
+    if not plan_features(client.tier)["direct_api_access"]:
+        await db.rollback()
+        raise HTTPException(
+            status_code=403,
+            detail="Direct API access is not included in this client's current plan.",
+        )
     current_count = int((await db.execute(
         select(sql_func.count(APIKey.id)).where(APIKey.license_id == license_id)
     )).scalar_one() or 0)
