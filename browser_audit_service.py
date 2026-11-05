@@ -899,6 +899,13 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence_ref": "browser.performance.lab_vitals",
                     })
                     outcomes.append({
+                        "check_id": "accessibility.rendered_text_contrast", "category": "accessibility", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright computed text contrast heuristic",
+                        "evidence": f"Rendered text contrast was not assessed because homepage navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.accessibility.text_contrast",
+                    })
+                    outcomes.append({
                         "check_id": "seo.javascript_rendered_metadata", "category": "technical_seo", "page_url": target,
                         "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "method": "Playwright Chromium navigation", "evidence": f"Rendered SEO metadata inspection was not run because homepage navigation failed: {navigation_error}.",
