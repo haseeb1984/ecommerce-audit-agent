@@ -545,3 +545,70 @@ async def test_agency_team_list_exposes_invitation_expiry_without_token_material
     assert result["items"][0]["invitation_expires_at"] == expires.isoformat()
     assert "invitation_token_hash" not in result["items"][0]
     assert "token" not in result["items"][0]
+
+
+class AgencyWebsiteStatusSession:
+    def __init__(self, agency, workspace, site):
+        self.rows = [agency, workspace, site]
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("last_seen", "expected_health"),
+    [
+        (datetime.now(timezone.utc) - timedelta(days=1), "healthy"),
+        (datetime.now(timezone.utc) - timedelta(days=8), "stale"),
+        (None, "stale"),
+        (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2), "healthy"),
+    ],
+)
+async def test_agency_client_website_status_reports_heartbeat_health(
+    monkeypatch, last_seen, expected_health
+):
+    import main
+    from fastapi import Response
+    from main import get_agency_client_website
+
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
+    workspace = SimpleNamespace(id="workspace-1")
+    site = SimpleNamespace(
+        id="site-1", site_url="https://client.example", site_host="client.example",
+        admin_email="admin@client.example", plugin_version="1.2.3",
+        connected_at=datetime.now(timezone.utc), last_seen_at=last_seen,
+    )
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+    response = Response()
+    result = await get_agency_client_website(
+        "workspace-1", response,
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=AgencyWebsiteStatusSession(agency, workspace, site),
+    )
+
+    assert result["connected"] is True
+    assert result["connection_health"] == expected_health
+    assert result["health_checked_at"]
+    assert result["last_seen_at"] == last_seen.isoformat() if last_seen else result["last_seen_at"] is None
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.asyncio
+async def test_agency_client_website_status_distinguishes_unconnected_workspace(monkeypatch):
+    import main
+    from fastapi import Response
+    from main import get_agency_client_website
+
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
+    workspace = SimpleNamespace(id="workspace-1")
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+    result = await get_agency_client_website(
+        "workspace-1", Response(),
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=AgencyWebsiteStatusSession(agency, workspace, None),
+    )
+
+    assert result["connected"] is False
+    assert result["connection_health"] == "not_connected"
+    assert result["health_checked_at"]
