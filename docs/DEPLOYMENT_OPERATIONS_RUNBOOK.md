@@ -166,3 +166,9 @@ Agency team invitation lifecycle:
 - The owner team list exposes each pending invitation's expiry timestamp, but never the one-time token or its hash.
 - Invitations expire after 48 hours. Expired, revoked, or email-delivery-failed invitations can be resent from the customer portal after explicit confirmation; resending issues a new single-use link and invalidates the previous link.
 - Active team members cannot be re-invited through the resend action. Existing workspace assignments and role are prefilled for a resend.
+
+
+### Customer bulk scan operations
+
+- Batch cancellation is an explicit confirmation action. It requests cancellation of queued/not-yet-started work; already completed jobs remain completed and in-progress work may finish before the batch settles.
+- The portal reports cancellation and batch-detail request failures inline and restores the action when a cancellation request fails, allowing the customer to retry safely.

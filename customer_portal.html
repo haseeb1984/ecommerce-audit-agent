@@ -1487,17 +1487,43 @@
           " · Package " + (batch.package_tier || "unknown");
         info.append(title, detail, created);
         const view = document.createElement("button"); view.type = "button"; view.className = "secondary"; view.textContent = "View URLs";
-        view.addEventListener("click", () => loadScanBatchDetail(batch.id));
+        view.addEventListener("click", async () => {
+          view.disabled = true;
+          const previousLabel = view.textContent;
+          view.textContent = "Loading URLs…";
+          try {
+            await loadScanBatchDetail(batch.id);
+          } catch (error) {
+            setStatus("bulkScanStatus", error.message || "Batch details could not be loaded.", "error");
+          } finally {
+            view.disabled = false;
+            view.textContent = previousLabel;
+          }
+        });
         card.append(info, view);
         if (["queued", "processing", "cancel_requested"].includes(batch.status)) {
           const cancel = document.createElement("button");
           cancel.type = "button"; cancel.className = "secondary";
           cancel.textContent = batch.status === "cancel_requested" ? "Cancellation pending" : "Cancel batch";
           cancel.disabled = batch.status === "cancel_requested";
+          cancel.title = batch.status === "cancel_requested"
+            ? "The cancellation request is already recorded."
+            : "Request cancellation of queued and not-yet-started jobs in this batch.";
           cancel.addEventListener("click", async () => {
-            const result = await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
-            if (!result.ok) throw new Error("Batch cancellation could not be recorded.");
-            await loadScanBatches();
+            if (cancel.disabled) return;
+            if (!window.confirm("Request cancellation for this scan batch? Jobs already completed will remain completed.")) return;
+            cancel.disabled = true;
+            cancel.textContent = "Requesting cancellation…";
+            try {
+              await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
+              setStatus("bulkScanStatus", "Cancellation request recorded. In-progress jobs may finish before the batch settles.", "success");
+              await loadScanBatches();
+              if ($("scanBatchDetail").childElementCount) await loadScanBatchDetail(batch.id);
+            } catch (error) {
+              setStatus("bulkScanStatus", error.message || "Batch cancellation could not be recorded.", "error");
+              cancel.disabled = false;
+              cancel.textContent = "Cancel batch";
+            }
           });
           card.append(cancel);
         }
