@@ -80,12 +80,22 @@ def _license_is_current(license_obj) -> bool:
 async def create_wordpress_link_challenge(
     response: Response,
     license_obj=Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Issue a short-lived single-use token for the authenticated license."""
-    now = datetime.now(timezone.utc)
-    if not _license_is_current(license_obj):
+    # Serialize challenge issuance per license in the canonical database. The
+    # challenge rows live in the operational database, so locking only existing
+    # challenge rows cannot protect the empty-set case from parallel requests.
+    locked_license = await db.scalar(
+        select(SoftwareLicense)
+        .where(SoftwareLicense.id == license_obj.id)
+        .with_for_update()
+    )
+    if not _license_is_current(locked_license):
         raise HTTPException(status_code=403, detail="An active, non-expired license is required to link a WordPress site.")
+    license_obj = locked_license
+    now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     recent = int((await operational_db.execute(
