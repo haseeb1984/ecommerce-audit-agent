@@ -38,6 +38,11 @@ UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
         "A controlled browser did not complete the agreed rendered viewport matrix for this run.",
     ),
     (
+        "performance.browser_lab_vitals",
+        "performance",
+        "A controlled browser did not collect short-run LCP, CLS session-window, and Long Tasks observations for this run.",
+    ),
+    (
         "performance.browser_navigation_timing",
         "performance",
         "A controlled browser did not collect Navigation Timing and Resource Timing diagnostics for this run.",
