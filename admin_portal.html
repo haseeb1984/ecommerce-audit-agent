@@ -36,8 +36,19 @@ for(const c of list){const tr=el("tr"),name=el("td"),strong=el("strong",c.client
 async function loadClientApiKeys(id){
  currentHistoryId=id;currentClientApiKey="";
  $("clientApiKeySecret").hidden=true;$("clientApiKeyValue").textContent="";
+ $("createClientApiKey").disabled=true;
  const container=$("clientApiKeys");container.replaceChildren(el("p","Loading API keys…","muted"));
  const d=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/api-keys");container.replaceChildren();
+ $("createClientApiKey").disabled=!d.can_create;
+ if(!d.can_create){
+  const reasons={
+   plan_not_eligible:"Direct API access is not included in this client's current plan.",
+   account_expired:"This client's license is expired. Renew it before issuing an API key.",
+   account_inactive:"This client's license is inactive. Reactivate it before issuing an API key.",
+   key_limit_reached:"This client already has the maximum of 10 API keys. Revoke an unused key first."
+  };
+  container.append(el("p",reasons[d.can_create_reason]||"API key creation is unavailable for this client.","muted"));
+ }
  if(!d.items.length){container.append(el("p","No API keys created for this client.","muted"));return}
  for(const item of d.items){
   const row=el("div",undefined,"historyitem");
