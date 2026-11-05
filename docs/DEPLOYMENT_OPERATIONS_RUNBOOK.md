@@ -172,3 +172,9 @@ Agency team invitation lifecycle:
 
 - Batch cancellation is an explicit confirmation action. It requests cancellation of queued/not-yet-started work; already completed jobs remain completed and in-progress work may finish before the batch settles.
 - The portal reports cancellation and batch-detail request failures inline and restores the action when a cancellation request fails, allowing the customer to retry safely.
+
+
+### Agency team audit history
+
+- Agency team audit history is loaded in bounded pages of 50 using the workspace-scoped history endpoint and an explicit offset.
+- Older batches are loaded only on request. Workspace authorization is checked by the API on every page; a session change invalidates in-flight requests.
