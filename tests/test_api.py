@@ -2959,6 +2959,32 @@ async def test_account_api_key_creation_enforces_ten_key_cap(client):
         assert len(rows) == 10
 
 @pytest.mark.asyncio
+async def test_admin_api_key_creation_respects_direct_api_plan_entitlement(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-plan-entitlement")
+    license_id = await create_license(
+        key="admin-api-key-starter-plan",
+        quota=5,
+        tier="starter",
+    )
+
+    response = await client.post(
+        f"/api/v1/admin/clients/{license_id}/api-keys",
+        headers={"X-Admin-Key": "test-admin-plan-entitlement"},
+        json={"client_id": license_id, "label": "must be denied"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "Direct API access is not included in this client's current plan."
+    )
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-cap")
     license_id = await create_license(key="admin-api-key-cap-license", quota=5)
