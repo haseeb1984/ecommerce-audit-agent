@@ -18,7 +18,6 @@ def test_admin_customer_detail_does_not_return_license_or_authentication_secrets
 
 
 def test_admin_wordpress_connection_health_is_visible_in_operator_console():
-    from pathlib import importlib.util
     from pathlib import Path
 
     portal = Path(__file__).resolve().parents[1] / "admin_portal.html"
