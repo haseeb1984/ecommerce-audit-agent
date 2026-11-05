@@ -688,3 +688,13 @@ async def test_archiving_workspace_without_connections_is_safe(monkeypatch):
     assert result["status"] == "archived"
     assert result["connection_revoked"] is False
     assert db.committed
+
+
+def test_customer_portal_explains_wordpress_revocation_after_archiving():
+    from pathlib import Path
+
+    portal = Path(__file__).resolve().parents[1] / "customer_portal.html"
+    source = portal.read_text(encoding="utf-8")
+    assert "updated.connection_revoked" in source
+    assert "WordPress credential and unused connection codes were revoked" in source
+    assert "reconnect the site after reactivation" in source
