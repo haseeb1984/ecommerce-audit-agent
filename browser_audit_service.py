@@ -552,6 +552,12 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         if (!Number.isFinite(alpha) || alpha < 0.999) return null;
                         return parts.slice(0, 3).map(value => Math.max(0, Math.min(255, value)));
                       };
+                      const alphaOf = value => {
+                        const match = String(value || '').match(/^rgba?\(([^)]+)\)$/i);
+                        if (!match) return null;
+                        const parts = match[1].split(',').map(item => Number(item.trim()));
+                        return parts.length > 3 && Number.isFinite(parts[3]) ? parts[3] : 1;
+                      };
                       const luminance = rgb => {
                         const channels = rgb.map(value => {
                           const normalized = value / 255;
@@ -579,11 +585,16 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         let uncertain = false;
                         while (ancestor && ancestor.nodeType === 1) {
                           const style = getComputedStyle(ancestor);
-                          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) < 0.999 || style.filter !== 'none') {
+                          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) < 0.999 || style.filter !== 'none' || style.mixBlendMode !== 'normal') {
                             uncertain = true;
                             break;
                           }
                           if (style.backgroundImage && style.backgroundImage !== 'none') {
+                            uncertain = true;
+                            break;
+                          }
+                          const backgroundAlpha = alphaOf(style.backgroundColor);
+                          if (backgroundAlpha !== null && backgroundAlpha > 0 && backgroundAlpha < 0.999) {
                             uncertain = true;
                             break;
                           }
