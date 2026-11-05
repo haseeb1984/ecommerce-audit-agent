@@ -141,6 +141,6 @@ async def test_admin_sync_outbox_retry_requires_admin_authentication(monkeypatch
             request=request, queue="customer_lifecycle", limit=10, db=db
         )
 
-    assert raised.value.status_code == 401
+    assert raised.value.status_code == 403
     assert db.statement is None
     assert db.committed is False
