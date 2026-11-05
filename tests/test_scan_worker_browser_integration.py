@@ -43,6 +43,20 @@ def _browser_metadata_outcome():
     }
 
 
+
+def _browser_lab_vitals_outcome():
+    return {
+        "check_id": "performance.browser_lab_vitals",
+        "category": "performance",
+        "page_url": "https://shop.example/",
+        "outcome": "pass",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "method": "Chromium PerformanceObserver short-run lab diagnostics",
+        "evidence": "Observed LCP: 1800ms; maximum CLS session window: 0.02; Long Tasks: 0.",
+        "evidence_ref": "browser.performance.lab_vitals",
+    }
+
+
 def _install_static_audit_mocks(monkeypatch):
     from ecommerce_agent import StoreAuditMetrics
 
@@ -67,7 +81,7 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
         "run_browser_audit",
         AsyncMock(return_value={
             "findings": [],
-            "check_outcomes": [_browser_outcome(), _browser_metadata_outcome()],
+            "check_outcomes": [_browser_outcome(), _browser_metadata_outcome(), _browser_lab_vitals_outcome()],
             "summary": {"viewports": [320, 360, 375, 390, 414, 768, 1365]},
         }),
     )
@@ -78,6 +92,7 @@ async def test_scan_worker_persists_successful_browser_outcomes_in_existing_resu
     assert result["summary"]["modules"]["browser_rendered"] == "completed"
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "pass"
     assert outcomes["seo.javascript_rendered_metadata"]["outcome"] == "pass"
+    assert outcomes["performance.browser_lab_vitals"]["outcome"] == "pass"
     assert "crawl.javascript_rendered_dom" not in outcomes
     assert "crawl.javascript_internal_pages" not in outcomes
 
@@ -100,3 +115,4 @@ async def test_scan_worker_marks_browser_checks_not_assessed_when_service_unavai
     assert outcomes["mobile_ux.rendered_viewport_matrix"]["outcome"] == "not_assessed"
     assert outcomes["performance.browser_console_errors"]["outcome"] == "not_assessed"
     assert outcomes["performance.browser_network_failures"]["outcome"] == "not_assessed"
+    assert outcomes["performance.browser_lab_vitals"]["outcome"] == "not_assessed"

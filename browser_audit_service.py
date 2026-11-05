@@ -63,6 +63,35 @@ RENDERED_METADATA_SCRIPT = """() => {
     product_schema_count: productSchemaCount
   };
 }"""
+LAB_VITALS_INIT_SCRIPT = """(() => {
+  const state = { lcp_supported: false, cls_supported: false, longtask_supported: false,
+    lcp_ms: null, cls: null, long_task_count: null, long_task_total_ms: null, long_task_max_ms: null,
+    _cls_entries: [], _long_tasks: [] };
+  try {
+    const lcp = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) state.lcp_ms = Math.round(entry.startTime);
+    });
+    lcp.observe({type: 'largest-contentful-paint', buffered: true});
+    state.lcp_supported = true;
+  } catch (_) {}
+  try {
+    const cls = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) {
+        if (!entry.hadRecentInput) state._cls_entries.push({start: entry.startTime, value: entry.value});
+      }
+    });
+    cls.observe({type: 'layout-shift', buffered: true});
+    state.cls_supported = true;
+  } catch (_) {}
+  try {
+    const longTasks = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) state._long_tasks.push(entry.duration);
+    });
+    longTasks.observe({type: 'longtask', buffered: true});
+    state.longtask_supported = true;
+  } catch (_) {}
+  window.__auditLabVitals = state;
+})();"""
 VIEWPORTS = ((320, 800), (360, 800), (375, 812), (390, 844), (414, 896), (768, 1024), (1365, 900))
 _BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 _SEEN_REQUESTS: dict[str, int] = {}
@@ -144,6 +173,60 @@ def _format_navigation_timing(timing: dict, resource_summary: dict) -> str:
     )
 
 
+
+
+
+def _summarize_lab_vitals(raw: dict) -> dict:
+    """Summarize single-render LCP, CLS session windows and Long Tasks API entries."""
+    shifts = raw.get("_cls_entries", []) if isinstance(raw, dict) else []
+    max_session_value = 0.0
+    session_start = None
+    session_last = None
+    session_value = 0.0
+    for entry in sorted(shifts, key=lambda item: float(item.get("start", 0))):
+        start = float(entry.get("start", 0))
+        value = float(entry.get("value", 0))
+        if session_start is None or start - session_last > 1000 or start - session_start > 5000:
+            session_start, session_last, session_value = start, start, value
+        else:
+            session_last = start
+            session_value += value
+        max_session_value = max(max_session_value, session_value)
+    tasks = [float(value) for value in raw.get("_long_tasks", []) if isinstance(value, (int, float))]
+    return {
+        "lcp_supported": bool(raw.get("lcp_supported")),
+        "cls_supported": bool(raw.get("cls_supported")),
+        "longtask_supported": bool(raw.get("longtask_supported")),
+        "lcp_ms": raw.get("lcp_ms"),
+        "cls": round(max_session_value, 4) if raw.get("cls_supported") else None,
+        "long_task_count": len(tasks) if raw.get("longtask_supported") else None,
+        "long_task_total_ms": round(sum(tasks)) if raw.get("longtask_supported") else None,
+        "long_task_max_ms": round(max(tasks)) if tasks and raw.get("longtask_supported") else None,
+    }
+
+
+def _format_lab_vitals_evidence(summary: dict) -> str:
+    lcp = summary.get("lcp_ms")
+    cls = summary.get("cls")
+    tasks = summary.get("long_task_count")
+    return (
+        f"Observed LCP: {str(lcp) + 'ms' if lcp is not None else 'unavailable'}; "
+        f"maximum CLS session window: {cls if cls is not None else 'unavailable'}; "
+        f"Long Tasks: {tasks if tasks is not None else 'API unavailable'} "
+        f"(total {summary.get('long_task_total_ms') if summary.get('long_task_total_ms') is not None else 'n/a'}ms, "
+        f"maximum {summary.get('long_task_max_ms') if summary.get('long_task_max_ms') is not None else 'n/a'}ms). "
+        "Single-run browser lab observations collected during a short page render; not field Core Web Vitals, "
+        "not a stable Lighthouse run, and not an INP measurement. Consent, page state, viewport changes, "
+        "browser support and the observation window can affect these values."
+    )
+
+
+def _lab_vitals_needs_review(summary: dict) -> bool:
+    return bool(
+        (isinstance(summary.get("lcp_ms"), (int, float)) and summary["lcp_ms"] > 2500)
+        or (isinstance(summary.get("cls"), (int, float)) and summary["cls"] > 0.1)
+        or (isinstance(summary.get("long_task_count"), int) and summary["long_task_count"] > 0)
+    )
 
 
 def _format_rendered_metadata_evidence(summary: dict) -> str:
@@ -344,6 +427,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                 await context.route_web_socket("**/*", block_websocket)
                 page = await context.new_page()
                 page.set_default_navigation_timeout(20_000)
+                await page.add_init_script(LAB_VITALS_INIT_SCRIPT)
                 page.set_default_timeout(5_000)
     
                 async def guard(route):
@@ -511,6 +595,22 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         }
                       };
                     }""")
+                    raw_lab_vitals = await page.evaluate("""() => {
+                      const state = window.__auditLabVitals;
+                      if (!state) return {};
+                      return {...state};
+                    }""")
+                    lab_vitals = _summarize_lab_vitals(raw_lab_vitals)
+                    vitals_supported = lab_vitals["lcp_supported"] or lab_vitals["cls_supported"] or lab_vitals["longtask_supported"]
+                    outcomes.append({
+                        "check_id": "performance.browser_lab_vitals",
+                        "category": "performance", "page_url": _safe_evidence_url(page.url),
+                        "outcome": ("warning" if _lab_vitals_needs_review(lab_vitals) else "pass") if vitals_supported else "not_assessed",
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Chromium PerformanceObserver for largest-contentful-paint, layout-shift session windows, and longtask; short single-run render",
+                        "evidence": _format_lab_vitals_evidence(lab_vitals),
+                        "evidence_ref": "browser.performance.lab_vitals",
+                    })
                     outcomes.append({
                         "check_id": "performance.browser_navigation_timing",
                         "category": "performance", "page_url": _safe_evidence_url(page.url),
@@ -690,6 +790,13 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         },
                     ])
                     outcomes.append({
+                        "check_id": "performance.browser_lab_vitals", "category": "performance", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Chromium PerformanceObserver lab diagnostics",
+                        "evidence": f"LCP, CLS and Long Tasks observations were unavailable because homepage navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.performance.lab_vitals",
+                    })
+                    outcomes.append({
                         "check_id": "seo.javascript_rendered_metadata", "category": "technical_seo", "page_url": target,
                         "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "method": "Playwright Chromium navigation", "evidence": f"Rendered SEO metadata inspection was not run because homepage navigation failed: {navigation_error}.",
@@ -758,7 +865,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
             "blocked_requests": browser_blocked_requests,
             "navigation_error": navigation_error,
             "screenshots": "not_captured: durable evidence storage is not configured",
-            "core_web_vitals": "not_measured: no field-data source or stable lab metric collection configured",
+            "core_web_vitals": "field data and INP not measured; LCP/CLS are short-run lab observations only",
             "navigation_timing": "single-run browser diagnostics only; not field Core Web Vitals",
         },
     }
