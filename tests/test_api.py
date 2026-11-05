@@ -2967,6 +2967,15 @@ async def test_admin_api_key_creation_respects_direct_api_plan_entitlement(clien
         tier="starter",
     )
 
+    eligibility = await client.get(
+        f"/api/v1/admin/clients/{license_id}/api-keys",
+        headers={"X-Admin-Key": "test-admin-plan-entitlement"},
+    )
+    assert eligibility.status_code == 200
+    assert eligibility.json()["direct_api_access"] is False
+    assert eligibility.json()["can_create"] is False
+    assert eligibility.json()["can_create_reason"] == "plan_not_eligible"
+
     response = await client.post(
         f"/api/v1/admin/clients/{license_id}/api-keys",
         headers={"X-Admin-Key": "test-admin-plan-entitlement"},
