@@ -571,7 +571,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
                       };
                       const candidates = [...document.querySelectorAll('body *')]
-                        .filter(el => el.children.length === 0 && (el.innerText || el.textContent || '').trim())
+                        .filter(el => el.namespaceURI === 'http://www.w3.org/1999/xhtml' && el.children.length === 0 && (el.innerText || el.textContent || '').trim())
                         .slice(0, 500);
                       let inspected = 0;
                       let low = 0;
