@@ -6220,6 +6220,45 @@ async def admin_billing_mirror_status(
     }
 
 
+@app.post("/api/v1/admin/billing/mirror-retry")
+async def admin_retry_billing_mirror_deliveries(
+    request: Request,
+    limit: int = Query(200, ge=1, le=200),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Make a bounded set of pending billing mirror deliveries eligible on the next worker cycle."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+
+    now = datetime.now(timezone.utc)
+    items = (await db.execute(
+        select(BillingMirrorSyncOutbox)
+        .where(BillingMirrorSyncOutbox.status == "pending")
+        .order_by(
+            BillingMirrorSyncOutbox.next_attempt_at.asc(),
+            BillingMirrorSyncOutbox.created_at.asc(),
+        )
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    for item in items:
+        item.next_attempt_at = now
+    await db.commit()
+    await _write_admin_log(
+        db,
+        "billing.mirror_retry_queued",
+        "billing_mirror_sync_outbox",
+        None,
+        {"requested_limit": limit, "queued": len(items)},
+    )
+    return {
+        "status": "queued" if items else "empty",
+        "queued": len(items),
+        "next_worker_cycle": bool(items),
+        "checked_at": now.isoformat(),
+    }
+
+
 @app.post("/api/v1/admin/billing/reconcile")
 async def admin_reconcile_billing_history(
     request: Request,
