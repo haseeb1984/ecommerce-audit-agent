@@ -544,7 +544,7 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                     ])
                     contrast_summary = await page.evaluate("""() => {
                       const parseColor = value => {
-                        const match = String(value || '').match(/^rgba?\\(([^)]+)\\)$/i);
+                        const match = String(value || '').match(/^rgba?\(([^)]+)\)$/i);
                         if (!match) return null;
                         const parts = match[1].split(',').map(item => Number(item.trim()));
                         if (parts.length < 3 || parts.slice(0, 3).some(value => !Number.isFinite(value))) return null;
