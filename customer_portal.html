@@ -1706,26 +1706,35 @@
     const email = $("loginEmail").value.trim();
     if (!email) { setStatus("loginStatus", "Enter the email address used at checkout.", "error"); return; }
     const button = $("requestLoginCode"); button.disabled = true;
+    const loginAttemptVersion = accountSessionVersion;
     try {
       const response = await fetch("/api/v1/account/auth/request-code", {
         method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({email})
       });
       const data = await response.json();
+      if (loginAttemptVersion !== accountSessionVersion) return;
       if (!response.ok) throw new Error(data.detail || "Unable to request a sign-in code.");
       setStatus("loginStatus", data.message || "If an account exists for this email, a sign-in code will be sent.", "success");
-    } catch (error) { setStatus("loginStatus", error.message, "error"); }
-    finally { button.disabled = false; }
+    } catch (error) {
+      if (loginAttemptVersion === accountSessionVersion) setStatus("loginStatus", error.message, "error");
+    } finally {
+      if (loginAttemptVersion === accountSessionVersion) button.disabled = false;
+    }
   });
   $("verifyLoginCode").addEventListener("click", async () => {
     const email = $("loginEmail").value.trim();
     const code = $("loginCode").value.trim();
     if (!email || !/^[0-9]{6}$/.test(code)) { setStatus("loginStatus", "Enter your account email and six-digit code.", "error"); return; }
     const button = $("verifyLoginCode"); button.disabled = true;
+    const loginAttemptVersion = accountSessionVersion;
     try {
       const response = await fetch("/api/v1/account/auth/verify-code", {
         method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({email, code})
       });
       const data = await response.json();
+      // A disconnect or newer account connection supersedes this OTP attempt. Never
+      // install its token into the identity that is now active in this browser.
+      if (loginAttemptVersion !== accountSessionVersion) return;
       if (!response.ok) throw new Error(data.detail || "The sign-in code could not be verified.");
       sessionToken = String(data.access_token || "");
       if (!sessionToken) throw new Error("The server did not return a customer session.");
@@ -1735,8 +1744,14 @@
       $("loginCode").value = "";
       setStatus("loginStatus", "Email verified. Your account is signing in…", "success");
       $("connect").click();
-    } catch (error) { sessionToken = ""; credential = ""; setStatus("loginStatus", error.message, "error"); }
-    finally { button.disabled = false; }
+    } catch (error) {
+      if (loginAttemptVersion === accountSessionVersion) {
+        sessionToken = ""; credential = "";
+        setStatus("loginStatus", error.message, "error");
+      }
+    } finally {
+      if (loginAttemptVersion === accountSessionVersion) button.disabled = false;
+    }
   });
   $("connect").addEventListener("click", async () => {
     const nextCredential = $("credential").value.trim();
