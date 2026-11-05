@@ -519,6 +519,7 @@ class BusinessAgencyTeamListSession:
 
 @pytest.mark.asyncio
 async def test_agency_team_list_exposes_invitation_expiry_without_token_material(monkeypatch):
+    import main
     from fastapi import Response
     from main import list_business_agency_team
 
