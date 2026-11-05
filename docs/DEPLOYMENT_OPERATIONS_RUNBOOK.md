@@ -166,3 +166,9 @@ Agency team invitation lifecycle:
 - The owner team list exposes each pending invitation's expiry timestamp, but never the one-time token or its hash.
 - Invitations expire after 48 hours. Expired, revoked, or email-delivery-failed invitations can be resent from the customer portal after explicit confirmation; resending issues a new single-use link and invalidates the previous link.
 - Active team members cannot be re-invited through the resend action. Existing workspace assignments and role are prefilled for a resend.
+
+
+### Agency team audit history
+
+- The agency team portal reads audit batches in pages of 50 using the workspace-scoped history endpoint and an explicit offset.
+- Older batches are loaded only when requested. Workspace authorization remains enforced by the API on every page; a session change invalidates in-flight page requests.
