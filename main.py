@@ -2275,13 +2275,32 @@ async def get_agency_client_website(workspace_id: str, response: Response,
     ))
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
+    checked_at = datetime.now(timezone.utc)
     if site is None:
-        return {"connected": False, "workspace_id": workspace.id}
-    return {"connected": True, "workspace_id": workspace.id, "site_id": site.id,
-            "site_url": site.site_url, "site_host": site.site_host,
-            "admin_email": site.admin_email, "plugin_version": site.plugin_version,
-            "connected_at": site.connected_at.isoformat() if site.connected_at else None,
-            "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None}
+        return {
+            "connected": False,
+            "workspace_id": workspace.id,
+            "connection_health": "not_connected",
+            "health_checked_at": checked_at.isoformat(),
+        }
+    last_seen = site.last_seen_at
+    if last_seen is not None and last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    stale_before = checked_at - timedelta(days=7)
+    connection_health = "healthy" if last_seen is not None and last_seen >= stale_before else "stale"
+    return {
+        "connected": True,
+        "workspace_id": workspace.id,
+        "site_id": site.id,
+        "site_url": site.site_url,
+        "site_host": site.site_host,
+        "admin_email": site.admin_email,
+        "plugin_version": site.plugin_version,
+        "connected_at": site.connected_at.isoformat() if site.connected_at else None,
+        "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None,
+        "connection_health": connection_health,
+        "health_checked_at": checked_at.isoformat(),
+    }
 
 
 @app.post("/api/v1/account/agency/clients/{workspace_id}/website/disconnect")
