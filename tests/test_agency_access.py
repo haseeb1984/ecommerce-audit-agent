@@ -502,3 +502,46 @@ def test_agency_wordpress_site_registration_rechecks_single_active_workspace_aft
     active_site_check = source.index("active_site = await operational_db.scalar")
     assert workspace_lock < active_site_check
     assert "AgencyClientWebsite.status == \"active\"" in source[active_site_check:]
+
+
+class BusinessAgencyTeamListSession:
+    def __init__(self, agency, members, access_rows=()):
+        self.agency = agency
+        self.results = [list(members), list(access_rows)]
+
+    async def scalar(self, _statement):
+        return self.agency
+
+    async def execute(self, _statement):
+        values = self.results.pop(0)
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: values),
+            all=lambda: values,
+        )
+
+
+@pytest.mark.asyncio
+async def test_agency_team_list_exposes_invitation_expiry_without_token_material(monkeypatch):
+    import main
+    from fastapi import Response
+    from main import list_business_agency_team
+
+    expires = datetime.now(timezone.utc) + timedelta(hours=12)
+    member = SimpleNamespace(
+        id="member-invited", email="invitee@example.com", role="analyst",
+        status="invited", created_at=datetime.now(timezone.utc),
+        accepted_at=None, invitation_expires_at=expires,
+    )
+    agency = SimpleNamespace(id="agency-1", status="active")
+    db = BusinessAgencyTeamListSession(agency, [member])
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await list_business_agency_team(
+        Response(),
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=db,
+    )
+
+    assert result["items"][0]["invitation_expires_at"] == expires.isoformat()
+    assert "invitation_token_hash" not in result["items"][0]
+    assert "token" not in result["items"][0]

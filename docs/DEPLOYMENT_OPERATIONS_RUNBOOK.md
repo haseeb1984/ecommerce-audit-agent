@@ -159,3 +159,9 @@ Customer account device security:
 - The customer portal lists active devices with last-seen and session-expiry timestamps; opaque session tokens and token digests are never displayed.
 - Customers can revoke one other device, revoke all other devices while retaining the current browser session, or sign out every device. Device-wide actions require an active passwordless customer session, not a license/API credential.
 - The "sign out other devices" action calls `POST /api/v1/account/sessions/revoke-others`; the current browser session remains active.
+
+
+Agency team invitation lifecycle:
+- The owner team list exposes each pending invitation's expiry timestamp, but never the one-time token or its hash.
+- Invitations expire after 48 hours. Expired, revoked, or email-delivery-failed invitations can be resent from the customer portal after explicit confirmation; resending issues a new single-use link and invalidates the previous link.
+- Active team members cannot be re-invited through the resend action. Existing workspace assignments and role are prefilled for a resend.

@@ -894,7 +894,16 @@
       const card = document.createElement("article"); card.className = "report";
       const info = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = item.email;
-      const detail = document.createElement("small"); detail.textContent = item.role + " · " + item.status + ((item.workspaces || []).length ? " · Clients: " + item.workspaces.map(workspace => workspace.workspace_name + " (" + workspace.role + ")").join(", ") : " · No client workspace assigned");
+      const detail = document.createElement("small");
+      const workspaceSummary = (item.workspaces || []).length
+        ? " · Clients: " + item.workspaces.map(workspace => workspace.workspace_name + " (" + workspace.role + ")").join(", ")
+        : " · No client workspace assigned";
+      const expiryTime = item.invitation_expires_at ? new Date(item.invitation_expires_at) : null;
+      const invitationExpired = item.status === "invited" && expiryTime && Number.isFinite(expiryTime.getTime()) && expiryTime.getTime() <= Date.now();
+      const invitationStatus = item.status === "invited" && expiryTime
+        ? (invitationExpired ? " · Invitation expired " : " · Invitation expires ") + expiryTime.toLocaleString()
+        : (item.status === "delivery_failed" ? " · Invitation email delivery failed" : "");
+      detail.textContent = item.role + " · " + item.status + invitationStatus + workspaceSummary;
       info.append(title, detail);
       const accessEditor = document.createElement("div"); accessEditor.className = "reports";
       if (item.status === "active") {
@@ -943,6 +952,22 @@
         accessEditor.append(accessLabel, accessSelect, roleLabel, accessRole, saveAccess);
       }
       const actions = document.createElement("div"); actions.className = "report-actions";
+      const canResendInvitation = item.status === "delivery_failed" || item.status === "revoked" || invitationExpired;
+      if (canResendInvitation) {
+        const resend = document.createElement("button"); resend.type = "button";
+        resend.className = "secondary"; resend.textContent = "Resend invitation";
+        resend.title = "Issue a new single-use invitation link valid for 48 hours.";
+        resend.addEventListener("click", async () => {
+          if (!window.confirm("Send a new 48-hour invitation to " + item.email + "? The previous invitation link will no longer work.")) return;
+          $("agencyTeamEmail").value = item.email;
+          $("agencyTeamRole").value = item.role;
+          const selectedIds = new Set((item.workspaces || []).map(workspace => workspace.workspace_id));
+          for (const option of Array.from($("agencyTeamWorkspaces").options)) option.selected = selectedIds.has(option.value);
+          $("agencyTeamEmail").scrollIntoView({behavior:"smooth", block:"center"});
+          await inviteAgencyTeam();
+        });
+        actions.append(resend);
+      }
       if (item.status !== "revoked") {
         const revoke = document.createElement("button"); revoke.type = "button";
         revoke.className = "secondary"; revoke.textContent = "Revoke";

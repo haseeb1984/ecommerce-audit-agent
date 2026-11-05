@@ -3104,6 +3104,7 @@ async def list_business_agency_team(
         "workspaces": access_by_member.get(item.id, []),
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "accepted_at": item.accepted_at.isoformat() if item.accepted_at else None,
+        "invitation_expires_at": item.invitation_expires_at.isoformat() if item.invitation_expires_at else None,
     } for item in members]}
 
 
