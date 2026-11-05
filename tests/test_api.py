@@ -563,6 +563,38 @@ async def test_api_key_authentication_and_revocation(client, mock_process_lead):
 
 
 @pytest.mark.asyncio
+async def test_existing_api_key_is_blocked_after_plan_downgrade_but_license_key_still_works(client, mock_process_lead):
+    api_key = "downgraded-plan-api-key"
+    license_id = await create_license(key="downgraded-api-license", quota=5, tier="business")
+    async with AsyncSessionLocal() as db:
+        db.add(APIKey(
+            license_id=license_id,
+            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            key_prefix=api_key[:10],
+        ))
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        license_obj.tier = "starter"
+        await db.commit()
+
+    api_response = await client.post(
+        "/api/v1/audit-lead",
+        params={"domain": "api-shop.example"},
+        headers={"X-API-Key": api_key},
+    )
+    assert api_response.status_code == 403
+    assert "Direct API access is not included" in api_response.json()["detail"]
+
+    license_response = await client.post(
+        "/api/v1/audit-lead",
+        params={"domain": "license-shop.example"},
+        headers={"X-License-Key": "downgraded-api-license"},
+    )
+    assert license_response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_missing_domain_is_rejected(client):
     await create_license(key="domain-validation-license")
     response = await client.post(
