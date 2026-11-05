@@ -1349,7 +1349,7 @@ async def test_public_resolver_rejects_excessive_dns_address_fanout(monkeypatch)
             ]
 
     monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
-    with pytest.raises(OSError, match="too many DNS addresses"):
+    with pytest.raises(OSError, match="more than 32 DNS addresses"):
         await audit_checks.PublicOnlyResolver().resolve("shop.example", 443)
 
 
@@ -1487,3 +1487,32 @@ def test_nested_productgroup_entities_are_discovered_inside_jsonld_item_lists():
     }
     assert outcomes["structured_data.product_group_variants"].outcome == "pass"
     assert "ProductGroup entities: 1" in outcomes["structured_data.product_group_variants"].evidence
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_rejects_excessive_unique_dns_answers(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", (f"8.8.8.{index}", port))
+                for index in range(1, audit_checks.MAX_DNS_ADDRESSES + 2)
+            ]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    with pytest.raises(OSError, match=f"more than {audit_checks.MAX_DNS_ADDRESSES} DNS addresses"):
+        await audit_checks.PublicOnlyResolver().resolve("many-addresses.example", 443)
+
+
+@pytest.mark.asyncio
+async def test_public_resolver_deduplicates_dns_answers_before_applying_cap(monkeypatch):
+    class FakeLoop:
+        async def getaddrinfo(self, host, port, **kwargs):
+            return [
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)),
+                (audit_checks.socket.AF_INET, audit_checks.socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)),
+            ]
+
+    monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
+    result = await audit_checks.PublicOnlyResolver().resolve("duplicate-address.example", 443)
+    assert len(result) == 1
+    assert result[0]["host"] == "8.8.8.8"
