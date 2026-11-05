@@ -153,3 +153,8 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 ## WordPress identity-link schema
 
 Before enabling the customer portal's one-time WordPress identity-link flow, apply `migrations/20261103_wordpress_identity_linking.sql` to Hostinger MySQL. It adds the linked WordPress user ID/login fields and creates the hashed, expiring challenge table. Fresh installations receive the same objects from `migrations/hostinger_operational_schema.sql`. Do not apply the migration to PostgreSQL.
+
+
+Customer bulk scan operations:
+- Batch cancellation is an explicit confirmation action. It requests cancellation of queued/not-yet-started work; already completed jobs remain completed and in-progress work may finish before the batch settles.
+- The portal reports cancellation and batch-detail request failures inline and restores the action when a cancellation request fails, allowing the customer to retry safely.
