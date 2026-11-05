@@ -7992,6 +7992,19 @@ async def admin_list_client_api_keys(
         select(APIKey).where(APIKey.license_id == license_id)
         .order_by(APIKey.created_at.desc(), APIKey.id.desc()).limit(100)
     )).scalars().all()
+    expires_at = client.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not plan_features(client.tier)["direct_api_access"]:
+        can_create_reason = "plan_not_eligible"
+    elif expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        can_create_reason = "account_expired"
+    elif not client.is_active:
+        can_create_reason = "account_inactive"
+    elif len(rows) >= 10:
+        can_create_reason = "key_limit_reached"
+    else:
+        can_create_reason = "available"
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -8005,6 +8018,12 @@ async def admin_list_client_api_keys(
             for item in rows
         ],
         "limit": 100,
+        "tier": client.tier,
+        "direct_api_access": plan_features(client.tier)["direct_api_access"],
+        "key_count": len(rows),
+        "max_keys": 10,
+        "can_create": can_create_reason == "available",
+        "can_create_reason": can_create_reason,
     }
 
 
@@ -8035,6 +8054,15 @@ async def admin_create_client_api_key(
             status_code=403,
             detail="Direct API access is not included in this client's current plan.",
         )
+    expires_at = client.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        await db.rollback()
+        raise HTTPException(status_code=402, detail="Client license is expired; renew before issuing an API key.")
+    if not client.is_active:
+        await db.rollback()
+        raise HTTPException(status_code=403, detail="Client license is inactive; reactivate before issuing an API key.")
     current_count = int((await db.execute(
         select(sql_func.count(APIKey.id)).where(APIKey.license_id == license_id)
     )).scalar_one() or 0)
