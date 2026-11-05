@@ -10,6 +10,7 @@ from database import get_async_db
 from models import SoftwareLicense, APIKey
 from hostinger_database import HostingerAsyncSessionLocal
 from hostinger_models import CustomerSession
+from plan_features import plan_features
 
 # Define explicit scheme_names to prevent Swagger UI schema collisions
 API_KEY_HEADER = APIKeyHeader(
@@ -122,6 +123,16 @@ async def verify_license_or_api_key(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="License is inactive. Contact the account owner or renew service."
+        )
+
+    # Direct API access is an entitlement, not a permanent property of a key.
+    # Re-check it on every API-key authentication so a plan downgrade takes
+    # effect immediately for existing keys. License-key and customer-session
+    # authentication remain governed by their normal account entitlements.
+    if api_key and not plan_features(license_obj.tier)["direct_api_access"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct API access is not included in the current plan."
         )
 
     return license_obj
