@@ -6125,6 +6125,54 @@ async def admin_deactivate_package(tier: str, request: Request, db: AsyncSession
 
 
 
+@app.post("/api/v1/admin/sync-outboxes/retry")
+async def admin_retry_sync_outbox(
+    request: Request,
+    queue: str = Query(...),
+    limit: int = Query(200, ge=1, le=200),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Make a bounded set of pending cross-database sync events eligible for the next worker cycle."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+
+    queue_models = {
+        "customer_lifecycle": CustomerLifecycleSyncOutbox,
+        "customer_email_identity": CustomerEmailIdentitySyncOutbox,
+    }
+    model = queue_models.get(queue)
+    if model is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Queue must be customer_lifecycle or customer_email_identity.",
+        )
+    now = datetime.now(timezone.utc)
+    items = (await db.execute(
+        select(model)
+        .where(model.status == "pending")
+        .order_by(model.next_attempt_at.asc(), model.created_at.asc())
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    for item in items:
+        item.next_attempt_at = now
+    await db.commit()
+    await _write_admin_log(
+        db,
+        "sync_outbox.retry_queued",
+        queue,
+        None,
+        {"requested_limit": limit, "queued": len(items)},
+    )
+    return {
+        "queue": queue,
+        "status": "queued" if items else "empty",
+        "queued": len(items),
+        "next_worker_cycle": bool(items),
+        "checked_at": now.isoformat(),
+    }
+
+
 @app.get("/api/v1/admin/billing/mirror-status")
 async def admin_billing_mirror_status(
     request: Request,
