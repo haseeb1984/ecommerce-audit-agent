@@ -68,3 +68,14 @@ def test_customer_session_revoke_others_keeps_current_session():
     assert "CustomerSession.token_hash != digest" in source
     assert "CustomerSession.email == current.email" in source
     assert "revoked_count" in source
+
+
+def test_customer_portal_exposes_safe_other_device_signout_controls():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    assert 'id="logoutOtherSessions"' in portal
+    assert '"/api/v1/account/sessions/revoke-others"' in portal
+    assert "This browser will remain signed in." in portal
+    assert '$("logoutOtherSessions").disabled = !connected || !sessionToken' in portal
+    assert '$("logoutAllSessions").disabled = !connected || !sessionToken' in portal
