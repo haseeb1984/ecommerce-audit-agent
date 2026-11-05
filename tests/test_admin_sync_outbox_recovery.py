@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException, Request
 
