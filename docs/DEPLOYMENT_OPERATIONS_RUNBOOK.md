@@ -161,6 +161,12 @@ Customer account device security:
 - The "sign out other devices" action calls `POST /api/v1/account/sessions/revoke-others`; the current browser session remains active.
 
 
+Agency team invitation lifecycle:
+- The owner team list exposes each pending invitation's expiry timestamp, but never the one-time token or its hash.
+- Invitations expire after 48 hours. Expired, revoked, or email-delivery-failed invitations can be resent from the customer portal after explicit confirmation; resending issues a new single-use link and invalidates the previous link.
+- Active team members cannot be re-invited through the resend action. Existing workspace assignments and role are prefilled for a resend.
+
+
 Customer portal passwordless-session controls:
 - Account profile, white-label branding, agency workspace/team actions, and device-wide session revocation remain usable when authenticated by a verified customer bearer session; the portal must not re-disable these actions merely because the legacy license-key input is empty.
 - WordPress identity-link challenge generation remains license-credential gated because that endpoint uses the legacy license/API-key authentication path.
