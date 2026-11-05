@@ -738,11 +738,15 @@
       toggle.addEventListener("click", async () => {
         toggle.disabled = true;
         try {
-          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
+          const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
             method: "PATCH", headers: {"Content-Type":"application/json"},
             body: JSON.stringify({status: item.status === "active" ? "archived" : "active"})
           });
+          const updated = await response.json();
           await loadAgencyDashboard();
+          if (updated.status === "archived" && updated.connection_revoked) {
+            setStatus("agencyStatus", "Client archived. Its WordPress credential and unused connection codes were revoked; reconnect the site after reactivation.", "success");
+          }
         } catch (error) {
           setStatus("agencyStatus", error.message, "error");
         } finally { toggle.disabled = false; }
