@@ -182,3 +182,25 @@ def test_lab_vitals_are_not_assessed_when_browser_apis_are_unavailable():
     assert summary["long_task_count"] is None
     assert browser_audit_service._format_lab_vitals_evidence(summary).startswith("Observed LCP: unavailable")
     assert browser_audit_service._lab_vitals_needs_review(summary) is False
+
+
+def test_rendered_contrast_review_only_flags_measured_low_contrast_text():
+    assert browser_audit_service._rendered_contrast_needs_review({
+        "inspected_text_count": 8, "low_contrast_text_count": 2,
+    }) is True
+    assert browser_audit_service._rendered_contrast_needs_review({
+        "inspected_text_count": 8, "low_contrast_text_count": 0,
+    }) is False
+    assert browser_audit_service._rendered_contrast_needs_review({
+        "inspected_text_count": 0, "low_contrast_text_count": 0,
+    }) is False
+
+
+def test_rendered_contrast_evidence_discloses_heuristic_limits():
+    evidence = browser_audit_service._format_rendered_contrast_evidence({
+        "inspected_text_count": 12, "low_contrast_text_count": 1,
+        "unmeasurable_text_count": 4, "low_contrast_samples": ["240,240,240/255,255,255/1.14"],
+    })
+    assert "low-contrast text candidates: 1" in evidence
+    assert "skips gradients, images, translucent layers" in evidence
+    assert "not a complete WCAG 2.2 contrast audit" in evidence
