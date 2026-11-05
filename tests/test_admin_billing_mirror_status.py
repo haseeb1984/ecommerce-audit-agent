@@ -139,7 +139,10 @@ async def test_admin_billing_mirror_retry_reports_empty_queue(monkeypatch):
         "client": ("testclient", 50000),
     })
     db = _BillingRetryDB([])
-    monkeypatch.setattr(main, "_write_admin_log", pytest.AsyncMock())
+    async def write_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "_write_admin_log", write_log)
 
     result = await main.admin_retry_billing_mirror_deliveries(
         request=request, limit=200, db=db
