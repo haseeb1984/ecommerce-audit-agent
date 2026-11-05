@@ -61,6 +61,96 @@ async def test_admin_billing_mirror_status_returns_safe_aggregate_diagnostics(mo
     assert "last_error" not in str(result)
 
 
+class _ScalarsResult:
+    def __init__(self, values):
+        self.values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.values
+
+
+class _BillingRetryDB:
+    def __init__(self, items):
+        self.items = items
+        self.statement = None
+        self.committed = False
+
+    async def execute(self, statement):
+        self.statement = statement
+        return _ScalarsResult(self.items)
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_admin_billing_mirror_retry_queues_only_selected_pending_rows(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-secret")
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/admin/billing/mirror-retry",
+        "headers": [(b"x-admin-key", b"test-admin-secret")],
+        "query_string": b"",
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "client": ("testclient", 50000),
+    })
+    items = [
+        SimpleNamespace(status="pending", next_attempt_at=datetime(2026, 11, 1, tzinfo=timezone.utc)),
+        SimpleNamespace(status="pending", next_attempt_at=datetime(2026, 11, 2, tzinfo=timezone.utc)),
+    ]
+    db = _BillingRetryDB(items)
+    logs = []
+
+    async def write_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    monkeypatch.setattr(main, "_write_admin_log", write_log)
+
+    result = await main.admin_retry_billing_mirror_deliveries(
+        request=request, limit=2, db=db
+    )
+
+    assert result["status"] == "queued"
+    assert result["queued"] == 2
+    assert result["next_worker_cycle"] is True
+    assert all(item.next_attempt_at == datetime.fromisoformat(result["checked_at"]) for item in items)
+    assert db.committed is True
+    assert len(logs) == 1
+    assert logs[0][0][1] == "billing.mirror_retry_queued"
+    assert logs[0][0][4] == {"requested_limit": 2, "queued": 2}
+
+
+@pytest.mark.asyncio
+async def test_admin_billing_mirror_retry_reports_empty_queue(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-secret")
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/admin/billing/mirror-retry",
+        "headers": [(b"x-admin-key", b"test-admin-secret")],
+        "query_string": b"",
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "client": ("testclient", 50000),
+    })
+    db = _BillingRetryDB([])
+    monkeypatch.setattr(main, "_write_admin_log", pytest.AsyncMock())
+
+    result = await main.admin_retry_billing_mirror_deliveries(
+        request=request, limit=200, db=db
+    )
+
+    assert result["status"] == "empty"
+    assert result["queued"] == 0
+    assert result["next_worker_cycle"] is False
+    assert db.committed is True
+
+
 def test_admin_paddle_cancellation_serializes_subscription_lifecycle():
     import inspect
 
