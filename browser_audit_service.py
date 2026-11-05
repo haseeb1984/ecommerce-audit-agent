@@ -264,6 +264,27 @@ def _format_accessibility_evidence(summary: dict) -> str:
     )
 
 
+def _format_rendered_contrast_evidence(summary: dict) -> str:
+    samples = summary.get("low_contrast_samples", [])
+    sample_text = "; ".join(str(item)[:100] for item in samples[:5]) or "none recorded"
+    return (
+        f"Visible text candidates measured: {summary.get('inspected_text_count', 0)}; "
+        f"low-contrast text candidates: {summary.get('low_contrast_text_count', 0)}; "
+        f"unmeasurable candidates: {summary.get('unmeasurable_text_count', 0)}. "
+        f"Example color pairs (foreground/background/ratio): {sample_text}. "
+        "This conservative browser heuristic measures only text with parseable foreground colors and an opaque solid ancestor background; "
+        "it skips gradients, images, translucent layers, opacity effects, and other uncertain combinations. "
+        "It is not a complete WCAG 2.2 contrast audit."
+    )
+
+
+def _rendered_contrast_needs_review(summary: dict) -> bool:
+    return bool(
+        int(summary.get("inspected_text_count", 0) or 0) > 0
+        and int(summary.get("low_contrast_text_count", 0) or 0) > 0
+    )
+
+
 def _format_product_page_evidence(summary: dict) -> str:
     return (
         f"Product-like page detected: {bool(summary.get('is_product_page'))}; "
@@ -521,6 +542,98 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "evidence_ref": "browser.accessibility.controls",
                       },
                     ])
+                    contrast_summary = await page.evaluate("""() => {
+                      const parseColor = value => {
+                        const match = String(value || '').match(/^rgba?\(([^)]+)\)$/i);
+                        if (!match) return null;
+                        const parts = match[1].split(',').map(item => Number(item.trim()));
+                        if (parts.length < 3 || parts.slice(0, 3).some(value => !Number.isFinite(value))) return null;
+                        const alpha = parts.length > 3 ? parts[3] : 1;
+                        if (!Number.isFinite(alpha) || alpha < 0.999) return null;
+                        return parts.slice(0, 3).map(value => Math.max(0, Math.min(255, value)));
+                      };
+                      const alphaOf = value => {
+                        const match = String(value || '').match(/^rgba?\(([^)]+)\)$/i);
+                        if (!match) return null;
+                        const parts = match[1].split(',').map(item => Number(item.trim()));
+                        return parts.length > 3 && Number.isFinite(parts[3]) ? parts[3] : 1;
+                      };
+                      const luminance = rgb => {
+                        const channels = rgb.map(value => {
+                          const normalized = value / 255;
+                          return normalized <= 0.04045 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
+                        });
+                        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+                      };
+                      const contrastRatio = (foreground, background) => {
+                        const first = luminance(foreground);
+                        const second = luminance(background);
+                        return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+                      };
+                      const candidates = [...document.querySelectorAll('body *')]
+                        .filter(el => el.namespaceURI === 'http://www.w3.org/1999/xhtml' && el.children.length === 0 && (el.innerText || el.textContent || '').trim())
+                        .slice(0, 500);
+                      let inspected = 0;
+                      let low = 0;
+                      let unmeasurable = 0;
+                      const samples = [];
+                      for (const el of candidates) {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width <= 0 || rect.height <= 0) continue;
+                        let ancestor = el;
+                        let background = null;
+                        let uncertain = false;
+                        while (ancestor && ancestor.nodeType === 1) {
+                          const style = getComputedStyle(ancestor);
+                          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) < 0.999 || style.filter !== 'none' || style.mixBlendMode !== 'normal') {
+                            uncertain = true;
+                            break;
+                          }
+                          if (style.backgroundImage && style.backgroundImage !== 'none') {
+                            uncertain = true;
+                            break;
+                          }
+                          const backgroundAlpha = alphaOf(style.backgroundColor);
+                          if (backgroundAlpha !== null && backgroundAlpha > 0 && backgroundAlpha < 0.999) {
+                            uncertain = true;
+                            break;
+                          }
+                          const parsed = parseColor(style.backgroundColor);
+                          if (parsed) { background = parsed; break; }
+                          ancestor = ancestor.parentElement;
+                        }
+                        const style = getComputedStyle(el);
+                        const foreground = parseColor(style.color);
+                        if (uncertain || !background || !foreground) {
+                          unmeasurable += 1;
+                          continue;
+                        }
+                        const ratio = contrastRatio(foreground, background);
+                        const fontSize = Number.parseFloat(style.fontSize) || 0;
+                        const fontWeight = Number.parseInt(style.fontWeight, 10) || 400;
+                        const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);
+                        const threshold = largeText ? 3 : 4.5;
+                        inspected += 1;
+                        if (ratio + 0.0001 < threshold) {
+                          low += 1;
+                          if (samples.length < 10) {
+                            const fmt = color => color.map(value => Math.round(value)).join(',');
+                            samples.push(fmt(foreground) + '/' + fmt(background) + '/' + ratio.toFixed(2));
+                          }
+                        }
+                      }
+                      return {inspected_text_count: inspected, low_contrast_text_count: low,
+                        unmeasurable_text_count: unmeasurable, low_contrast_samples: samples};
+                    }""")
+                    outcomes.append({
+                        "check_id": "accessibility.rendered_text_contrast",
+                        "category": "accessibility", "page_url": _safe_evidence_url(page.url),
+                        "outcome": "not_assessed" if not contrast_summary["inspected_text_count"] else ("warning" if _rendered_contrast_needs_review(contrast_summary) else "pass"),
+                        "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright computed foreground/opaque-background color contrast heuristic on visible leaf text",
+                        "evidence": _format_rendered_contrast_evidence(contrast_summary),
+                        "evidence_ref": "browser.accessibility.text_contrast",
+                    })
                     product_page_summary = await page.evaluate("""() => {
                       const visible = el => {
                         const r = el.getBoundingClientRect();
@@ -795,6 +908,13 @@ async def audit(payload: BrowserAuditRequest, request: Request,
                         "method": "Chromium PerformanceObserver lab diagnostics",
                         "evidence": f"LCP, CLS and Long Tasks observations were unavailable because homepage navigation failed: {navigation_error}.",
                         "evidence_ref": "browser.performance.lab_vitals",
+                    })
+                    outcomes.append({
+                        "check_id": "accessibility.rendered_text_contrast", "category": "accessibility", "page_url": target,
+                        "outcome": "not_assessed", "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "method": "Playwright computed text contrast heuristic",
+                        "evidence": f"Rendered text contrast was not assessed because homepage navigation failed: {navigation_error}.",
+                        "evidence_ref": "browser.accessibility.text_contrast",
                     })
                     outcomes.append({
                         "check_id": "seo.javascript_rendered_metadata", "category": "technical_seo", "page_url": target,
