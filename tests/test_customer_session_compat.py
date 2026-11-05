@@ -79,3 +79,23 @@ def test_customer_portal_exposes_safe_other_device_signout_controls():
     assert "This browser will remain signed in." in portal
     assert '$("logoutOtherSessions").disabled = !connected || !sessionToken' in portal
     assert '$("logoutAllSessions").disabled = !connected || !sessionToken' in portal
+
+
+def test_customer_passwordless_login_responses_cannot_overwrite_a_newer_account_session():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    request_start = portal.index('$("requestLoginCode").addEventListener')
+    verify_start = portal.index('$("verifyLoginCode").addEventListener')
+    connect_start = portal.index('$("connect").addEventListener', verify_start)
+    request_handler = portal[request_start:verify_start]
+    verify_handler = portal[verify_start:connect_start]
+
+    assert "const loginAttemptVersion = accountSessionVersion;" in request_handler
+    assert "if (loginAttemptVersion !== accountSessionVersion) return;" in request_handler
+    assert "if (loginAttemptVersion === accountSessionVersion) button.disabled = false;" in request_handler
+    assert "const loginAttemptVersion = accountSessionVersion;" in verify_handler
+    assert "Never install its token into the identity that is now active" in verify_handler
+    assert "if (loginAttemptVersion !== accountSessionVersion) return;" in verify_handler
+    assert "if (loginAttemptVersion === accountSessionVersion) {" in verify_handler
+    assert "if (loginAttemptVersion === accountSessionVersion) button.disabled = false;" in verify_handler
