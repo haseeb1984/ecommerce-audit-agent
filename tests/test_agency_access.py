@@ -514,7 +514,10 @@ class BusinessAgencyTeamListSession:
 
     async def execute(self, _statement):
         values = self.results.pop(0)
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+        return SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: values),
+            all=lambda: values,
+        )
 
 
 @pytest.mark.asyncio
