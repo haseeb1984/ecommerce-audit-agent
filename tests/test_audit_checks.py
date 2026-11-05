@@ -1349,7 +1349,7 @@ async def test_public_resolver_rejects_excessive_dns_address_fanout(monkeypatch)
             ]
 
     monkeypatch.setattr(audit_checks.asyncio, "get_running_loop", lambda: FakeLoop())
-    with pytest.raises(OSError, match="too many DNS addresses"):
+    with pytest.raises(OSError, match="more than 32 DNS addresses"):
         await audit_checks.PublicOnlyResolver().resolve("shop.example", 443)
 
 
