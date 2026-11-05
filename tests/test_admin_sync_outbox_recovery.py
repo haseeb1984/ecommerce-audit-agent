@@ -1,6 +1,4 @@
 from datetime import datetime, timezone
-from types import SimpleNamespace
-
 import pytest
 from fastapi import HTTPException, Request
 
@@ -93,8 +91,6 @@ async def test_admin_sync_outbox_retry_requeues_bounded_pending_rows(
 async def test_admin_sync_outbox_retry_reports_empty_queue(monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-secret")
     db = _RetryDB([])
-    monkeypatch.setattr(main, "_write_admin_log", lambda *args, **kwargs: None)
-
     async def write_log(*args, **kwargs):
         return None
 
@@ -120,4 +116,30 @@ async def test_admin_sync_outbox_retry_rejects_unknown_queue(monkeypatch):
         )
 
     assert raised.value.status_code == 422
+    assert db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_admin_sync_outbox_retry_requires_admin_authentication(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-secret")
+    db = _RetryDB([])
+
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/admin/sync-outboxes/retry",
+        "headers": [(b"x-admin-key", b"incorrect-secret")],
+        "query_string": b"",
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "client": ("testclient", 50000),
+    })
+
+    with pytest.raises(HTTPException) as raised:
+        await main.admin_retry_sync_outbox(
+            request=request, queue="customer_lifecycle", limit=10, db=db
+        )
+
+    assert raised.value.status_code == 401
+    assert db.statement is None
     assert db.committed is False
