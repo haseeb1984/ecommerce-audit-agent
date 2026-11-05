@@ -97,13 +97,20 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       });
       const button=document.createElement("button");button.type="button";button.textContent="View audit history";
       const history=document.createElement("div");
-      button.addEventListener("click",async()=>{
-        const actionVersion = sessionVersion;
-        button.disabled=true;history.replaceChildren();
+      let historyOffset=0;
+      let historyLoadMore=null;
+      const historyPageSize=50;
+      async function loadHistoryPage(offset, append) {
+        const actionVersion=sessionVersion;
+        button.disabled=true;
+        if(historyLoadMore) historyLoadMore.disabled=true;
+        if(!append) { history.replaceChildren(); historyOffset=0; }
         try {
-          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audits?limit=100",{},actionVersion);
+          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audits?limit="+historyPageSize+"&offset="+offset,{},actionVersion);
           assertCurrentSession(actionVersion);
-          if (!result.items.length) {const empty=document.createElement("p");empty.className="muted";empty.textContent="No audit batches are available yet.";history.append(empty);}
+          if(!append && !result.items.length) {
+            const empty=document.createElement("p");empty.className="muted";empty.textContent="No audit batches are available yet.";history.append(empty);
+          }
           for(const batch of result.items){
             const row=document.createElement("div");row.className="batch";
             const title=document.createElement("strong");title.textContent="Batch "+batch.batch_number+" · "+batch.status;
@@ -111,11 +118,11 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
             const view=document.createElement("button");view.type="button";view.className="secondary";view.textContent="View saved findings";
             const evidence=document.createElement("div");
             view.addEventListener("click",async()=>{
-              const actionVersion = sessionVersion;
+              const evidenceVersion=sessionVersion;
               view.disabled=true;evidence.replaceChildren();
               try {
-                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},actionVersion);
-                assertCurrentSession(actionVersion);
+                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},evidenceVersion);
+                assertCurrentSession(evidenceVersion);
                 if(!saved.items.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="No saved audit results are available yet.";evidence.append(empty);}
                 for(const audit of saved.items){
                   const resultCard=document.createElement("div");resultCard.className="batch";
@@ -131,14 +138,27 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
                   }else{const pending=document.createElement("p");pending.className="muted";pending.textContent="No saved result for this URL yet.";resultCard.append(pending);}
                   evidence.append(resultCard);
                 }
-              }catch(error){if(actionVersion===sessionVersion){const message=document.createElement("p");message.className="status";message.textContent=error.message;evidence.append(message);}}
-              finally{if(actionVersion===sessionVersion)view.disabled=false;}
+              }catch(error){if(evidenceVersion===sessionVersion){const message=document.createElement("p");message.className="status";message.textContent=error.message;evidence.append(message);}}
+              finally{if(evidenceVersion===sessionVersion)view.disabled=false;}
             });
             row.append(title,detail,view,evidence);history.append(row);
           }
-        } catch(error){if(actionVersion===sessionVersion){const p=document.createElement("p");p.className="status";p.textContent=error.message;history.append(p);}}
-        finally{if(actionVersion===sessionVersion)button.disabled=false;}
-      });
+          historyOffset=offset+result.items.length;
+          if(historyLoadMore) historyLoadMore.remove();
+          historyLoadMore=null;
+          if(result.items.length===historyPageSize){
+            historyLoadMore=document.createElement("button");
+            historyLoadMore.type="button";historyLoadMore.className="secondary";historyLoadMore.textContent="Load older audit batches";
+            historyLoadMore.addEventListener("click",()=>loadHistoryPage(historyOffset,true));
+            history.append(historyLoadMore);
+          }
+        }catch(error){
+          if(actionVersion===sessionVersion){const message=document.createElement("p");message.className="status";message.textContent=error.message;history.append(message);}
+        }finally{
+          if(actionVersion===sessionVersion){button.disabled=false;if(historyLoadMore)historyLoadMore.disabled=false;}
+        }
+      }
+      button.addEventListener("click",()=>loadHistoryPage(0,false));
       card.append(heading,role,submitForm,button,history);$("workspaces").append(card);
     }
   }
