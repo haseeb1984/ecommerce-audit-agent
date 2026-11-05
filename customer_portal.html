@@ -26,7 +26,7 @@
   <div><label for="loginEmail">Account email</label><input id="loginEmail" type="text" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com"></div>
   <div><label for="loginCode">Six-digit sign-in code</label><input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456"></div>
 </div>
-<div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button><button id="logoutAllSessions" class="secondary" type="button" disabled>Sign out all devices</button></div>
+<div class="report-actions"><button id="requestLoginCode" type="button">Email me a sign-in code</button><button id="verifyLoginCode" class="secondary" type="button">Verify code & sign in</button><button id="logoutOtherSessions" class="secondary" type="button" disabled>Sign out other devices</button><button id="logoutAllSessions" class="secondary" type="button" disabled>Sign out all devices</button></div>
 <div id="deviceSessions" class="reports" aria-live="polite" style="margin-top:14px"><p class="muted">Sign in to manage devices connected to your customer account.</p></div>
 <div id="loginStatus" class="status" role="status" aria-live="polite">Passwordless sign-in is available for accounts with a verified checkout email.</div>
 </section>
@@ -197,7 +197,9 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "logoutAllSessions", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    $("logoutOtherSessions").disabled = !connected || !sessionToken;
+    $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
   setAccountControls(false);
   loadPlans();
@@ -543,7 +545,7 @@
       const details = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = item.current ? "This device" : (item.client_name || "Customer device");
       const meta = document.createElement("small");
-      meta.textContent = String(item.user_agent || "Unknown device").slice(0,180) + " · Last active: " + (item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Not yet active");
+      meta.textContent = String(item.user_agent || "Unknown device").slice(0,180) + " · Last active: " + (item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "Not yet active") + " · Expires: " + (item.expires_at ? new Date(item.expires_at).toLocaleString() : "Unknown");
       details.append(title, meta); card.append(details);
       if (!item.current) {
         const revoke = document.createElement("button"); revoke.type="button"; revoke.className="secondary"; revoke.textContent="Sign out device";
@@ -1744,6 +1746,21 @@
       setStatus("connectStatus", e.message + " Credentials were cleared; reconnect to continue.", "error");
     } finally {
       if (attemptSessionVersion === accountSessionVersion) $("connect").disabled = false;
+    }
+  });
+  $("logoutOtherSessions").addEventListener("click", async () => {
+    if (!sessionToken) { setStatus("loginStatus", "Sign in with your account email to manage customer sessions.", "error"); return; }
+    if (!window.confirm("Sign out every other device connected to this verified account? This browser will remain signed in.")) return;
+    const button = $("logoutOtherSessions"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/sessions/revoke-others", {method:"POST"});
+      const data = await response.json();
+      await loadDeviceSessions();
+      setStatus("loginStatus", String(data.revoked_count || 0) + " other device session(s) signed out. This browser remains signed in.", "success");
+    } catch (error) {
+      setStatus("loginStatus", error.message, "error");
+    } finally {
+      button.disabled = !sessionToken;
     }
   });
   $("logoutAllSessions").addEventListener("click", async () => {
