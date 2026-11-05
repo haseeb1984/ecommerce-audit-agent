@@ -178,3 +178,8 @@ Agency team invitation lifecycle:
 
 - Agency team audit history is loaded in bounded pages of 50 using the workspace-scoped history endpoint and an explicit offset.
 - Older batches are loaded only on request. Workspace authorization is checked by the API on every page; a session change invalidates in-flight requests.
+
+### Customer passwordless sign-in race handling
+
+- Login-code request and verification responses are scoped to the account-session generation active when the action began.
+- If the customer disconnects or starts a newer account connection while an OTP request is pending, its late response is ignored and cannot install a stale session token or overwrite the current login status.
