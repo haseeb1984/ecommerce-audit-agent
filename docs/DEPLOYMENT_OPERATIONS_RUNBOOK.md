@@ -159,3 +159,8 @@ Customer account device security:
 - The customer portal lists active devices with last-seen and session-expiry timestamps; opaque session tokens and token digests are never displayed.
 - Customers can revoke one other device, revoke all other devices while retaining the current browser session, or sign out every device. Device-wide actions require an active passwordless customer session, not a license/API credential.
 - The "sign out other devices" action calls `POST /api/v1/account/sessions/revoke-others`; the current browser session remains active.
+
+
+Customer bulk scan operations:
+- Batch cancellation is an explicit confirmation action. It requests cancellation of queued/not-yet-started work; already completed jobs remain completed and in-progress work may finish before the batch settles.
+- The portal reports cancellation and batch-detail request failures inline and restores the action when a cancellation request fails, allowing the customer to retry safely.
