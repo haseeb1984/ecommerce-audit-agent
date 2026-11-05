@@ -2994,6 +2994,47 @@ async def test_admin_api_key_creation_respects_direct_api_plan_entitlement(clien
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("active", "expires_at", "expected_reason", "expected_status"),
+    [
+        (False, None, "account_inactive", 403),
+        (True, datetime.now(timezone.utc) - timedelta(days=1), "account_expired", 402),
+    ],
+)
+async def test_admin_api_key_creation_rejects_inactive_or_expired_clients(
+    client, monkeypatch, active, expires_at, expected_reason, expected_status
+):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-account-state")
+    license_id = await create_license(
+        key=f"admin-api-key-{expected_reason}",
+        quota=5,
+        active=active,
+        expires_at=expires_at,
+        tier="business",
+    )
+
+    eligibility = await client.get(
+        f"/api/v1/admin/clients/{license_id}/api-keys",
+        headers={"X-Admin-Key": "test-admin-account-state"},
+    )
+    assert eligibility.status_code == 200
+    assert eligibility.json()["can_create"] is False
+    assert eligibility.json()["can_create_reason"] == expected_reason
+
+    response = await client.post(
+        f"/api/v1/admin/clients/{license_id}/api-keys",
+        headers={"X-Admin-Key": "test-admin-account-state"},
+        json={"client_id": license_id, "label": "must be denied"},
+    )
+    assert response.status_code == expected_status
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(APIKey).where(APIKey.license_id == license_id)
+        )).scalars().all()
+        assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_admin_api_key_creation_enforces_same_ten_key_cap(client, monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-cap")
     license_id = await create_license(key="admin-api-key-cap-license", quota=5)
