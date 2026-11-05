@@ -236,6 +236,10 @@ class PublicOnlyResolver(aiohttp.abc.AbstractResolver):
                         seen.add(address)
                         addresses.append(address)
                         if len(addresses) > MAX_DNS_ADDRESSES:
+                            raise OSError(
+                                f"Target host returned more than {MAX_DNS_ADDRESSES} DNS addresses."
+                            )
+                        if len(addresses) > MAX_DNS_ADDRESSES:
                             raise OSError("Target host returned too many DNS addresses.")
             except (IndexError, TypeError, ValueError) as exc:
                 raise OSError("Target host returned an invalid DNS address record.") from exc
