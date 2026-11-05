@@ -1,4 +1,5 @@
 """Acceptance tests for the current Hostinger-backed WordPress identity flow."""
+import asyncio
 import hashlib
 from datetime import datetime, timedelta, timezone
 
@@ -83,6 +84,37 @@ async def test_wordpress_link_challenge_rate_limit_is_per_license_and_hour(clien
             )
         )).scalars().all()
         assert len(rows) == 5
+
+
+@pytest.mark.asyncio
+async def test_parallel_wordpress_link_challenge_requests_leave_only_latest_token_valid(client):
+    license_key = "wordpress-parallel-challenge-issuance"
+    await seed_customer(license_key)
+
+    responses = await asyncio.gather(*[
+        client.post(
+            "/api/v1/account/wordpress-link/challenges",
+            headers={"X-License-Key": license_key},
+        )
+        for _ in range(3)
+    ])
+    assert all(response.status_code == 201 for response in responses), [
+        response.text for response in responses
+    ]
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        rows = (await operational_db.execute(
+            select(WordPressSiteLinkChallenge).where(
+                WordPressSiteLinkChallenge.license_key == license_key
+            )
+        )).scalars().all()
+        assert len(rows) == 3
+        outstanding = [
+            row for row in rows
+            if row.consumed_at is None
+        ]
+        assert len(outstanding) == 1
+        assert sum(row.consumed_at is not None for row in rows) == 2
 
 
 @pytest.mark.asyncio
