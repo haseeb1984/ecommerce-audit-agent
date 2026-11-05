@@ -79,3 +79,13 @@ def test_customer_portal_exposes_safe_other_device_signout_controls():
     assert "This browser will remain signed in." in portal
     assert '$("logoutOtherSessions").disabled = !connected || !sessionToken' in portal
     assert '$("logoutAllSessions").disabled = !connected || !sessionToken' in portal
+
+
+def test_customer_portal_keeps_passwordless_session_actions_enabled():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    assert 'if (!sessionToken) { setStatus("loginStatus", "Sign in with your customer email to manage device sessions."' in portal
+    assert 'finally { button.disabled = !sessionToken; }' in portal
+    assert 'finally { button.disabled = !credential && !sessionToken; }' in portal
+    assert 'finally { button.disabled = !credential; }' in portal  # WordPress identity-link action still requires a license credential.
