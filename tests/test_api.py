@@ -575,7 +575,7 @@ async def test_existing_api_key_is_blocked_after_plan_downgrade_but_license_key_
         license_obj = (await db.execute(
             select(SoftwareLicense).where(SoftwareLicense.id == license_id)
         )).scalar_one()
-        license_obj.tier = "starter"
+        license_obj.tier = "pro"
         await db.commit()
 
     api_response = await client.post(
