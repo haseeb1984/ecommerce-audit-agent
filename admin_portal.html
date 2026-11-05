@@ -135,8 +135,14 @@ async function loadClientWordPressLinks(id){
   for(const item of data.items){
    const row=el("div",undefined,"historyitem");
    row.append(el("strong",item.site_url||"WordPress site"));
-   row.append(el("span","Status "+String(item.status||"unknown")+" · Admin "+(item.admin_email||"—")+" · WordPress "+(item.wordpress_version||"—")+" · WooCommerce "+(item.woocommerce_version||"—")+" · Plugin "+(item.plugin_version||"—"),"small"));
-   row.append(el("span","Last seen "+date(item.last_seen_at)+" · Connected "+date(item.created_at)+(item.disconnected_at?" · Disconnected "+date(item.disconnected_at):""),"small"));
+   const heartbeatAt=item.last_seen_at?Date.parse(item.last_seen_at):NaN;
+   const staleHeartbeat=item.status==="active"&&(!Number.isFinite(heartbeatAt)||Date.now()-heartbeatAt>7*24*60*60*1000);
+   const health=item.connection_health||(staleHeartbeat?"stale":item.status==="active"?"healthy":"not_connected");
+   row.append(el("span","Connection health "+String(health)+" · Installation "+String(item.status||"unknown")+" · Admin "+(item.admin_email||"—")+" · WordPress "+(item.wordpress_version||"—")+" · WooCommerce "+(item.woocommerce_version||"—")+" · Plugin "+(item.plugin_version||"—"),"small"));
+   row.append(el("span","Last heartbeat "+date(item.last_seen_at)+" · Connected "+date(item.created_at)+(item.disconnected_at?" · Disconnected "+date(item.disconnected_at):""),"small"));
+   if(health==="stale"){
+    row.append(el("span","No recent plugin heartbeat. Ask the customer to confirm the plugin is active and reconnect it from their customer dashboard.","small muted"));
+   }
    if(item.status==="active"){
     const disconnect=el("button","Disconnect site","secondary");disconnect.style.marginTop="6px";
     disconnect.addEventListener("click",()=>adminDisconnectWordPressSite(id,item.site_url,disconnect));
