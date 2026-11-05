@@ -153,3 +153,9 @@ The script `scripts/migrate_operational_data_to_hostinger.py` is a compatibility
 ## WordPress identity-link schema
 
 Before enabling the customer portal's one-time WordPress identity-link flow, apply `migrations/20261103_wordpress_identity_linking.sql` to Hostinger MySQL. It adds the linked WordPress user ID/login fields and creates the hashed, expiring challenge table. Fresh installations receive the same objects from `migrations/hostinger_operational_schema.sql`. Do not apply the migration to PostgreSQL.
+
+
+Customer account device security:
+- The customer portal lists active devices with last-seen and session-expiry timestamps; opaque session tokens and token digests are never displayed.
+- Customers can revoke one other device, revoke all other devices while retaining the current browser session, or sign out every device. Device-wide actions require an active passwordless customer session, not a license/API credential.
+- The "sign out other devices" action calls `POST /api/v1/account/sessions/revoke-others`; the current browser session remains active.
