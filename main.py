@@ -6159,12 +6159,13 @@ async def admin_retry_sync_outbox(
     queue_models = {
         "customer_lifecycle": CustomerLifecycleSyncOutbox,
         "customer_email_identity": CustomerEmailIdentitySyncOutbox,
+        "billing_mirror": BillingMirrorSyncOutbox,
     }
     model = queue_models.get(queue)
     if model is None:
         raise HTTPException(
             status_code=422,
-            detail="Queue must be customer_lifecycle or customer_email_identity.",
+            detail="Queue must be customer_lifecycle, customer_email_identity, or billing_mirror.",
         )
     now = datetime.now(timezone.utc)
     items = (await db.execute(

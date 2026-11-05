@@ -178,3 +178,59 @@ def test_admin_payment_reconciliation_serializes_transaction_webhook_work():
     locked_reload = source.index(".with_for_update()", transaction_lock)
     provider_request = source.index('f"/transactions/{transaction_id}"')
     assert initial_lookup < subscription_lock < transaction_lock < locked_reload < provider_request
+
+
+
+class _GenericOutboxRetryDB:
+    def __init__(self, items):
+        self.items = items
+        self.statement = None
+        self.committed = False
+
+    async def execute(self, statement):
+        self.statement = statement
+        return _ScalarsResult(self.items)
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_admin_generic_sync_retry_supports_billing_mirror_queue(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-secret")
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/admin/sync-outboxes/retry",
+        "headers": [(b"x-admin-key", b"test-admin-secret")],
+        "query_string": b"queue=billing_mirror",
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "client": ("testclient", 50000),
+    })
+    now = datetime.now(timezone.utc)
+    items = [
+        SimpleNamespace(status="pending", next_attempt_at=datetime(2026, 11, 1, tzinfo=timezone.utc)),
+        SimpleNamespace(status="pending", next_attempt_at=datetime(2026, 11, 2, tzinfo=timezone.utc)),
+    ]
+    db = _GenericOutboxRetryDB(items)
+    logs = []
+
+    async def write_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    monkeypatch.setattr(main, "_write_admin_log", write_log)
+
+    result = await main.admin_retry_sync_outbox(
+        request=request, queue="billing_mirror", limit=2, db=db
+    )
+
+    assert result["queue"] == "billing_mirror"
+    assert result["status"] == "queued"
+    assert result["queued"] == 2
+    assert result["next_worker_cycle"] is True
+    assert all(item.next_attempt_at == datetime.fromisoformat(result["checked_at"]) for item in items)
+    assert db.committed is True
+    assert len(logs) == 1
+    assert logs[0][0][1] == "sync_outbox.retry_queued"
+    assert logs[0][0][2] == "billing_mirror"
