@@ -26,14 +26,6 @@ def test_customer_scan_history_refresh_starts_from_latest_page():
     assert 'scanBatchOffset = offset + items.length' in portal
 
 
-def test_customer_scan_history_refresh_starts_from_latest_page():
-    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
-
-    assert 'async function loadScanBatches({append = false} = {})' in portal
-    assert 'if (!append) {' in portal
-    assert 'container.replaceChildren();' in portal
-
-
 def test_customer_scan_batch_cancel_requires_confirmation_and_handles_errors():
     portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
 
