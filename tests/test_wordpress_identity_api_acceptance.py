@@ -60,6 +60,32 @@ def claim_payload(token: str, site_url: str = "https://shop.example.test/"):
 
 
 @pytest.mark.asyncio
+async def test_wordpress_link_challenge_rate_limit_is_per_license_and_hour(client):
+    license_key = "wordpress-challenge-rate-limit"
+    await seed_customer(license_key)
+
+    issued = []
+    for _ in range(5):
+        issued.append(await issue_link_code(client, license_key))
+    assert len(set(issued)) == 5
+
+    limited = await client.post(
+        "/api/v1/account/wordpress-link/challenges",
+        headers={"X-License-Key": license_key},
+    )
+    assert limited.status_code == 429
+    assert "Too many WordPress link codes" in limited.json()["detail"]
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        rows = (await operational_db.execute(
+            select(WordPressSiteLinkChallenge).where(
+                WordPressSiteLinkChallenge.license_key == license_key
+            )
+        )).scalars().all()
+        assert len(rows) == 5
+
+
+@pytest.mark.asyncio
 async def test_wordpress_identity_claim_persists_owner_and_wp_user_and_token_is_single_use(client):
     license_key = "wordpress-identity-acceptance"
     await seed_customer(license_key)
