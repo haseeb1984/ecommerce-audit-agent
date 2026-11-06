@@ -756,3 +756,13 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - CI run [40790960269](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40790960269) passed on commit `8351ba6d9f6ed57596229cce80192cb91812f1b4` with **660 passed** and 55 warnings. The expanded schema/index readiness checks were committed after that run and are **awaiting their own CI result**.
 - No production database was queried or modified, no migration was executed, and no deployment was performed.
 
+
+
+## 2026-11-06 — integrated SaaS and audit-engine implementation batch
+
+- Consolidated the existing agency/admin/customer implementation chain (PRs #163–#191), plus admin billing response cache controls and passive CORS review, into PR #194. The integration branch is 22 commits ahead of main, contains 38 changed files, has no base divergence, and is marked mergeable; it has not been merged.
+- SaaS implementation consolidated: agency inventory/detail/lifecycle audit, workspace/team role/grant/revoke locking, WordPress connection health and archive revocation, customer/admin API-key ownership and session-race controls, passwordless customer actions, usage-history safety, admin activity filters, cross-database sync retry and queue diagnostics.
+- Audit-engine implementation: synchronous licensed audits now call the isolated signed Playwright browser service already used by bulk workers; browser unavailability/failed navigation remains explicit. Added bounded source-text volume and exact duplicate-copy review signals. CORS response combinations are low-severity manual review signals, and security references point to OWASP Top 10:2025 as an awareness taxonomy only.
+- Evidence boundaries remain: no Google Search Console index status without owner-authorized data; no backlink/competitor dataset without a provider/export; no manual WCAG conformance, authenticated checkout completion, consent-dependent event-delivery verification, active penetration testing, field Core Web Vitals or INP. These remain not assessed rather than inferred passes.
+- Verification is blocked by CI infrastructure: latest backend run [42227554897](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42227554897) failed before runner startup (runner_id=0, blank runner name, zero steps). No test results were produced. Vercel reports its build-rate-limit failure; it is not being bypassed.
+- No production migration, deployment, real payment, or live customer-site audit was performed. PDF/report layout and final audit-result refinement remain deferred to the final phase.
