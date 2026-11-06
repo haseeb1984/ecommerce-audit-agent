@@ -101,3 +101,61 @@ def test_customer_passwordless_login_responses_cannot_overwrite_a_newer_account_
     assert "if (loginAttemptVersion !== accountSessionVersion) return;" in verify_handler
     assert "if (loginAttemptVersion === accountSessionVersion) {" in verify_handler
     assert "if (loginAttemptVersion === accountSessionVersion) button.disabled = false;" in verify_handler
+
+
+def test_customer_portal_keeps_passwordless_session_actions_enabled():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    assert 'finally { button.disabled = !credential && !sessionToken; }' in portal
+    logout_all = portal[portal.index('$("logoutAllSessions").addEventListener("click"'):portal.index('$("disconnectAccount").addEventListener("click"')]
+    assert 'if (!sessionToken) { setStatus("loginStatus", "Sign in with your customer email to manage device sessions."' in logout_all
+    assert 'if (operationSessionVersion === accountSessionVersion) button.disabled = !sessionToken;' in logout_all
+    wordpress_link = portal[portal.index('$("generateWordPressLinkCode").addEventListener("click"'):portal.index('$("copyWordPressLinkCode").addEventListener("click"')]
+    assert 'finally {\n      if (operationSessionVersion === accountSessionVersion) button.disabled = !credential;' in wordpress_link
+
+
+def test_customer_portal_profile_update_accepts_verified_bearer_sessions():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    handler_start = portal.index('$("saveProfile").addEventListener')
+    handler_end = portal.index('$("openBillingPortal").addEventListener', handler_start)
+    handler = portal[handler_start:handler_end]
+
+    assert 'if (!credential && !sessionToken)' in handler
+    assert 'api("/api/v1/account/profile"' in handler
+    assert 'button.disabled = !credential && !sessionToken;' in handler
+
+
+def test_customer_management_actions_accept_verified_bearer_sessions():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    assert '$("createApiKey").disabled = (!credential && !sessionToken) || !apiKeyCreationAllowed || atLimit;' in portal
+
+    key_start = portal.index("async function createApiKey()")
+    key_end = portal.index("async function loadDeviceSessions()", key_start)
+    key_handler = portal[key_start:key_end]
+    assert 'if (!credential && !sessionToken)' in key_handler
+    assert 'api("/api/v1/account/api-keys"' in key_handler
+
+    billing_start = portal.index('$("openBillingPortal").addEventListener')
+    billing_end = portal.index('$("loadMoreBillingHistory").addEventListener', billing_start)
+    billing_handler = portal[billing_start:billing_end]
+    assert 'if (!credential && !sessionToken)' in billing_handler
+    assert 'api("/api/v1/account/billing-portal"' in billing_handler
+
+
+def test_wordpress_identity_link_accepts_verified_customer_session_authentication():
+    from pathlib import Path
+    import inspect
+    import wordpress_identity_api
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    controls = portal[portal.index("function setAccountControls"):portal.index("setAccountControls(false)")]
+    assert '"generateWordPressLinkCode"' in controls
+    assert 'const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken}' in portal
+
+    endpoint = inspect.getsource(wordpress_identity_api.create_wordpress_link_challenge)
+    assert "Depends(verify_customer_account)" in endpoint

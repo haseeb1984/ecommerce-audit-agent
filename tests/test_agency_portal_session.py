@@ -85,3 +85,17 @@ def test_customer_portal_confirms_and_reports_team_member_revocation():
     assert 'method:"DELETE"' in section
     assert 'setStatus("agencyStatus", "Access revoked for " + item.email, "success")' in section
     assert "revoke.disabled = true" in section
+
+
+def test_agency_portal_otp_attempts_ignore_stale_responses():
+    portal = Path("agency_portal.html").read_text(encoding="utf-8")
+    start = portal.index("(() => {")
+    script = portal[start:portal.index("</script>", start)]
+
+    assert "let authAttemptVersion = 0;" in script
+    assert "const attemptVersion=++authAttemptVersion;" in script
+    assert "if(attemptVersion!==authAttemptVersion)return;" in script
+    assert 'if(actionVersion===sessionVersion&&attemptVersion===authAttemptVersion)$("loginStatus").textContent=error.message;' in script
+    assert 'if(actionVersion===sessionVersion&&attemptVersion===authAttemptVersion)button.disabled=false;' in script
+    assert "authAttemptVersion += 1;" in script
+    assert 'if(!result.access_token)throw new Error("The server did not return an agency session.");' in script
