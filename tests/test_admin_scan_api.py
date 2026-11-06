@@ -407,4 +407,6 @@ def test_admin_portal_exposes_retry_controls_for_all_sync_outboxes():
     assert 'retrySyncOutbox("billing_mirror",$("retryBillingMirrorOutbox"))' in portal
     assert 'billing_mirror:"billing mirror"' in portal
     assert '$("retryBillingMirrorOutbox").disabled=false' in portal
-    assert '$("retryBillingMirrorOutbox").disabled=true' in portal
+    assert "if(button.disabled||!key)return;" in portal
+    assert "const requestSessionVersion=adminSessionVersion;" in portal
+    assert 'adminPost("/api/v1/admin/sync-outboxes/retry?"' in portal
