@@ -543,9 +543,17 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                             status="suspended" if action == "suspend" else "active",
                             updated_at=datetime.now(timezone.utc),
                         ))
-                    if action_applies and action in {"suspend", "revoke_sessions"}:
+                    if action_applies and action == "suspend":
                         await operational_db.execute(update(CustomerSession).where(
                             CustomerSession.license_key == license_key,
+                            CustomerSession.revoked_at.is_(None),
+                        ).values(revoked_at=datetime.now(timezone.utc)))
+                    if action_applies and action == "revoke_sessions":
+                        # A delayed retry must not terminate sessions created
+                        # after the operator requested this one-time revocation.
+                        await operational_db.execute(update(CustomerSession).where(
+                            CustomerSession.license_key == license_key,
+                            CustomerSession.created_at <= event.created_at,
                             CustomerSession.revoked_at.is_(None),
                         ).values(revoked_at=datetime.now(timezone.utc)))
                     await operational_db.commit()
