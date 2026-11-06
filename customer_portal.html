@@ -907,6 +907,30 @@
       info.append(title, detail);
       const accessEditor = document.createElement("div"); accessEditor.className = "reports";
       if (item.status === "active") {
+        const agencyRoleLabel = document.createElement("label"); agencyRoleLabel.textContent = "Agency default role";
+        const agencyRole = document.createElement("select");
+        for (const role of ["viewer", "analyst", "admin"]) {
+          const option = document.createElement("option"); option.value = role;
+          option.textContent = role[0].toUpperCase() + role.slice(1); agencyRole.append(option);
+        }
+        agencyRole.value = item.role;
+        const saveAgencyRole = document.createElement("button"); saveAgencyRole.type = "button";
+        saveAgencyRole.className = "secondary"; saveAgencyRole.textContent = "Update agency role";
+        saveAgencyRole.title = "Updates grants that still use the previous agency role; custom workspace roles are preserved.";
+        saveAgencyRole.addEventListener("click", async () => {
+          if (agencyRole.value === item.role) return;
+          saveAgencyRole.disabled = true;
+          try {
+            await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id), {
+              method:"PUT", headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({role:agencyRole.value})
+            });
+            await loadAgencyTeam();
+            setStatus("agencyStatus", "Agency role updated for " + item.email + ". Custom workspace roles were preserved.", "success");
+          } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          finally { saveAgencyRole.disabled = false; }
+        });
+        accessEditor.append(agencyRoleLabel, agencyRole, saveAgencyRole);
         const accessLabel = document.createElement("label"); accessLabel.textContent = "Assigned client workspaces";
         const accessSelect = document.createElement("select"); accessSelect.multiple = true; accessSelect.size = 4;
         accessSelect.style.width = "100%";
