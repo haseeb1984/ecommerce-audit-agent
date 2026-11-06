@@ -186,6 +186,7 @@
   let apiKeyCreationAllowed = false;
   let apiKeyCreationReason = "account_inactive";
   let newlyCreatedApiKey = "";
+  let apiKeyRequestVersion = 0;
   let billingOffset = 0;
   let billingTotal = 0;
   let billingLoading = false;
@@ -434,16 +435,22 @@
     }
   }
   async function loadApiKeys() {
+    const requestVersion = ++apiKeyRequestVersion;
+    const sessionVersion = accountSessionVersion;
     try {
       const response = await api("/api/v1/account/api-keys");
       const data = await response.json();
+      // A newer refresh or account switch owns the API-key panel now.
+      if (requestVersion !== apiKeyRequestVersion || sessionVersion !== accountSessionVersion) return;
       apiKeyRows = Array.isArray(data.items) ? data.items : [];
       apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
       apiKeyCreationAllowed = data.can_create === true;
       apiKeyCreationReason = String(data.can_create_reason || (apiKeyCreationAllowed ? "available" : "account_inactive"));
       renderApiKeys();
     } catch (error) {
-      setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
+      if (requestVersion === apiKeyRequestVersion && sessionVersion === accountSessionVersion) {
+        setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
+      }
       throw error;
     }
   }
@@ -485,12 +492,19 @@
       const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "secondary"; revoke.textContent = "Revoke";
       revoke.addEventListener("click", async () => {
         if (!window.confirm("Revoke API key " + item.key_prefix + "? Any integration using it will stop authenticating.")) return;
+        const operationSessionVersion = accountSessionVersion;
         revoke.disabled = true;
         try {
           await api("/api/v1/account/api-keys/" + encodeURIComponent(item.id), {method:"DELETE"});
+          if (operationSessionVersion !== accountSessionVersion) return;
           await loadApiKeys();
-          setStatus("apiKeyStatus", "API key revoked.", "success");
-        } catch (error) { setStatus("apiKeyStatus", error.message, "error"); revoke.disabled = false; }
+          if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "API key revoked.", "success");
+        } catch (error) {
+          if (operationSessionVersion === accountSessionVersion) {
+            setStatus("apiKeyStatus", error.message, "error");
+            revoke.disabled = false;
+          }
+        }
       });
       const actions = document.createElement("div"); actions.className = "report-actions"; actions.append(revoke);
       card.append(meta, actions); container.append(card);
@@ -1672,6 +1686,8 @@
   });
 
   function clearAccountView() {
+    // Invalidate in-flight API-key list requests before clearing account-owned data.
+    apiKeyRequestVersion += 1;
     loadedReports = [];
     reportsTotal = 0;
     activeEvidenceReportId = null;
@@ -1986,16 +2002,23 @@
   });
   $("createApiKey").addEventListener("click", createApiKey);
   $("refreshApiKeys").addEventListener("click", async () => {
-    try { await loadApiKeys(); setStatus("apiKeyStatus", "API key list refreshed.", "success"); }
-    catch (error) { setStatus("apiKeyStatus", error.message, "error"); }
+    const operationSessionVersion = accountSessionVersion;
+    try {
+      await loadApiKeys();
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "API key list refreshed.", "success");
+    } catch (error) {
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", error.message, "error");
+    }
   });
   $("copyApiKey").addEventListener("click", async () => {
     if (!newlyCreatedApiKey) return;
+    const operationSessionVersion = accountSessionVersion;
+    const keyToCopy = newlyCreatedApiKey;
     try {
-      await navigator.clipboard.writeText(newlyCreatedApiKey);
-      setStatus("apiKeyStatus", "API key copied to clipboard. Store it securely.", "success");
+      await navigator.clipboard.writeText(keyToCopy);
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "API key copied to clipboard. Store it securely.", "success");
     } catch {
-      setStatus("apiKeyStatus", "Clipboard access was blocked. Select and copy the key shown above manually.", "error");
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "Clipboard access was blocked. Select and copy the key shown above manually.", "error");
     }
   });
   $("hideApiKey").addEventListener("click", () => {
