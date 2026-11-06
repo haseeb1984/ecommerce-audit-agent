@@ -649,7 +649,7 @@
       setStatus("brandingStatus", "White-label branding saved.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
-    } finally { button.disabled = !credential; }
+    } finally { button.disabled = !credential && !sessionToken; }
   }
   async function loadAgencyUsage() {
     const response = await api("/api/v1/account/agency/usage");
@@ -999,7 +999,7 @@
       await loadAgencyTeam();
       setStatus("agencyStatus", "Invitation email sent to " + email + ".", "success");
     } catch (error) { setStatus("agencyStatus", error.message, "error"); }
-    finally { button.disabled = !credential; }
+    finally { button.disabled = !credential && !sessionToken; }
   }
   async function createAgencyClient() {
     const name = $("agencyClientName").value.trim();
@@ -1018,7 +1018,7 @@
       setStatus("agencyStatus", "Client workspace created.", "success");
     } catch (error) {
       setStatus("agencyStatus", error.message, "error");
-    } finally { button.disabled = !credential; }
+    } finally { button.disabled = !credential && !sessionToken; }
   }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
@@ -1830,7 +1830,7 @@
     }
   });
   $("logoutAllSessions").addEventListener("click", async () => {
-    if (!credential) { setStatus("loginStatus", "Sign in to manage customer sessions.", "error"); return; }
+    if (!sessionToken) { setStatus("loginStatus", "Sign in with your customer email to manage device sessions.", "error"); return; }
     const button = $("logoutAllSessions"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/auth/logout-all", {method:"POST"});
@@ -1842,7 +1842,7 @@
       setStatus("connectStatus", "All customer sessions were revoked.", "success");
       setStatus("loginStatus", "All devices have been signed out. Sign in again to continue.", "success");
     } catch (error) { setStatus("loginStatus", error.message, "error"); }
-    finally { button.disabled = !credential; }
+    finally { button.disabled = !sessionToken; }
   });
   $("disconnectAccount").addEventListener("click", () => {
     accountSessionVersion += 1;
