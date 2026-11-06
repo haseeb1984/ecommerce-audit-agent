@@ -171,6 +171,7 @@
   // Invalidate in-flight authenticated requests whenever the connected identity changes
   // or the user disconnects, so late responses cannot repopulate another account's view.
   let accountSessionVersion = 0;
+  let deviceSessionsRequestId = 0;
   let loadedReports = [];
   let reportsTotal = 0;
   const reportPageSize = 50;
@@ -534,13 +535,25 @@
     }
   }
   async function loadDeviceSessions() {
+    const requestId = ++deviceSessionsRequestId;
+    const requestSessionVersion = accountSessionVersion;
     const container = $("deviceSessions");
-    if (!sessionToken) { container.replaceChildren(); const note=document.createElement("p"); note.className="muted"; note.textContent="Email sign-in is required to manage devices."; container.append(note); return; }
+    if (!sessionToken) {
+      container.replaceChildren();
+      const note=document.createElement("p"); note.className="muted";
+      note.textContent="Email sign-in is required to manage devices.";
+      container.append(note);
+      return;
+    }
     const response = await api("/api/v1/account/auth/sessions");
     const data = await response.json();
+    // Several refreshes can be in flight for the same account. Only the newest
+    // response may replace the device list; an account switch invalidates it too.
+    if (requestId !== deviceSessionsRequestId || requestSessionVersion !== accountSessionVersion) return;
     container.replaceChildren();
-    const heading = document.createElement("strong"); heading.textContent = "Signed-in devices (" + ((data.items || []).length) + ")"; container.append(heading);
-    for (const item of (Array.isArray(data.items) ? data.items : [])) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    const heading = document.createElement("strong"); heading.textContent = "Signed-in devices (" + items.length + ")"; container.append(heading);
+    for (const item of items) {
       const card = document.createElement("div"); card.className = "report";
       const details = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = item.current ? "This device" : (item.client_name || "Customer device");
@@ -550,15 +563,26 @@
       if (!item.current) {
         const revoke = document.createElement("button"); revoke.type="button"; revoke.className="secondary"; revoke.textContent="Sign out device";
         revoke.addEventListener("click", async () => {
+          const actionSessionVersion = accountSessionVersion;
           revoke.disabled=true;
-          try { await api("/api/v1/account/auth/sessions/" + encodeURIComponent(item.id), {method:"DELETE"}); await loadDeviceSessions(); setStatus("loginStatus","Selected device has been signed out.","success"); }
-          catch(error) { revoke.disabled=false; setStatus("loginStatus",error.message,"error"); }
+          try {
+            await api("/api/v1/account/auth/sessions/" + encodeURIComponent(item.id), {method:"DELETE"});
+            if (actionSessionVersion !== accountSessionVersion) return;
+            await loadDeviceSessions();
+            if (actionSessionVersion !== accountSessionVersion) return;
+            setStatus("loginStatus","Selected device has been signed out.","success");
+          } catch(error) {
+            if (actionSessionVersion === accountSessionVersion) {
+              revoke.disabled=false;
+              setStatus("loginStatus",error.message,"error");
+            }
+          }
         });
         card.append(revoke);
       } else { const current=document.createElement("small"); current.textContent="Current browser session"; card.append(current); }
       container.append(card);
     }
-    if (!(data.items || []).length) { const note=document.createElement("p"); note.className="muted"; note.textContent="No active devices found."; container.append(note); }
+    if (!items.length) { const note=document.createElement("p"); note.className="muted"; note.textContent="No active devices found."; container.append(note); }
   }
 
   async function loadWordPressSites() {
@@ -1672,6 +1696,12 @@
   });
 
   function clearAccountView() {
+    deviceSessionsRequestId += 1;
+    $("deviceSessions").replaceChildren();
+    const deviceNote = document.createElement("p");
+    deviceNote.className = "muted";
+    deviceNote.textContent = "Connect with email sign-in to view active devices.";
+    $("deviceSessions").append(deviceNote);
     loadedReports = [];
     reportsTotal = 0;
     activeEvidenceReportId = null;
