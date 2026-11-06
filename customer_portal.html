@@ -101,6 +101,7 @@
 <div class="usagebar" id="usageBar" role="progressbar" aria-label="Monthly audit quota used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="usageFill"></span></div>
 <div class="usage-meta"><span id="usageRemaining" class="muted">Remaining: —</span><span id="usageReset" class="muted">Period reset: —</span></div>
 <div class="panel" style="margin-top:12px"><h3>Included plan features</h3><div id="planFeatures" class="muted" aria-live="polite">Connect your account to view included features.</div></div>
+<div class="panel" style="margin-top:12px" aria-labelledby="usageHistoryHeading"><h3 id="usageHistoryHeading">Usage history</h3><p class="muted">Recent monthly quota and audit-usage events for this account.</p><div id="usageHistory" class="reports" aria-live="polite"><p class="muted">Connect your account to view usage history.</p></div></div>
 </section>
 <section class="panel" aria-labelledby="billingHistoryHeading">
 <h2 id="billingHistoryHeading">Billing history</h2>
@@ -186,6 +187,7 @@
   let apiKeyCreationAllowed = false;
   let apiKeyCreationReason = "account_inactive";
   let newlyCreatedApiKey = "";
+  let apiKeyRequestVersion = 0;
   let billingOffset = 0;
   let billingTotal = 0;
   let billingLoading = false;
@@ -434,16 +436,22 @@
     }
   }
   async function loadApiKeys() {
+    const requestVersion = ++apiKeyRequestVersion;
+    const sessionVersion = accountSessionVersion;
     try {
       const response = await api("/api/v1/account/api-keys");
       const data = await response.json();
+      // A newer refresh or account switch owns the API-key panel now.
+      if (requestVersion !== apiKeyRequestVersion || sessionVersion !== accountSessionVersion) return;
       apiKeyRows = Array.isArray(data.items) ? data.items : [];
       apiKeyLimit = Math.max(1, Number(data.max_keys) || 10);
       apiKeyCreationAllowed = data.can_create === true;
       apiKeyCreationReason = String(data.can_create_reason || (apiKeyCreationAllowed ? "available" : "account_inactive"));
       renderApiKeys();
     } catch (error) {
-      setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
+      if (requestVersion === apiKeyRequestVersion && sessionVersion === accountSessionVersion) {
+        setStatus("apiKeyStatus", "Unable to load API keys. " + error.message, "error");
+      }
       throw error;
     }
   }
@@ -485,12 +493,19 @@
       const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "secondary"; revoke.textContent = "Revoke";
       revoke.addEventListener("click", async () => {
         if (!window.confirm("Revoke API key " + item.key_prefix + "? Any integration using it will stop authenticating.")) return;
+        const operationSessionVersion = accountSessionVersion;
         revoke.disabled = true;
         try {
           await api("/api/v1/account/api-keys/" + encodeURIComponent(item.id), {method:"DELETE"});
+          if (operationSessionVersion !== accountSessionVersion) return;
           await loadApiKeys();
-          setStatus("apiKeyStatus", "API key revoked.", "success");
-        } catch (error) { setStatus("apiKeyStatus", error.message, "error"); revoke.disabled = false; }
+          if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "API key revoked.", "success");
+        } catch (error) {
+          if (operationSessionVersion === accountSessionVersion) {
+            setStatus("apiKeyStatus", error.message, "error");
+            revoke.disabled = false;
+          }
+        }
       });
       const actions = document.createElement("div"); actions.className = "report-actions"; actions.append(revoke);
       card.append(meta, actions); container.append(card);
@@ -1020,9 +1035,42 @@
       setStatus("agencyStatus", error.message, "error");
     } finally { button.disabled = !credential; }
   }
+  function renderUsageHistory(events) {
+    const container = $("usageHistory");
+    container.replaceChildren();
+    const rows = Array.isArray(events) ? events : [];
+    if (!rows.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No usage events recorded for the current month yet.";
+      container.append(empty);
+      return;
+    }
+    for (const item of rows) {
+      const card = document.createElement("article"); card.className = "report";
+      const title = document.createElement("strong");
+      title.textContent = String(item.event_type || "Usage event").replace(/[_-]+/g, " ");
+      const detail = document.createElement("small");
+      const when = item.created_at ? new Date(item.created_at) : null;
+      detail.textContent = "Quantity: " + (Number.isFinite(Number(item.quantity)) ? Number(item.quantity) : "not recorded") +
+        " · " + (when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : "Time not recorded");
+      card.append(title, detail);
+      if (item.details && typeof item.details === "object" && Object.keys(item.details).length) {
+        const metadata = document.createElement("p"); metadata.className = "muted";
+        let serialized = "";
+        try { serialized = JSON.stringify(item.details); } catch (_) {}
+        metadata.textContent = serialized ? serialized.slice(0, 1200) : "Additional event details are unavailable.";
+        card.append(metadata);
+      }
+      container.append(card);
+    }
+    const note = document.createElement("p"); note.className = "muted";
+    note.textContent = "Showing up to " + rows.length + " recent usage events for this month.";
+    container.append(note);
+  }
   async function loadUsage() {
     const response = await api("/api/v1/account/usage");
     const usage = await response.json();
+    renderUsageHistory(usage.history);
     const used = Math.max(0, Number(usage.used) || 0);
     const pending = Math.max(0, Number(usage.in_progress) || 0);
     const limit = Math.max(0, Number(usage.monthly_limit) || 0);
@@ -1672,6 +1720,8 @@
   });
 
   function clearAccountView() {
+    // Invalidate in-flight API-key list requests before clearing account-owned data.
+    apiKeyRequestVersion += 1;
     loadedReports = [];
     reportsTotal = 0;
     activeEvidenceReportId = null;
@@ -1688,6 +1738,7 @@
     $("loadMoreReports").hidden = true;
     $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
+    renderUsageHistory([]);
     $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
     const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
     $("bulkUrls").value = ""; setStatus("bulkScanStatus", "Connect your account to submit website batches.");
@@ -1986,16 +2037,23 @@
   });
   $("createApiKey").addEventListener("click", createApiKey);
   $("refreshApiKeys").addEventListener("click", async () => {
-    try { await loadApiKeys(); setStatus("apiKeyStatus", "API key list refreshed.", "success"); }
-    catch (error) { setStatus("apiKeyStatus", error.message, "error"); }
+    const operationSessionVersion = accountSessionVersion;
+    try {
+      await loadApiKeys();
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "API key list refreshed.", "success");
+    } catch (error) {
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", error.message, "error");
+    }
   });
   $("copyApiKey").addEventListener("click", async () => {
     if (!newlyCreatedApiKey) return;
+    const operationSessionVersion = accountSessionVersion;
+    const keyToCopy = newlyCreatedApiKey;
     try {
-      await navigator.clipboard.writeText(newlyCreatedApiKey);
-      setStatus("apiKeyStatus", "API key copied to clipboard. Store it securely.", "success");
+      await navigator.clipboard.writeText(keyToCopy);
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "API key copied to clipboard. Store it securely.", "success");
     } catch {
-      setStatus("apiKeyStatus", "Clipboard access was blocked. Select and copy the key shown above manually.", "error");
+      if (operationSessionVersion === accountSessionVersion) setStatus("apiKeyStatus", "Clipboard access was blocked. Select and copy the key shown above manually.", "error");
     }
   });
   $("hideApiKey").addEventListener("click", () => {

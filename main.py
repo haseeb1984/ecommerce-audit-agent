@@ -3288,19 +3288,21 @@ async def set_business_agency_team_workspace_access(
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Serialize grant changes with agency suspension and team-member revocation.
+    # All team mutations acquire locks in agency -> member -> workspace -> grant order.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.id == member_id, AgencyTeamMember.agency_id == agency.id,
         AgencyTeamMember.status == "active",
-    ))
+    ).with_for_update())
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
         AgencyClientWorkspace.id == workspace_id, AgencyClientWorkspace.agency_id == agency.id,
         AgencyClientWorkspace.status == "active",
-    ))
+    ).with_for_update())
     if member is None or workspace is None:
         raise HTTPException(status_code=404, detail="Active team member or client workspace was not found in this agency.")
     access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
@@ -3338,12 +3340,21 @@ async def remove_business_agency_team_workspace_access(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
+    # Keep the same agency -> member -> grant lock order as grant creation
+    # and member revocation so access cannot be re-added during a revoke.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key,
         AgencyAccount.status == "active",
-    ))
+    ).with_for_update())
     if agency is None:
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == member_id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=404, detail="Active team member was not found.")
     access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
         AgencyWorkspaceAccess.agency_id == agency.id,
         AgencyWorkspaceAccess.team_member_id == member_id,
@@ -3441,8 +3452,12 @@ async def create_business_agency_client(
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Serialize workspace creation with agency suspension and other lifecycle
+    # mutations. The agency row is always the first lock in this workflow.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
@@ -3486,8 +3501,12 @@ async def update_business_agency_client(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
     from sqlalchemy import select
+    # Keep the agency -> workspace lock order consistent with suspension,
+    # workspace creation and website-connection lifecycle operations.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
@@ -3582,6 +3601,17 @@ async def update_account_branding(
     return {"brand_name": brand_name, "logo_url": logo_url, "primary_color": color, "updated": True}
 
 
+def _load_customer_usage_details(details_json: str | None) -> dict:
+    """Decode a usage event defensively and redact/bound any persisted metadata."""
+    try:
+        parsed = json.loads(details_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"_warning": "Stored usage details were invalid and have been omitted."}
+    if not isinstance(parsed, dict):
+        return {"_warning": "Stored usage details were not an object and have been omitted."}
+    return _sanitize_admin_log_value(parsed)
+
+
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
@@ -3668,7 +3698,7 @@ async def get_account_usage(
             "event_key": item.event_key, "event_type": item.event_type,
             "quantity": item.quantity,
             "created_at": item.created_at.isoformat() if item.created_at else None,
-            "details": json.loads(item.details_json or "{}"),
+            "details": _load_customer_usage_details(item.details_json),
         } for item in usage_events],
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
@@ -4016,17 +4046,34 @@ async def revoke_account_api_key(
     The dedicated dependency grants no audit/report access and is used only for
     this revocation action so expired customers can invalidate compromised keys.
     """
-    from sqlalchemy import delete
+    from sqlalchemy import delete, select
 
-    result = await db.execute(
-        delete(APIKey).where(
+    # Use the same license-first lock order as customer/admin key issuance and
+    # admin revocation. This serializes revocation with concurrent key creation
+    # and prevents duplicate revocation attempts from racing on the same key.
+    client = (await db.execute(
+        select(SoftwareLicense).where(
+            SoftwareLicense.id == license_obj.id
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if client is None:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Account not found.")
+    item = (await db.execute(
+        select(APIKey).where(
             APIKey.id == key_id,
-            APIKey.license_id == license_obj.id,
-        )
-    )
-    if not result.rowcount:
+            APIKey.license_id == client.id,
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if item is None:
         await db.rollback()
         raise HTTPException(status_code=404, detail="API key not found for this account.")
+    await db.execute(
+        delete(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.license_id == client.id,
+        )
+    )
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -6117,6 +6164,7 @@ async def admin_update_business_agency(
     if agency is None:
         raise HTTPException(status_code=404, detail="Business agency account was not found.")
     now = datetime.now(timezone.utc)
+    previous_status = agency.status
     agency.status = payload.status
     if payload.status == "suspended":
         sessions = (await operational_db.execute(select(AgencyTeamSession).where(
@@ -6141,6 +6189,18 @@ async def admin_update_business_agency(
             member.invitation_expires_at = None
     agency.updated_at = now
     await operational_db.commit()
+    if previous_status != agency.status:
+        await _write_admin_log(
+            operational_db,
+            "agency_status_changed",
+            "agency",
+            agency.id,
+            {
+                "previous_status": previous_status,
+                "new_status": agency.status,
+                "team_sessions_revoked": payload.status == "suspended",
+            },
+        )
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -8242,13 +8302,15 @@ async def admin_revoke_client_api_key(
     _require_admin_key(request)
     from sqlalchemy import delete, select
 
+    # Match API-key creation's license-first lock order. This serializes admin
+    # revocation with key issuance and prevents concurrent duplicate revoke logs.
     client = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id).with_for_update()
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     item = (await db.execute(
-        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id)
+        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id).with_for_update()
     )).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="API key not found for this client.")
@@ -8265,6 +8327,7 @@ async def admin_revoke_client_api_key(
 
 @app.patch("/api/v1/admin/clients/{license_id}")
 async def admin_update_client(license_id: int, payload: AdminClientUpdate, request: Request,
+                              response: Response,
                               db: AsyncSession = Depends(get_async_db)):
     """Allow an authenticated operator to adjust a customer's entitlement and account status."""
     _require_admin_key(request)
@@ -8296,6 +8359,11 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     previous_active = bool(client.is_active)
+    audited_fields = ("client_name", "tier", "max_monthly_audits", "is_active", "expires_at")
+    previous_values = {
+        key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
+        for key in audited_fields
+    }
     if "tier" in changes:
         package = (await db.execute(text("""
             SELECT monthly_audit_allowance, is_active
@@ -8326,14 +8394,19 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
             next_attempt_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),
         ))
-    await _write_admin_log(db, "client.updated", "client", client.id, {
-        "fields": sorted(changes),
-        "tier": client.tier,
-        "max_monthly_audits": client.max_monthly_audits,
-        "is_active": bool(client.is_active),
-    })
     await db.commit()
     await db.refresh(client)
+    current_values = {
+        key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
+        for key in audited_fields
+    }
+    await _write_admin_log(db, "client.updated", "client", client.id, {
+        "fields": sorted(changes),
+        "previous": previous_values,
+        "updated": current_values,
+    })
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     # Deliberately log only the client ID and field names, never license keys or credentials.
     logger.info("Admin updated client account (client_id=%s, fields=%s)", client.id, ",".join(sorted(changes)))
     return {
