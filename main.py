@@ -6594,6 +6594,9 @@ async def admin_action_history(
     response: Response,
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
+    action: str = Query(default="", max_length=100),
+    entity_type: str = Query(default="", max_length=80),
+    entity_id: str = Query(default="", max_length=160),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return a bounded, newest-first page of sanitized administrator activity."""
@@ -6603,12 +6606,22 @@ async def admin_action_history(
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational activity storage is unavailable.")
     from sqlalchemy import select, func
+    filters = []
+    if action.strip():
+        filters.append(AdminActionLog.action.ilike(f"%{action.strip()}%"))
+    if entity_type.strip():
+        filters.append(AdminActionLog.entity_type.ilike(f"%{entity_type.strip()}%"))
+    if entity_id.strip():
+        filters.append(AdminActionLog.entity_id.ilike(f"%{entity_id.strip()}%"))
     async with HostingerAsyncSessionLocal() as operational_db:
-        total = int((await operational_db.execute(
-            select(func.count(AdminActionLog.id))
-        )).scalar_one() or 0)
+        total_query = select(func.count(AdminActionLog.id))
+        rows_query = select(AdminActionLog)
+        if filters:
+            total_query = total_query.where(*filters)
+            rows_query = rows_query.where(*filters)
+        total = int((await operational_db.execute(total_query)).scalar_one() or 0)
         rows = (await operational_db.execute(
-            select(AdminActionLog)
+            rows_query
             .order_by(AdminActionLog.created_at.desc(), AdminActionLog.id.desc())
             .offset(offset)
             .limit(limit)
