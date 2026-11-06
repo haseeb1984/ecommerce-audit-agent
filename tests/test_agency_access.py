@@ -612,3 +612,29 @@ async def test_agency_client_website_status_distinguishes_unconnected_workspace(
     assert result["connected"] is False
     assert result["connection_health"] == "not_connected"
     assert result["health_checked_at"]
+
+
+
+def test_agency_workspace_grant_mutations_follow_agency_member_workspace_lock_order():
+    import inspect
+    import main
+
+    grant_source = inspect.getsource(main.set_business_agency_team_workspace_access)
+    remove_source = inspect.getsource(main.remove_business_agency_team_workspace_access)
+
+    grant_agency = grant_source.index("AgencyAccount.owner_license_key")
+    grant_member = grant_source.index("AgencyTeamMember.id == member_id")
+    grant_workspace = grant_source.index("AgencyClientWorkspace.id == workspace_id")
+    grant_access = grant_source.index("AgencyWorkspaceAccess.agency_id == agency.id")
+    assert grant_agency < grant_member < grant_workspace < grant_access
+    assert ".with_for_update()" in grant_source[grant_agency:grant_member]
+    assert ".with_for_update()" in grant_source[grant_member:grant_workspace]
+    assert ".with_for_update()" in grant_source[grant_workspace:grant_access]
+
+    remove_agency = remove_source.index("AgencyAccount.owner_license_key")
+    remove_member = remove_source.index("AgencyTeamMember.id == member_id")
+    remove_access = remove_source.index("AgencyWorkspaceAccess.agency_id == agency.id")
+    assert remove_agency < remove_member < remove_access
+    assert ".with_for_update()" in remove_source[remove_agency:remove_member]
+    assert ".with_for_update()" in remove_source[remove_member:remove_access]
+    assert 'AgencyTeamMember.status == "active"' in remove_source[remove_member:remove_access]
