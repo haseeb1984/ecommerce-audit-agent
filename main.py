@@ -3601,6 +3601,17 @@ async def update_account_branding(
     return {"brand_name": brand_name, "logo_url": logo_url, "primary_color": color, "updated": True}
 
 
+def _load_customer_usage_details(details_json: str | None) -> dict:
+    """Decode a usage event defensively and redact/bound any persisted metadata."""
+    try:
+        parsed = json.loads(details_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"_warning": "Stored usage details were invalid and have been omitted."}
+    if not isinstance(parsed, dict):
+        return {"_warning": "Stored usage details were not an object and have been omitted."}
+    return _sanitize_admin_log_value(parsed)
+
+
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
@@ -3687,7 +3698,7 @@ async def get_account_usage(
             "event_key": item.event_key, "event_type": item.event_type,
             "quantity": item.quantity,
             "created_at": item.created_at.isoformat() if item.created_at else None,
-            "details": json.loads(item.details_json or "{}"),
+            "details": _load_customer_usage_details(item.details_json),
         } for item in usage_events],
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
