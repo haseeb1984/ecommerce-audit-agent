@@ -113,7 +113,7 @@ def test_customer_portal_keeps_passwordless_session_actions_enabled():
     assert 'if (!sessionToken) { setStatus("loginStatus", "Sign in with your customer email to manage device sessions."' in logout_all
     assert 'finally { button.disabled = !sessionToken; }' in logout_all
     wordpress_link = portal[portal.index('$("generateWordPressLinkCode").addEventListener("click"'):portal.index('$("copyWordPressLinkCode").addEventListener("click"')]
-    assert 'finally { button.disabled = !credential; }' in wordpress_link
+    assert 'if (operationSessionVersion === accountSessionVersion) button.disabled = !credential;' in wordpress_link
 
 
 def test_wordpress_identity_link_accepts_verified_customer_session_authentication():
