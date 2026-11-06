@@ -5993,6 +5993,113 @@ async def admin_list_business_agencies(
     }
 
 
+@app.get("/api/v1/admin/agencies/{agency_id}")
+async def admin_get_business_agency_detail(
+    agency_id: str,
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return bounded, secret-free operational details for one agency tenant."""
+    _require_admin_key(request)
+    from sqlalchemy import func, select
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.id == agency_id)
+    )
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Business agency account was not found.")
+    workspaces = (await operational_db.execute(
+        select(AgencyClientWorkspace)
+        .where(AgencyClientWorkspace.agency_id == agency.id)
+        .order_by(AgencyClientWorkspace.created_at.desc(), AgencyClientWorkspace.id.asc())
+        .limit(100)
+    )).scalars().all()
+    members = (await operational_db.execute(
+        select(AgencyTeamMember)
+        .where(AgencyTeamMember.agency_id == agency.id)
+        .order_by(AgencyTeamMember.created_at.desc(), AgencyTeamMember.id.asc())
+        .limit(100)
+    )).scalars().all()
+    workspace_ids = [item.id for item in workspaces]
+    websites_by_workspace = {}
+    access_counts = {}
+    if workspace_ids:
+        website_rows = (await operational_db.execute(
+            select(AgencyClientWebsite)
+            .where(
+                AgencyClientWebsite.agency_id == agency.id,
+                AgencyClientWebsite.workspace_id.in_(workspace_ids),
+            )
+            .order_by(AgencyClientWebsite.connected_at.desc())
+        )).scalars().all()
+        for site in website_rows:
+            websites_by_workspace.setdefault(site.workspace_id, []).append({
+                "host": site.site_host,
+                "status": site.status,
+                "connection_type": site.connection_type,
+                "plugin_version": site.plugin_version,
+                "wordpress_version": site.wordpress_version,
+                "woocommerce_version": site.woocommerce_version,
+                "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None,
+                "disconnected_at": site.disconnected_at.isoformat() if site.disconnected_at else None,
+            })
+        access_rows = (await operational_db.execute(
+            select(AgencyWorkspaceAccess.workspace_id, func.count(AgencyWorkspaceAccess.id))
+            .where(
+                AgencyWorkspaceAccess.agency_id == agency.id,
+                AgencyWorkspaceAccess.workspace_id.in_(workspace_ids),
+            )
+            .group_by(AgencyWorkspaceAccess.workspace_id)
+        )).all()
+        access_counts = {workspace_id: int(count) for workspace_id, count in access_rows}
+    workspace_total = int(await operational_db.scalar(
+        select(func.count(AgencyClientWorkspace.id)).where(
+            AgencyClientWorkspace.agency_id == agency.id
+        )
+    ) or 0)
+    member_total = int(await operational_db.scalar(
+        select(func.count(AgencyTeamMember.id)).where(
+            AgencyTeamMember.agency_id == agency.id
+        )
+    ) or 0)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "agency": {
+            "id": agency.id,
+            "owner_email": agency.owner_email,
+            "status": agency.status,
+            "created_at": agency.created_at.isoformat() if agency.created_at else None,
+            "updated_at": agency.updated_at.isoformat() if agency.updated_at else None,
+        },
+        "workspaces": [{
+            "id": item.id,
+            "display_name": item.display_name,
+            "external_reference": item.external_reference,
+            "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "website_connections": websites_by_workspace.get(item.id, []),
+            "team_access_count": access_counts.get(item.id, 0),
+        } for item in workspaces],
+        "team_members": [{
+            "id": item.id,
+            "email": item.email,
+            "role": item.role,
+            "status": item.status,
+            "invited_by": item.invited_by,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "accepted_at": item.accepted_at.isoformat() if item.accepted_at else None,
+        } for item in members],
+        "page": {
+            "workspaces_returned": len(workspaces),
+            "workspaces_total": workspace_total,
+            "team_members_returned": len(members),
+            "team_members_total": member_total,
+            "truncated": len(workspaces) < workspace_total or len(members) < member_total,
+        },
+    }
+
+
 @app.patch("/api/v1/admin/agencies/{agency_id}")
 async def admin_update_business_agency(
     agency_id: str,
