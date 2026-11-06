@@ -450,7 +450,7 @@
   function renderApiKeys() {
     const container = $("apiKeys"); container.replaceChildren();
     const atLimit = apiKeyRows.length >= apiKeyLimit;
-    $("createApiKey").disabled = !credential || !apiKeyCreationAllowed || atLimit;
+    $("createApiKey").disabled = (!credential && !sessionToken) || !apiKeyCreationAllowed || atLimit;
     const creationMessages = {
       key_limit_reached: "Revoke an existing key before creating another.",
       account_expired: "Your license has expired. Renew your subscription to create API keys.",
@@ -497,7 +497,7 @@
     }
   }
   async function createApiKey() {
-    if (!credential) { setStatus("apiKeyStatus", "Connect your account first.", "error"); return; }
+    if (!credential && !sessionToken) { setStatus("apiKeyStatus", "Connect your account first.", "error"); return; }
     const operationSessionVersion = accountSessionVersion;
     if (!apiKeyCreationAllowed) {
       const messages = {
@@ -1966,7 +1966,7 @@
     }
   });
   $("openBillingPortal").addEventListener("click", async () => {
-    if (!credential) { setStatus("billingStatus", "Connect your account first.", "error"); return; }
+    if (!credential && !sessionToken) { setStatus("billingStatus", "Connect your account first.", "error"); return; }
     const button = $("openBillingPortal"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/billing-portal", {method:"POST"});
