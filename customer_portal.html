@@ -1946,7 +1946,7 @@
     catch (error) { setStatus("brandingStatus", error.message, "error"); }
   });
   $("saveProfile").addEventListener("click", async () => {
-    if (!credential) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
+    if (!credential && !sessionToken) { setStatus("profileStatus", "Connect your account first.", "error"); return; }
     const clientName = $("profileName").value.trim();
     if (!clientName) { setStatus("profileStatus", "Account name cannot be blank.", "error"); return; }
     const button = $("saveProfile"); button.disabled = true;
@@ -1962,7 +1962,7 @@
     } catch (error) {
       setStatus("profileStatus", error.message, "error");
     } finally {
-      button.disabled = !credential;
+      button.disabled = !credential && !sessionToken;
     }
   });
   $("openBillingPortal").addEventListener("click", async () => {
