@@ -3571,8 +3571,12 @@ async def create_business_agency_client(
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Serialize workspace creation with agency suspension and all other
+    # agency -> workspace lifecycle mutations.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
