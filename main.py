@@ -762,8 +762,12 @@ async def comprehensive_audit_pdf(
             browser_summary = browser_result.get("summary")
             if not isinstance(browser_summary, dict):
                 browser_summary = {}
-            browser_audit_completed = not bool(browser_summary.get("navigation_error"))
             rendered_pages = browser_summary.get("rendered_pages", [])
+            browser_audit_completed = (
+                isinstance(rendered_pages, list)
+                and bool(rendered_pages)
+                and not bool(browser_summary.get("navigation_error"))
+            )
             if isinstance(rendered_pages, list):
                 safe_rendered_pages = [
                     _safe_audit_metadata_url(url)
@@ -1040,7 +1044,7 @@ async def comprehensive_audit_pdf(
                 },
                 "measurement_context": {
                     "performance": "PageSpeed Insights lab metrics and any provider-returned field data are reported separately; absent field data is not inferred.",
-                    "rendered_browser": "Not available in this server-side audit path unless explicitly recorded by a checker outcome.",
+                    "rendered_browser": "The isolated signed Playwright service is invoked when configured; only returned viewport and lab observations are reported. Field Core Web Vitals and INP are not measured.",
                     "authorization": "Only unauthenticated public checks are attempted by default.",
                 },
             },
