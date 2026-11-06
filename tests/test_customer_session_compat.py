@@ -101,3 +101,16 @@ def test_customer_passwordless_login_responses_cannot_overwrite_a_newer_account_
     assert "if (loginAttemptVersion !== accountSessionVersion) return;" in verify_handler
     assert "if (loginAttemptVersion === accountSessionVersion) {" in verify_handler
     assert "if (loginAttemptVersion === accountSessionVersion) button.disabled = false;" in verify_handler
+
+
+def test_customer_portal_profile_update_accepts_verified_bearer_sessions():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    handler_start = portal.index('$("saveProfile").addEventListener')
+    handler_end = portal.index('$("openBillingPortal").addEventListener', handler_start)
+    handler = portal[handler_start:handler_end]
+
+    assert 'if (!credential && !sessionToken)' in handler
+    assert 'api("/api/v1/account/profile"' in handler
+    assert 'button.disabled = !credential && !sessionToken;' in handler
