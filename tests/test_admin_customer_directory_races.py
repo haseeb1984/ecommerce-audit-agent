@@ -37,8 +37,8 @@ def test_admin_customer_directory_merges_legacy_and_operational_identities():
     merged = _merge_admin_customer_directory_candidates(operational, legacy)
 
     assert [item["email"] for item in merged] == [
-        "operational-only@example.com",
         "shared@example.com",
         "legacy-only@example.com",
+        "operational-only@example.com",
     ]
-    assert merged[1]["activity_at"] == recent
+    assert merged[0]["activity_at"] == recent
