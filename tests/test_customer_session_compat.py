@@ -101,3 +101,17 @@ def test_customer_passwordless_login_responses_cannot_overwrite_a_newer_account_
     assert "if (loginAttemptVersion !== accountSessionVersion) return;" in verify_handler
     assert "if (loginAttemptVersion === accountSessionVersion) {" in verify_handler
     assert "if (loginAttemptVersion === accountSessionVersion) button.disabled = false;" in verify_handler
+
+
+
+def test_customer_portal_keeps_passwordless_session_actions_enabled():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    assert 'finally { button.disabled = !credential && !sessionToken; }' in portal
+    logout_all = portal[portal.index('$("logoutAllSessions").addEventListener("click"'):portal.index('$("disconnectAccount").addEventListener("click"')]
+    assert 'if (!sessionToken) { setStatus("loginStatus", "Sign in with your customer email to manage device sessions."' in logout_all
+    assert 'finally { button.disabled = !sessionToken; }' in logout_all
+    # WordPress identity-link challenge generation remains license/API-key credential gated.
+    wordpress_link = portal[portal.index('$("generateWordPressLinkCode").addEventListener("click"'):portal.index('$("copyWordPressLinkCode").addEventListener("click"')]
+    assert 'finally { button.disabled = !credential; }' in wordpress_link
