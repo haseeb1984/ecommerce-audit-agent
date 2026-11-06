@@ -1768,12 +1768,15 @@
     $("connect").disabled = true;
     try {
       await loadBillingHistory();
+      if (attemptSessionVersion !== accountSessionVersion) return;
       const results = await Promise.allSettled([loadReports(), loadUsage(), loadApiKeys(), loadActivity(), loadProfile(), loadWordPressSites(), loadScanBatches()]);
+      if (attemptSessionVersion !== accountSessionVersion) return;
       const names = ["saved reports", "usage and audit access", "API keys", "recent audit activity", "account profile", "WordPress sites", "scan batches"];
       const brandingEnabled = results[1].status === "fulfilled" && results[1].value.features && results[1].value.features.white_label_branding === true;
       $("brandingPanel").hidden = !brandingEnabled;
       if (brandingEnabled) {
         const brandingResult = await Promise.allSettled([loadBranding()]);
+        if (attemptSessionVersion !== accountSessionVersion) return;
         if (brandingResult[0].status === "rejected") names.push("white-label branding");
         results.push(brandingResult[0]);
       } else {
@@ -1783,11 +1786,13 @@
       $("agencyPanel").hidden = !agencyEnabled;
       if (agencyEnabled) {
         const agencyResult = await Promise.allSettled([loadAgencyDashboard()]);
+        if (attemptSessionVersion !== accountSessionVersion) return;
         if (agencyResult[0].status === "rejected") names.push("agency client management");
         results.push(agencyResult[0]);
       } else {
         setStatus("agencyStatus", "Agency client management is available on the Business plan.");
       }
+      if (attemptSessionVersion !== accountSessionVersion) return;
       const unavailable = results.map((result, index) => result.status === "rejected" ? names[index] : null).filter(Boolean);
       const auditAccess = results[0].status === "fulfilled" && results[1].status === "fulfilled";
       $("credential").value = "";
