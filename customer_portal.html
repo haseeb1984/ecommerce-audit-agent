@@ -731,11 +731,37 @@
       const auditHistoryPanel = document.createElement("div"); auditHistoryPanel.className = "reports";
       auditHistory.addEventListener("click", () => loadAgencyClientAudits(item.id, auditHistoryPanel));
       actions.append(auditHistory);
+      const rename = document.createElement("button");
+      rename.type = "button"; rename.className = "secondary"; rename.textContent = "Rename client";
+      rename.addEventListener("click", async () => {
+        const proposedName = window.prompt("Enter a new name for this client workspace:", item.display_name);
+        if (proposedName === null) return;
+        const displayName = proposedName.trim();
+        if (!displayName) { setStatus("agencyStatus", "Client workspace name cannot be blank.", "error"); return; }
+        if (displayName === item.display_name) return;
+        rename.disabled = true;
+        try {
+          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
+            method: "PATCH", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({display_name: displayName})
+          });
+          await loadAgencyDashboard();
+          setStatus("agencyStatus", "Client workspace renamed.", "success");
+        } catch (error) {
+          setStatus("agencyStatus", error.message, "error");
+        } finally { rename.disabled = false; }
+      });
+      actions.append(rename);
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "secondary";
       toggle.textContent = item.status === "active" ? "Archive client" : "Reactivate client";
       toggle.addEventListener("click", async () => {
+        const archiving = item.status === "active";
+        const confirmation = archiving
+          ? "Archive " + item.display_name + "? The workspace will leave active client operations and cannot receive new team scans until reactivated. Existing audit history is retained."
+          : "Reactivate " + item.display_name + "? The workspace will return to active client operations.";
+        if (!window.confirm(confirmation)) return;
         toggle.disabled = true;
         try {
           await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
