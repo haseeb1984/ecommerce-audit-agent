@@ -77,3 +77,17 @@ def test_bounded_crawler_integrates_content_quality_outcomes():
     assert "inspect_content_quality(" in source
     assert "outcome_records.extend(content_outcomes)" in source
     assert (Path(__file__).resolve().parents[1] / "content_quality_checks.py").exists()
+
+
+def test_source_text_extraction_ignores_explicitly_hidden_content():
+    html = (
+        '<div hidden>' + " ".join(f"hiddenword{i}" for i in range(150)) + '</div>'
+        '<div aria-hidden="true">' + " ".join(f"ariahidden{i}" for i in range(150)) + '</div>'
+        '<div style="display:none">' + " ".join(f"csshidden{i}" for i in range(150)) + '</div>'
+        '<main><p>Short visible content.</p></main>'
+    )
+    findings, outcomes, fingerprint = inspect_content_quality(html, "https://shop.example/")
+
+    assert any(item.title == "Low visible-text volume needs editorial review" for item in findings)
+    assert next(item for item in outcomes if item.check_id == "content.visible_text_volume").outcome == "warning"
+    assert fingerprint is None

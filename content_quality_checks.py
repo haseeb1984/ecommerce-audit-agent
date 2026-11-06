@@ -32,11 +32,18 @@ class _VisibleContentParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
+        attributes = {str(key).lower(): str(value or "").lower() for key, value in attrs}
+        inline_style = attributes.get("style", "")
+        hidden = (
+            "hidden" in attributes
+            or attributes.get("aria-hidden") == "true"
+            or re.search(r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)", inline_style) is not None
+        )
         if self._ignored_depth:
             if tag not in self._VOID:
                 self._ignored_depth += 1
             return
-        if tag in self._IGNORED:
+        if tag in self._IGNORED or hidden:
             self._ignored_depth = 1
             return
         if tag in {"main", "article"}:
@@ -87,8 +94,8 @@ def inspect_content_quality(
 
     if word_count < MIN_VISIBLE_WORDS:
         evidence = (
-            f"The bounded HTML text extractor found {word_count} visible word(s) "
-            f"against a {MIN_VISIBLE_WORDS}-word review threshold. This is a low-volume signal, "
+            f"The bounded static HTML source-text extractor found {word_count} word(s) "
+            f"against a {MIN_VISIBLE_WORDS}-word review threshold. CSS visibility and JavaScript-rendered text are not evaluated. This is a low-volume signal, "
             "not a judgment of content quality or page usefulness."
         )
         findings.append(AuditFinding(
@@ -112,13 +119,13 @@ def inspect_content_quality(
                 "Have the content owner review whether the page needs additional unique explanatory content.",
             ],
             source_url=page_url,
-            test_method="bounded static HTML visible-text extraction excluding script, style, navigation, header and footer content",
+            test_method="bounded static HTML source-text extraction excluding script, style, navigation, header, footer and explicitly hidden elements; CSS visibility and JavaScript rendering are not evaluated",
             evidence_confidence="limited",
         ))
         volume_outcome = "warning"
     else:
         evidence = (
-            f"The bounded HTML text extractor found {word_count} visible word(s), meeting the "
+            f"The bounded static HTML source-text extractor found {word_count} word(s), meeting the "
             f"{MIN_VISIBLE_WORDS}-word low-volume review threshold. This does not establish content quality."
         )
         volume_outcome = "pass"
@@ -128,7 +135,7 @@ def inspect_content_quality(
         page_url=page_url,
         outcome=volume_outcome,
         observed_at_utc=observed_at,
-        method="bounded static HTML visible-text extraction",
+        method="bounded static HTML source-text extraction; CSS visibility and JavaScript rendering are not evaluated",
         evidence=evidence,
         evidence_ref="content.visible_text_volume",
     ))
@@ -139,7 +146,7 @@ def inspect_content_quality(
         duplicate_url = (prior_fingerprints or {}).get(fingerprint)
         if duplicate_url and duplicate_url != page_url:
             duplicate_evidence = (
-                "The normalized visible text exactly matches another page in the bounded crawl sample: "
+                "The normalized source text exactly matches another page in the bounded crawl sample: "
                 f"{duplicate_url}. Page text is not reproduced in the evidence."
             )
             findings.append(AuditFinding(
@@ -186,7 +193,7 @@ def inspect_content_quality(
         page_url=page_url,
         outcome=duplicate_outcome,
         observed_at_utc=observed_at,
-        method="bounded exact normalized visible-text fingerprint comparison",
+        method="bounded exact normalized source-text fingerprint comparison",
         evidence=duplicate_evidence,
         evidence_ref="content.exact_duplicate_copy",
     ))
