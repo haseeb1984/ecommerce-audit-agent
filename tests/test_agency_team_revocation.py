@@ -79,3 +79,22 @@ def test_agency_team_login_code_uses_agency_before_member_lock_order():
     assert ".with_for_update()" in route[agency_lock:member_lock]
     assert ".with_for_update()" in route[member_lock:challenge_insert]
     assert 'agency.status != "active"' in route[agency_lock:member_lock]
+
+
+def test_agency_team_session_authorization_serializes_with_revocation():
+    source = Path("main.py").read_text(encoding="utf-8")
+    start = source.index("async def require_agency_team_session")
+    end = source.index('@app.get("/api/v1/account/agency/usage")', start)
+    guard = source[start:end]
+
+    candidate_lookup = guard.index("AgencyTeamSession.token_hash == token_hash")
+    agency_lock = guard.index("AgencyAccount.id == candidate.agency_id")
+    member_lock = guard.index("AgencyTeamMember.id == candidate.team_member_id")
+    session_recheck = guard.index("AgencyTeamSession.id == candidate.id")
+    assert candidate_lookup < agency_lock < member_lock < session_recheck
+    assert guard[agency_lock:member_lock].count(".with_for_update()") == 1
+    assert guard[member_lock:session_recheck].count(".with_for_update()") == 1
+    assert guard[session_recheck:].count(".with_for_update()") == 1
+    assert 'agency.status != "active"' in guard
+    assert 'AgencyTeamSession.revoked_at.is_(None)' in guard[session_recheck:]
+    assert 'AgencyTeamSession.expires_at > datetime.now(timezone.utc)' in guard[session_recheck:]
