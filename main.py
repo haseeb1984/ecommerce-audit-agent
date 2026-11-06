@@ -155,6 +155,10 @@ class AgencyTeamInviteCreate(BaseModel):
     workspace_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
+class AgencyTeamMemberRoleUpdate(BaseModel):
+    role: str = Field(..., pattern="^(admin|analyst|viewer)$")
+
+
 class AgencyWorkspaceAccessUpdate(BaseModel):
     role: str = Field(default="viewer", pattern="^(admin|analyst|viewer)$")
 
@@ -3281,6 +3285,45 @@ async def accept_business_agency_invitation(
             "role": member.role, "message": "Invitation accepted. Team-member sign-in is the next access-control step."}
 
 
+@app.put("/api/v1/account/agency/team/{member_id}")
+async def update_business_agency_team_member_role(
+    member_id: str,
+    payload: AgencyTeamMemberRoleUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Update a member's agency role while preserving explicitly customized workspace roles."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
+    from sqlalchemy import select, update
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == member_id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=404, detail="Active team member was not found.")
+    previous_role = member.role
+    member.role = payload.role
+    # Grants that still match the former agency role follow the new role.
+    # Deliberate per-workspace overrides remain untouched.
+    await operational_db.execute(update(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == agency.id,
+        AgencyWorkspaceAccess.team_member_id == member.id,
+        AgencyWorkspaceAccess.role == previous_role,
+    ).values(role=payload.role))
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "updated", "member_id": member.id, "role": member.role}
+
+
 @app.put("/api/v1/account/agency/team/{member_id}/workspaces/{workspace_id}")
 async def set_business_agency_team_workspace_access(
     member_id: str,
@@ -3383,9 +3426,10 @@ async def revoke_business_agency_team_member(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
+    # Match invitation and agency-suspension lock order to serialize revocation.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
@@ -3505,8 +3549,12 @@ async def update_business_agency_client(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
     from sqlalchemy import select
+    # Keep the agency -> workspace lock order consistent with suspension,
+    # workspace creation and website-connection lifecycle operations.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
@@ -3524,9 +3572,35 @@ async def update_business_agency_client(
         if not display_name:
             raise HTTPException(status_code=422, detail="Client display name cannot be blank.")
         item.display_name = display_name
+    now = datetime.now(timezone.utc)
+    connection_revoked = False
+    if changes.get("status") == "archived" and item.status != "archived":
+        # Archiving is an access boundary, not just a dashboard filter:
+        # revoke the active plugin credential and any unused setup token.
+        site = await operational_db.scalar(select(AgencyClientWebsite).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.workspace_id == item.id,
+            AgencyClientWebsite.status == "active",
+        ).with_for_update())
+        if site is not None:
+            site.status = "disconnected"
+            site.disconnected_at = now
+            site.site_token_hash = None
+            connection_revoked = True
+        pending_challenges = (await operational_db.execute(
+            select(AgencyWebsiteConnectChallenge).where(
+                AgencyWebsiteConnectChallenge.agency_id == agency.id,
+                AgencyWebsiteConnectChallenge.workspace_id == item.id,
+                AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+            ).with_for_update()
+        )).scalars().all()
+        for challenge in pending_challenges:
+            challenge.consumed_at = now
+        if pending_challenges:
+            connection_revoked = True
     if "status" in changes:
         item.status = changes["status"]
-    item.updated_at = datetime.now(timezone.utc)
+    item.updated_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -3535,6 +3609,7 @@ async def update_business_agency_client(
         "display_name": item.display_name,
         "external_reference": item.external_reference,
         "status": item.status,
+        "connection_revoked": connection_revoked,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
 
@@ -8098,6 +8173,7 @@ async def admin_list_client_wordpress_links(
             WordPressInstallation.id.desc(),
         ).limit(100)
     )).scalars().all()
+    now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -8111,6 +8187,14 @@ async def admin_list_client_wordpress_links(
             "woocommerce_version": item.woocommerce_version,
             "plugin_version": item.plugin_version,
             "status": item.status,
+            "connection_health": (
+                "not_connected" if item.status != "active" else
+                "stale" if (
+                    item.last_seen_at is None or
+                    (item.last_seen_at.replace(tzinfo=timezone.utc) if item.last_seen_at.tzinfo is None else item.last_seen_at)
+                    < now - timedelta(days=7)
+                ) else "healthy"
+            ),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
             "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,

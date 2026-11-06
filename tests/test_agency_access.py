@@ -702,3 +702,91 @@ async def test_agency_workspace_creation_rejects_suspended_agency_before_insert(
     assert operational.added == []
     assert operational.committed is False
     assert operational.statement._for_update_arg is not None
+
+
+class AgencyArchiveSession:
+    def __init__(self, agency, workspace, site, challenges):
+        self.rows = [agency, workspace, site]
+        self.challenges = challenges
+        self.committed = False
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+    async def execute(self, _statement):
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.challenges))
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_archiving_agency_workspace_revokes_plugin_credential_and_pending_tokens(monkeypatch):
+    import main
+    from fastapi import Response
+    from main import AgencyClientWorkspaceUpdate, update_business_agency_client
+
+    agency = SimpleNamespace(id="agency-archive", status="active", owner_license_key="business-license")
+    workspace = SimpleNamespace(
+        id="workspace-archive", agency_id=agency.id, display_name="Client",
+        external_reference=None, status="active", updated_at=None,
+    )
+    site = SimpleNamespace(
+        agency_id=agency.id, workspace_id=workspace.id, status="active",
+        site_token_hash="hashed-live-site-token", disconnected_at=None,
+    )
+    challenges = [
+        SimpleNamespace(agency_id=agency.id, workspace_id=workspace.id, consumed_at=None),
+        SimpleNamespace(agency_id=agency.id, workspace_id=workspace.id, consumed_at=None),
+    ]
+    db = AgencyArchiveSession(agency, workspace, site, challenges)
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await update_business_agency_client(
+        workspace.id, AgencyClientWorkspaceUpdate(status="archived"), Response(),
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=db,
+    )
+
+    assert result["status"] == "archived"
+    assert result["connection_revoked"] is True
+    assert site.status == "disconnected"
+    assert site.site_token_hash is None
+    assert site.disconnected_at is not None
+    assert all(challenge.consumed_at is not None for challenge in challenges)
+    assert db.committed
+
+
+@pytest.mark.asyncio
+async def test_archiving_workspace_without_connections_is_safe(monkeypatch):
+    import main
+    from fastapi import Response
+    from main import AgencyClientWorkspaceUpdate, update_business_agency_client
+
+    agency = SimpleNamespace(id="agency-empty", status="active", owner_license_key="business-license")
+    workspace = SimpleNamespace(
+        id="workspace-empty", agency_id=agency.id, display_name="Empty",
+        external_reference=None, status="active", updated_at=None,
+    )
+    db = AgencyArchiveSession(agency, workspace, None, [])
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await update_business_agency_client(
+        workspace.id, AgencyClientWorkspaceUpdate(status="archived"), Response(),
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=db,
+    )
+
+    assert result["status"] == "archived"
+    assert result["connection_revoked"] is False
+    assert db.committed
+
+
+def test_customer_portal_explains_wordpress_revocation_after_archiving():
+    from pathlib import Path
+
+    portal = Path(__file__).resolve().parents[1] / "customer_portal.html"
+    source = portal.read_text(encoding="utf-8")
+    assert "updated.connection_revoked" in source
+    assert "WordPress credential and unused connection codes were revoked" in source
+    assert "reconnect the site after reactivation" in source
