@@ -369,3 +369,27 @@ async def test_admin_sync_outbox_retry_requires_admin_authentication(monkeypatch
     assert raised.value.status_code == 403
     assert db.statement is None
     assert db.committed is False
+
+
+def test_admin_sync_outbox_retry_uses_the_database_that_owns_each_queue():
+    from main import admin_retry_sync_outbox
+
+    source = inspect.getsource(admin_retry_sync_outbox)
+    params = inspect.signature(admin_retry_sync_outbox).parameters
+
+    assert params["db"].default.dependency.__name__ == "get_async_db"
+    assert params["operational_db"].default.dependency.__name__ == "get_hostinger_db"
+    assert '"customer_lifecycle": (CustomerLifecycleSyncOutbox, db)' in source
+    assert '"customer_email_identity": (CustomerEmailIdentitySyncOutbox, operational_db)' in source
+    assert "model, queue_db = selected" in source
+    assert "await queue_db.execute(" in source
+    assert "await queue_db.commit()" in source
+    assert 'await _write_admin_log(\n        db,' in source
+
+
+def test_admin_sync_outbox_retry_rejects_unknown_queue_before_database_access():
+    from main import admin_retry_sync_outbox
+
+    source = inspect.getsource(admin_retry_sync_outbox)
+    assert "if selected is None:" in source
+    assert source.index("if selected is None:") < source.index("await queue_db.execute(")
