@@ -119,3 +119,25 @@ def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_or
     assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
     assert 'workspace.status != "active"' in source[workspace_lock:site_lock]
     assert "site.site_token_hash = None" in source[site_lock:challenge_lock]
+
+
+def test_agency_wordpress_heartbeat_revalidates_credential_under_lifecycle_locks():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.get_agency_wordpress_site_status)
+    candidate = source.index("AgencyClientWebsite.site_token_hash == token_hash")
+    agency_lock = source.index("AgencyAccount.id == candidate.agency_id")
+    workspace_lock = source.index("AgencyClientWorkspace.id == candidate.workspace_id")
+    site_recheck = source.index("AgencyClientWebsite.id == candidate.id")
+    heartbeat = source.index("site.last_seen_at = datetime.now(timezone.utc)")
+    commit = source.index("await operational_db.commit()")
+
+    assert candidate < agency_lock < workspace_lock < site_recheck < heartbeat < commit
+    assert ".with_for_update()" in source[agency_lock:workspace_lock]
+    assert ".with_for_update()" in source[workspace_lock:site_recheck]
+    assert ".with_for_update()" in source[site_recheck:heartbeat]
+    assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
+    assert 'workspace.status != "active"' in source[workspace_lock:site_recheck]
+    assert 'AgencyClientWebsite.site_token_hash == token_hash' in source[site_recheck:heartbeat]
+    assert 'AgencyClientWebsite.status == "active"' in source[site_recheck:heartbeat]
