@@ -98,3 +98,24 @@ def test_agency_team_session_authorization_serializes_with_revocation():
     assert 'agency.status != "active"' in guard
     assert 'AgencyTeamSession.revoked_at.is_(None)' in guard[session_recheck:]
     assert 'AgencyTeamSession.expires_at > datetime.now(timezone.utc)' in guard[session_recheck:]
+
+
+def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_order():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.disconnect_agency_client_website)
+    agency_lock = source.index("AgencyAccount.owner_license_key")
+    workspace_lock = source.index("AgencyClientWorkspace.id == workspace_id")
+    site_lock = source.index("AgencyClientWebsite.agency_id == agency.id")
+    challenge_lock = source.index("AgencyWebsiteConnectChallenge.agency_id == agency.id")
+    commit = source.index("await operational_db.commit()")
+
+    assert agency_lock < workspace_lock < site_lock < challenge_lock < commit
+    assert ".with_for_update()" in source[agency_lock:workspace_lock]
+    assert ".with_for_update()" in source[workspace_lock:site_lock]
+    assert ".with_for_update()" in source[site_lock:challenge_lock]
+    assert ".with_for_update()" in source[challenge_lock:commit]
+    assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
+    assert 'workspace.status != "active"' in source[workspace_lock:site_lock]
+    assert "site.site_token_hash = None" in source[site_lock:challenge_lock]
