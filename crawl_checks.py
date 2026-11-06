@@ -42,6 +42,7 @@ from audit_checks import (
 )
 from audit_checks import record_homepage_outcomes
 from product_consistency_checks import inspect_visible_product_consistency
+from content_quality_checks import inspect_content_quality
 
 
 MAX_CRAWL_PAGES = 12
@@ -1872,6 +1873,7 @@ async def run_bounded_site_crawl(
 
         title_pages: dict[str, list[str]] = defaultdict(list)
         description_pages: dict[str, list[str]] = defaultdict(list)
+        content_fingerprints: dict[str, str] = {}
         # Keep the initial homepage/sitemap discoveries, then append newly found
         # same-origin links as pages are inspected. Python's list iterator observes
         # appended entries, providing bounded breadth-first traversal without an
@@ -2095,6 +2097,17 @@ async def run_bounded_site_crawl(
                 category="technical_seo", page_url=final_url,
                 findings=document_findings, method="static HTML document metadata and landmark inspection",
             )
+
+            # Content volume and exact duplicate text are bounded editorial signals,
+            # not a subjective content-quality score or ranking prediction.
+            content_findings, content_outcomes, content_fingerprint = inspect_content_quality(
+                body, final_url, prior_fingerprints=content_fingerprints
+            )
+            findings.extend(content_findings)
+            if content_fingerprint:
+                content_fingerprints.setdefault(content_fingerprint, final_url)
+            if outcome_records is not None:
+                outcome_records.extend(content_outcomes)
 
             hreflang_findings = inspect_hreflang(body, final_url)
             findings.extend(hreflang_findings)

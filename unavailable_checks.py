@@ -13,6 +13,16 @@ from audit_checks import CheckOutcome
 
 UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
     (
+        "content.visible_text_volume",
+        "content_quality",
+        "Visible-text volume was not assessed because no bounded HTML page completed successfully.",
+    ),
+    (
+        "content.exact_duplicate_copy",
+        "content_quality",
+        "Exact visible-text duplication was not assessed because no bounded HTML page completed successfully.",
+    ),
+    (
         "crawl.javascript_rendered_dom",
         "crawlability",
         "A controlled browser did not complete a rendered DOM inspection for this run.",
