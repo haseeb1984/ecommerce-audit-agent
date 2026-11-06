@@ -52,3 +52,16 @@ def test_admin_wordpress_connection_health_is_visible_in_operator_console():
     assert 'staleHeartbeat' in source
     assert 'Connection health ' in source
     assert 'No recent plugin heartbeat.' in source
+
+
+def test_admin_client_detail_panels_ignore_stale_client_responses():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text()
+    assert "let currentHistoryId=null,clientDetailVersion=0;" in portal
+    assert "const detailVersion=++clientDetailVersion;currentHistoryId=id;" in portal
+    assert "if(detailVersion!==clientDetailVersion||currentHistoryId!==id)return;" in portal
+    assert "loadClientSessions(id,detailVersion)" in portal
+    assert "loadClientWordPressLinks(id,detailVersion)" in portal
+    assert "loadClientApiKeys(id,detailVersion)" in portal
+    assert "clientDetailVersion+=1;currentHistoryId=null;" in portal
