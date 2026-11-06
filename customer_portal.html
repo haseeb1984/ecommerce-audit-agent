@@ -746,11 +746,37 @@
       const auditHistoryPanel = document.createElement("div"); auditHistoryPanel.className = "reports";
       auditHistory.addEventListener("click", () => loadAgencyClientAudits(item.id, auditHistoryPanel));
       actions.append(auditHistory);
+      const rename = document.createElement("button");
+      rename.type = "button"; rename.className = "secondary"; rename.textContent = "Rename client";
+      rename.addEventListener("click", async () => {
+        const proposedName = window.prompt("Enter a new name for this client workspace:", item.display_name);
+        if (proposedName === null) return;
+        const displayName = proposedName.trim();
+        if (!displayName) { setStatus("agencyStatus", "Client workspace name cannot be blank.", "error"); return; }
+        if (displayName === item.display_name) return;
+        rename.disabled = true;
+        try {
+          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
+            method: "PATCH", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({display_name: displayName})
+          });
+          await loadAgencyDashboard();
+          setStatus("agencyStatus", "Client workspace renamed.", "success");
+        } catch (error) {
+          setStatus("agencyStatus", error.message, "error");
+        } finally { rename.disabled = false; }
+      });
+      actions.append(rename);
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "secondary";
       toggle.textContent = item.status === "active" ? "Archive client" : "Reactivate client";
       toggle.addEventListener("click", async () => {
+        const archiving = item.status === "active";
+        const confirmation = archiving
+          ? "Archive " + item.display_name + "? The workspace will leave active client operations and cannot receive new team scans until reactivated. Existing audit history is retained."
+          : "Reactivate " + item.display_name + "? The workspace will return to active client operations.";
+        if (!window.confirm(confirmation)) return;
         toggle.disabled = true;
         try {
           const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
@@ -946,6 +972,30 @@
       info.append(title, detail);
       const accessEditor = document.createElement("div"); accessEditor.className = "reports";
       if (item.status === "active") {
+        const agencyRoleLabel = document.createElement("label"); agencyRoleLabel.textContent = "Agency default role";
+        const agencyRole = document.createElement("select");
+        for (const role of ["viewer", "analyst", "admin"]) {
+          const option = document.createElement("option"); option.value = role;
+          option.textContent = role[0].toUpperCase() + role.slice(1); agencyRole.append(option);
+        }
+        agencyRole.value = item.role;
+        const saveAgencyRole = document.createElement("button"); saveAgencyRole.type = "button";
+        saveAgencyRole.className = "secondary"; saveAgencyRole.textContent = "Update agency role";
+        saveAgencyRole.title = "Updates grants that still use the previous agency role; custom workspace roles are preserved.";
+        saveAgencyRole.addEventListener("click", async () => {
+          if (agencyRole.value === item.role) return;
+          saveAgencyRole.disabled = true;
+          try {
+            await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id), {
+              method:"PUT", headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({role:agencyRole.value})
+            });
+            await loadAgencyTeam();
+            setStatus("agencyStatus", "Agency role updated for " + item.email + ". Custom workspace roles were preserved.", "success");
+          } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          finally { saveAgencyRole.disabled = false; }
+        });
+        accessEditor.append(agencyRoleLabel, agencyRole, saveAgencyRole);
         const accessLabel = document.createElement("label"); accessLabel.textContent = "Assigned client workspaces";
         const accessSelect = document.createElement("select"); accessSelect.multiple = true; accessSelect.size = 4;
         accessSelect.style.width = "100%";
@@ -1010,10 +1060,15 @@
       if (item.status !== "revoked") {
         const revoke = document.createElement("button"); revoke.type = "button";
         revoke.className = "secondary"; revoke.textContent = "Revoke";
+        revoke.title = "Immediately revoke this member’s sessions and client workspace access.";
         revoke.addEventListener("click", async () => {
+          if (!window.confirm("Revoke access for " + item.email + "? Their active sessions will be invalidated and client workspace grants removed.")) return;
           revoke.disabled = true;
-          try { await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id), {method:"DELETE"}); await loadAgencyTeam(); }
-          catch (error) { setStatus("agencyStatus", error.message, "error"); }
+          try {
+            await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id), {method:"DELETE"});
+            await loadAgencyTeam();
+            setStatus("agencyStatus", "Access revoked for " + item.email + ".", "success");
+          } catch (error) { setStatus("agencyStatus", error.message, "error"); }
           finally { revoke.disabled = false; }
         });
         actions.append(revoke);

@@ -55,3 +55,62 @@ def test_agency_portal_otp_attempts_ignore_stale_responses():
     assert 'if(actionVersion===sessionVersion&&attemptVersion===authAttemptVersion)button.disabled=false;' in script
     assert "authAttemptVersion += 1;" in script
     assert 'if(!result.access_token)throw new Error("The server did not return an agency session.");' in script
+
+
+
+def test_agency_portal_exposes_agency_role_editor_and_preserves_workspace_overrides():
+    portal = Path("customer_portal.html").read_text(encoding="utf-8")
+
+    assert 'agencyRoleLabel.textContent = "Agency default role"' in portal
+    assert 'method:"PUT"' in portal
+    assert '"/api/v1/account/agency/team/" + encodeURIComponent(item.id)' in portal
+    assert "Custom workspace roles were preserved." in portal
+
+
+def test_agency_member_role_api_updates_default_role_without_overwriting_custom_grants():
+    import inspect
+    import main
+
+    assert "/api/v1/account/agency/team/{member_id}" in main.app.openapi()["paths"]
+    source = inspect.getsource(main.update_business_agency_team_member_role)
+    assert "AgencyAccount.owner_license_key == license_obj.license_key" in source
+    assert "AgencyTeamMember.agency_id == agency.id" in source
+    assert 'AgencyTeamMember.status == "active"' in source
+    assert "AgencyWorkspaceAccess.role == previous_role" in source
+    assert ".values(role=payload.role)" in source
+
+
+
+def test_customer_portal_agency_workspace_rename_and_archive_confirmation():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    assert 'rename.textContent = "Rename client"' in portal
+    assert "body: JSON.stringify({display_name: displayName})" in portal
+    assert "Client workspace name cannot be blank." in portal
+    assert "if (!window.confirm(confirmation)) return;" in portal
+    assert "Existing audit history is retained." in portal
+def test_agency_team_revocation_uses_agency_first_lock_order():
+    source = Path("main.py").read_text(encoding="utf-8")
+    start = source.index('@app.delete("/api/v1/account/agency/team/{member_id}")')
+    end = source.index('@app.get("/api/v1/account/agency/clients")', start)
+    route = source[start:end]
+
+    assert "AgencyAccount.owner_license_key == license_obj.license_key" in route
+    assert ").with_for_update())" in route
+    assert "AgencyTeamMember.id == member_id" in route
+    assert "AgencyTeamSession.team_member_id == member.id" in route
+    assert "member.status = \"revoked\"" in route
+    assert "delete(AgencyWorkspaceAccess)" in route
+
+
+def test_customer_portal_confirms_and_reports_team_member_revocation():
+    portal = Path("customer_portal.html").read_text(encoding="utf-8")
+    start = portal.index("async function loadAgencyTeam()")
+    end = portal.index("async function inviteAgencyTeam()", start)
+    section = portal[start:end]
+
+    assert "window.confirm(\"Revoke access for \" + item.email" in section
+    assert 'method:"DELETE"' in section
+    assert 'setStatus("agencyStatus", "Access revoked for " + item.email, "success")' in section
+    assert "revoke.disabled = true" in section
