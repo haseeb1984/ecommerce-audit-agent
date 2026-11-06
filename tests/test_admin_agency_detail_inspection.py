@@ -34,3 +34,15 @@ def test_admin_agency_detail_ui_guards_session_switch_and_renders_workspace_team
     assert 'website_connections' in portal
     assert 'team_members' in portal
     assert 'agencyDetailRequestVersion+=1' in portal
+
+
+def test_admin_agency_status_transition_is_audited_after_commit():
+    source = inspect.getsource(main.admin_update_business_agency)
+    assert 'previous_status = agency.status' in source
+    assert 'await operational_db.commit()' in source
+    assert 'await _write_admin_log(' in source
+    assert source.index('await operational_db.commit()') < source.index('await _write_admin_log(')
+    assert '"agency_status_changed"' in source
+    assert '"previous_status": previous_status' in source
+    assert '"new_status": agency.status' in source
+    assert 'if previous_status != agency.status:' in source
