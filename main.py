@@ -7846,18 +7846,18 @@ async def admin_cancel_subscription(
 
 def _merge_admin_customer_directory_candidates(operational_candidates, legacy_candidates):
     """Merge cross-database customer candidates with deterministic newest-first ordering."""
+    def timestamp(value):
+        if value is None:
+            return float("-inf")
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.timestamp()
+
     merged = {}
     for candidate in [*operational_candidates, *legacy_candidates]:
         email = candidate.email
         activity_at = candidate.activity_at
         current = merged.get(email)
-
-        def timestamp(value):
-            if value is None:
-                return float("-inf")
-            if value.tzinfo is None:
-                value = value.replace(tzinfo=timezone.utc)
-            return value.timestamp()
 
         if current is None or timestamp(activity_at) > timestamp(current["activity_at"]):
             merged[email] = {"email": email, "activity_at": activity_at}
@@ -7878,9 +7878,9 @@ async def admin_customer_directory(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Account directory aggregated from Hostinger billing identities."""
+    """Merge canonical billing identities with Hostinger operational customer accounts."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func, distinct, union, literal
+    from sqlalchemy import select, func as sql_func, union, literal
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     normalized = search.strip().lower()
