@@ -394,3 +394,17 @@ def test_admin_sync_outbox_retry_rejects_unknown_queue_before_database_access():
     source = inspect.getsource(admin_retry_sync_outbox)
     assert "if selected is None:" in source
     assert source.index("if selected is None:") < source.index("await queue_db.execute(")
+
+
+def test_admin_portal_exposes_retry_controls_for_all_sync_outboxes():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+
+    assert 'id="retryLifecycleOutbox"' in portal
+    assert 'id="retryEmailIdentityOutbox"' in portal
+    assert 'id="retryBillingMirrorOutbox"' in portal
+    assert 'retrySyncOutbox("billing_mirror",$("retryBillingMirrorOutbox"))' in portal
+    assert 'billing_mirror:"billing mirror"' in portal
+    assert '$("retryBillingMirrorOutbox").disabled=false' in portal
+    assert '$("retryBillingMirrorOutbox").disabled=true' in portal
