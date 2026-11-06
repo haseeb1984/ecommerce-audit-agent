@@ -8255,6 +8255,7 @@ async def admin_revoke_client_api_key(
 
 @app.patch("/api/v1/admin/clients/{license_id}")
 async def admin_update_client(license_id: int, payload: AdminClientUpdate, request: Request,
+                              response: Response,
                               db: AsyncSession = Depends(get_async_db)):
     """Allow an authenticated operator to adjust a customer's entitlement and account status."""
     _require_admin_key(request)
@@ -8286,6 +8287,10 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     previous_active = bool(client.is_active)
+    previous_values = {
+        key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
+        for key in changes
+    }
     if "tier" in changes:
         package = (await db.execute(text("""
             SELECT monthly_audit_allowance, is_active
@@ -8316,14 +8321,19 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
             next_attempt_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),
         ))
-    await _write_admin_log(db, "client.updated", "client", client.id, {
-        "fields": sorted(changes),
-        "tier": client.tier,
-        "max_monthly_audits": client.max_monthly_audits,
-        "is_active": bool(client.is_active),
-    })
     await db.commit()
     await db.refresh(client)
+    current_values = {
+        key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
+        for key in changes
+    }
+    await _write_admin_log(db, "client.updated", "client", client.id, {
+        "fields": sorted(changes),
+        "previous": previous_values,
+        "updated": current_values,
+    })
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     # Deliberately log only the client ID and field names, never license keys or credentials.
     logger.info("Admin updated client account (client_id=%s, fields=%s)", client.id, ",".join(sorted(changes)))
     return {
