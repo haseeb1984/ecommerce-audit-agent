@@ -6505,8 +6505,8 @@ async def admin_retry_sync_outbox(
     for item in items:
         item.next_attempt_at = now
     await queue_db.commit()
-    # Keep the admin audit trail in PostgreSQL regardless of which operational
-    # database owns the selected outbox table.
+    # Keep the admin activity trail in Hostinger's operational database,
+    # regardless of which database owns the selected outbox table.
     await _write_admin_log(
         db,
         "sync_outbox.retry_queued",
