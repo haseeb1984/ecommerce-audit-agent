@@ -40,3 +40,14 @@ def test_agency_portal_paginates_audit_history_without_losing_session_guards():
     assert "loadHistoryPage(historyOffset,true)" in script
     assert "assertCurrentSession(actionVersion);" in script
     assert "history.replaceChildren(); historyOffset=0;" in script
+
+
+def test_customer_portal_agency_workspace_rename_and_archive_confirmation():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    assert 'rename.textContent = "Rename client"' in portal
+    assert "body: JSON.stringify({display_name: displayName})" in portal
+    assert "Client workspace name cannot be blank." in portal
+    assert "if (!window.confirm(confirmation)) return;" in portal
+    assert "Existing audit history is retained." in portal
