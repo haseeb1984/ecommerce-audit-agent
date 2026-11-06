@@ -5934,13 +5934,30 @@ def _validate_admin_package(payload: AdminPackageInput) -> dict:
 async def admin_list_business_agencies(
     request: Request,
     response: Response,
+    search: str = Query(default="", max_length=254),
+    status: str = Query(default="all", max_length=16),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Read-only admin inventory of Business agency tenants and their client/team counts."""
+    """Return a bounded, searchable page of Business agency tenants and counts."""
     _require_admin_key(request)
     from sqlalchemy import func, select
+    normalized_search = search.strip().lower()
+    if status not in {"all", "active", "suspended"}:
+        raise HTTPException(status_code=422, detail="Agency status filter is invalid.")
+    filters = []
+    if normalized_search:
+        filters.append(func.lower(AgencyAccount.owner_email).like(f"%{normalized_search}%"))
+    if status != "all":
+        filters.append(AgencyAccount.status == status)
+    base_query = select(AgencyAccount).where(*filters)
+    total = int(await operational_db.scalar(
+        select(func.count(AgencyAccount.id)).where(*filters)
+    ) or 0)
     agencies = (await operational_db.execute(
-        select(AgencyAccount).order_by(AgencyAccount.created_at.desc()).limit(500)
+        base_query.order_by(AgencyAccount.created_at.desc(), AgencyAccount.id.asc())
+        .limit(limit).offset(offset)
     )).scalars().all()
     agency_ids = [item.id for item in agencies]
     client_counts = {}
@@ -5960,14 +5977,20 @@ async def admin_list_business_agencies(
         team_counts = {agency_id: int(count) for agency_id, count in team_rows}
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"items": [{
-        "id": item.id,
-        "owner_email": item.owner_email,
-        "status": item.status,
-        "client_count": client_counts.get(item.id, 0),
-        "team_member_count": team_counts.get(item.id, 0),
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-    } for item in agencies]}
+    return {
+        "items": [{
+            "id": item.id,
+            "owner_email": item.owner_email,
+            "status": item.status,
+            "client_count": client_counts.get(item.id, 0),
+            "team_member_count": team_counts.get(item.id, 0),
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        } for item in agencies],
+        "page": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": offset + len(agencies) < total,
+        },
+    }
 
 
 @app.patch("/api/v1/admin/agencies/{agency_id}")
