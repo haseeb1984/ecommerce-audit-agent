@@ -7883,79 +7883,105 @@ async def admin_customer_directory(
         ),
     ).subquery("customer_identity_sources")
 
-    query = select(
-        identity_sources.c.email.label("email"),
-        sql_func.count(distinct(identity_sources.c.license_key)).label("license_count"),
-        sql_func.max(identity_sources.c.activity_at).label("last_billing_activity"),
-    ).group_by(identity_sources.c.email)
-    count_query = select(sql_func.count(sql_func.distinct(identity_sources.c.email)))
+    search_term = normalized.replace("%", "").replace("_", "")
+    operational_filter = identity_sources.c.email.ilike(f"%{search_term}%") if normalized else None
+    legacy_email = sql_func.lower(PaymentWebhookEvent.recipient_email)
+    legacy_filters = [
+        PaymentWebhookEvent.recipient_email.is_not(None),
+        PaymentWebhookEvent.recipient_email != "",
+        PaymentWebhookEvent.license_id.is_not(None),
+    ]
     if normalized:
-        search_term = normalized.replace("%", "").replace("_", "")
-        email_filter = identity_sources.c.email.ilike(f"%{search_term}%")
-        query = query.where(email_filter)
-        count_query = count_query.where(email_filter)
-    total = int((await operational_db.execute(count_query)).scalar_one() or 0)
-    rows = (await operational_db.execute(
-        query.order_by(sql_func.max(identity_sources.c.activity_at).desc(), identity_sources.c.email.asc())
-        .offset(offset).limit(limit)
+        legacy_filters.append(legacy_email.ilike(f"%{search_term}%"))
+
+    # PostgreSQL remains canonical for webhook/license history while Hostinger
+    # contains operational customer identities. Merge both sources on every
+    # request; a partially migrated customer must not disappear merely because
+    # another customer's operational mirror is already present.
+    operational_emails = set((await operational_db.execute(
+        select(identity_sources.c.email).distinct().where(
+            *([operational_filter] if operational_filter is not None else [])
+        )
+    )).scalars().all())
+    legacy_emails = set((await db.execute(
+        select(legacy_email).where(*legacy_filters).distinct()
+    )).scalars().all())
+    total = len(operational_emails | legacy_emails)
+
+    candidate_limit = offset + limit
+    operational_candidates_query = select(
+        identity_sources.c.email.label("email"),
+        sql_func.max(identity_sources.c.activity_at).label("activity_at"),
+    ).group_by(identity_sources.c.email)
+    if operational_filter is not None:
+        operational_candidates_query = operational_candidates_query.where(operational_filter)
+    operational_candidates = (await operational_db.execute(
+        operational_candidates_query
+        .order_by(sql_func.max(identity_sources.c.activity_at).desc(), identity_sources.c.email.asc())
+        .limit(candidate_limit)
     )).all()
 
-    legacy_directory = False
-    if total == 0:
-        # Compatibility fallback for deployments where the Hostinger data
-        # migration has not yet been applied.
-        legacy_directory = True
-        legacy_query = select(
-            sql_func.lower(PaymentWebhookEvent.recipient_email).label("email"),
-            sql_func.count(distinct(PaymentWebhookEvent.license_id)).label("license_count"),
-            sql_func.max(PaymentWebhookEvent.updated_at).label("last_billing_activity"),
-        ).where(
-            PaymentWebhookEvent.recipient_email.is_not(None),
-            PaymentWebhookEvent.recipient_email != "",
-            PaymentWebhookEvent.license_id.is_not(None),
-        ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email))
-        legacy_count = select(sql_func.count(sql_func.distinct(
-            sql_func.lower(PaymentWebhookEvent.recipient_email)
-        ))).where(
-            PaymentWebhookEvent.recipient_email.is_not(None),
-            PaymentWebhookEvent.recipient_email != "",
-            PaymentWebhookEvent.license_id.is_not(None),
-        )
-        if normalized:
-            legacy_filter = sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(
-                f"%{normalized.replace('%', '').replace('_', '')}%"
-            )
-            legacy_query = legacy_query.having(legacy_filter)
-            legacy_count = legacy_count.where(legacy_filter)
-        total = int((await db.execute(legacy_count)).scalar_one() or 0)
-        rows = (await db.execute(
-            legacy_query.order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc())
-            .offset(offset).limit(limit)
+    legacy_candidates = (await db.execute(
+        select(
+            legacy_email.label("email"),
+            sql_func.max(PaymentWebhookEvent.updated_at).label("activity_at"),
+        ).where(*legacy_filters)
+        .group_by(legacy_email)
+        .order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc(), legacy_email.asc())
+        .limit(candidate_limit)
+    )).all()
+
+    candidates_by_email = {}
+    for candidate in [*operational_candidates, *legacy_candidates]:
+        current = candidates_by_email.get(candidate.email)
+        activity_at = candidate.activity_at
+        if current is None or (
+            activity_at is not None
+            and (current["activity_at"] is None or activity_at > current["activity_at"])
+        ):
+            candidates_by_email[candidate.email] = {
+                "email": candidate.email,
+                "activity_at": activity_at,
+            }
+    candidate_rows = sorted(
+        candidates_by_email.values(),
+        key=lambda item: (
+            item["activity_at"] or datetime.min.replace(tzinfo=timezone.utc),
+            item["email"],
+        ),
+        reverse=True,
+    )
+    rows = candidate_rows[offset:offset + limit]
+    page_emails = [row["email"] for row in rows]
+
+    license_keys_by_email = {email: set() for email in page_emails}
+    if page_emails:
+        operational_license_rows = (await operational_db.execute(
+            select(identity_sources.c.email, identity_sources.c.license_key)
+            .where(identity_sources.c.email.in_(page_emails))
+            .distinct()
         )).all()
+        for identity in operational_license_rows:
+            if identity.license_key:
+                license_keys_by_email.setdefault(identity.email, set()).add(identity.license_key)
+
+        legacy_license_rows = (await db.execute(
+            select(legacy_email.label("email"), SoftwareLicense.license_key)
+            .join(PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id)
+            .where(legacy_email.in_(page_emails))
+            .distinct()
+        )).all()
+        for identity in legacy_license_rows:
+            if identity.license_key:
+                license_keys_by_email.setdefault(identity.email, set()).add(identity.license_key)
 
     items = []
     now = datetime.now(timezone.utc)
     for row in rows:
-        if legacy_directory:
-            license_rows = (await db.execute(select(SoftwareLicense).join(
-                PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-            ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == row.email)
-            .distinct())).scalars().all()
-        else:
-            operational_license_keys = union(
-                select(CustomerBillingEvent.license_key).where(
-                    sql_func.lower(CustomerBillingEvent.recipient_email) == row.email
-                ),
-                select(CustomerAccount.license_key).where(
-                    sql_func.lower(CustomerAccount.email) == row.email
-                ),
-            ).subquery("customer_license_sources")
-            license_keys = set((await operational_db.execute(
-                select(operational_license_keys.c.license_key)
-            )).scalars().all())
-            license_rows = (await db.execute(
-                select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
-            )).scalars().all() if license_keys else []
+        license_keys = license_keys_by_email.get(row["email"], set())
+        license_rows = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
+        )).scalars().all() if license_keys else []
 
         active = sum(
             1 for lic in license_rows
@@ -7965,11 +7991,11 @@ async def admin_customer_directory(
             )
         )
         items.append({
-            "email": row.email,
+            "email": row["email"],
             "license_count": len(license_rows),
             "active_license_count": active,
             "inactive_license_count": len(license_rows) - active,
-            "last_billing_activity": row.last_billing_activity.isoformat() if row.last_billing_activity else None,
+            "last_billing_activity": row["activity_at"].isoformat() if row["activity_at"] else None,
         })
     return {"items": items, "page": {
         "limit": limit, "offset": offset, "total": total,
