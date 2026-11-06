@@ -8159,7 +8159,9 @@ async def admin_customer_account_action(
             ))
         await db.commit()
         result = await operational_db.execute(update(CustomerSession).where(
-            CustomerSession.license_key.in_(license_keys), CustomerSession.revoked_at.is_(None)
+            CustomerSession.license_key.in_(license_keys),
+            CustomerSession.created_at <= now,
+            CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now))
         await operational_db.commit()
         changed = int(result.rowcount or 0)
