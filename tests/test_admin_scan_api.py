@@ -338,7 +338,7 @@ async def test_admin_sync_outbox_retry_rejects_unknown_queue(monkeypatch):
 
     with pytest.raises(HTTPException) as raised:
         await main.admin_retry_sync_outbox(
-            request=_admin_request(), queue="billing_mirror", limit=10, db=db
+            request=_admin_request(), queue="unknown_queue", limit=10, db=db
         )
 
     assert raised.value.status_code == 422
