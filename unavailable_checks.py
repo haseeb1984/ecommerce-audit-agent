@@ -157,6 +157,6 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
         added += 1
     if added:
         result.limitations.append(
-            "Several verification methods are explicitly not assessed in this deployment: rendered-browser diagnostics, manual WCAG review, owner-authorized Google Search Console data, external backlink/competitor datasets, authorized checkout testing, consent-dependent event verification, and active security testing. See the per-check outcome records for exact boundaries."
+            "Several verification methods are explicitly not assessed in this deployment: content-volume/duplicate-copy review when no page was fetched, rendered-browser diagnostics, manual WCAG review, owner-authorized Google Search Console data, external backlink/competitor datasets, authorized checkout testing, consent-dependent event verification, and active security testing. See the per-check outcome records for exact boundaries."
         )
     return added

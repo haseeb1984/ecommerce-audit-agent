@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Mapping
 
@@ -82,7 +83,7 @@ def inspect_content_quality(
     word_count = len(words)
     findings: list[AuditFinding] = []
     outcomes: list[CheckOutcome] = []
-    observed_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    observed_at = datetime.now(timezone.utc).isoformat()
 
     if word_count < MIN_VISIBLE_WORDS:
         evidence = (
