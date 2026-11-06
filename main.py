@@ -2394,28 +2394,37 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website management is available on the Business plan.")
     from sqlalchemy import select
+    # Serialize with workspace archival, agency suspension and token issuance.
+    # The shared lifecycle lock order is agency -> workspace -> website -> challenge.
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.owner_license_key == license_obj.license_key,
-        AgencyAccount.status == "active",
-    ))
-    if agency is None:
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ).with_for_update())
+    if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ).with_for_update())
+    if workspace is None or workspace.status != "active":
+        raise HTTPException(status_code=404, detail="Active client workspace not found.")
     site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
-        AgencyClientWebsite.workspace_id == workspace_id,
+        AgencyClientWebsite.workspace_id == workspace.id,
         AgencyClientWebsite.status == "active",
     ).with_for_update())
     if site is None:
         raise HTTPException(status_code=404, detail="Active client website connection not found.")
+    now = datetime.now(timezone.utc)
     site.status = "disconnected"
-    site.disconnected_at = datetime.now(timezone.utc)
+    site.disconnected_at = now
     site.site_token_hash = None
-    from sqlalchemy import update
-    await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+    challenges = (await operational_db.execute(select(AgencyWebsiteConnectChallenge).where(
         AgencyWebsiteConnectChallenge.agency_id == agency.id,
-        AgencyWebsiteConnectChallenge.workspace_id == workspace_id,
+        AgencyWebsiteConnectChallenge.workspace_id == workspace.id,
         AgencyWebsiteConnectChallenge.consumed_at.is_(None),
-    ).values(consumed_at=datetime.now(timezone.utc)))
+    ).with_for_update())).scalars().all()
+    for challenge in challenges:
+        challenge.consumed_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"status": "disconnected", "site_id": site.id}
