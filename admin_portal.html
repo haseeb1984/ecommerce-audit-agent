@@ -60,10 +60,18 @@ async function loadClientApiKeys(id,expectedDetailVersion=clientDetailVersion){
   row.append(el("strong","Key "+item.key_prefix),el("span","ID "+item.id+" · Created "+date(item.created_at),"small"));
   const revoke=el("button","Revoke key","secondary");revoke.style.marginTop="6px";
   revoke.addEventListener("click",async()=>{
-   if(!window.confirm("Revoke API key "+item.key_prefix+"? Integrations using it will stop authenticating."))return;
+   const reason=window.prompt("Reason for revoking this key:","operator revocation");if(reason===null)return;
+   if(!reason.trim()||reason.trim().length>200){status("Revocation reason must be 1–200 characters.","error");return}
+   if(!window.confirm("Revoke API key "+item.key_prefix+" for client #"+id+"? Integrations using it will stop authenticating."))return;
+   const operationSessionVersion=adminSessionVersion;
    revoke.disabled=true;
-   try{await adminPost("/api/v1/admin/clients/"+encodeURIComponent(id)+"/api-keys/"+encodeURIComponent(item.id)+"/revoke");await loadClientApiKeys(id,expectedDetailVersion)}
-   catch(error){status(error.message,"error");revoke.disabled=false}
+   try{
+    const response=await guardedFetch("/api/v1/admin/clients/"+encodeURIComponent(id)+"/api-keys/"+encodeURIComponent(item.id),{method:"DELETE",headers:{"Content-Type":"application/json","X-Admin-Key":key},body:JSON.stringify({reason:reason.trim()})});
+    const result=await response.json().catch(()=>({}));if(!response.ok)throw Error(result.detail||"API key revocation failed ("+response.status+")");
+    if(operationSessionVersion!==adminSessionVersion||expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
+    await loadClientApiKeys(id,expectedDetailVersion);
+    if(operationSessionVersion===adminSessionVersion&&expectedDetailVersion===clientDetailVersion&&currentHistoryId===id)status("API key "+item.key_prefix+" revoked.","success");
+   }catch(e){if(operationSessionVersion===adminSessionVersion&&expectedDetailVersion===clientDetailVersion&&currentHistoryId===id){status(e.message,"error");revoke.disabled=false}}
   });
   row.append(revoke);container.append(row);
  }
