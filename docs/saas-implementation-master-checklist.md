@@ -64,6 +64,6 @@
 ## Latest known verification snapshot
 
 - Historical CI run [40791577713](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40791577713) passed on commit d9430c2949d7ec80eadada868a65f847a3ea708a, reporting 661 passed and 55 warnings. This is not verification of the current integration branch.
-- Current integration PR [#194](https://github.com/haseeb1984/ecommerce-audit-agent/pull/194) is 24 commits ahead of main across 43 files and is mergeable, but not merged. It includes the integrated SaaS lifecycle regression suites for account, agency, customer, billing, WordPress and admin-operation workflows.
-- Latest backend workflow [42231370543](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42231370543) failed before runner startup (job has no steps); no tests executed. The Vercel check on the latest integration commit succeeded.
+- Current integration PR [#194](https://github.com/haseeb1984/ecommerce-audit-agent/pull/194) is open, mergeable, and not merged. It consolidates the SaaS account, agency, customer, billing, WordPress and admin-operation workflows, including three integrated lifecycle regression suites.
+- Most recent completed backend workflow [42231370543](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42231370543) failed before runner startup (job has no steps); no tests executed. Checks for the latest integration head are pending.
 - Staging database/schema verification, provider sandbox journeys, browser QA, full test execution, and production readiness remain unverified. No production migration or deployment was performed.
