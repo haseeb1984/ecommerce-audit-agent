@@ -1847,32 +1847,40 @@
   $("logoutOtherSessions").addEventListener("click", async () => {
     if (!sessionToken) { setStatus("loginStatus", "Sign in with your account email to manage customer sessions.", "error"); return; }
     if (!window.confirm("Sign out every other device connected to this verified account? This browser will remain signed in.")) return;
+    const operationSessionVersion = accountSessionVersion;
     const button = $("logoutOtherSessions"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/sessions/revoke-others", {method:"POST"});
       const data = await response.json();
+      if (operationSessionVersion !== accountSessionVersion) return;
       await loadDeviceSessions();
+      if (operationSessionVersion !== accountSessionVersion) return;
       setStatus("loginStatus", String(data.revoked_count || 0) + " other device session(s) signed out. This browser remains signed in.", "success");
     } catch (error) {
-      setStatus("loginStatus", error.message, "error");
+      if (operationSessionVersion === accountSessionVersion) setStatus("loginStatus", error.message, "error");
     } finally {
-      button.disabled = !sessionToken;
+      if (operationSessionVersion === accountSessionVersion) button.disabled = !sessionToken;
     }
   });
   $("logoutAllSessions").addEventListener("click", async () => {
     if (!credential) { setStatus("loginStatus", "Sign in to manage customer sessions.", "error"); return; }
+    const operationSessionVersion = accountSessionVersion;
     const button = $("logoutAllSessions"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/auth/logout-all", {method:"POST"});
-      const data = await response.json();
+      await response.json();
+      if (operationSessionVersion !== accountSessionVersion) return;
       accountSessionVersion += 1;
       sessionToken = ""; credential = ""; headerName = "X-License-Key";
       $("credential").value = "";
       clearAccountView(); setAccountControls(false);
       setStatus("connectStatus", "All customer sessions were revoked.", "success");
       setStatus("loginStatus", "All devices have been signed out. Sign in again to continue.", "success");
-    } catch (error) { setStatus("loginStatus", error.message, "error"); }
-    finally { button.disabled = !credential; }
+    } catch (error) {
+      if (operationSessionVersion === accountSessionVersion) setStatus("loginStatus", error.message, "error");
+    } finally {
+      if (operationSessionVersion === accountSessionVersion) button.disabled = !credential;
+    }
   });
   $("disconnectAccount").addEventListener("click", () => {
     accountSessionVersion += 1;
@@ -1895,6 +1903,7 @@
     if (!sessionToken) { setStatus("emailChangeStatus", "Sign in with your verified email before changing it.", "error"); return; }
     const newEmail = $("newAccountEmail").value.trim();
     if (!newEmail) { setStatus("emailChangeStatus", "Enter the new email address.", "error"); return; }
+    const operationSessionVersion = accountSessionVersion;
     const button = $("requestEmailChange"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/auth/email-change/request-code", {
@@ -1902,20 +1911,26 @@
         body: JSON.stringify({new_email: newEmail})
       });
       const data = await response.json();
+      if (operationSessionVersion !== accountSessionVersion) return;
       emailChangeChallengeId = String(data.challenge_id || "");
       if (!emailChangeChallengeId) throw new Error("The server did not return a verification challenge.");
       $("emailChangeCode").value = "";
       setStatus("emailChangeStatus", data.message || "Verification code sent to the new address.", "success");
       $("verifyEmailChange").disabled = false;
     } catch (error) {
-      emailChangeChallengeId = "";
-      setStatus("emailChangeStatus", error.message, "error");
-    } finally { button.disabled = !sessionToken; }
+      if (operationSessionVersion === accountSessionVersion) {
+        emailChangeChallengeId = "";
+        setStatus("emailChangeStatus", error.message, "error");
+      }
+    } finally {
+      if (operationSessionVersion === accountSessionVersion) button.disabled = !sessionToken;
+    }
   });
   $("verifyEmailChange").addEventListener("click", async () => {
     if (!sessionToken || !emailChangeChallengeId) { setStatus("emailChangeStatus", "Request a new email verification code first.", "error"); return; }
     const code = $("emailChangeCode").value.trim();
     if (!/^[0-9]{6}$/.test(code)) { setStatus("emailChangeStatus", "Enter the six-digit code sent to the new email.", "error"); return; }
+    const operationSessionVersion = accountSessionVersion;
     const button = $("verifyEmailChange"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/auth/email-change/verify-code", {
@@ -1923,40 +1938,54 @@
         body: JSON.stringify({challenge_id: emailChangeChallengeId, code})
       });
       const data = await response.json();
+      if (operationSessionVersion !== accountSessionVersion) return;
       emailChangeChallengeId = "";
       $("loginEmail").value = data.email || $("newAccountEmail").value.trim();
       $("newAccountEmail").value = "";
       $("emailChangeCode").value = "";
       accountSessionVersion += 1;
+      const updatedSessionVersion = accountSessionVersion;
       await Promise.allSettled([loadDeviceSessions()]);
+      if (updatedSessionVersion !== accountSessionVersion) return;
       setStatus("emailChangeStatus", data.message || "Your account email has been updated.", "success");
       setStatus("loginStatus", "Account email updated. Use the new email for future sign-ins.", "success");
     } catch (error) {
-      setStatus("emailChangeStatus", error.message, "error");
-      button.disabled = false;
+      if (operationSessionVersion === accountSessionVersion) {
+        setStatus("emailChangeStatus", error.message, "error");
+        button.disabled = false;
+      }
     }
   });
 
   $("generateWordPressLinkCode").addEventListener("click", async () => {
     if (!credential) { setStatus("wordpressLinkCodeStatus", "Connect your customer account first.", "error"); return; }
+    const operationSessionVersion = accountSessionVersion;
     const button = $("generateWordPressLinkCode"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/wordpress-link/challenges", {method:"POST"});
       const data = await response.json();
+      if (operationSessionVersion !== accountSessionVersion) return;
       if (!data.token) throw new Error("The service did not return a one-time code.");
       $("wordpressLinkCode").textContent = data.token;
       $("wordpressLinkCodeExpiry").textContent = "Expires at " + new Date(data.expires_at).toLocaleString() + ". This code can be used once and is shown only here.";
       $("wordpressLinkCodePanel").hidden = false;
       setStatus("wordpressLinkCodeStatus", "Code generated. Paste it into the WordPress plugin identity-link form.", "success");
     } catch (error) {
-      setStatus("wordpressLinkCodeStatus", error.message, "error");
-    } finally { button.disabled = !credential; }
+      if (operationSessionVersion === accountSessionVersion) setStatus("wordpressLinkCodeStatus", error.message, "error");
+    } finally {
+      if (operationSessionVersion === accountSessionVersion) button.disabled = !credential;
+    }
   });
   $("copyWordPressLinkCode").addEventListener("click", async () => {
     const value = $("wordpressLinkCode").textContent;
     if (!value) return;
-    try { await navigator.clipboard.writeText(value); setStatus("wordpressLinkCodeStatus", "One-time code copied.", "success"); }
-    catch { setStatus("wordpressLinkCodeStatus", "Clipboard access was blocked. Copy the code manually.", "error"); }
+    const operationSessionVersion = accountSessionVersion;
+    try {
+      await navigator.clipboard.writeText(value);
+      if (operationSessionVersion === accountSessionVersion) setStatus("wordpressLinkCodeStatus", "One-time code copied.", "success");
+    } catch {
+      if (operationSessionVersion === accountSessionVersion) setStatus("wordpressLinkCodeStatus", "Clipboard access was blocked. Copy the code manually.", "error");
+    }
   });
   $("hideWordPressLinkCode").addEventListener("click", () => {
     $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodePanel").hidden = true;
