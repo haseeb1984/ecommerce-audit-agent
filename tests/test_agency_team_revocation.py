@@ -63,3 +63,19 @@ def test_agency_workspace_creation_locks_active_agency_before_insert():
     assert ".with_for_update()" in route[agency_lookup:workspace_insert]
     assert 'agency.status != "active"' in route[agency_lookup:workspace_insert]
     assert agency_lookup < workspace_insert
+
+
+def test_agency_team_login_code_uses_agency_before_member_lock_order():
+    source = Path("main.py").read_text(encoding="utf-8")
+    start = source.index("async def request_agency_team_login")
+    end = source.index('@app.post("/api/v1/agency/team/auth/verify-code")', start)
+    route = source[start:end]
+
+    candidate_lookup = route.index("AgencyTeamMember.normalized_email == email")
+    agency_lock = route.index("AgencyAccount.id == candidate.agency_id")
+    member_lock = route.index("AgencyTeamMember.id == candidate.id")
+    challenge_insert = route.index("operational_db.add(challenge)")
+    assert candidate_lookup < agency_lock < member_lock < challenge_insert
+    assert ".with_for_update()" in route[agency_lock:member_lock]
+    assert ".with_for_update()" in route[member_lock:challenge_insert]
+    assert 'agency.status != "active"' in route[agency_lock:member_lock]
