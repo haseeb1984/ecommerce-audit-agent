@@ -637,3 +637,68 @@ def test_agency_workspace_grant_mutations_follow_agency_member_workspace_lock_or
     assert ".with_for_update()" in remove_source[remove_agency:remove_member]
     assert ".with_for_update()" in remove_source[remove_member:remove_access]
     assert 'AgencyTeamMember.status == "active"' in remove_source[remove_member:remove_access]
+
+
+def test_agency_workspace_create_and_update_lock_agency_before_workspace():
+    import inspect
+    import main
+
+    create_source = inspect.getsource(main.create_business_agency_client)
+    update_source = inspect.getsource(main.update_business_agency_client)
+    suspend_source = inspect.getsource(main.admin_update_business_agency)
+
+    create_agency_lock = create_source.index("AgencyAccount.owner_license_key")
+    create_insert = create_source.index("operational_db.add(item)")
+    assert create_agency_lock < create_insert
+    assert ".with_for_update()" in create_source[create_agency_lock:create_insert]
+    assert 'agency.status != "active"' in create_source[create_agency_lock:create_insert]
+
+    update_agency_lock = update_source.index("AgencyAccount.owner_license_key")
+    update_workspace_lock = update_source.index("AgencyClientWorkspace.id == workspace_id")
+    update_commit = update_source.index("await operational_db.commit()")
+    assert update_agency_lock < update_workspace_lock < update_commit
+    assert ".with_for_update()" in update_source[update_agency_lock:update_workspace_lock]
+    assert ".with_for_update()" in update_source[update_workspace_lock:update_commit]
+    assert 'agency.status != "active"' in update_source[update_agency_lock:update_workspace_lock]
+
+    suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
+    assert ".with_for_update()" in suspend_source[suspend_agency_lock:]
+
+
+@pytest.mark.asyncio
+async def test_agency_workspace_creation_rejects_suspended_agency_before_insert(monkeypatch):
+    import main
+    from fastapi import HTTPException, Response
+    from main import AgencyClientWorkspaceCreate, create_business_agency_client
+
+    class OperationalSession:
+        def __init__(self):
+            self.added = []
+            self.committed = False
+            self.statement = None
+
+        async def scalar(self, statement):
+            self.statement = statement
+            return SimpleNamespace(id="agency-1", status="suspended")
+
+        def add(self, item):
+            self.added.append(item)
+
+        async def commit(self):
+            self.committed = True
+
+    operational = OperationalSession()
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    with pytest.raises(HTTPException) as error:
+        await create_business_agency_client(
+            AgencyClientWorkspaceCreate(display_name="New Client"),
+            Response(),
+            license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+            operational_db=operational,
+        )
+
+    assert error.value.status_code == 409
+    assert operational.added == []
+    assert operational.committed is False
+    assert operational.statement._for_update_arg is not None
