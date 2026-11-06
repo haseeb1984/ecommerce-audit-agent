@@ -6552,12 +6552,15 @@ async def admin_retry_billing_mirror_deliveries(
 @app.post("/api/v1/admin/billing/reconcile")
 async def admin_reconcile_billing_history(
     request: Request,
+    response: Response,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Repair a bounded page of Hostinger billing mirrors from canonical webhook records."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational billing storage is unavailable.")
     from sqlalchemy import select, func
@@ -6766,10 +6769,12 @@ async def admin_payment_events(
     }
 
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
-async def admin_reconcile_payment(event_id: str, request: Request,
+async def admin_reconcile_payment(event_id: str, request: Request, response: Response,
                                   db: AsyncSession = Depends(get_async_db)):
     """Reconcile a recorded payment and safely backfill missing provider identifiers."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
     from sqlalchemy import select
     event = (await db.execute(select(PaymentWebhookEvent).where(

@@ -29,7 +29,7 @@ def test_admin_api_key_inventory_ignores_stale_client_and_session_responses():
 
     assert "const requestVersion=++clientApiKeyRequestVersion" in source
     assert "const sessionVersion=adminSessionVersion" in source
-    assert "if(currentHistoryId!==id)return;" in source
+    assert "if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;" in source
     assert "requestVersion!==clientApiKeyRequestVersion" in source
     assert "sessionVersion!==adminSessionVersion" in source
     assert "currentHistoryId!==id)return;" in source
