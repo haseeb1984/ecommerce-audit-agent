@@ -2657,22 +2657,30 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     generic = {"status": "accepted", "message": "If an active agency team account exists, a sign-in code will be sent."}
-    # Lock the selected active membership while checking and issuing the email cooldown.
-    # Concurrent requests for the same email resolve to this same latest membership,
-    # so the second request waits and then observes the first request's committed challenge.
-    member = await operational_db.scalar(select(AgencyTeamMember).where(
+    # Resolve the selected membership without locking, then acquire locks in the
+    # global agency -> member order used by suspension and member revocation.
+    candidate = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.normalized_email == email,
         AgencyTeamMember.status == "active",
-    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1).with_for_update())
-    if member is None:
+    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1))
+    if candidate is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
-    # Serialize code issuance with administrator suspension so no fresh challenge
-    # can be inserted after the suspension transaction has revoked outstanding codes.
+    # Serialize code issuance with administrator suspension before locking the
+    # membership. This avoids member -> agency lock inversion with suspension.
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == member.agency_id, AgencyAccount.status == "active"
+        AgencyAccount.id == candidate.agency_id
     ).with_for_update())
-    if agency is None:
+    if agency is None or agency.status != "active":
+        response.headers["Cache-Control"] = "no-store, private"
+        return generic
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == candidate.id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.normalized_email == email,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
     owner_license = await db.scalar(select(SoftwareLicense).where(
