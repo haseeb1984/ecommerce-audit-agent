@@ -369,3 +369,24 @@ async def test_admin_sync_outbox_retry_requires_admin_authentication(monkeypatch
     assert raised.value.status_code == 403
     assert db.statement is None
     assert db.committed is False
+
+
+def test_scan_operations_outbox_diagnostics_include_retry_pressure_and_due_age():
+    route = next(route for route in router.routes if route.path == "/api/v1/admin/scan-operations")
+    source = inspect.getsource(route.endpoint)
+
+    assert '"max_attempts"' in source
+    assert '"oldest_pending_at"' in source
+    assert '"oldest_due_at"' in source
+    assert 'func.max(model.attempts)' in source
+    assert 'model.next_attempt_at <= datetime.now(timezone.utc)' in source
+
+
+def test_admin_portal_displays_outbox_retry_pressure_and_oldest_due_timestamp():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+
+    assert 'label+" max attempts"' in portal
+    assert 'label+" oldest pending"' in portal
+    assert 'label+" oldest due"' in portal
