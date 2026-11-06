@@ -665,3 +665,23 @@ def test_cors_explicit_origin_or_wildcard_without_credentials_has_no_cors_findin
     ):
         findings = inspect_security_header_quality(headers, "https://shop.example/")
         assert not any(item.category == "security_cors" for item in findings)
+
+
+def test_security_findings_reference_owasp_top_10_2025_as_awareness_taxonomy():
+    from audit_checks import _finding
+
+    for category in ("security", "security_cors", "security_headers", "security_exposure"):
+        finding = _finding(
+            category=category,
+            title="Passive security configuration review",
+            status="manual_review_required",
+            severity="low",
+            evidence="Response headers require context.",
+            explanation="Passive review only.",
+            recommendation="Review the control.",
+            steps=["Verify in staging."],
+            source_url="https://shop.example/",
+        )
+        assert any("OWASP Top 10:2025" in item for item in finding.standard_references)
+        assert "https://owasp.org/Top10/2025/" in finding.standard_references
+        assert any("not a complete vulnerability test" in item for item in finding.standard_references)
