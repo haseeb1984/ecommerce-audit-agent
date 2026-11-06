@@ -8266,13 +8266,15 @@ async def admin_revoke_client_api_key(
     _require_admin_key(request)
     from sqlalchemy import delete, select
 
+    # Match API-key creation's license-first lock order. This serializes admin
+    # revocation with key issuance and prevents concurrent duplicate revoke logs.
     client = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id).with_for_update()
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     item = (await db.execute(
-        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id)
+        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id).with_for_update()
     )).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="API key not found for this client.")
