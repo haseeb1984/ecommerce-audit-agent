@@ -6094,6 +6094,7 @@ async def admin_update_business_agency(
     if agency is None:
         raise HTTPException(status_code=404, detail="Business agency account was not found.")
     now = datetime.now(timezone.utc)
+    previous_status = agency.status
     agency.status = payload.status
     if payload.status == "suspended":
         sessions = (await operational_db.execute(select(AgencyTeamSession).where(
@@ -6118,6 +6119,18 @@ async def admin_update_business_agency(
             member.invitation_expires_at = None
     agency.updated_at = now
     await operational_db.commit()
+    if previous_status != agency.status:
+        await _write_admin_log(
+            operational_db,
+            "agency_status_changed",
+            "agency",
+            agency.id,
+            {
+                "previous_status": previous_status,
+                "new_status": agency.status,
+                "team_sessions_revoked": payload.status == "suspended",
+            },
+        )
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
