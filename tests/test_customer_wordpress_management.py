@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -50,3 +51,19 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
     assert result == {"items": []}
     assert response.headers["Cache-Control"] == "no-store, private"
     assert response.headers["Pragma"] == "no-cache"
+
+
+
+def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replacement():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text(encoding="utf-8")
+    start = portal.index("async function loadAgencyDashboard")
+    end = portal.index("async function loadAgencyClientAuditResults", start)
+    section = portal[start:end]
+
+    assert 'refreshWebsite.textContent = "Refresh connection status";' in section
+    assert 'website.connection_health === "healthy"' in section
+    assert 'website.connection_health === "stale"' in section
+    assert 'connectWebsite.textContent = "Generate replacement token";' in section
+    assert 'window.confirm("Generate a replacement token?' in section
+    assert 'Generating another token invalidates this one.' in section
+    assert 'refreshWebsiteStatus();' in section

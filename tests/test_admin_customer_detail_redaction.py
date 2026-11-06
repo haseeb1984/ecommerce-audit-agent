@@ -27,3 +27,30 @@ def test_admin_client_update_commits_before_writing_audit_and_returns_private_re
     assert source.index('await db.commit()') < source.index('await _write_admin_log(')
     assert 'response.headers["Cache-Control"] = "no-store, private"' in source
     assert 'response.headers["Pragma"] = "no-cache"' in source
+
+
+
+def test_admin_wordpress_link_inventory_exposes_bounded_connection_health_without_secrets():
+    source = inspect.getsource(main.admin_list_client_wordpress_links)
+
+    assert 'now = datetime.now(timezone.utc)' in source
+    assert '"connection_health"' in source
+    assert '"not_connected"' in source
+    assert '"stale"' in source
+    assert '"healthy"' in source
+    assert 'timedelta(days=7)' in source
+    assert '"token_hash"' not in source
+    assert '"token_digest"' not in source
+    assert '"license_key":' not in source
+
+
+def test_admin_wordpress_connection_health_is_visible_in_operator_console():
+    from pathlib import Path
+
+    portal = Path(__file__).resolve().parents[1] / "admin_portal.html"
+    source = portal.read_text(encoding="utf-8")
+
+    assert 'item.connection_health' in source
+    assert 'staleHeartbeat' in source
+    assert 'Connection health ' in source
+    assert 'No recent plugin heartbeat.' in source

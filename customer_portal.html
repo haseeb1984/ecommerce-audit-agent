@@ -753,11 +753,15 @@
       toggle.addEventListener("click", async () => {
         toggle.disabled = true;
         try {
-          await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
+          const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id), {
             method: "PATCH", headers: {"Content-Type":"application/json"},
             body: JSON.stringify({status: item.status === "active" ? "archived" : "active"})
           });
+          const updated = await response.json();
           await loadAgencyDashboard();
+          if (updated.status === "archived" && updated.connection_revoked) {
+            setStatus("agencyStatus", "Client archived. Its WordPress credential and unused connection codes were revoked; reconnect the site after reactivation.", "success");
+          }
         } catch (error) {
           setStatus("agencyStatus", error.message, "error");
         } finally { toggle.disabled = false; }
@@ -768,14 +772,43 @@
       const connectWebsite = document.createElement("button"); connectWebsite.type = "button";
       connectWebsite.className = "secondary"; connectWebsite.textContent = "Generate WordPress connection token";
       const tokenPanel = document.createElement("div"); tokenPanel.className = "reports";
+      let tokenIssued = false;
+      const refreshWebsite = document.createElement("button");
+      refreshWebsite.type = "button"; refreshWebsite.className = "secondary";
+      refreshWebsite.textContent = "Refresh connection status";
+      async function refreshWebsiteStatus() {
+        refreshWebsite.disabled = true;
+        try {
+          const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
+          const website = await websiteResponse.json();
+          if (website.connected) {
+            const health = website.connection_health === "healthy" ? "Healthy heartbeat"
+              : website.connection_health === "stale" ? "Heartbeat stale — check the WordPress plugin"
+              : "Health not yet reported";
+            websiteStatus.textContent = "Connected: " + website.site_url + " · " + health + " · Last seen: " + (website.last_seen_at || "not reported");
+            connectWebsite.hidden = true; disconnectWebsite.hidden = false;
+            tokenPanel.replaceChildren(); tokenIssued = false;
+          } else {
+            websiteStatus.textContent = tokenIssued
+              ? "No WordPress website connected yet. The issued token remains valid until its expiry; refresh after plugin registration."
+              : "No WordPress website connected to this client.";
+            connectWebsite.hidden = false; disconnectWebsite.hidden = true;
+          }
+        } catch (error) {
+          websiteStatus.textContent = error.message;
+        } finally {
+          refreshWebsite.disabled = false;
+        }
+      }
       connectWebsite.addEventListener("click", async () => {
+        if (tokenIssued && !window.confirm("Generate a replacement token? This invalidates the previously issued connection token.")) return;
         connectWebsite.disabled = true;
         try {
           const tokenResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website-connection-token", {method:"POST"});
           const tokenData = await tokenResponse.json();
           tokenPanel.replaceChildren();
           const instruction = document.createElement("p");
-          instruction.textContent = "Copy this one-time token into the Ecommerce Audit Agent plugin on the client's WordPress site. It expires " + tokenData.expires_at + " and is shown only once.";
+          instruction.textContent = "Copy this one-time token into the Ecommerce Audit Agent plugin on the client's WordPress site. It expires " + tokenData.expires_at + " and is shown only once. Generating another token invalidates this one.";
           const token = document.createElement("input"); token.type = "text"; token.readOnly = true;
           token.value = tokenData.connection_token; token.autocomplete = "off"; token.spellcheck = false;
           const copy = document.createElement("button"); copy.type = "button"; copy.className = "secondary"; copy.textContent = "Copy token";
@@ -784,11 +817,12 @@
             catch (_) { token.select(); document.execCommand("copy"); copy.textContent = "Copied"; }
           });
           tokenPanel.append(instruction, token, copy);
-          websiteStatus.textContent = "Connection token generated; awaiting WordPress plugin registration.";
-          connectWebsite.textContent = "Token issued — awaiting connection";
+          tokenIssued = true;
+          websiteStatus.textContent = "Connection token generated; awaiting WordPress plugin registration. Refresh connection status after activation.";
+          connectWebsite.textContent = "Generate replacement token";
         } catch (error) {
           setStatus("agencyStatus", error.message, "error");
-        } finally { if (!tokenPanel.childElementCount) connectWebsite.disabled = false; else connectWebsite.disabled = true; }
+        } finally { connectWebsite.disabled = item.status !== "active"; }
       });
       const disconnectWebsite = document.createElement("button"); disconnectWebsite.type = "button";
       disconnectWebsite.className = "secondary"; disconnectWebsite.textContent = "Disconnect website"; disconnectWebsite.hidden = true;
@@ -797,24 +831,14 @@
         try {
           await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website/disconnect", {method:"POST"});
           websiteStatus.textContent = "Website disconnected. Generate a new token to connect a replacement.";
-          disconnectWebsite.hidden = true; connectWebsite.hidden = false; tokenPanel.replaceChildren();
+          disconnectWebsite.hidden = true; connectWebsite.hidden = false; tokenPanel.replaceChildren(); tokenIssued = false;
+          connectWebsite.textContent = "Generate WordPress connection token";
         } catch (error) { setStatus("agencyStatus", error.message, "error"); }
         finally { disconnectWebsite.disabled = false; }
       });
-      websitePanel.append(websiteStatus, connectWebsite, disconnectWebsite, tokenPanel);
+      websitePanel.append(websiteStatus, connectWebsite, disconnectWebsite, refreshWebsite, tokenPanel);
       if (item.status !== "active") connectWebsite.disabled = true;
-      if (item.status === "active") {
-        (async () => {
-          try {
-            const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
-            const website = await websiteResponse.json();
-            if (website.connected) {
-              websiteStatus.textContent = "Connected: " + website.site_url + " · Last seen: " + (website.last_seen_at || "not reported");
-              connectWebsite.hidden = true; disconnectWebsite.hidden = false;
-            } else { websiteStatus.textContent = "No WordPress website connected to this client."; }
-          } catch (error) { websiteStatus.textContent = error.message; }
-        })();
-      }
+      if (item.status === "active") refreshWebsiteStatus();
       card.append(info, actions, websitePanel, auditHistoryPanel);
       container.append(card);
     }

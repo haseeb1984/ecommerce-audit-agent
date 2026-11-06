@@ -3524,9 +3524,35 @@ async def update_business_agency_client(
         if not display_name:
             raise HTTPException(status_code=422, detail="Client display name cannot be blank.")
         item.display_name = display_name
+    now = datetime.now(timezone.utc)
+    connection_revoked = False
+    if changes.get("status") == "archived" and item.status != "archived":
+        # Archiving is an access boundary, not just a dashboard filter:
+        # revoke the active plugin credential and any unused setup token.
+        site = await operational_db.scalar(select(AgencyClientWebsite).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.workspace_id == item.id,
+            AgencyClientWebsite.status == "active",
+        ).with_for_update())
+        if site is not None:
+            site.status = "disconnected"
+            site.disconnected_at = now
+            site.site_token_hash = None
+            connection_revoked = True
+        pending_challenges = (await operational_db.execute(
+            select(AgencyWebsiteConnectChallenge).where(
+                AgencyWebsiteConnectChallenge.agency_id == agency.id,
+                AgencyWebsiteConnectChallenge.workspace_id == item.id,
+                AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+            ).with_for_update()
+        )).scalars().all()
+        for challenge in pending_challenges:
+            challenge.consumed_at = now
+        if pending_challenges:
+            connection_revoked = True
     if "status" in changes:
         item.status = changes["status"]
-    item.updated_at = datetime.now(timezone.utc)
+    item.updated_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -3535,6 +3561,7 @@ async def update_business_agency_client(
         "display_name": item.display_name,
         "external_reference": item.external_reference,
         "status": item.status,
+        "connection_revoked": connection_revoked,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
 
@@ -8097,6 +8124,7 @@ async def admin_list_client_wordpress_links(
             WordPressInstallation.id.desc(),
         ).limit(100)
     )).scalars().all()
+    now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -8110,6 +8138,14 @@ async def admin_list_client_wordpress_links(
             "woocommerce_version": item.woocommerce_version,
             "plugin_version": item.plugin_version,
             "status": item.status,
+            "connection_health": (
+                "not_connected" if item.status != "active" else
+                "stale" if (
+                    item.last_seen_at is None or
+                    (item.last_seen_at.replace(tzinfo=timezone.utc) if item.last_seen_at.tzinfo is None else item.last_seen_at)
+                    < now - timedelta(days=7)
+                ) else "healthy"
+            ),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
             "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,
