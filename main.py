@@ -4035,17 +4035,34 @@ async def revoke_account_api_key(
     The dedicated dependency grants no audit/report access and is used only for
     this revocation action so expired customers can invalidate compromised keys.
     """
-    from sqlalchemy import delete
+    from sqlalchemy import delete, select
 
-    result = await db.execute(
-        delete(APIKey).where(
+    # Use the same license-first lock order as customer/admin key issuance and
+    # admin revocation. This serializes revocation with concurrent key creation
+    # and prevents duplicate revocation attempts from racing on the same key.
+    client = (await db.execute(
+        select(SoftwareLicense).where(
+            SoftwareLicense.id == license_obj.id
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if client is None:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Account not found.")
+    item = (await db.execute(
+        select(APIKey).where(
             APIKey.id == key_id,
-            APIKey.license_id == license_obj.id,
-        )
-    )
-    if not result.rowcount:
+            APIKey.license_id == client.id,
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if item is None:
         await db.rollback()
         raise HTTPException(status_code=404, detail="API key not found for this account.")
+    await db.execute(
+        delete(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.license_id == client.id,
+        )
+    )
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
