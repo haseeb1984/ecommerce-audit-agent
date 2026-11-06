@@ -790,3 +790,25 @@ def test_customer_portal_explains_wordpress_revocation_after_archiving():
     assert "updated.connection_revoked" in source
     assert "WordPress credential and unused connection codes were revoked" in source
     assert "reconnect the site after reactivation" in source
+
+def test_agency_team_workspace_audit_access_uses_workspace_grant_lock_order_and_tenant_scope():
+    import inspect
+    import main
+
+    results_source = inspect.getsource(main.list_agency_team_workspace_audit_results)
+    audits_source = inspect.getsource(main.list_agency_team_workspace_audits)
+    submit_source = inspect.getsource(main.submit_agency_team_workspace_scans)
+
+    for source in (results_source, audits_source, submit_source):
+        workspace_lock = source.index("AgencyClientWorkspace.id == workspace_id")
+        grant_lock = source.index("AgencyWorkspaceAccess.agency_id == identity[\"agency\"].id")
+        assert workspace_lock < grant_lock
+        assert ".with_for_update()" in source[workspace_lock:grant_lock]
+        assert ".with_for_update()" in source[grant_lock:]
+
+    assert 'ScanBatch.license_key == identity["agency"].owner_license_key' in audits_source
+    assert 'ScanBatch.license_key == identity["agency"].owner_license_key' in results_source
+    site_lock = submit_source.index("AgencyClientWebsite.agency_id == identity[\"agency\"].id")
+    assert grant_lock < site_lock
+    assert ".with_for_update()" in submit_source[site_lock:]
+
