@@ -55,7 +55,7 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
 
 
 def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replacement():
-    portal = Path("customer_portal.html").read_text(encoding="utf-8")
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text(encoding="utf-8")
     start = portal.index("async function loadAgencyDashboard")
     end = portal.index("async function loadAgencyClientAuditResults", start)
     section = portal[start:end]
