@@ -271,7 +271,7 @@ async def test_agency_analyst_can_queue_connected_client_audits_under_shared_lic
     grant = SimpleNamespace(role="analyst")
     workspace = SimpleNamespace(id="workspace-1", display_name="Client One")
     site = SimpleNamespace(site_host="client.example")
-    db = AgencyTeamScanSession(grant, workspace, site)
+    db = AgencyTeamScanSession(workspace, grant, site)
     owner_license = SimpleNamespace(license_key="business-owner-license", tier="business")
     identity = {
         "agency": SimpleNamespace(id="agency-1"),
@@ -334,7 +334,10 @@ async def test_agency_viewer_cannot_queue_client_audits():
             SimpleNamespace(),
             Response(),
             identity=identity,
-            operational_db=AgencyTeamScanSession(SimpleNamespace(role="viewer")),
+            operational_db=AgencyTeamScanSession(
+                SimpleNamespace(id="workspace-1", display_name="Client One"),
+                SimpleNamespace(role="viewer"),
+            ),
         )
     assert error.value.status_code == 403
     assert "read-only" in error.value.detail
@@ -361,8 +364,8 @@ async def test_agency_team_audit_submission_rejects_urls_outside_connected_site(
             Response(),
             identity=identity,
             operational_db=AgencyTeamScanSession(
-                SimpleNamespace(role="analyst"),
                 SimpleNamespace(id="workspace-1", display_name="Client One"),
+                SimpleNamespace(role="analyst"),
                 SimpleNamespace(site_host="client.example"),
             ),
         )
