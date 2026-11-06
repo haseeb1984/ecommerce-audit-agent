@@ -2622,22 +2622,38 @@ async def get_agency_wordpress_site_status(request: Request, response: Response,
     if len(raw_token) < 32 or len(raw_token) > 200:
         raise HTTPException(status_code=401, detail="Agency site authentication is required.")
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+    # Resolve the credential first, then serialize the heartbeat with suspension,
+    # workspace archival and disconnect using agency -> workspace -> website locks.
+    candidate = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.site_token_hash == token_hash,
         AgencyClientWebsite.status == "active",
     ))
-    if site is None:
+    if candidate is None:
         raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == site.agency_id, AgencyAccount.status == "active"
-    ))
+        AgencyAccount.id == candidate.agency_id,
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
-        AgencyClientWorkspace.id == site.workspace_id, AgencyClientWorkspace.status == "active"
-    ))
+        AgencyClientWorkspace.id == candidate.workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ).with_for_update())
+    if workspace is None or workspace.status != "active":
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.id == candidate.id,
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ).with_for_update())
+    if site is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
-    )) if agency else None
-    if agency is None or workspace is None or not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
+    ))
+    if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
     site.last_seen_at = datetime.now(timezone.utc)
     await operational_db.commit()
