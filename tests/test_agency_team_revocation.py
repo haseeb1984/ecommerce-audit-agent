@@ -50,3 +50,16 @@ def test_workspace_grant_mutations_follow_agency_member_workspace_grant_lock_ord
     assert grant_routes.count(".with_for_update()") >= 8
     assert "agency.status != \"active\"" in grant_routes
     assert "workspace.status == \"active\"" in grant_routes
+
+
+def test_agency_workspace_creation_locks_active_agency_before_insert():
+    source = Path("main.py").read_text(encoding="utf-8")
+    start = source.index('@app.post("/api/v1/account/agency/clients")')
+    end = source.index('@app.patch("/api/v1/account/agency/clients/{workspace_id}")', start)
+    route = source[start:end]
+
+    agency_lookup = route.index("AgencyAccount.owner_license_key == license_obj.license_key")
+    workspace_insert = route.index("operational_db.add(item)")
+    assert ".with_for_update()" in route[agency_lookup:workspace_insert]
+    assert 'agency.status != "active"' in route[agency_lookup:workspace_insert]
+    assert agency_lookup < workspace_insert
