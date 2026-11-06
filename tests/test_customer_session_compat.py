@@ -118,14 +118,16 @@ def test_customer_portal_keeps_passwordless_session_actions_enabled():
 
 
 
-def test_wordpress_identity_code_remains_license_or_api_key_only():
+
+def test_wordpress_identity_link_accepts_verified_customer_session_authentication():
     from pathlib import Path
+    import inspect
+    import wordpress_identity_api
 
     portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
     controls = portal[portal.index("function setAccountControls"):portal.index("setAccountControls(false)")]
-    assert '$("generateWordPressLinkCode").disabled = !connected || !credential || credential === "customer-session" || Boolean(sessionToken);' in controls
+    assert '"generateWordPressLinkCode"' in controls
+    assert 'const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken}' in portal
 
-    action = portal[portal.index('$("generateWordPressLinkCode").addEventListener("click"'):portal.index('$("copyWordPressLinkCode").addEventListener("click"')]
-    assert 'credential === "customer-session" || sessionToken' in action
-    assert "Connect with your license key or API key" in action
-    assert 'finally { button.disabled = !credential || credential === "customer-session" || Boolean(sessionToken); }' in action
+    endpoint = inspect.getsource(wordpress_identity_api.create_wordpress_link_challenge)
+    assert "Depends(verify_customer_account)" in endpoint
