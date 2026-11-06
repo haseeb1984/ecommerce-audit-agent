@@ -189,6 +189,8 @@
   let billingOffset = 0;
   let billingTotal = 0;
   let billingLoading = false;
+  let billingLoadingSessionVersion = -1;
+  let billingRequestVersion = 0;
   let websiteOffset = 0;
   let websiteHasMore = false;
   let websitesLoading = false;
@@ -329,13 +331,18 @@
     }
   }
   async function loadBillingHistory(reset = true) {
-    if (billingLoading) return;
+    const requestSessionVersion = accountSessionVersion;
+    // A request for a previous account must not block the newly connected account.
+    if (billingLoading && billingLoadingSessionVersion === requestSessionVersion) return;
+    const requestVersion = ++billingRequestVersion;
     billingLoading = true;
+    billingLoadingSessionVersion = requestSessionVersion;
     const button = $("loadMoreBillingHistory"); button.disabled = true;
     try {
     const requestedOffset = reset ? 0 : billingOffset;
     const response = await api("/api/v1/account/billing-history?limit=50&offset=" + requestedOffset);
     const data = await response.json();
+    if (requestVersion !== billingRequestVersion || requestSessionVersion !== accountSessionVersion) return;
     const account = data.account || {};
     $("billingAccount").textContent = (account.client_name || "Account") + " · Plan " + (account.tier || "unassigned") +
       " · " + (account.is_active ? "Active" : "Inactive") +
@@ -427,10 +434,15 @@
     } catch (error) {
       // Keep previously rendered history intact and show a recoverable error when
       // a refresh or next-page request fails (network, auth, or server error).
-      setStatus("billingStatus", "Unable to load billing history. " + error.message, "error");
+      if (requestVersion === billingRequestVersion && requestSessionVersion === accountSessionVersion) {
+        setStatus("billingStatus", "Unable to load billing history. " + error.message, "error");
+      }
     } finally {
-      billingLoading = false;
-      button.disabled = !billingTotal || billingOffset >= billingTotal;
+      if (requestVersion === billingRequestVersion) {
+        billingLoading = false;
+        billingLoadingSessionVersion = -1;
+        button.disabled = !billingTotal || billingOffset >= billingTotal;
+      }
     }
   }
   async function loadApiKeys() {
