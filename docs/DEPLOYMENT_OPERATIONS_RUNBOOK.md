@@ -183,3 +183,15 @@ Agency team invitation lifecycle:
 
 - Login-code request and verification responses are scoped to the account-session generation active when the action began.
 - If the customer disconnects or starts a newer account connection while an OTP request is pending, its late response is ignored and cannot install a stale session token or overwrite the current login status.
+
+
+Customer passwordless session compatibility:
+- A verified customer bearer session is accepted by customer-account operations, including WordPress identity-link challenge issuance through `verify_customer_account`.
+- The customer portal sends the bearer session in the `Authorization` header while a passwordless session is active; it must not disable account actions solely because the legacy license-key input is empty.
+
+
+### Agency team passwordless sign-in race handling
+
+- Agency team sign-in code requests and verification attempts are versioned independently from the authenticated session.
+- A newer OTP attempt or sign-out invalidates earlier in-flight responses. Late responses cannot replace the current sign-in status or install an older agency session token.
+- Sign-in controls remain disabled only while their current request is pending; stale requests cannot re-enable or overwrite a newer attempt's controls.
