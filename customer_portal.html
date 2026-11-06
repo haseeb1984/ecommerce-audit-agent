@@ -197,7 +197,8 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    $("generateWordPressLinkCode").disabled = !connected || !credential || credential === "customer-session" || Boolean(sessionToken);
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
@@ -1908,7 +1909,7 @@
   });
 
   $("generateWordPressLinkCode").addEventListener("click", async () => {
-    if (!credential) { setStatus("wordpressLinkCodeStatus", "Connect your customer account first.", "error"); return; }
+    if (!credential || credential === "customer-session" || sessionToken) { setStatus("wordpressLinkCodeStatus", "Connect with your license key or API key to generate a WordPress identity code.", "error"); return; }
     const button = $("generateWordPressLinkCode"); button.disabled = true;
     try {
       const response = await api("/api/v1/account/wordpress-link/challenges", {method:"POST"});
@@ -1920,7 +1921,7 @@
       setStatus("wordpressLinkCodeStatus", "Code generated. Paste it into the WordPress plugin identity-link form.", "success");
     } catch (error) {
       setStatus("wordpressLinkCodeStatus", error.message, "error");
-    } finally { button.disabled = !credential; }
+    } finally { button.disabled = !credential || credential === "customer-session" || Boolean(sessionToken); }
   });
   $("copyWordPressLinkCode").addEventListener("click", async () => {
     const value = $("wordpressLinkCode").textContent;
