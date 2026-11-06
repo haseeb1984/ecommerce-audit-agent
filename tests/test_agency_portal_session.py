@@ -40,3 +40,27 @@ def test_agency_portal_paginates_audit_history_without_losing_session_guards():
     assert "loadHistoryPage(historyOffset,true)" in script
     assert "assertCurrentSession(actionVersion);" in script
     assert "history.replaceChildren(); historyOffset=0;" in script
+
+
+
+def test_agency_portal_exposes_agency_role_editor_and_preserves_workspace_overrides():
+    portal = Path("customer_portal.html").read_text(encoding="utf-8")
+
+    assert 'agencyRoleLabel.textContent = "Agency default role"' in portal
+    assert 'method:"PUT"' in portal
+    assert '"/api/v1/account/agency/team/" + encodeURIComponent(item.id)' in portal
+    assert "Custom workspace roles were preserved." in portal
+
+
+def test_agency_member_role_api_updates_default_role_without_overwriting_custom_grants():
+    import inspect
+    import main
+
+    assert "/api/v1/account/agency/team/{member_id}" in main.app.openapi()["paths"]
+    source = inspect.getsource(main.update_business_agency_team_member_role)
+    assert "AgencyAccount.owner_license_key == license_obj.license_key" in source
+    assert "AgencyTeamMember.agency_id == agency.id" in source
+    assert "AgencyTeamMember.status == \"active\"" in source
+    assert "AgencyWorkspaceAccess.role == previous_role" in source
+    assert ".values(role=payload.role)" in source
+    assert "AgencyWorkspaceAccess.role == previous_role" in source
