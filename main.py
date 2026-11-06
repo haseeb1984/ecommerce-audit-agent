@@ -3449,11 +3449,11 @@ async def remove_business_agency_team_workspace_access(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
+    # Match grant creation and agency suspension: lock agency -> member -> workspace -> grant.
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.owner_license_key == license_obj.license_key,
-        AgencyAccount.status == "active",
-    ))
-    if agency is None:
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ).with_for_update())
+    if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.id == member_id,
@@ -3462,10 +3462,17 @@ async def remove_business_agency_team_workspace_access(
     ).with_for_update())
     if member is None:
         raise HTTPException(status_code=404, detail="Active team member was not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+        AgencyClientWorkspace.status == "active",
+    ).with_for_update())
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace was not found.")
     access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
         AgencyWorkspaceAccess.agency_id == agency.id,
-        AgencyWorkspaceAccess.team_member_id == member_id,
-        AgencyWorkspaceAccess.workspace_id == workspace_id,
+        AgencyWorkspaceAccess.team_member_id == member.id,
+        AgencyWorkspaceAccess.workspace_id == workspace.id,
     ).with_for_update())
     if access is None:
         raise HTTPException(status_code=404, detail="Workspace access grant was not found.")
