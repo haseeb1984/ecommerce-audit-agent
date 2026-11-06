@@ -159,3 +159,14 @@ def test_wordpress_identity_link_accepts_verified_customer_session_authenticatio
 
     endpoint = inspect.getsource(wordpress_identity_api.create_wordpress_link_challenge)
     assert "Depends(verify_customer_account)" in endpoint
+
+def test_customer_session_revocation_actions_have_request_time_cutoffs():
+    import inspect
+    import main
+
+    revoke_others = inspect.getsource(main.revoke_other_customer_sessions)
+    logout_all = inspect.getsource(main.logout_all_account_sessions)
+
+    assert "CustomerSession.created_at <= now" in revoke_others
+    assert "CustomerSession.created_at <= now" in logout_all
+
