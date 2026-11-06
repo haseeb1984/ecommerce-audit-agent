@@ -1,8 +1,16 @@
 """Regression tests for defensive customer usage-history metadata decoding."""
 
+import inspect
 import json
 
 import main
+
+
+def test_usage_endpoint_uses_safe_decoder_for_persisted_history():
+    source = inspect.getsource(main.get_account_usage)
+
+    assert '"details": _load_customer_usage_details(item.details_json)' in source
+    assert '"details": json.loads(item.details_json or "{}")' not in source
 
 
 def test_usage_details_invalid_json_does_not_break_usage_response():
