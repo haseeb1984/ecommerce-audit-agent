@@ -7941,7 +7941,7 @@ async def admin_customer_directory(
         operational_candidates_query = operational_candidates_query.where(operational_filter)
     operational_candidates = (await operational_db.execute(
         operational_candidates_query
-        .order_by(sql_func.max(identity_sources.c.activity_at).desc(), identity_sources.c.email.asc())
+        .order_by(sql_func.max(identity_sources.c.activity_at).desc().nullslast(), identity_sources.c.email.asc())
         .limit(candidate_limit)
     )).all()
 
