@@ -1420,6 +1420,7 @@ def _customer_email_change_operational_updates(
             CustomerSession.license_key == license_key,
             CustomerSession.email == old_email,
             CustomerSession.token_hash != current_token_hash,
+            CustomerSession.created_at <= now,
             CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now),
     )
@@ -1768,6 +1769,7 @@ async def revoke_other_customer_sessions(
     result = await operational_db.execute(update(CustomerSession).where(
         CustomerSession.email == current.email,
         CustomerSession.token_hash != digest,
+        CustomerSession.created_at <= now,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
@@ -1796,6 +1798,7 @@ async def logout_all_account_sessions(
     now = datetime.now(timezone.utc)
     result = await operational_db.execute(update(CustomerSession).where(
         CustomerSession.email == current.email,
+        CustomerSession.created_at <= now,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
