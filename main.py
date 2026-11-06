@@ -49,6 +49,7 @@ from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, Au
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, get_customer_session_credentials
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
+from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -613,6 +614,7 @@ async def comprehensive_audit_pdf(
             "pagespeed": "not_started",
             "bounded_crawl": "not_started",
             "conversion_paid_traffic": "not_started",
+            "browser_rendered": "not_started",
         }
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
@@ -743,6 +745,60 @@ async def comprehensive_audit_pdf(
             result.limitations.append(
                 f"Conversion and paid-traffic checks are unavailable for this run ({type(conversion_exc).__name__}); other completed checks are retained."
             )
+
+        # Rendered browser diagnostics are an independent audit family. They run
+        # only through the isolated, signed browser service; unavailable browser
+        # infrastructure must not discard valid static/crawl findings.
+        browser_audit_completed = False
+        module_statuses["browser_rendered"] = "running"
+        try:
+            browser_result = await run_browser_audit(target_url)
+            browser_findings = browser_result.get("findings", [])
+            browser_outcomes = browser_result.get("check_outcomes", [])
+            if not isinstance(browser_findings, list) or not isinstance(browser_outcomes, list):
+                raise BrowserAuditUnavailable("Browser service returned invalid finding data")
+            result.findings.extend(AuditFinding(**item) for item in browser_findings)
+            result.check_outcomes.extend(CheckOutcome(**item) for item in browser_outcomes)
+            browser_summary = browser_result.get("summary")
+            if not isinstance(browser_summary, dict):
+                browser_summary = {}
+            browser_audit_completed = not bool(browser_summary.get("navigation_error"))
+            rendered_pages = browser_summary.get("rendered_pages", [])
+            if isinstance(rendered_pages, list):
+                safe_rendered_pages = [
+                    _safe_audit_metadata_url(url)
+                    for url in rendered_pages
+                    if isinstance(url, str)
+                ]
+                result.pages_checked = list(dict.fromkeys([
+                    *result.pages_checked, *(url for url in safe_rendered_pages if url)
+                ]))
+            if browser_audit_completed:
+                module_statuses["browser_rendered"] = "completed"
+                viewports = browser_summary.get("viewports", [])
+                viewport_text = ", ".join(str(width) for width in viewports) if isinstance(viewports, list) else "configured"
+                result.limitations.append(
+                    "Rendered-browser diagnostics completed through the isolated browser service at viewport widths "
+                    + viewport_text
+                    + "px. Browser screenshots are not persisted because durable evidence storage is not configured; "
+                    "Core Web Vitals field data and INP are not measured by this browser worker."
+                )
+            else:
+                module_statuses["browser_rendered"] = "partial"
+                result.limitations.append(
+                    "The isolated browser service responded but could not complete page navigation; rendered DOM and viewport checks remain not assessed."
+                )
+        except BrowserAuditUnavailable as browser_exc:
+            module_statuses["browser_rendered"] = "unavailable"
+            result.limitations.append(
+                f"Rendered-browser diagnostics were not assessed ({str(browser_exc)}); static HTML signals do not establish rendered mobile behavior."
+            )
+        except Exception as browser_exc:
+            module_statuses["browser_rendered"] = "error"
+            result.limitations.append(
+                f"Rendered-browser diagnostics failed safely ({type(browser_exc).__name__}); no browser pass is inferred."
+            )
+
         performance_completed = metrics is not None
         if metrics is not None:
             # PageSpeed successfully returned a lab result. Record an explicit
@@ -888,7 +944,7 @@ async def comprehensive_audit_pdf(
             ))
         # Explicitly disclose verification modes unavailable in this deployment; absence of
         # browser/authorized/external data must never read as a pass.
-        append_unavailable_check_outcomes(result)
+        append_unavailable_check_outcomes(result, browser_audit_completed=browser_audit_completed)
 
         # Convert each emitted finding into a durable explicit outcome record. This
         # records observed issues/review-needed/not-assessed states only; absence of a

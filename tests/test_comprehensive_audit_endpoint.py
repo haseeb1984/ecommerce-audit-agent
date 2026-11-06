@@ -70,6 +70,9 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
     )))
     monkeypatch.setattr(main, "run_bounded_site_crawl", AsyncMock(return_value=([], [], ["Bounded crawl test."])))
     monkeypatch.setattr(main, "run_conversion_paid_traffic_checks", AsyncMock(return_value=([], [], ["Conversion checks test."])))
+    monkeypatch.setattr(main, "run_browser_audit", AsyncMock(
+        side_effect=main.BrowserAuditUnavailable("Isolated browser service is not configured")
+    ))
     captured_results = []
     monkeypatch.setattr(
         main, "render_audit_pdf",
@@ -132,5 +135,104 @@ async def test_comprehensive_audit_rejects_private_target_before_quota(monkeypat
         assert response.status_code == 422
         reserve.assert_not_awaited()
         assert db.added == []
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_comprehensive_audit_merges_isolated_rendered_browser_findings_and_coverage(monkeypatch):
+    db = FakeDB()
+    license_obj = SimpleNamespace(id=45, tier="pro")
+    monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(102, datetime(2026, 10, 17, tzinfo=timezone.utc))))
+    monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
+    monkeypatch.setattr(main.agent, "run_audit", AsyncMock(return_value=StoreAuditMetrics(
+        domain="shop.example", mobile_score=82, speed_index_sec=3.1, is_slow=False
+    )))
+    monkeypatch.setattr(main, "run_phase_one_checks", AsyncMock(return_value=AuditCheckResult(
+        target_url="https://shop.example/", checked_at_utc="2026-10-17T00:00:00+00:00",
+        findings=[], pages_checked=["https://shop.example/"], limitations=["Static checks completed."],
+        check_outcomes=[],
+    )))
+    monkeypatch.setattr(main, "run_bounded_site_crawl", AsyncMock(return_value=([], [], [])))
+    monkeypatch.setattr(main, "run_conversion_paid_traffic_checks", AsyncMock(return_value=([], [], [])))
+    rendered_finding = AuditFinding(
+        category="mobile_ux", title="Rendered mobile viewport inspection",
+        status="verified", severity="info",
+        evidence="Rendered DOM inspected at 320, 390 and 768 CSS px.",
+        explanation="A bounded browser run inspected rendered layout at configured viewports.",
+        recommendation="Review any viewport-specific findings before changing layout.",
+        verification_steps=["Repeat in a real device/browser matrix for final acceptance."],
+        source_url="https://shop.example/",
+    )
+    rendered_outcome = CheckOutcome(
+        check_id="browser.rendered_viewport",
+        category="mobile_ux", page_url="https://shop.example/",
+        outcome="pass", observed_at_utc="2026-10-17T00:00:00+00:00",
+        method="isolated Playwright browser audit",
+        evidence="Rendered page completed at 320, 390 and 768 CSS px.",
+        evidence_ref="browser.rendered_viewport",
+    )
+    monkeypatch.setattr(main, "run_browser_audit", AsyncMock(return_value={
+        "request_id": "browser-test-1",
+        "findings": [rendered_finding.dict()],
+        "check_outcomes": [rendered_outcome.dict()],
+        "summary": {
+            "viewports": [320, 390, 768],
+            "rendered_pages": ["https://shop.example/"],
+            "navigation_error": None,
+        },
+    }))
+    captured = []
+    monkeypatch.setattr(main, "render_audit_pdf", lambda result, **kwargs: (captured.append(result), b"%PDF-browser-test")[1])
+    main.app.dependency_overrides[main.verify_license_or_api_key] = lambda: license_obj
+    main.app.dependency_overrides[main.get_async_db] = lambda: db
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver") as client:
+            response = await client.post("/api/v1/comprehensive-audit", params={"domain": "shop.example"})
+        assert response.status_code == 200
+        assert main.run_browser_audit.await_count == 1
+        reported = captured[0]
+        assert any(item.title == "Rendered mobile viewport inspection" for item in reported.findings)
+        assert any(item.check_id == "browser.rendered_viewport" and item.outcome == "pass" for item in reported.check_outcomes)
+        saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
+        metadata = __import__("json").loads(saved_report.coverage_json)
+        assert metadata["run_context"]["modules"]["browser_rendered"] == "completed"
+        assert any("Rendered-browser diagnostics completed" in item for item in reported.limitations)
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_comprehensive_audit_records_browser_service_unavailable_without_failing_audit(monkeypatch):
+    db = FakeDB()
+    license_obj = SimpleNamespace(id=46, tier="starter")
+    monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(103, datetime(2026, 10, 17, tzinfo=timezone.utc))))
+    monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
+    monkeypatch.setattr(main.agent, "run_audit", AsyncMock(return_value=StoreAuditMetrics(
+        domain="shop.example", mobile_score=82, speed_index_sec=3.1, is_slow=False
+    )))
+    monkeypatch.setattr(main, "run_phase_one_checks", AsyncMock(return_value=AuditCheckResult(
+        target_url="https://shop.example/", checked_at_utc="2026-10-17T00:00:00+00:00",
+        findings=[], pages_checked=["https://shop.example/"], limitations=[],
+        check_outcomes=[],
+    )))
+    monkeypatch.setattr(main, "run_bounded_site_crawl", AsyncMock(return_value=([], [], [])))
+    monkeypatch.setattr(main, "run_conversion_paid_traffic_checks", AsyncMock(return_value=([], [], [])))
+    monkeypatch.setattr(main, "run_browser_audit", AsyncMock(
+        side_effect=main.BrowserAuditUnavailable("Isolated browser service is not configured")
+    ))
+    captured = []
+    monkeypatch.setattr(main, "render_audit_pdf", lambda result, **kwargs: (captured.append(result), b"%PDF-browser-unavailable")[1])
+    main.app.dependency_overrides[main.verify_license_or_api_key] = lambda: license_obj
+    main.app.dependency_overrides[main.get_async_db] = lambda: db
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver") as client:
+            response = await client.post("/api/v1/comprehensive-audit", params={"domain": "shop.example"})
+        assert response.status_code == 200
+        saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
+        metadata = __import__("json").loads(saved_report.coverage_json)
+        assert metadata["run_context"]["modules"]["browser_rendered"] == "unavailable"
+        assert any("Rendered-browser diagnostics were not assessed" in item for item in captured[0].limitations)
+        assert any(item.check_id.startswith("browser.") and item.outcome == "not_assessed" for item in captured[0].check_outcomes)
     finally:
         main.app.dependency_overrides.clear()
