@@ -8287,9 +8287,10 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     previous_active = bool(client.is_active)
+    audited_fields = ("client_name", "tier", "max_monthly_audits", "is_active", "expires_at")
     previous_values = {
         key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
-        for key in changes
+        for key in audited_fields
     }
     if "tier" in changes:
         package = (await db.execute(text("""
@@ -8325,7 +8326,7 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     await db.refresh(client)
     current_values = {
         key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
-        for key in changes
+        for key in audited_fields
     }
     await _write_admin_log(db, "client.updated", "client", client.id, {
         "fields": sorted(changes),
