@@ -25,6 +25,8 @@ def test_admin_activity_portal_exposes_filters_and_preserves_them_for_pagination
     source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
     assert 'id="activityActionFilter"' in source
     assert 'id="activityEntityFilter"' in source
+    assert 'id="activityEntityIdFilter"' in source
     assert 'query.set("action",actionFilter)' in source
     assert 'query.set("entity_type",entityFilter)' in source
+    assert 'query.set("entity_id",entityIdFilter)' in source
     assert 'id="actionsFilterApply"' in source
