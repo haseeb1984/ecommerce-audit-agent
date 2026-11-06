@@ -7903,6 +7903,7 @@ async def admin_list_client_wordpress_links(
             WordPressInstallation.id.desc(),
         ).limit(100)
     )).scalars().all()
+    now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -7916,6 +7917,14 @@ async def admin_list_client_wordpress_links(
             "woocommerce_version": item.woocommerce_version,
             "plugin_version": item.plugin_version,
             "status": item.status,
+            "connection_health": (
+                "not_connected" if item.status != "active" else
+                "stale" if (
+                    item.last_seen_at is None or
+                    (item.last_seen_at.replace(tzinfo=timezone.utc) if item.last_seen_at.tzinfo is None else item.last_seen_at)
+                    < now - timedelta(days=7)
+                ) else "healthy"
+            ),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
             "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,
