@@ -115,3 +115,17 @@ def test_customer_portal_keeps_passwordless_session_actions_enabled():
     # WordPress identity-link challenge generation remains license/API-key credential gated.
     wordpress_link = portal[portal.index('$("generateWordPressLinkCode").addEventListener("click"'):portal.index('$("copyWordPressLinkCode").addEventListener("click"')]
     assert 'finally { button.disabled = !credential; }' in wordpress_link
+
+
+
+def test_wordpress_identity_code_remains_license_or_api_key_only():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    controls = portal[portal.index("function setAccountControls"):portal.index("setAccountControls(false)")]
+    assert '$("generateWordPressLinkCode").disabled = !connected || !credential || credential === "customer-session" || Boolean(sessionToken);' in controls
+
+    action = portal[portal.index('$("generateWordPressLinkCode").addEventListener("click"'):portal.index('$("copyWordPressLinkCode").addEventListener("click"')]
+    assert 'credential === "customer-session" || sessionToken' in action
+    assert "Connect with your license key or API key" in action
+    assert 'finally { button.disabled = !credential || credential === "customer-session" || Boolean(sessionToken); }' in action
