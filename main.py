@@ -2206,30 +2206,44 @@ async def require_agency_team_session(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Authenticate an accepted agency teammate without exposing the owner's license key."""
+    """Authenticate an accepted agency teammate while serializing access revocation."""
     from sqlalchemy import select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Agency team sign-in is required.")
     token_hash = hashlib.sha256(credentials.credentials.encode("utf-8")).hexdigest()
     now = datetime.now(timezone.utc)
-    session = await operational_db.scalar(select(AgencyTeamSession).where(
+    # Resolve identifiers without locks, then serialize every authorization check
+    # with suspension and member revocation. The shared order is agency -> member
+    # -> session, matching the write paths that revoke sessions.
+    candidate = await operational_db.scalar(select(AgencyTeamSession).where(
         AgencyTeamSession.token_hash == token_hash,
         AgencyTeamSession.revoked_at.is_(None),
         AgencyTeamSession.expires_at > now,
     ))
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Agency team session is invalid or expired.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == candidate.agency_id,
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == candidate.team_member_id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
+    session = await operational_db.scalar(select(AgencyTeamSession).where(
+        AgencyTeamSession.id == candidate.id,
+        AgencyTeamSession.token_hash == token_hash,
+        AgencyTeamSession.agency_id == agency.id,
+        AgencyTeamSession.team_member_id == member.id,
+        AgencyTeamSession.revoked_at.is_(None),
+        AgencyTeamSession.expires_at > datetime.now(timezone.utc),
+    ).with_for_update())
     if session is None:
         raise HTTPException(status_code=401, detail="Agency team session is invalid or expired.")
-    member = await operational_db.scalar(select(AgencyTeamMember).where(
-        AgencyTeamMember.id == session.team_member_id,
-        AgencyTeamMember.agency_id == session.agency_id,
-        AgencyTeamMember.status == "active",
-    ))
-    agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == session.agency_id,
-        AgencyAccount.status == "active",
-    ))
-    if member is None or agency is None:
-        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     ))
