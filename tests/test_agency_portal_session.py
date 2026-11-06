@@ -40,3 +40,18 @@ def test_agency_portal_paginates_audit_history_without_losing_session_guards():
     assert "loadHistoryPage(historyOffset,true)" in script
     assert "assertCurrentSession(actionVersion);" in script
     assert "history.replaceChildren(); historyOffset=0;" in script
+
+
+
+def test_agency_portal_otp_attempts_ignore_stale_responses():
+    portal = Path("agency_portal.html").read_text(encoding="utf-8")
+    start = portal.index("(() => {")
+    script = portal[start:portal.index("</script>", start)]
+
+    assert "let authAttemptVersion = 0;" in script
+    assert "const attemptVersion=++authAttemptVersion;" in script
+    assert "if(attemptVersion!==authAttemptVersion)return;" in script
+    assert 'if(actionVersion===sessionVersion&&attemptVersion===authAttemptVersion)$("loginStatus").textContent=error.message;' in script
+    assert 'if(actionVersion===sessionVersion&&attemptVersion===authAttemptVersion)button.disabled=false;' in script
+    assert "authAttemptVersion += 1;" in script
+    assert 'if(!result.access_token)throw new Error("The server did not return an agency session.");' in script
