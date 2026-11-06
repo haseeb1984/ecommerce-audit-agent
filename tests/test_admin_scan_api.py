@@ -338,7 +338,7 @@ async def test_admin_sync_outbox_retry_rejects_unknown_queue(monkeypatch):
 
     with pytest.raises(HTTPException) as raised:
         await main.admin_retry_sync_outbox(
-            request=_admin_request(), queue="billing_mirror", limit=10, db=db
+            request=_admin_request(), queue="unknown_queue", limit=10, db=db
         )
 
     assert raised.value.status_code == 422
@@ -369,3 +369,66 @@ async def test_admin_sync_outbox_retry_requires_admin_authentication(monkeypatch
     assert raised.value.status_code == 403
     assert db.statement is None
     assert db.committed is False
+
+
+
+def test_admin_sync_outbox_retry_uses_the_database_that_owns_each_queue():
+    from main import admin_retry_sync_outbox
+
+    source = inspect.getsource(admin_retry_sync_outbox)
+    params = inspect.signature(admin_retry_sync_outbox).parameters
+
+    assert params["db"].default.dependency.__name__ == "get_async_db"
+    assert params["operational_db"].default.dependency.__name__ == "get_hostinger_db"
+    assert '"customer_lifecycle": (CustomerLifecycleSyncOutbox, db)' in source
+    assert '"customer_email_identity": (CustomerEmailIdentitySyncOutbox, operational_db)' in source
+    assert '"billing_mirror": (BillingMirrorSyncOutbox, db)' in source
+    assert "model, queue_db = selected" in source
+    assert "await queue_db.execute(" in source
+    assert "await queue_db.commit()" in source
+    assert 'await _write_admin_log(\n        db,' in source
+
+
+def test_admin_sync_outbox_retry_rejects_unknown_queue_before_database_access():
+    from main import admin_retry_sync_outbox
+
+    source = inspect.getsource(admin_retry_sync_outbox)
+    assert "if selected is None:" in source
+    assert source.index("if selected is None:") < source.index("await queue_db.execute(")
+
+
+def test_admin_portal_exposes_retry_controls_for_all_sync_outboxes():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+
+    assert 'id="retryLifecycleOutbox"' in portal
+    assert 'id="retryEmailIdentityOutbox"' in portal
+    assert 'id="retryBillingMirrorOutbox"' in portal
+    assert 'retrySyncOutbox("billing_mirror",$("retryBillingMirrorOutbox"))' in portal
+    assert 'billing_mirror:"billing mirror"' in portal
+    assert '$("retryBillingMirrorOutbox").disabled=false' in portal
+    assert "if(button.disabled||!key)return;" in portal
+    assert "const requestSessionVersion=adminSessionVersion;" in portal
+    assert 'adminPost("/api/v1/admin/sync-outboxes/retry?"' in portal
+
+
+def test_scan_operations_outbox_diagnostics_include_retry_pressure_and_due_age():
+    route = next(route for route in router.routes if route.path == "/api/v1/admin/scan-operations")
+    source = inspect.getsource(route.endpoint)
+
+    assert '"max_attempts"' in source
+    assert '"oldest_pending_at"' in source
+    assert '"oldest_due_at"' in source
+    assert 'func.max(model.attempts)' in source
+    assert 'model.next_attempt_at <= datetime.now(timezone.utc)' in source
+
+
+def test_admin_portal_displays_outbox_retry_pressure_and_oldest_due_timestamp():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text(encoding="utf-8")
+
+    assert 'label+" max attempts"' in portal
+    assert 'label+" oldest pending"' in portal
+    assert 'label+" oldest due"' in portal
