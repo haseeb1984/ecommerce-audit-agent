@@ -7844,6 +7844,30 @@ async def admin_cancel_subscription(
     }
 
 
+def _merge_admin_customer_directory_candidates(operational_candidates, legacy_candidates):
+    """Merge cross-database customer candidates with deterministic newest-first ordering."""
+    merged = {}
+    for candidate in [*operational_candidates, *legacy_candidates]:
+        email = candidate.email
+        activity_at = candidate.activity_at
+        current = merged.get(email)
+
+        def timestamp(value):
+            if value is None:
+                return float("-inf")
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.timestamp()
+
+        if current is None or timestamp(activity_at) > timestamp(current["activity_at"]):
+            merged[email] = {"email": email, "activity_at": activity_at}
+
+    # Stable two-pass ordering keeps email ascending when activity timestamps tie.
+    candidates = sorted(merged.values(), key=lambda item: item["email"])
+    candidates.sort(key=lambda item: timestamp(item["activity_at"]), reverse=True)
+    return candidates
+
+
 @app.get("/api/v1/admin/customers")
 async def admin_customer_directory(
     request: Request,
@@ -7931,25 +7955,8 @@ async def admin_customer_directory(
         .limit(candidate_limit)
     )).all()
 
-    candidates_by_email = {}
-    for candidate in [*operational_candidates, *legacy_candidates]:
-        current = candidates_by_email.get(candidate.email)
-        activity_at = candidate.activity_at
-        if current is None or (
-            activity_at is not None
-            and (current["activity_at"] is None or activity_at > current["activity_at"])
-        ):
-            candidates_by_email[candidate.email] = {
-                "email": candidate.email,
-                "activity_at": activity_at,
-            }
-    candidate_rows = sorted(
-        candidates_by_email.values(),
-        key=lambda item: (
-            item["activity_at"] or datetime.min.replace(tzinfo=timezone.utc),
-            item["email"],
-        ),
-        reverse=True,
+    candidate_rows = _merge_admin_customer_directory_candidates(
+        operational_candidates, legacy_candidates
     )
     rows = candidate_rows[offset:offset + limit]
     page_emails = [row["email"] for row in rows]
