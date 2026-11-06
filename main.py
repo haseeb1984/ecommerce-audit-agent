@@ -6341,23 +6341,26 @@ async def admin_retry_sync_outbox(
     queue: str = Query(...),
     limit: int = Query(200, ge=1, le=200),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Make a bounded set of pending cross-database sync events eligible for the next worker cycle."""
     _require_admin_key(request)
     from sqlalchemy import select
 
     queue_models = {
-        "customer_lifecycle": CustomerLifecycleSyncOutbox,
-        "customer_email_identity": CustomerEmailIdentitySyncOutbox,
+        "customer_lifecycle": (CustomerLifecycleSyncOutbox, db),
+        "customer_email_identity": (CustomerEmailIdentitySyncOutbox, operational_db),
+        "billing_mirror": (BillingMirrorSyncOutbox, db),
     }
-    model = queue_models.get(queue)
-    if model is None:
+    selected = queue_models.get(queue)
+    if selected is None:
         raise HTTPException(
             status_code=422,
-            detail="Queue must be customer_lifecycle or customer_email_identity.",
+            detail="Queue must be customer_lifecycle, customer_email_identity, or billing_mirror.",
         )
+    model, queue_db = selected
     now = datetime.now(timezone.utc)
-    items = (await db.execute(
+    items = (await queue_db.execute(
         select(model)
         .where(model.status == "pending")
         .order_by(model.next_attempt_at.asc(), model.created_at.asc())
@@ -6366,7 +6369,9 @@ async def admin_retry_sync_outbox(
     )).scalars().all()
     for item in items:
         item.next_attempt_at = now
-    await db.commit()
+    await queue_db.commit()
+    # Keep the admin audit trail in PostgreSQL regardless of which operational
+    # database owns the selected outbox table.
     await _write_admin_log(
         db,
         "sync_outbox.retry_queued",
