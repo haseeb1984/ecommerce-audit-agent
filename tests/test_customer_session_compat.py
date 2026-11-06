@@ -114,3 +114,22 @@ def test_customer_portal_profile_update_accepts_verified_bearer_sessions():
     assert 'if (!credential && !sessionToken)' in handler
     assert 'api("/api/v1/account/profile"' in handler
     assert 'button.disabled = !credential && !sessionToken;' in handler
+
+
+def test_customer_management_actions_accept_verified_bearer_sessions():
+    from pathlib import Path
+
+    portal = Path("customer_portal.html").read_text()
+    assert '$("createApiKey").disabled = (!credential && !sessionToken) || !apiKeyCreationAllowed || atLimit;' in portal
+
+    key_start = portal.index("async function createApiKey()")
+    key_end = portal.index("async function loadDeviceSessions()", key_start)
+    key_handler = portal[key_start:key_end]
+    assert 'if (!credential && !sessionToken)' in key_handler
+    assert 'api("/api/v1/account/api-keys"' in key_handler
+
+    billing_start = portal.index('$("openBillingPortal").addEventListener')
+    billing_end = portal.index('$("loadMoreBillingHistory").addEventListener', billing_start)
+    billing_handler = portal[billing_start:billing_end]
+    assert 'if (!credential && !sessionToken)' in billing_handler
+    assert 'api("/api/v1/account/billing-portal"' in billing_handler
