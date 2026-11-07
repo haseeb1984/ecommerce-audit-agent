@@ -5003,6 +5003,59 @@ async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_
         .limit(1)
     )).scalar_one_or_none()
 
+def _paddle_event_occurred_at(event: dict) -> datetime:
+    """Parse Paddle's provider occurrence time for lifecycle event ordering."""
+    raw = event.get("occurred_at")
+    if raw is None:
+        # Older fixtures/manual replay payloads may omit the field. Live Paddle
+        # notifications include it; use receipt time only as a compatibility fallback.
+        return datetime.now(timezone.utc)
+    if not isinstance(raw, str) or len(raw) > 80:
+        raise HTTPException(status_code=400, detail="Paddle event occurrence time is invalid.")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Paddle event occurrence time is invalid.")
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=400, detail="Paddle event occurrence time must include a timezone.")
+    return parsed.astimezone(timezone.utc)
+
+
+async def _paddle_subscription_event_is_stale(
+    db: AsyncSession, subscription_id: str, occurred_at: datetime
+) -> bool:
+    """Reject out-of-order subscription state notifications before they mutate access."""
+    from sqlalchemy import select
+
+    lifecycle_statuses = {
+        "subscription_paused", "subscription_resumed", "subscription_activated",
+        "subscription_canceled", "subscription_updated_active",
+        "subscription_updated_past_due", "subscription_updated",
+        "subscription_update_unmapped_price", "subscription_past_due",
+    }
+    latest = (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.subscription_id == subscription_id,
+            PaymentWebhookEvent.status.in_(lifecycle_statuses),
+        )
+        .order_by(
+            PaymentWebhookEvent.updated_at.desc(),
+            PaymentWebhookEvent.created_at.desc(),
+            PaymentWebhookEvent.event_id.desc(),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+    if latest is None:
+        return False
+    latest_at = latest.updated_at or latest.created_at
+    if latest_at is None:
+        return False
+    if latest_at.tzinfo is None:
+        latest_at = latest_at.replace(tzinfo=timezone.utc)
+    return occurred_at < latest_at.astimezone(timezone.utc)
+
+
 async def _filter_recovered_billing_attention_events(
     events: list,
     db: AsyncSession,
@@ -5120,6 +5173,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if not event_type or len(event_type) > 120:
         raise HTTPException(status_code=400, detail="Paddle event type is missing or invalid.")
     transaction = event.get("data") or {}
+    occurred_at = _paddle_event_occurred_at(event)
     if not isinstance(transaction, dict):
         raise HTTPException(status_code=400, detail="Paddle event data must be a JSON object.")
 
@@ -5224,6 +5278,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription lifecycle event has no subscription ID.")
         from sqlalchemy import select
         await _lock_paddle_webhook_resource(db, subscription_id)
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+            return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -5272,8 +5328,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             recipient_email=linked_event.recipient_email,
             subscription_id=subscription_id,
             paddle_customer_id=linked_event.paddle_customer_id,
-            created_at=now,
-            updated_at=now,
+            created_at=occurred_at,
+            updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
@@ -5291,6 +5347,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # Serialize lifecycle transitions for this subscription. The advisory lock
         # is transaction-scoped and avoids a late renewal racing a cancellation.
         await _lock_paddle_webhook_resource(db, subscription_id)
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+            return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate_cancellation = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -5319,8 +5377,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             recipient_email=linked_event.recipient_email,
             subscription_id=subscription_id,
             paddle_customer_id=linked_event.paddle_customer_id,
-            created_at=now,
-            updated_at=now,
+            created_at=occurred_at,
+            updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
@@ -5337,6 +5395,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription update has no subscription ID.")
         from sqlalchemy import select
         await _lock_paddle_webhook_resource(db, subscription_id)
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+            return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -5422,7 +5482,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             event_id=event_id, status=event_status, license_id=license_obj.id,
             recipient_email=linked_event.recipient_email, subscription_id=subscription_id,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
-            created_at=now, updated_at=now,
+            created_at=occurred_at, updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
