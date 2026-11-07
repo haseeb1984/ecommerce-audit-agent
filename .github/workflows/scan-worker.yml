@@ -14,13 +14,12 @@ concurrency:
 
 jobs:
   process-scan-queue:
-    # Scheduled invocations remain idle until the deployment endpoint is configured.
-    # Once configured, a missing CRON_SECRET still fails visibly in the step below.
-    if: ${{ vars.SCAN_WORKER_URL != '' }}
+    # Always start the job: missing deployment configuration must fail visibly
+    # instead of silently skipping every scheduled invocation.
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      - name: Invoke protected scan worker
+      - name: Validate worker configuration
         env:
           SCAN_WORKER_URL: ${{ vars.SCAN_WORKER_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -38,6 +37,13 @@ jobs:
             https://*) ;;
             *) echo "SCAN_WORKER_URL must use HTTPS." >&2; exit 1 ;;
           esac
+
+      - name: Invoke protected scan worker
+        env:
+          SCAN_WORKER_URL: ${{ vars.SCAN_WORKER_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
           curl --silent --show-error --fail-with-body \
             --connect-timeout 10 --max-time 150 \
             --retry 2 --retry-all-errors --retry-delay 5 \
