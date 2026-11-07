@@ -67,10 +67,27 @@ async def run_worker() -> None:
             result = await process_scan_queue(max_jobs=max_jobs)
             claimed = int(result.get("claimed_slots", 0) or 0)
             processed = int(result.get("processed", 0) or 0)
+            lifecycle = result.get("customer_lifecycle_sync") or {}
+            identity = result.get("customer_email_identity_sync") or {}
+            billing = result.get("billing_mirror_sync") or {}
+            cleanup = result.get("authentication_cleanup") or {}
             logger.info(
-                "Worker cycle complete (claimed=%s, processed=%s)",
+                "Worker cycle complete "
+                "(claimed=%s, processed=%s, "
+                "lifecycle_processed=%s, lifecycle_deferred=%s, "
+                "identity_processed=%s, identity_deferred=%s, "
+                "billing_processed=%s, billing_deferred=%s, billing_discarded=%s, "
+                "auth_cleanup_status=%s)",
                 claimed,
                 processed,
+                int(lifecycle.get("processed", 0) or 0),
+                int(lifecycle.get("deferred", 0) or 0),
+                int(identity.get("processed", 0) or 0),
+                int(identity.get("deferred", 0) or 0),
+                int(billing.get("processed", 0) or 0),
+                int(billing.get("deferred", 0) or 0),
+                int(billing.get("discarded", 0) or 0),
+                cleanup.get("status", "unknown"),
             )
             delay = 1 if claimed else poll_seconds
         except Exception as exc:
