@@ -182,3 +182,24 @@ def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constrain
         "Fresh Hostinger schema is missing ORM index/unique coverage: "
         f"{missing}"
     )
+
+
+def test_support_note_migration_refuses_ambiguous_email_to_license_mapping():
+    from types import SimpleNamespace
+
+    from scripts.migrate_operational_data_to_hostinger import _billing_license_map
+
+    billing_rows = [
+        SimpleNamespace(recipient_email=" Shared@Example.com ", license_id=1),
+        SimpleNamespace(recipient_email="shared@example.com", license_id=2),
+        SimpleNamespace(recipient_email="single@example.com", license_id=3),
+        SimpleNamespace(recipient_email="orphan@example.com", license_id=None),
+    ]
+
+    resolved, ambiguous = _billing_license_map(
+        billing_rows,
+        {1: "license-one", 2: "license-two", 3: "license-three"},
+    )
+
+    assert resolved == {"single@example.com": "license-three"}
+    assert ambiguous == {"shared@example.com"}
