@@ -4285,6 +4285,22 @@ async def test_paddle_older_subscription_resume_cannot_override_newer_pause(clie
     assert delayed_resume.status_code == 200
     assert delayed_resume.json()["status"] == "ignored_stale_subscription_event"
 
+    renewal = await send({
+        "event_id": "evt_ordering_renewal",
+        "event_type": "transaction.completed",
+        "occurred_at": "2026-11-07T11:00:00Z",
+        "data": {
+            "id": "txn_ordering_renewal",
+            "subscription_id": "sub_ordering123",
+            "status": "completed",
+            "customer_id": "ctm_ordering123",
+            "customer": {"email": "ordering-buyer@example.com", "name": "Ordering Buyer"},
+            "items": [{"price": {"id": "pri_ordering123"}, "quantity": 1}],
+        },
+    })
+    assert renewal.status_code == 200
+    assert renewal.json()["status"] == "subscription_renewed"
+
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(
             select(SoftwareLicense).where(
