@@ -208,41 +208,17 @@ async def test_legacy_worker_route_rejects_invalid_scheduler_secret(monkeypatch)
 def test_worker_cycle_logs_outbox_reconciliation_counters(caplog):
     import logging
 
-    from worker_service import logger
+    from worker_service import _log_worker_cycle
 
     result = {
-        "claimed_slots": 0,
-        "processed": 0,
         "customer_lifecycle_sync": {"processed": 2, "deferred": 1},
         "customer_email_identity_sync": {"processed": 3, "deferred": 0},
         "billing_mirror_sync": {"processed": 4, "deferred": 2, "discarded": 1},
         "authentication_cleanup": {"status": "deferred"},
     }
 
-    lifecycle = result["customer_lifecycle_sync"]
-    identity = result["customer_email_identity_sync"]
-    billing = result["billing_mirror_sync"]
-    cleanup = result["authentication_cleanup"]
-
     with caplog.at_level(logging.INFO, logger="worker_service"):
-        logger.info(
-            "Worker cycle complete "
-            "(claimed=%s, processed=%s, "
-            "lifecycle_processed=%s, lifecycle_deferred=%s, "
-            "identity_processed=%s, identity_deferred=%s, "
-            "billing_processed=%s, billing_deferred=%s, billing_discarded=%s, "
-            "auth_cleanup_status=%s)",
-            result["claimed_slots"],
-            result["processed"],
-            lifecycle["processed"],
-            lifecycle["deferred"],
-            identity["processed"],
-            identity["deferred"],
-            billing["processed"],
-            billing["deferred"],
-            billing["discarded"],
-            cleanup["status"],
-        )
+        _log_worker_cycle(result, claimed=0, processed=0)
 
     assert "lifecycle_deferred=1" in caplog.text
     assert "identity_processed=3" in caplog.text
