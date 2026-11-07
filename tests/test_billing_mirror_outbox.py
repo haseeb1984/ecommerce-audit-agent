@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from scan_worker import _billing_mirror_source_event_query, _mark_billing_mirror_outbox_completed
-from models import PaymentWebhookEvent
 from sqlalchemy.dialects import postgresql
 
 
