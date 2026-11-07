@@ -279,6 +279,32 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
                 source_url,
             ))
 
+
+    # CORS is reviewed from the observed response only. A wildcard origin paired
+    # with credentials is rejected by browsers for credentialed requests, but is
+    # still a configuration signal worth reviewing; a literal null origin can be
+    # intentional for sandboxed integrations and is never labelled exploitable.
+    allow_origin = next((str(value).strip() for key, value in headers.items()
+                         if str(key).lower() == "access-control-allow-origin"), "")
+    allow_credentials = next((str(value).strip().lower() for key, value in headers.items()
+                              if str(key).lower() == "access-control-allow-credentials"), "")
+    cors_review = []
+    if allow_origin == "*" and allow_credentials == "true":
+        cors_review.append("Access-Control-Allow-Origin is wildcard while Access-Control-Allow-Credentials is true")
+    if allow_origin.lower() == "null" and allow_credentials == "true":
+        cors_review.append("the response trusts the opaque null origin for credentialed requests")
+    if cors_review:
+        findings.append(_finding(
+            "security_cors", "Cross-origin access policy needs review",
+            "manual_review_required", "low",
+            "Observed CORS response signals: " + "; ".join(cors_review) +
+            ". The request Origin and browser enforcement behavior were not independently tested.",
+            "CORS controls which browser origins may read cross-origin responses. These response-header combinations require context and do not by themselves prove that sensitive data is exposed; browsers reject wildcard origins for credentialed requests.",
+            "Review the intended trusted origins and credential requirements. Return an explicit allowlist origin only after validating it against the request Origin, use credentials only where required, and avoid trusting the opaque null origin unless a documented integration requires it.",
+            ["Test with controlled trusted and untrusted Origin values in a staging environment.", "Verify that sensitive endpoints enforce authentication and authorization independently of CORS."],
+            source_url,
+        ))
+
     hsts = headers.get("strict-transport-security", "").lower()
     max_age = re.search(r"(?:^|;)\s*max-age\s*=\s*(\d+)", hsts)
     if hsts and (not max_age or int(max_age.group(1)) < 15552000):

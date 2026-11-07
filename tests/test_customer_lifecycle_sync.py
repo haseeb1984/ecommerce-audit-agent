@@ -38,3 +38,18 @@ def test_email_identity_update_is_scoped_to_license_and_normalizes_old_email():
     assert 42 in compiled.params.values()
     assert "old.customer@example.com" in compiled.params.values()
     assert "New.Customer@Example.com" in compiled.params.values()
+
+def test_delayed_explicit_session_revocation_is_bounded_to_sessions_existing_at_request_time():
+    from pathlib import Path
+    import inspect
+    import main
+    import scan_worker
+
+    worker_source = inspect.getsource(scan_worker.reconcile_customer_lifecycle_outbox)
+    admin_source = inspect.getsource(main.admin_customer_account_action)
+
+    assert 'action == "revoke_sessions"' in worker_source
+    revoke_branch = worker_source[worker_source.index('action == "revoke_sessions"'):]
+    assert "CustomerSession.created_at <= event.created_at" in revoke_branch
+    assert "CustomerSession.created_at <= now" in admin_source
+

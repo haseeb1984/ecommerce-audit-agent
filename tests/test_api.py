@@ -4227,3 +4227,92 @@ async def test_agency_wordpress_connection_token_is_single_use_and_site_credenti
         assert site.status == "disconnected"
         assert site.disconnected_at is not None
         assert site.site_token_hash is None
+
+
+@pytest.mark.asyncio
+async def test_paddle_older_subscription_resume_cannot_override_newer_pause(client, monkeypatch):
+    secret = "paddle-test-webhook-ordering-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sandbox_test_key")
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_ordering123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM", "reports@example.com")
+    monkeypatch.setattr(main, "_send_license_email", lambda *args: None)
+
+    async def send(event):
+        body = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signature = hmac.new(
+            secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+        ).hexdigest()
+        return await client.post(
+            "/api/v1/billing/paddle-webhook",
+            content=body,
+            headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+        )
+
+    purchase = {
+        "event_id": "evt_ordering_purchase",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_ordering123",
+            "subscription_id": "sub_ordering123",
+            "status": "completed",
+            "custom_data": {"license_tier": "starter"},
+            "customer_id": "ctm_ordering123",
+            "customer": {"email": "ordering-buyer@example.com", "name": "Ordering Buyer"},
+            "items": [{"price": {"id": "pri_ordering123"}, "quantity": 1}],
+        },
+    }
+    assert (await send(purchase)).status_code == 200
+
+    paused = await send({
+        "event_id": "evt_ordering_pause",
+        "event_type": "subscription.paused",
+        "occurred_at": "2026-11-07T10:00:00Z",
+        "data": {"id": "sub_ordering123"},
+    })
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "subscription_paused"
+
+    delayed_resume = await send({
+        "event_id": "evt_ordering_delayed_resume",
+        "event_type": "subscription.resumed",
+        "occurred_at": "2026-11-07T09:00:00Z",
+        "data": {"id": "sub_ordering123"},
+    })
+    assert delayed_resume.status_code == 200
+    assert delayed_resume.json()["status"] == "ignored_stale_subscription_event"
+
+    renewal = await send({
+        "event_id": "evt_ordering_renewal",
+        "event_type": "transaction.completed",
+        "occurred_at": "2026-11-07T11:00:00Z",
+        "data": {
+            "id": "txn_ordering_renewal",
+            "subscription_id": "sub_ordering123",
+            "status": "completed",
+            "customer_id": "ctm_ordering123",
+            "customer": {"email": "ordering-buyer@example.com", "name": "Ordering Buyer"},
+            "items": [{"price": {"id": "pri_ordering123"}, "quantity": 1}],
+        },
+    })
+    assert renewal.status_code == 200
+    assert renewal.json()["status"] == "subscription_renewed"
+
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(
+                SoftwareLicense.client_name == "Ordering Buyer"
+            )
+        )).scalar_one()
+        assert license_obj.is_active is False
+        pause_event = (await db.execute(
+            select(PaymentWebhookEvent).where(
+                PaymentWebhookEvent.event_id == "evt_ordering_pause"
+            )
+        )).scalar_one()
+        assert pause_event.updated_at.replace(tzinfo=timezone.utc) == datetime(
+            2026, 11, 7, 10, 0, tzinfo=timezone.utc
+        )

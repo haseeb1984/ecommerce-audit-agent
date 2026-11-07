@@ -621,3 +621,67 @@ def test_git_config_exposure_ignores_generic_text_without_required_structure():
             "/.git/config", 200, body, {"content-type": "text/plain"},
             "https://shop.example/.git/config",
         ) == []
+
+def test_cors_wildcard_with_credentials_is_low_severity_review_signal():
+    from security_checks import inspect_security_header_quality
+
+    findings = inspect_security_header_quality(
+        {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+        },
+        "https://shop.example/",
+    )
+    cors = next(item for item in findings if item.category == "security_cors")
+    assert cors.status == "manual_review_required"
+    assert cors.severity == "low"
+    assert "wildcard" in cors.evidence
+    assert "not independently tested" in cors.evidence
+
+
+def test_cors_null_origin_with_credentials_is_review_signal_not_confirmed_vulnerability():
+    from security_checks import inspect_security_header_quality
+
+    findings = inspect_security_header_quality(
+        {
+            "access-control-allow-origin": "null",
+            "access-control-allow-credentials": "true",
+        },
+        "https://shop.example/",
+    )
+    cors = next(item for item in findings if item.category == "security_cors")
+    assert cors.status == "manual_review_required"
+    assert cors.severity == "low"
+    assert "null origin" in cors.evidence
+
+
+def test_cors_explicit_origin_or_wildcard_without_credentials_has_no_cors_finding():
+    from security_checks import inspect_security_header_quality
+
+    for headers in (
+        {"access-control-allow-origin": "https://partner.example", "access-control-allow-credentials": "true"},
+        {"access-control-allow-origin": "*", "access-control-allow-credentials": "false"},
+        {"access-control-allow-origin": "*"},
+    ):
+        findings = inspect_security_header_quality(headers, "https://shop.example/")
+        assert not any(item.category == "security_cors" for item in findings)
+
+
+def test_security_findings_reference_owasp_top_10_2025_as_awareness_taxonomy():
+    from audit_checks import _finding
+
+    for category in ("security", "security_cors", "security_headers", "security_exposure"):
+        finding = _finding(
+            category=category,
+            title="Passive security configuration review",
+            status="manual_review_required",
+            severity="low",
+            evidence="Response headers require context.",
+            explanation="Passive review only.",
+            recommendation="Review the control.",
+            steps=["Verify in staging."],
+            source_url="https://shop.example/",
+        )
+        assert any("OWASP Top 10:2025" in item for item in finding.standard_references)
+        assert "https://owasp.org/Top10/2025/" in finding.standard_references
+        assert any("not a complete vulnerability test" in item for item in finding.standard_references)

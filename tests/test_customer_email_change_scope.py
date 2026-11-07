@@ -87,3 +87,23 @@ def test_email_change_throttle_model_schema_and_forward_migration_align():
     for source in (schema, migration):
         assert "CREATE TABLE IF NOT EXISTS customer_email_change_throttles" in source
         assert "license_key VARCHAR(100) NOT NULL PRIMARY KEY" in source
+
+def test_email_change_revokes_only_sessions_existing_at_verification_time():
+    from datetime import datetime, timezone
+    from main import _customer_email_change_operational_updates
+
+    cutoff = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
+    statements = _customer_email_change_operational_updates(
+        license_key="license-customer-a",
+        old_email="old@example.com",
+        new_email="new@example.com",
+        current_token_hash="current-session",
+        now=cutoff,
+    )
+    session_update = next(
+        statement for statement in statements
+        if statement.table.name == "customer_sessions"
+    )
+    compiled = session_update.compile()
+    assert "customer_sessions.created_at" in str(session_update).lower()
+    assert cutoff in compiled.params.values()

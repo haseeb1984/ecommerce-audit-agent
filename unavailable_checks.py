@@ -13,6 +13,16 @@ from audit_checks import CheckOutcome
 
 UNAVAILABLE_CHECKS: tuple[tuple[str, str, str], ...] = (
     (
+        "content.visible_text_volume",
+        "content_quality",
+        "Visible-text volume was not assessed because no bounded HTML page completed successfully.",
+    ),
+    (
+        "content.exact_duplicate_copy",
+        "content_quality",
+        "Exact visible-text duplication was not assessed because no bounded HTML page completed successfully.",
+    ),
+    (
         "crawl.javascript_rendered_dom",
         "crawlability",
         "A controlled browser did not complete a rendered DOM inspection for this run.",
@@ -147,6 +157,6 @@ def append_unavailable_check_outcomes(result: Any, *, browser_audit_completed: b
         added += 1
     if added:
         result.limitations.append(
-            "Several verification methods are explicitly not assessed in this deployment: rendered-browser diagnostics, manual WCAG review, owner-authorized Google Search Console data, external backlink/competitor datasets, authorized checkout testing, consent-dependent event verification, and active security testing. See the per-check outcome records for exact boundaries."
+            "Several verification methods are explicitly not assessed in this deployment: content-volume/duplicate-copy review when no page was fetched, rendered-browser diagnostics, manual WCAG review, owner-authorized Google Search Console data, external backlink/competitor datasets, authorized checkout testing, consent-dependent event verification, and active security testing. See the per-check outcome records for exact boundaries."
         )
     return added

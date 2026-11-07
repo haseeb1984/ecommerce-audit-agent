@@ -49,6 +49,7 @@ from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, Au
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, get_customer_session_credentials
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
+from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
 from report_generator import render_audit_pdf
 from crawl_checks import run_bounded_site_crawl
 from conversion_checks import run_conversion_paid_traffic_checks
@@ -153,6 +154,10 @@ class AgencyTeamInviteCreate(BaseModel):
     email: str = Field(..., min_length=3, max_length=254)
     role: str = Field(default="analyst", pattern="^(admin|analyst|viewer)$")
     workspace_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
+class AgencyTeamMemberRoleUpdate(BaseModel):
+    role: str = Field(..., pattern="^(admin|analyst|viewer)$")
 
 
 class AgencyWorkspaceAccessUpdate(BaseModel):
@@ -609,6 +614,7 @@ async def comprehensive_audit_pdf(
             "pagespeed": "not_started",
             "bounded_crawl": "not_started",
             "conversion_paid_traffic": "not_started",
+            "browser_rendered": "not_started",
         }
         reservation_id, reserved_at = await reserve_audit_slot(db, license_id)
 
@@ -739,6 +745,64 @@ async def comprehensive_audit_pdf(
             result.limitations.append(
                 f"Conversion and paid-traffic checks are unavailable for this run ({type(conversion_exc).__name__}); other completed checks are retained."
             )
+
+        # Rendered browser diagnostics are an independent audit family. They run
+        # only through the isolated, signed browser service; unavailable browser
+        # infrastructure must not discard valid static/crawl findings.
+        browser_audit_completed = False
+        module_statuses["browser_rendered"] = "running"
+        try:
+            browser_result = await run_browser_audit(target_url)
+            browser_findings = browser_result.get("findings", [])
+            browser_outcomes = browser_result.get("check_outcomes", [])
+            if not isinstance(browser_findings, list) or not isinstance(browser_outcomes, list):
+                raise BrowserAuditUnavailable("Browser service returned invalid finding data")
+            result.findings.extend(AuditFinding(**item) for item in browser_findings)
+            result.check_outcomes.extend(CheckOutcome(**item) for item in browser_outcomes)
+            browser_summary = browser_result.get("summary")
+            if not isinstance(browser_summary, dict):
+                browser_summary = {}
+            rendered_pages = browser_summary.get("rendered_pages", [])
+            browser_audit_completed = (
+                isinstance(rendered_pages, list)
+                and bool(rendered_pages)
+                and not bool(browser_summary.get("navigation_error"))
+            )
+            if isinstance(rendered_pages, list):
+                safe_rendered_pages = [
+                    _safe_audit_metadata_url(url)
+                    for url in rendered_pages
+                    if isinstance(url, str)
+                ]
+                result.pages_checked = list(dict.fromkeys([
+                    *result.pages_checked, *(url for url in safe_rendered_pages if url)
+                ]))
+            if browser_audit_completed:
+                module_statuses["browser_rendered"] = "completed"
+                viewports = browser_summary.get("viewports", [])
+                viewport_text = ", ".join(str(width) for width in viewports) if isinstance(viewports, list) else "configured"
+                result.limitations.append(
+                    "Rendered-browser diagnostics completed through the isolated browser service at viewport widths "
+                    + viewport_text
+                    + "px. Browser screenshots are not persisted because durable evidence storage is not configured; "
+                    "Core Web Vitals field data and INP are not measured by this browser worker."
+                )
+            else:
+                module_statuses["browser_rendered"] = "partial"
+                result.limitations.append(
+                    "The isolated browser service responded but could not complete page navigation; rendered DOM and viewport checks remain not assessed."
+                )
+        except BrowserAuditUnavailable as browser_exc:
+            module_statuses["browser_rendered"] = "unavailable"
+            result.limitations.append(
+                f"Rendered-browser diagnostics were not assessed ({str(browser_exc)}); static HTML signals do not establish rendered mobile behavior."
+            )
+        except Exception as browser_exc:
+            module_statuses["browser_rendered"] = "error"
+            result.limitations.append(
+                f"Rendered-browser diagnostics failed safely ({type(browser_exc).__name__}); no browser pass is inferred."
+            )
+
         performance_completed = metrics is not None
         if metrics is not None:
             # PageSpeed successfully returned a lab result. Record an explicit
@@ -884,7 +948,7 @@ async def comprehensive_audit_pdf(
             ))
         # Explicitly disclose verification modes unavailable in this deployment; absence of
         # browser/authorized/external data must never read as a pass.
-        append_unavailable_check_outcomes(result)
+        append_unavailable_check_outcomes(result, browser_audit_completed=browser_audit_completed)
 
         # Convert each emitted finding into a durable explicit outcome record. This
         # records observed issues/review-needed/not-assessed states only; absence of a
@@ -980,7 +1044,7 @@ async def comprehensive_audit_pdf(
                 },
                 "measurement_context": {
                     "performance": "PageSpeed Insights lab metrics and any provider-returned field data are reported separately; absent field data is not inferred.",
-                    "rendered_browser": "Not available in this server-side audit path unless explicitly recorded by a checker outcome.",
+                    "rendered_browser": "The isolated signed Playwright service is invoked when configured; only returned viewport and lab observations are reported. Field Core Web Vitals and INP are not measured.",
                     "authorization": "Only unauthenticated public checks are attempted by default.",
                 },
             },
@@ -1356,6 +1420,7 @@ def _customer_email_change_operational_updates(
             CustomerSession.license_key == license_key,
             CustomerSession.email == old_email,
             CustomerSession.token_hash != current_token_hash,
+            CustomerSession.created_at <= now,
             CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now),
     )
@@ -1704,6 +1769,7 @@ async def revoke_other_customer_sessions(
     result = await operational_db.execute(update(CustomerSession).where(
         CustomerSession.email == current.email,
         CustomerSession.token_hash != digest,
+        CustomerSession.created_at <= now,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
@@ -1732,6 +1798,7 @@ async def logout_all_account_sessions(
     now = datetime.now(timezone.utc)
     result = await operational_db.execute(update(CustomerSession).where(
         CustomerSession.email == current.email,
+        CustomerSession.created_at <= now,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
@@ -2101,8 +2168,12 @@ async def create_or_get_business_agency(
     )
     if account is None:
         raise HTTPException(status_code=409, detail="Complete verified customer account sign-in before creating an agency.")
+    # Serialize workspace creation with agency suspension and other lifecycle
+    # mutations. The agency row is always the first lock in this workflow.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is not None and agency.status != "active":
         raise HTTPException(status_code=403, detail="This Business agency has been suspended by the platform administrator.")
@@ -2138,30 +2209,44 @@ async def require_agency_team_session(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Authenticate an accepted agency teammate without exposing the owner's license key."""
+    """Authenticate an accepted agency teammate while serializing access revocation."""
     from sqlalchemy import select
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Agency team sign-in is required.")
     token_hash = hashlib.sha256(credentials.credentials.encode("utf-8")).hexdigest()
     now = datetime.now(timezone.utc)
-    session = await operational_db.scalar(select(AgencyTeamSession).where(
+    # Resolve identifiers without locks, then serialize every authorization check
+    # with suspension and member revocation. The shared order is agency -> member
+    # -> session, matching the write paths that revoke sessions.
+    candidate = await operational_db.scalar(select(AgencyTeamSession).where(
         AgencyTeamSession.token_hash == token_hash,
         AgencyTeamSession.revoked_at.is_(None),
         AgencyTeamSession.expires_at > now,
     ))
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Agency team session is invalid or expired.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == candidate.agency_id,
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == candidate.team_member_id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
+    session = await operational_db.scalar(select(AgencyTeamSession).where(
+        AgencyTeamSession.id == candidate.id,
+        AgencyTeamSession.token_hash == token_hash,
+        AgencyTeamSession.agency_id == agency.id,
+        AgencyTeamSession.team_member_id == member.id,
+        AgencyTeamSession.revoked_at.is_(None),
+        AgencyTeamSession.expires_at > datetime.now(timezone.utc),
+    ).with_for_update())
     if session is None:
         raise HTTPException(status_code=401, detail="Agency team session is invalid or expired.")
-    member = await operational_db.scalar(select(AgencyTeamMember).where(
-        AgencyTeamMember.id == session.team_member_id,
-        AgencyTeamMember.agency_id == session.agency_id,
-        AgencyTeamMember.status == "active",
-    ))
-    agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == session.agency_id,
-        AgencyAccount.status == "active",
-    ))
-    if member is None or agency is None:
-        raise HTTPException(status_code=403, detail="Agency team access is no longer active.")
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
     ))
@@ -2181,10 +2266,12 @@ async def get_business_agency_usage(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency usage reporting is available on the Business plan.")
     from sqlalchemy import select, func as sql_func
+    # Keep the same agency -> member -> grant lock order as grant creation
+    # and member revocation so access cannot be re-added during a revoke.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key,
         AgencyAccount.status == "active",
-    ))
+    ).with_for_update())
     if agency is None:
         raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
     now = datetime.now(timezone.utc)
@@ -2310,28 +2397,37 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website management is available on the Business plan.")
     from sqlalchemy import select
+    # Serialize with workspace archival, agency suspension and token issuance.
+    # The shared lifecycle lock order is agency -> workspace -> website -> challenge.
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.owner_license_key == license_obj.license_key,
-        AgencyAccount.status == "active",
-    ))
-    if agency is None:
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ).with_for_update())
+    if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active Business agency workspace not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ).with_for_update())
+    if workspace is None or workspace.status != "active":
+        raise HTTPException(status_code=404, detail="Active client workspace not found.")
     site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
-        AgencyClientWebsite.workspace_id == workspace_id,
+        AgencyClientWebsite.workspace_id == workspace.id,
         AgencyClientWebsite.status == "active",
     ).with_for_update())
     if site is None:
         raise HTTPException(status_code=404, detail="Active client website connection not found.")
+    now = datetime.now(timezone.utc)
     site.status = "disconnected"
-    site.disconnected_at = datetime.now(timezone.utc)
+    site.disconnected_at = now
     site.site_token_hash = None
-    from sqlalchemy import update
-    await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+    challenges = (await operational_db.execute(select(AgencyWebsiteConnectChallenge).where(
         AgencyWebsiteConnectChallenge.agency_id == agency.id,
-        AgencyWebsiteConnectChallenge.workspace_id == workspace_id,
+        AgencyWebsiteConnectChallenge.workspace_id == workspace.id,
         AgencyWebsiteConnectChallenge.consumed_at.is_(None),
-    ).values(consumed_at=datetime.now(timezone.utc)))
+    ).with_for_update())).scalars().all()
+    for challenge in challenges:
+        challenge.consumed_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"status": "disconnected", "site_id": site.id}
@@ -2529,22 +2625,38 @@ async def get_agency_wordpress_site_status(request: Request, response: Response,
     if len(raw_token) < 32 or len(raw_token) > 200:
         raise HTTPException(status_code=401, detail="Agency site authentication is required.")
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+    # Resolve the credential first, then serialize the heartbeat with suspension,
+    # workspace archival and disconnect using agency -> workspace -> website locks.
+    candidate = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.site_token_hash == token_hash,
         AgencyClientWebsite.status == "active",
     ))
-    if site is None:
+    if candidate is None:
         raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == site.agency_id, AgencyAccount.status == "active"
-    ))
+        AgencyAccount.id == candidate.agency_id,
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
-        AgencyClientWorkspace.id == site.workspace_id, AgencyClientWorkspace.status == "active"
-    ))
+        AgencyClientWorkspace.id == candidate.workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ).with_for_update())
+    if workspace is None or workspace.status != "active":
+        raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
+    site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.id == candidate.id,
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace.id,
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ).with_for_update())
+    if site is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection is no longer active.")
     owner_license = await db.scalar(select(SoftwareLicense).where(
         SoftwareLicense.license_key == agency.owner_license_key
-    )) if agency else None
-    if agency is None or workspace is None or not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
+    ))
+    if not _license_is_current(owner_license) or not plan_features(owner_license.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency Business subscription or client workspace is inactive.")
     site.last_seen_at = datetime.now(timezone.utc)
     await operational_db.commit()
@@ -2587,22 +2699,30 @@ async def request_agency_team_login(payload: AgencyTeamLoginRequest, response: R
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
     generic = {"status": "accepted", "message": "If an active agency team account exists, a sign-in code will be sent."}
-    # Lock the selected active membership while checking and issuing the email cooldown.
-    # Concurrent requests for the same email resolve to this same latest membership,
-    # so the second request waits and then observes the first request's committed challenge.
-    member = await operational_db.scalar(select(AgencyTeamMember).where(
+    # Resolve the selected membership without locking, then acquire locks in the
+    # global agency -> member order used by suspension and member revocation.
+    candidate = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.normalized_email == email,
         AgencyTeamMember.status == "active",
-    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1).with_for_update())
-    if member is None:
+    ).order_by(AgencyTeamMember.accepted_at.desc()).limit(1))
+    if candidate is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
-    # Serialize code issuance with administrator suspension so no fresh challenge
-    # can be inserted after the suspension transaction has revoked outstanding codes.
+    # Serialize code issuance with administrator suspension before locking the
+    # membership. This avoids member -> agency lock inversion with suspension.
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.id == member.agency_id, AgencyAccount.status == "active"
+        AgencyAccount.id == candidate.agency_id
     ).with_for_update())
-    if agency is None:
+    if agency is None or agency.status != "active":
+        response.headers["Cache-Control"] = "no-store, private"
+        return generic
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == candidate.id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.normalized_email == email,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
         response.headers["Cache-Control"] = "no-store, private"
         return generic
     owner_license = await db.scalar(select(SoftwareLicense).where(
@@ -2760,20 +2880,22 @@ async def list_agency_team_workspace_audit_results(
 ):
     """Return structured audit evidence only within a teammate's explicitly granted workspace."""
     from sqlalchemy import select
-    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
-        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
-        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
-        AgencyWorkspaceAccess.workspace_id == workspace_id,
-    ))
-    if grant is None:
-        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
+    # The session dependency already holds agency/member locks. Continue in the
+    # shared lifecycle order: workspace -> grant, matching grant revocation.
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
         AgencyClientWorkspace.id == workspace_id,
         AgencyClientWorkspace.agency_id == identity["agency"].id,
         AgencyClientWorkspace.status == "active",
-    ))
+    ).with_for_update())
     if workspace is None:
         raise HTTPException(status_code=404, detail="Active client workspace not found.")
+    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+        AgencyWorkspaceAccess.workspace_id == workspace.id,
+    ).with_for_update())
+    if grant is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
     statement = select(WebsiteScanJob, WebsiteScanResult).join(
         ScanBatch, ScanBatch.id == WebsiteScanJob.batch_id
     ).outerjoin(WebsiteScanResult, WebsiteScanResult.job_id == WebsiteScanJob.id).where(
@@ -2840,22 +2962,25 @@ async def list_agency_team_workspace_audits(workspace_id: str, response: Respons
                                             operational_db: AsyncSession = Depends(get_hostinger_db)):
     """List only audit batches in workspaces explicitly granted to the signed-in teammate."""
     from sqlalchemy import select
-    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
-        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
-        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
-        AgencyWorkspaceAccess.workspace_id == workspace_id,
-    ))
-    if grant is None:
-        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
+    # The session dependency already holds agency/member locks. Continue in the
+    # shared lifecycle order: workspace -> grant, matching grant revocation.
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
         AgencyClientWorkspace.id == workspace_id,
         AgencyClientWorkspace.agency_id == identity["agency"].id,
         AgencyClientWorkspace.status == "active",
-    ))
+    ).with_for_update())
     if workspace is None:
         raise HTTPException(status_code=404, detail="Client workspace not found.")
+    grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+        AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+        AgencyWorkspaceAccess.workspace_id == workspace.id,
+    ).with_for_update())
+    if grant is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
     batches = (await operational_db.execute(select(ScanBatch).where(
-        ScanBatch.workspace_id == workspace.id
+        ScanBatch.license_key == identity["agency"].owner_license_key,
+        ScanBatch.workspace_id == workspace.id,
     ).order_by(ScanBatch.created_at.desc(), ScanBatch.batch_number.desc()).offset(offset).limit(limit))).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -2883,28 +3008,30 @@ async def submit_agency_team_workspace_scans(
     from scan_api import _normalize_bulk_target, _validate_single_site_submission
     from scan_queue import enqueue_scan_request
 
+    # Continue the session dependency's agency -> member locks with
+    # workspace -> grant -> site, matching owner disconnect and grant revocation.
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == identity["agency"].id,
+        AgencyClientWorkspace.status == "active",
+    ).with_for_update())
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace not found.")
     grant = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
         AgencyWorkspaceAccess.agency_id == identity["agency"].id,
         AgencyWorkspaceAccess.team_member_id == identity["member"].id,
-        AgencyWorkspaceAccess.workspace_id == workspace_id,
-    ))
+        AgencyWorkspaceAccess.workspace_id == workspace.id,
+    ).with_for_update())
     if grant is None:
         raise HTTPException(status_code=403, detail="You do not have access to this client workspace.")
     if grant.role not in {"admin", "analyst"}:
         raise HTTPException(status_code=403, detail="Your workspace role is read-only and cannot submit audits.")
 
-    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
-        AgencyClientWorkspace.id == workspace_id,
-        AgencyClientWorkspace.agency_id == identity["agency"].id,
-        AgencyClientWorkspace.status == "active",
-    ))
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Active client workspace not found.")
     site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == identity["agency"].id,
         AgencyClientWebsite.workspace_id == workspace.id,
         AgencyClientWebsite.status == "active",
-    ))
+    ).with_for_update())
     if site is None:
         raise HTTPException(status_code=409, detail="Connect and verify this client's WordPress website before submitting audits.")
 
@@ -3275,6 +3402,45 @@ async def accept_business_agency_invitation(
             "role": member.role, "message": "Invitation accepted. Team-member sign-in is the next access-control step."}
 
 
+@app.put("/api/v1/account/agency/team/{member_id}")
+async def update_business_agency_team_member_role(
+    member_id: str,
+    payload: AgencyTeamMemberRoleUpdate,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Update a member's agency role while preserving explicitly customized workspace roles."""
+    if not plan_features(license_obj.tier)["agency_management"]:
+        raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
+    from sqlalchemy import select, update
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ).with_for_update())
+    if agency is None or agency.status != "active":
+        raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == member_id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=404, detail="Active team member was not found.")
+    previous_role = member.role
+    member.role = payload.role
+    # Grants that still match the former agency role follow the new role.
+    # Deliberate per-workspace overrides remain untouched.
+    await operational_db.execute(update(AgencyWorkspaceAccess).where(
+        AgencyWorkspaceAccess.agency_id == agency.id,
+        AgencyWorkspaceAccess.team_member_id == member.id,
+        AgencyWorkspaceAccess.role == previous_role,
+    ).values(role=payload.role))
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"status": "updated", "member_id": member.id, "role": member.role}
+
+
 @app.put("/api/v1/account/agency/team/{member_id}/workspaces/{workspace_id}")
 async def set_business_agency_team_workspace_access(
     member_id: str,
@@ -3288,19 +3454,21 @@ async def set_business_agency_team_workspace_access(
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Serialize grant changes with agency suspension and team-member revocation.
+    # All team mutations acquire locks in agency -> member -> workspace -> grant order.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
         AgencyTeamMember.id == member_id, AgencyTeamMember.agency_id == agency.id,
         AgencyTeamMember.status == "active",
-    ))
+    ).with_for_update())
     workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
         AgencyClientWorkspace.id == workspace_id, AgencyClientWorkspace.agency_id == agency.id,
         AgencyClientWorkspace.status == "active",
-    ))
+    ).with_for_update())
     if member is None or workspace is None:
         raise HTTPException(status_code=404, detail="Active team member or client workspace was not found in this agency.")
     access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
@@ -3338,16 +3506,30 @@ async def remove_business_agency_team_workspace_access(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
+    # Match grant creation and agency suspension: lock agency -> member -> workspace -> grant.
     agency = await operational_db.scalar(select(AgencyAccount).where(
-        AgencyAccount.owner_license_key == license_obj.license_key,
-        AgencyAccount.status == "active",
-    ))
-    if agency is None:
+        AgencyAccount.owner_license_key == license_obj.license_key
+    ).with_for_update())
+    if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
+    member = await operational_db.scalar(select(AgencyTeamMember).where(
+        AgencyTeamMember.id == member_id,
+        AgencyTeamMember.agency_id == agency.id,
+        AgencyTeamMember.status == "active",
+    ).with_for_update())
+    if member is None:
+        raise HTTPException(status_code=404, detail="Active team member was not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+        AgencyClientWorkspace.status == "active",
+    ).with_for_update())
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Active client workspace was not found.")
     access = await operational_db.scalar(select(AgencyWorkspaceAccess).where(
         AgencyWorkspaceAccess.agency_id == agency.id,
-        AgencyWorkspaceAccess.team_member_id == member_id,
-        AgencyWorkspaceAccess.workspace_id == workspace_id,
+        AgencyWorkspaceAccess.team_member_id == member.id,
+        AgencyWorkspaceAccess.workspace_id == workspace.id,
     ).with_for_update())
     if access is None:
         raise HTTPException(status_code=404, detail="Workspace access grant was not found.")
@@ -3368,9 +3550,10 @@ async def revoke_business_agency_team_member(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
     from sqlalchemy import select
+    # Match invitation and agency-suspension lock order to serialize revocation.
     agency = await operational_db.scalar(select(AgencyAccount).where(
         AgencyAccount.owner_license_key == license_obj.license_key
-    ))
+    ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
     member = await operational_db.scalar(select(AgencyTeamMember).where(
@@ -3407,8 +3590,12 @@ async def list_business_agency_clients(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency management is available on the Business plan.")
     from sqlalchemy import select
+    # Keep the agency -> workspace lock order consistent with suspension,
+    # workspace creation and website-connection lifecycle operations.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="An active agency workspace is required before managing clients.")
@@ -3441,8 +3628,12 @@ async def create_business_agency_client(
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
+    # Serialize workspace creation with agency suspension and all other
+    # agency -> workspace lifecycle mutations.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=409, detail="An active Business agency workspace is required.")
@@ -3486,8 +3677,12 @@ async def update_business_agency_client(
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
     from sqlalchemy import select
+    # Keep the agency -> workspace lock order consistent with suspension,
+    # workspace creation and website-connection lifecycle operations.
     agency = await operational_db.scalar(
-        select(AgencyAccount).where(AgencyAccount.owner_license_key == license_obj.license_key)
+        select(AgencyAccount).where(
+            AgencyAccount.owner_license_key == license_obj.license_key
+        ).with_for_update()
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
@@ -3505,9 +3700,35 @@ async def update_business_agency_client(
         if not display_name:
             raise HTTPException(status_code=422, detail="Client display name cannot be blank.")
         item.display_name = display_name
+    now = datetime.now(timezone.utc)
+    connection_revoked = False
+    if changes.get("status") == "archived" and item.status != "archived":
+        # Archiving is an access boundary, not just a dashboard filter:
+        # revoke the active plugin credential and any unused setup token.
+        site = await operational_db.scalar(select(AgencyClientWebsite).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.workspace_id == item.id,
+            AgencyClientWebsite.status == "active",
+        ).with_for_update())
+        if site is not None:
+            site.status = "disconnected"
+            site.disconnected_at = now
+            site.site_token_hash = None
+            connection_revoked = True
+        pending_challenges = (await operational_db.execute(
+            select(AgencyWebsiteConnectChallenge).where(
+                AgencyWebsiteConnectChallenge.agency_id == agency.id,
+                AgencyWebsiteConnectChallenge.workspace_id == item.id,
+                AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+            ).with_for_update()
+        )).scalars().all()
+        for challenge in pending_challenges:
+            challenge.consumed_at = now
+        if pending_challenges:
+            connection_revoked = True
     if "status" in changes:
         item.status = changes["status"]
-    item.updated_at = datetime.now(timezone.utc)
+    item.updated_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -3516,6 +3737,7 @@ async def update_business_agency_client(
         "display_name": item.display_name,
         "external_reference": item.external_reference,
         "status": item.status,
+        "connection_revoked": connection_revoked,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
     }
 
@@ -3580,6 +3802,17 @@ async def update_account_branding(
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     return {"brand_name": brand_name, "logo_url": logo_url, "primary_color": color, "updated": True}
+
+
+def _load_customer_usage_details(details_json: str | None) -> dict:
+    """Decode a usage event defensively and redact/bound any persisted metadata."""
+    try:
+        parsed = json.loads(details_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"_warning": "Stored usage details were invalid and have been omitted."}
+    if not isinstance(parsed, dict):
+        return {"_warning": "Stored usage details were not an object and have been omitted."}
+    return _sanitize_admin_log_value(parsed)
 
 
 @app.get("/api/v1/account/usage")
@@ -3668,7 +3901,7 @@ async def get_account_usage(
             "event_key": item.event_key, "event_type": item.event_type,
             "quantity": item.quantity,
             "created_at": item.created_at.isoformat() if item.created_at else None,
-            "details": json.loads(item.details_json or "{}"),
+            "details": _load_customer_usage_details(item.details_json),
         } for item in usage_events],
         "period_resets_at": next_month.isoformat(),
         "is_active": bool(license_obj.is_active),
@@ -4016,17 +4249,34 @@ async def revoke_account_api_key(
     The dedicated dependency grants no audit/report access and is used only for
     this revocation action so expired customers can invalidate compromised keys.
     """
-    from sqlalchemy import delete
+    from sqlalchemy import delete, select
 
-    result = await db.execute(
-        delete(APIKey).where(
+    # Use the same license-first lock order as customer/admin key issuance and
+    # admin revocation. This serializes revocation with concurrent key creation
+    # and prevents duplicate revocation attempts from racing on the same key.
+    client = (await db.execute(
+        select(SoftwareLicense).where(
+            SoftwareLicense.id == license_obj.id
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if client is None:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Account not found.")
+    item = (await db.execute(
+        select(APIKey).where(
             APIKey.id == key_id,
-            APIKey.license_id == license_obj.id,
-        )
-    )
-    if not result.rowcount:
+            APIKey.license_id == client.id,
+        ).with_for_update()
+    )).scalar_one_or_none()
+    if item is None:
         await db.rollback()
         raise HTTPException(status_code=404, detail="API key not found for this account.")
+    await db.execute(
+        delete(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.license_id == client.id,
+        )
+    )
     await db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -4753,6 +5003,66 @@ async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_
         .limit(1)
     )).scalar_one_or_none()
 
+def _paddle_event_occurred_at(event: dict) -> datetime:
+    """Parse Paddle's provider occurrence time for lifecycle event ordering."""
+    raw = event.get("occurred_at")
+    if raw is None:
+        # Older fixtures/manual replay payloads may omit the field. Live Paddle
+        # notifications include it; use receipt time only as a compatibility fallback.
+        return datetime.now(timezone.utc)
+    if not isinstance(raw, str) or len(raw) > 80:
+        raise HTTPException(status_code=400, detail="Paddle event occurrence time is invalid.")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Paddle event occurrence time is invalid.")
+    if parsed.tzinfo is None:
+        raise HTTPException(status_code=400, detail="Paddle event occurrence time must include a timezone.")
+    return parsed.astimezone(timezone.utc)
+
+
+async def _latest_paddle_subscription_lifecycle_event(
+    db: AsyncSession, subscription_id: str
+) -> PaymentWebhookEvent | None:
+    """Return the latest provider-timestamped subscription state transition."""
+    from sqlalchemy import select
+
+    lifecycle_statuses = {
+        "subscription_paused", "subscription_resumed", "subscription_activated",
+        "subscription_canceled", "subscription_updated_active",
+        "subscription_updated_past_due", "subscription_updated",
+        "subscription_update_unmapped_price", "subscription_past_due",
+    }
+    return (await db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.subscription_id == subscription_id,
+            PaymentWebhookEvent.status.in_(lifecycle_statuses),
+        )
+        .order_by(
+            PaymentWebhookEvent.updated_at.desc(),
+            PaymentWebhookEvent.created_at.desc(),
+            PaymentWebhookEvent.event_id.desc(),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+
+
+async def _paddle_subscription_event_is_stale(
+    db: AsyncSession, subscription_id: str, occurred_at: datetime
+) -> bool:
+    """Reject out-of-order subscription state notifications before they mutate access."""
+    latest = await _latest_paddle_subscription_lifecycle_event(db, subscription_id)
+    if latest is None:
+        return False
+    latest_at = latest.updated_at or latest.created_at
+    if latest_at is None:
+        return False
+    if latest_at.tzinfo is None:
+        latest_at = latest_at.replace(tzinfo=timezone.utc)
+    return occurred_at < latest_at.astimezone(timezone.utc)
+
+
 async def _filter_recovered_billing_attention_events(
     events: list,
     db: AsyncSession,
@@ -4870,6 +5180,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
     if not event_type or len(event_type) > 120:
         raise HTTPException(status_code=400, detail="Paddle event type is missing or invalid.")
     transaction = event.get("data") or {}
+    occurred_at = _paddle_event_occurred_at(event)
     if not isinstance(transaction, dict):
         raise HTTPException(status_code=400, detail="Paddle event data must be a JSON object.")
 
@@ -4958,6 +5269,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 if is_transaction_failure else None,
             subscription_id=subscription_id or None,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
+            created_at=occurred_at,
+            updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
@@ -4974,6 +5287,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription lifecycle event has no subscription ID.")
         from sqlalchemy import select
         await _lock_paddle_webhook_resource(db, subscription_id)
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+            return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -5022,8 +5337,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             recipient_email=linked_event.recipient_email,
             subscription_id=subscription_id,
             paddle_customer_id=linked_event.paddle_customer_id,
-            created_at=now,
-            updated_at=now,
+            created_at=occurred_at,
+            updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
@@ -5041,6 +5356,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # Serialize lifecycle transitions for this subscription. The advisory lock
         # is transaction-scoped and avoids a late renewal racing a cancellation.
         await _lock_paddle_webhook_resource(db, subscription_id)
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+            return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate_cancellation = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -5069,8 +5386,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             recipient_email=linked_event.recipient_email,
             subscription_id=subscription_id,
             paddle_customer_id=linked_event.paddle_customer_id,
-            created_at=now,
-            updated_at=now,
+            created_at=occurred_at,
+            updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
@@ -5087,6 +5404,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription update has no subscription ID.")
         from sqlalchemy import select
         await _lock_paddle_webhook_resource(db, subscription_id)
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+            return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
         )).scalar_one_or_none()
@@ -5131,6 +5450,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         now = datetime.now(timezone.utc)
         was_active = bool(license_obj.is_active)
+        latest_lifecycle_event = await _latest_paddle_subscription_lifecycle_event(
+            db, subscription_id
+        )
         provider_canceled = provider_status in {"canceled", "cancelled"}
         is_canceled = canceled is not None or provider_canceled
 
@@ -5149,7 +5471,11 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 
             if provider_status == "paused":
                 license_obj.is_active = False
-            elif provider_status in {"active", "trialing"} and linked_event.status == "subscription_paused":
+            elif (
+                provider_status in {"active", "trialing"}
+                and latest_lifecycle_event is not None
+                and latest_lifecycle_event.status == "subscription_paused"
+            ):
                 expiry = license_obj.expires_at
                 if expiry is not None and expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=timezone.utc)
@@ -5172,7 +5498,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             event_id=event_id, status=event_status, license_id=license_obj.id,
             recipient_email=linked_event.recipient_email, subscription_id=subscription_id,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
-            created_at=now, updated_at=now,
+            created_at=occurred_at, updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
@@ -5306,7 +5632,17 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 expiry = linked_license.expires_at
                 if expiry is not None and expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=timezone.utc)
-                linked_license.is_active = expiry is None or expiry > datetime.now(timezone.utc)
+                latest_lifecycle_event = await _latest_paddle_subscription_lifecycle_event(
+                    db, subscription_id
+                )
+                subscription_is_paused = (
+                    latest_lifecycle_event is not None
+                    and latest_lifecycle_event.status == "subscription_paused"
+                )
+                linked_license.is_active = (
+                    not subscription_is_paused
+                    and (expiry is None or expiry > datetime.now(timezone.utc))
+                )
                 renewal_customer_id = str(
                     transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
@@ -5676,10 +6012,20 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
     """Mirror a committed billing event and durably queue failed cross-database delivery."""
     from sqlalchemy import select
     try:
+        # Match the worker's lock order (outbox row, then canonical event row)
+        # so a live webhook update cannot race a retry or deadlock with it.
+        pending = (await db.execute(
+            select(BillingMirrorSyncOutbox)
+            .where(BillingMirrorSyncOutbox.event_id == event_id)
+            .with_for_update()
+        )).scalar_one_or_none()
         event = (await db.execute(
-            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+            select(PaymentWebhookEvent)
+            .where(PaymentWebhookEvent.event_id == event_id)
+            .with_for_update()
         )).scalar_one_or_none()
         if event is None or event.license_id is None:
+            await db.rollback()
             return False
         license_key = await db.scalar(
             select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
@@ -5718,7 +6064,6 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
             except Exception as exc:
                 mirror_error = type(exc).__name__
 
-        pending = await db.get(BillingMirrorSyncOutbox, event_id)
         if mirror_error:
             if pending is None:
                 db.add(BillingMirrorSyncOutbox(
@@ -5743,7 +6088,8 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
 
         if pending is not None:
             await db.delete(pending)
-            await db.commit()
+        # Release both row locks before the caller proceeds with any other work.
+        await db.commit()
         return True
     except Exception as exc:
         await db.rollback()
@@ -5934,13 +6280,30 @@ def _validate_admin_package(payload: AdminPackageInput) -> dict:
 async def admin_list_business_agencies(
     request: Request,
     response: Response,
+    search: str = Query(default="", max_length=254),
+    status: str = Query(default="all", max_length=16),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Read-only admin inventory of Business agency tenants and their client/team counts."""
+    """Return a bounded, searchable page of Business agency tenants and counts."""
     _require_admin_key(request)
     from sqlalchemy import func, select
+    normalized_search = search.strip().lower()
+    if status not in {"all", "active", "suspended"}:
+        raise HTTPException(status_code=422, detail="Agency status filter is invalid.")
+    filters = []
+    if normalized_search:
+        filters.append(func.lower(AgencyAccount.owner_email).like(f"%{normalized_search}%"))
+    if status != "all":
+        filters.append(AgencyAccount.status == status)
+    base_query = select(AgencyAccount).where(*filters)
+    total = int(await operational_db.scalar(
+        select(func.count(AgencyAccount.id)).where(*filters)
+    ) or 0)
     agencies = (await operational_db.execute(
-        select(AgencyAccount).order_by(AgencyAccount.created_at.desc()).limit(500)
+        base_query.order_by(AgencyAccount.created_at.desc(), AgencyAccount.id.asc())
+        .limit(limit).offset(offset)
     )).scalars().all()
     agency_ids = [item.id for item in agencies]
     client_counts = {}
@@ -5960,14 +6323,127 @@ async def admin_list_business_agencies(
         team_counts = {agency_id: int(count) for agency_id, count in team_rows}
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"items": [{
-        "id": item.id,
-        "owner_email": item.owner_email,
-        "status": item.status,
-        "client_count": client_counts.get(item.id, 0),
-        "team_member_count": team_counts.get(item.id, 0),
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-    } for item in agencies]}
+    return {
+        "items": [{
+            "id": item.id,
+            "owner_email": item.owner_email,
+            "status": item.status,
+            "client_count": client_counts.get(item.id, 0),
+            "team_member_count": team_counts.get(item.id, 0),
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        } for item in agencies],
+        "page": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": offset + len(agencies) < total,
+        },
+    }
+
+
+@app.get("/api/v1/admin/agencies/{agency_id}")
+async def admin_get_business_agency_detail(
+    agency_id: str,
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return bounded, secret-free operational details for one agency tenant."""
+    _require_admin_key(request)
+    from sqlalchemy import func, select
+    agency = await operational_db.scalar(
+        select(AgencyAccount).where(AgencyAccount.id == agency_id)
+    )
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Business agency account was not found.")
+    workspaces = (await operational_db.execute(
+        select(AgencyClientWorkspace)
+        .where(AgencyClientWorkspace.agency_id == agency.id)
+        .order_by(AgencyClientWorkspace.created_at.desc(), AgencyClientWorkspace.id.asc())
+        .limit(100)
+    )).scalars().all()
+    members = (await operational_db.execute(
+        select(AgencyTeamMember)
+        .where(AgencyTeamMember.agency_id == agency.id)
+        .order_by(AgencyTeamMember.created_at.desc(), AgencyTeamMember.id.asc())
+        .limit(100)
+    )).scalars().all()
+    workspace_ids = [item.id for item in workspaces]
+    websites_by_workspace = {}
+    access_counts = {}
+    if workspace_ids:
+        website_rows = (await operational_db.execute(
+            select(AgencyClientWebsite)
+            .where(
+                AgencyClientWebsite.agency_id == agency.id,
+                AgencyClientWebsite.workspace_id.in_(workspace_ids),
+            )
+            .order_by(AgencyClientWebsite.connected_at.desc())
+        )).scalars().all()
+        for site in website_rows:
+            websites_by_workspace.setdefault(site.workspace_id, []).append({
+                "host": site.site_host,
+                "status": site.status,
+                "connection_type": site.connection_type,
+                "plugin_version": site.plugin_version,
+                "wordpress_version": site.wordpress_version,
+                "woocommerce_version": site.woocommerce_version,
+                "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None,
+                "disconnected_at": site.disconnected_at.isoformat() if site.disconnected_at else None,
+            })
+        access_rows = (await operational_db.execute(
+            select(AgencyWorkspaceAccess.workspace_id, func.count(AgencyWorkspaceAccess.id))
+            .where(
+                AgencyWorkspaceAccess.agency_id == agency.id,
+                AgencyWorkspaceAccess.workspace_id.in_(workspace_ids),
+            )
+            .group_by(AgencyWorkspaceAccess.workspace_id)
+        )).all()
+        access_counts = {workspace_id: int(count) for workspace_id, count in access_rows}
+    workspace_total = int(await operational_db.scalar(
+        select(func.count(AgencyClientWorkspace.id)).where(
+            AgencyClientWorkspace.agency_id == agency.id
+        )
+    ) or 0)
+    member_total = int(await operational_db.scalar(
+        select(func.count(AgencyTeamMember.id)).where(
+            AgencyTeamMember.agency_id == agency.id
+        )
+    ) or 0)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "agency": {
+            "id": agency.id,
+            "owner_email": agency.owner_email,
+            "status": agency.status,
+            "created_at": agency.created_at.isoformat() if agency.created_at else None,
+            "updated_at": agency.updated_at.isoformat() if agency.updated_at else None,
+        },
+        "workspaces": [{
+            "id": item.id,
+            "display_name": item.display_name,
+            "external_reference": item.external_reference,
+            "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "website_connections": websites_by_workspace.get(item.id, []),
+            "team_access_count": access_counts.get(item.id, 0),
+        } for item in workspaces],
+        "team_members": [{
+            "id": item.id,
+            "email": item.email,
+            "role": item.role,
+            "status": item.status,
+            "invited_by": item.invited_by,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "accepted_at": item.accepted_at.isoformat() if item.accepted_at else None,
+        } for item in members],
+        "page": {
+            "workspaces_returned": len(workspaces),
+            "workspaces_total": workspace_total,
+            "team_members_returned": len(members),
+            "team_members_total": member_total,
+            "truncated": len(workspaces) < workspace_total or len(members) < member_total,
+        },
+    }
 
 
 @app.patch("/api/v1/admin/agencies/{agency_id}")
@@ -5987,6 +6463,7 @@ async def admin_update_business_agency(
     if agency is None:
         raise HTTPException(status_code=404, detail="Business agency account was not found.")
     now = datetime.now(timezone.utc)
+    previous_status = agency.status
     agency.status = payload.status
     if payload.status == "suspended":
         sessions = (await operational_db.execute(select(AgencyTeamSession).where(
@@ -6011,6 +6488,18 @@ async def admin_update_business_agency(
             member.invitation_expires_at = None
     agency.updated_at = now
     await operational_db.commit()
+    if previous_status != agency.status:
+        await _write_admin_log(
+            operational_db,
+            "agency_status_changed",
+            "agency",
+            agency.id,
+            {
+                "previous_status": previous_status,
+                "new_status": agency.status,
+                "team_sessions_revoked": payload.status == "suspended",
+            },
+        )
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -6151,23 +6640,26 @@ async def admin_retry_sync_outbox(
     queue: str = Query(...),
     limit: int = Query(200, ge=1, le=200),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Make a bounded set of pending cross-database sync events eligible for the next worker cycle."""
     _require_admin_key(request)
     from sqlalchemy import select
 
     queue_models = {
-        "customer_lifecycle": CustomerLifecycleSyncOutbox,
-        "customer_email_identity": CustomerEmailIdentitySyncOutbox,
+        "customer_lifecycle": (CustomerLifecycleSyncOutbox, db),
+        "customer_email_identity": (CustomerEmailIdentitySyncOutbox, operational_db),
+        "billing_mirror": (BillingMirrorSyncOutbox, db),
     }
-    model = queue_models.get(queue)
-    if model is None:
+    selected = queue_models.get(queue)
+    if selected is None:
         raise HTTPException(
             status_code=422,
-            detail="Queue must be customer_lifecycle or customer_email_identity.",
+            detail="Queue must be customer_lifecycle, customer_email_identity, or billing_mirror.",
         )
+    model, queue_db = selected
     now = datetime.now(timezone.utc)
-    items = (await db.execute(
+    items = (await queue_db.execute(
         select(model)
         .where(model.status == "pending")
         .order_by(model.next_attempt_at.asc(), model.created_at.asc())
@@ -6176,7 +6668,9 @@ async def admin_retry_sync_outbox(
     )).scalars().all()
     for item in items:
         item.next_attempt_at = now
-    await db.commit()
+    await queue_db.commit()
+    # Keep the admin activity trail in Hostinger's operational database,
+    # regardless of which database owns the selected outbox table.
     await _write_admin_log(
         db,
         "sync_outbox.retry_queued",
@@ -6282,12 +6776,15 @@ async def admin_retry_billing_mirror_deliveries(
 @app.post("/api/v1/admin/billing/reconcile")
 async def admin_reconcile_billing_history(
     request: Request,
+    response: Response,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Repair a bounded page of Hostinger billing mirrors from canonical webhook records."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational billing storage is unavailable.")
     from sqlalchemy import select, func
@@ -6329,6 +6826,9 @@ async def admin_action_history(
     response: Response,
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
+    action: str = Query(default="", max_length=100),
+    entity_type: str = Query(default="", max_length=80),
+    entity_id: str = Query(default="", max_length=160),
     db: AsyncSession = Depends(get_async_db),
 ):
     """Return a bounded, newest-first page of sanitized administrator activity."""
@@ -6338,12 +6838,22 @@ async def admin_action_history(
     if HostingerAsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Operational activity storage is unavailable.")
     from sqlalchemy import select, func
+    filters = []
+    if action.strip():
+        filters.append(AdminActionLog.action.ilike(f"%{action.strip()}%"))
+    if entity_type.strip():
+        filters.append(AdminActionLog.entity_type.ilike(f"%{entity_type.strip()}%"))
+    if entity_id.strip():
+        filters.append(AdminActionLog.entity_id.ilike(f"%{entity_id.strip()}%"))
     async with HostingerAsyncSessionLocal() as operational_db:
-        total = int((await operational_db.execute(
-            select(func.count(AdminActionLog.id))
-        )).scalar_one() or 0)
+        total_query = select(func.count(AdminActionLog.id))
+        rows_query = select(AdminActionLog)
+        if filters:
+            total_query = total_query.where(*filters)
+            rows_query = rows_query.where(*filters)
+        total = int((await operational_db.execute(total_query)).scalar_one() or 0)
         rows = (await operational_db.execute(
-            select(AdminActionLog)
+            rows_query
             .order_by(AdminActionLog.created_at.desc(), AdminActionLog.id.desc())
             .offset(offset)
             .limit(limit)
@@ -6483,10 +6993,12 @@ async def admin_payment_events(
     }
 
 @app.post("/api/v1/admin/payment-events/{event_id}/reconcile")
-async def admin_reconcile_payment(event_id: str, request: Request,
+async def admin_reconcile_payment(event_id: str, request: Request, response: Response,
                                   db: AsyncSession = Depends(get_async_db)):
     """Reconcile a recorded payment and safely backfill missing provider identifiers."""
     _require_admin_key(request)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     await _ensure_admin_tables(db)
     from sqlalchemy import select
     event = (await db.execute(select(PaymentWebhookEvent).where(
@@ -7428,6 +7940,30 @@ async def admin_cancel_subscription(
     }
 
 
+def _merge_admin_customer_directory_candidates(operational_candidates, legacy_candidates):
+    """Merge cross-database customer candidates with deterministic newest-first ordering."""
+    def timestamp(value):
+        if value is None:
+            return float("-inf")
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.timestamp()
+
+    merged = {}
+    for candidate in [*operational_candidates, *legacy_candidates]:
+        email = candidate.email
+        activity_at = candidate.activity_at
+        current = merged.get(email)
+
+        if current is None or timestamp(activity_at) > timestamp(current["activity_at"]):
+            merged[email] = {"email": email, "activity_at": activity_at}
+
+    # Stable two-pass ordering keeps email ascending when activity timestamps tie.
+    candidates = sorted(merged.values(), key=lambda item: item["email"])
+    candidates.sort(key=lambda item: timestamp(item["activity_at"]), reverse=True)
+    return candidates
+
+
 @app.get("/api/v1/admin/customers")
 async def admin_customer_directory(
     request: Request,
@@ -7438,9 +7974,9 @@ async def admin_customer_directory(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Account directory aggregated from Hostinger billing identities."""
+    """Merge canonical billing identities with Hostinger operational customer accounts."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func, distinct, union, literal
+    from sqlalchemy import select, func as sql_func, union, literal
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     normalized = search.strip().lower()
@@ -7467,79 +8003,88 @@ async def admin_customer_directory(
         ),
     ).subquery("customer_identity_sources")
 
-    query = select(
-        identity_sources.c.email.label("email"),
-        sql_func.count(distinct(identity_sources.c.license_key)).label("license_count"),
-        sql_func.max(identity_sources.c.activity_at).label("last_billing_activity"),
-    ).group_by(identity_sources.c.email)
-    count_query = select(sql_func.count(sql_func.distinct(identity_sources.c.email)))
+    search_term = normalized.replace("%", "").replace("_", "")
+    operational_filter = identity_sources.c.email.ilike(f"%{search_term}%") if normalized else None
+    legacy_email = sql_func.lower(PaymentWebhookEvent.recipient_email)
+    legacy_filters = [
+        PaymentWebhookEvent.recipient_email.is_not(None),
+        PaymentWebhookEvent.recipient_email != "",
+        PaymentWebhookEvent.license_id.is_not(None),
+    ]
     if normalized:
-        search_term = normalized.replace("%", "").replace("_", "")
-        email_filter = identity_sources.c.email.ilike(f"%{search_term}%")
-        query = query.where(email_filter)
-        count_query = count_query.where(email_filter)
-    total = int((await operational_db.execute(count_query)).scalar_one() or 0)
-    rows = (await operational_db.execute(
-        query.order_by(sql_func.max(identity_sources.c.activity_at).desc(), identity_sources.c.email.asc())
-        .offset(offset).limit(limit)
+        legacy_filters.append(legacy_email.ilike(f"%{search_term}%"))
+
+    # PostgreSQL remains canonical for webhook/license history while Hostinger
+    # contains operational customer identities. Merge both sources on every
+    # request; a partially migrated customer must not disappear merely because
+    # another customer's operational mirror is already present.
+    operational_emails = set((await operational_db.execute(
+        select(identity_sources.c.email).distinct().where(
+            *([operational_filter] if operational_filter is not None else [])
+        )
+    )).scalars().all())
+    legacy_emails = set((await db.execute(
+        select(legacy_email).where(*legacy_filters).distinct()
+    )).scalars().all())
+    total = len(operational_emails | legacy_emails)
+
+    candidate_limit = offset + limit
+    operational_candidates_query = select(
+        identity_sources.c.email.label("email"),
+        sql_func.max(identity_sources.c.activity_at).label("activity_at"),
+    ).group_by(identity_sources.c.email)
+    if operational_filter is not None:
+        operational_candidates_query = operational_candidates_query.where(operational_filter)
+    operational_candidates = (await operational_db.execute(
+        operational_candidates_query
+        .order_by(sql_func.max(identity_sources.c.activity_at).desc().nullslast(), identity_sources.c.email.asc())
+        .limit(candidate_limit)
     )).all()
 
-    legacy_directory = False
-    if total == 0:
-        # Compatibility fallback for deployments where the Hostinger data
-        # migration has not yet been applied.
-        legacy_directory = True
-        legacy_query = select(
-            sql_func.lower(PaymentWebhookEvent.recipient_email).label("email"),
-            sql_func.count(distinct(PaymentWebhookEvent.license_id)).label("license_count"),
-            sql_func.max(PaymentWebhookEvent.updated_at).label("last_billing_activity"),
-        ).where(
-            PaymentWebhookEvent.recipient_email.is_not(None),
-            PaymentWebhookEvent.recipient_email != "",
-            PaymentWebhookEvent.license_id.is_not(None),
-        ).group_by(sql_func.lower(PaymentWebhookEvent.recipient_email))
-        legacy_count = select(sql_func.count(sql_func.distinct(
-            sql_func.lower(PaymentWebhookEvent.recipient_email)
-        ))).where(
-            PaymentWebhookEvent.recipient_email.is_not(None),
-            PaymentWebhookEvent.recipient_email != "",
-            PaymentWebhookEvent.license_id.is_not(None),
-        )
-        if normalized:
-            legacy_filter = sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(
-                f"%{normalized.replace('%', '').replace('_', '')}%"
-            )
-            legacy_query = legacy_query.having(legacy_filter)
-            legacy_count = legacy_count.where(legacy_filter)
-        total = int((await db.execute(legacy_count)).scalar_one() or 0)
-        rows = (await db.execute(
-            legacy_query.order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc())
-            .offset(offset).limit(limit)
+    legacy_candidates = (await db.execute(
+        select(
+            legacy_email.label("email"),
+            sql_func.max(PaymentWebhookEvent.updated_at).label("activity_at"),
+        ).where(*legacy_filters)
+        .group_by(legacy_email)
+        .order_by(sql_func.max(PaymentWebhookEvent.updated_at).desc(), legacy_email.asc())
+        .limit(candidate_limit)
+    )).all()
+
+    candidate_rows = _merge_admin_customer_directory_candidates(
+        operational_candidates, legacy_candidates
+    )
+    rows = candidate_rows[offset:offset + limit]
+    page_emails = [row["email"] for row in rows]
+
+    license_keys_by_email = {email: set() for email in page_emails}
+    if page_emails:
+        operational_license_rows = (await operational_db.execute(
+            select(identity_sources.c.email, identity_sources.c.license_key)
+            .where(identity_sources.c.email.in_(page_emails))
+            .distinct()
         )).all()
+        for identity in operational_license_rows:
+            if identity.license_key:
+                license_keys_by_email.setdefault(identity.email, set()).add(identity.license_key)
+
+        legacy_license_rows = (await db.execute(
+            select(legacy_email.label("email"), SoftwareLicense.license_key)
+            .join(PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id)
+            .where(legacy_email.in_(page_emails))
+            .distinct()
+        )).all()
+        for identity in legacy_license_rows:
+            if identity.license_key:
+                license_keys_by_email.setdefault(identity.email, set()).add(identity.license_key)
 
     items = []
     now = datetime.now(timezone.utc)
     for row in rows:
-        if legacy_directory:
-            license_rows = (await db.execute(select(SoftwareLicense).join(
-                PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-            ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == row.email)
-            .distinct())).scalars().all()
-        else:
-            operational_license_keys = union(
-                select(CustomerBillingEvent.license_key).where(
-                    sql_func.lower(CustomerBillingEvent.recipient_email) == row.email
-                ),
-                select(CustomerAccount.license_key).where(
-                    sql_func.lower(CustomerAccount.email) == row.email
-                ),
-            ).subquery("customer_license_sources")
-            license_keys = set((await operational_db.execute(
-                select(operational_license_keys.c.license_key)
-            )).scalars().all())
-            license_rows = (await db.execute(
-                select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
-            )).scalars().all() if license_keys else []
+        license_keys = license_keys_by_email.get(row["email"], set())
+        license_rows = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
+        )).scalars().all() if license_keys else []
 
         active = sum(
             1 for lic in license_rows
@@ -7549,11 +8094,11 @@ async def admin_customer_directory(
             )
         )
         items.append({
-            "email": row.email,
+            "email": row["email"],
             "license_count": len(license_rows),
             "active_license_count": active,
             "inactive_license_count": len(license_rows) - active,
-            "last_billing_activity": row.last_billing_activity.isoformat() if row.last_billing_activity else None,
+            "last_billing_activity": row["activity_at"].isoformat() if row["activity_at"] else None,
         })
     return {"items": items, "page": {
         "limit": limit, "offset": offset, "total": total,
@@ -7746,7 +8291,9 @@ async def admin_customer_account_action(
             ))
         await db.commit()
         result = await operational_db.execute(update(CustomerSession).where(
-            CustomerSession.license_key.in_(license_keys), CustomerSession.revoked_at.is_(None)
+            CustomerSession.license_key.in_(license_keys),
+            CustomerSession.created_at <= now,
+            CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now))
         await operational_db.commit()
         changed = int(result.rowcount or 0)
@@ -7903,6 +8450,7 @@ async def admin_list_client_wordpress_links(
             WordPressInstallation.id.desc(),
         ).limit(100)
     )).scalars().all()
+    now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {
@@ -7916,6 +8464,14 @@ async def admin_list_client_wordpress_links(
             "woocommerce_version": item.woocommerce_version,
             "plugin_version": item.plugin_version,
             "status": item.status,
+            "connection_health": (
+                "not_connected" if item.status != "active" else
+                "stale" if (
+                    item.last_seen_at is None or
+                    (item.last_seen_at.replace(tzinfo=timezone.utc) if item.last_seen_at.tzinfo is None else item.last_seen_at)
+                    < now - timedelta(days=7)
+                ) else "healthy"
+            ),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
             "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,
@@ -8112,13 +8668,15 @@ async def admin_revoke_client_api_key(
     _require_admin_key(request)
     from sqlalchemy import delete, select
 
+    # Match API-key creation's license-first lock order. This serializes admin
+    # revocation with key issuance and prevents concurrent duplicate revoke logs.
     client = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id).with_for_update()
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     item = (await db.execute(
-        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id)
+        select(APIKey).where(APIKey.id == key_id, APIKey.license_id == license_id).with_for_update()
     )).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="API key not found for this client.")
@@ -8135,6 +8693,7 @@ async def admin_revoke_client_api_key(
 
 @app.patch("/api/v1/admin/clients/{license_id}")
 async def admin_update_client(license_id: int, payload: AdminClientUpdate, request: Request,
+                              response: Response,
                               db: AsyncSession = Depends(get_async_db)):
     """Allow an authenticated operator to adjust a customer's entitlement and account status."""
     _require_admin_key(request)
@@ -8166,6 +8725,11 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     previous_active = bool(client.is_active)
+    audited_fields = ("client_name", "tier", "max_monthly_audits", "is_active", "expires_at")
+    previous_values = {
+        key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
+        for key in audited_fields
+    }
     if "tier" in changes:
         package = (await db.execute(text("""
             SELECT monthly_audit_allowance, is_active
@@ -8196,14 +8760,19 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
             next_attempt_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),
         ))
-    await _write_admin_log(db, "client.updated", "client", client.id, {
-        "fields": sorted(changes),
-        "tier": client.tier,
-        "max_monthly_audits": client.max_monthly_audits,
-        "is_active": bool(client.is_active),
-    })
     await db.commit()
     await db.refresh(client)
+    current_values = {
+        key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
+        for key in audited_fields
+    }
+    await _write_admin_log(db, "client.updated", "client", client.id, {
+        "fields": sorted(changes),
+        "previous": previous_values,
+        "updated": current_values,
+    })
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     # Deliberately log only the client ID and field names, never license keys or credentials.
     logger.info("Admin updated client account (client_id=%s, fields=%s)", client.id, ",".join(sorted(changes)))
     return {

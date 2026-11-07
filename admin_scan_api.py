@@ -66,11 +66,24 @@ async def admin_scan_operations(
         oldest_pending = await session.scalar(
             select(func.min(model.created_at)).where(model.status == "pending")
         )
+        oldest_due = await session.scalar(
+            select(func.min(model.next_attempt_at)).where(
+                model.status == "pending",
+                model.next_attempt_at <= datetime.now(timezone.utc),
+            )
+        )
+        max_attempts = int((await session.execute(
+            select(func.coalesce(func.max(model.attempts), 0)).where(
+                model.status == "pending"
+            )
+        )).scalar_one() or 0)
         return {
             "pending": pending,
             "due": due,
             "completed": int(status_counts.get("completed", 0)),
+            "max_attempts": max_attempts,
             "oldest_pending_at": oldest_pending.isoformat() if oldest_pending else None,
+            "oldest_due_at": oldest_due.isoformat() if oldest_due else None,
         }
 
     reconciliation_outboxes = {

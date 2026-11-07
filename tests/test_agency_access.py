@@ -271,7 +271,7 @@ async def test_agency_analyst_can_queue_connected_client_audits_under_shared_lic
     grant = SimpleNamespace(role="analyst")
     workspace = SimpleNamespace(id="workspace-1", display_name="Client One")
     site = SimpleNamespace(site_host="client.example")
-    db = AgencyTeamScanSession(grant, workspace, site)
+    db = AgencyTeamScanSession(workspace, grant, site)
     owner_license = SimpleNamespace(license_key="business-owner-license", tier="business")
     identity = {
         "agency": SimpleNamespace(id="agency-1"),
@@ -334,7 +334,10 @@ async def test_agency_viewer_cannot_queue_client_audits():
             SimpleNamespace(),
             Response(),
             identity=identity,
-            operational_db=AgencyTeamScanSession(SimpleNamespace(role="viewer")),
+            operational_db=AgencyTeamScanSession(
+                SimpleNamespace(id="workspace-1", display_name="Client One"),
+                SimpleNamespace(role="viewer"),
+            ),
         )
     assert error.value.status_code == 403
     assert "read-only" in error.value.detail
@@ -361,8 +364,8 @@ async def test_agency_team_audit_submission_rejects_urls_outside_connected_site(
             Response(),
             identity=identity,
             operational_db=AgencyTeamScanSession(
-                SimpleNamespace(role="analyst"),
                 SimpleNamespace(id="workspace-1", display_name="Client One"),
+                SimpleNamespace(role="analyst"),
                 SimpleNamespace(site_host="client.example"),
             ),
         )
@@ -612,3 +615,203 @@ async def test_agency_client_website_status_distinguishes_unconnected_workspace(
     assert result["connected"] is False
     assert result["connection_health"] == "not_connected"
     assert result["health_checked_at"]
+
+
+def test_agency_workspace_grant_mutations_follow_agency_member_workspace_lock_order():
+    import inspect
+    import main
+
+    grant_source = inspect.getsource(main.set_business_agency_team_workspace_access)
+    remove_source = inspect.getsource(main.remove_business_agency_team_workspace_access)
+
+    grant_agency = grant_source.index("AgencyAccount.owner_license_key")
+    grant_member = grant_source.index("AgencyTeamMember.id == member_id")
+    grant_workspace = grant_source.index("AgencyClientWorkspace.id == workspace_id")
+    grant_access = grant_source.index("AgencyWorkspaceAccess.agency_id == agency.id")
+    assert grant_agency < grant_member < grant_workspace < grant_access
+    assert ".with_for_update()" in grant_source[grant_agency:grant_member]
+    assert ".with_for_update()" in grant_source[grant_member:grant_workspace]
+    assert ".with_for_update()" in grant_source[grant_workspace:grant_access]
+
+    remove_agency = remove_source.index("AgencyAccount.owner_license_key")
+    remove_member = remove_source.index("AgencyTeamMember.id == member_id")
+    remove_access = remove_source.index("AgencyWorkspaceAccess.agency_id == agency.id")
+    assert remove_agency < remove_member < remove_access
+    assert ".with_for_update()" in remove_source[remove_agency:remove_member]
+    assert ".with_for_update()" in remove_source[remove_member:remove_access]
+    assert 'AgencyTeamMember.status == "active"' in remove_source[remove_member:remove_access]
+
+
+def test_agency_workspace_create_and_update_lock_agency_before_workspace():
+    import inspect
+    import main
+
+    create_source = inspect.getsource(main.create_business_agency_client)
+    update_source = inspect.getsource(main.update_business_agency_client)
+    suspend_source = inspect.getsource(main.admin_update_business_agency)
+
+    create_agency_lock = create_source.index("AgencyAccount.owner_license_key")
+    create_insert = create_source.index("operational_db.add(item)")
+    assert create_agency_lock < create_insert
+    assert ".with_for_update()" in create_source[create_agency_lock:create_insert]
+    assert 'agency.status != "active"' in create_source[create_agency_lock:create_insert]
+
+    update_agency_lock = update_source.index("AgencyAccount.owner_license_key")
+    update_workspace_lock = update_source.index("AgencyClientWorkspace.id == workspace_id")
+    update_commit = update_source.index("await operational_db.commit()")
+    assert update_agency_lock < update_workspace_lock < update_commit
+    assert ".with_for_update()" in update_source[update_agency_lock:update_workspace_lock]
+    assert ".with_for_update()" in update_source[update_workspace_lock:update_commit]
+    assert 'agency.status != "active"' in update_source[update_agency_lock:update_workspace_lock]
+
+    suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
+    assert ".with_for_update()" in suspend_source[suspend_agency_lock:]
+
+
+@pytest.mark.asyncio
+async def test_agency_workspace_creation_rejects_suspended_agency_before_insert(monkeypatch):
+    import main
+    from fastapi import HTTPException, Response
+    from main import AgencyClientWorkspaceCreate, create_business_agency_client
+
+    class OperationalSession:
+        def __init__(self):
+            self.added = []
+            self.committed = False
+            self.statement = None
+
+        async def scalar(self, statement):
+            self.statement = statement
+            return SimpleNamespace(id="agency-1", status="suspended")
+
+        def add(self, item):
+            self.added.append(item)
+
+        async def commit(self):
+            self.committed = True
+
+    operational = OperationalSession()
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    with pytest.raises(HTTPException) as error:
+        await create_business_agency_client(
+            AgencyClientWorkspaceCreate(display_name="New Client"),
+            Response(),
+            license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+            operational_db=operational,
+        )
+
+    assert error.value.status_code == 409
+    assert operational.added == []
+    assert operational.committed is False
+    assert operational.statement._for_update_arg is not None
+
+
+class AgencyArchiveSession:
+    def __init__(self, agency, workspace, site, challenges):
+        self.rows = [agency, workspace, site]
+        self.challenges = challenges
+        self.committed = False
+
+    async def scalar(self, _statement):
+        return self.rows.pop(0)
+
+    async def execute(self, _statement):
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.challenges))
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_archiving_agency_workspace_revokes_plugin_credential_and_pending_tokens(monkeypatch):
+    import main
+    from fastapi import Response
+    from main import AgencyClientWorkspaceUpdate, update_business_agency_client
+
+    agency = SimpleNamespace(id="agency-archive", status="active", owner_license_key="business-license")
+    workspace = SimpleNamespace(
+        id="workspace-archive", agency_id=agency.id, display_name="Client",
+        external_reference=None, status="active", updated_at=None,
+    )
+    site = SimpleNamespace(
+        agency_id=agency.id, workspace_id=workspace.id, status="active",
+        site_token_hash="hashed-live-site-token", disconnected_at=None,
+    )
+    challenges = [
+        SimpleNamespace(agency_id=agency.id, workspace_id=workspace.id, consumed_at=None),
+        SimpleNamespace(agency_id=agency.id, workspace_id=workspace.id, consumed_at=None),
+    ]
+    db = AgencyArchiveSession(agency, workspace, site, challenges)
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await update_business_agency_client(
+        workspace.id, AgencyClientWorkspaceUpdate(status="archived"), Response(),
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=db,
+    )
+
+    assert result["status"] == "archived"
+    assert result["connection_revoked"] is True
+    assert site.status == "disconnected"
+    assert site.site_token_hash is None
+    assert site.disconnected_at is not None
+    assert all(challenge.consumed_at is not None for challenge in challenges)
+    assert db.committed
+
+
+@pytest.mark.asyncio
+async def test_archiving_workspace_without_connections_is_safe(monkeypatch):
+    import main
+    from fastapi import Response
+    from main import AgencyClientWorkspaceUpdate, update_business_agency_client
+
+    agency = SimpleNamespace(id="agency-empty", status="active", owner_license_key="business-license")
+    workspace = SimpleNamespace(
+        id="workspace-empty", agency_id=agency.id, display_name="Empty",
+        external_reference=None, status="active", updated_at=None,
+    )
+    db = AgencyArchiveSession(agency, workspace, None, [])
+    monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
+
+    result = await update_business_agency_client(
+        workspace.id, AgencyClientWorkspaceUpdate(status="archived"), Response(),
+        license_obj=SimpleNamespace(license_key="business-license", tier="business"),
+        operational_db=db,
+    )
+
+    assert result["status"] == "archived"
+    assert result["connection_revoked"] is False
+    assert db.committed
+
+
+def test_customer_portal_explains_wordpress_revocation_after_archiving():
+    from pathlib import Path
+
+    portal = Path(__file__).resolve().parents[1] / "customer_portal.html"
+    source = portal.read_text(encoding="utf-8")
+    assert "updated.connection_revoked" in source
+    assert "WordPress credential and unused connection codes were revoked" in source
+    assert "reconnect the site after reactivation" in source
+
+def test_agency_team_workspace_audit_access_uses_workspace_grant_lock_order_and_tenant_scope():
+    import inspect
+    import main
+
+    results_source = inspect.getsource(main.list_agency_team_workspace_audit_results)
+    audits_source = inspect.getsource(main.list_agency_team_workspace_audits)
+    submit_source = inspect.getsource(main.submit_agency_team_workspace_scans)
+
+    for source in (results_source, audits_source, submit_source):
+        workspace_lock = source.index("AgencyClientWorkspace.id == workspace_id")
+        grant_lock = source.index("AgencyWorkspaceAccess.agency_id == identity[\"agency\"].id")
+        assert workspace_lock < grant_lock
+        assert ".with_for_update()" in source[workspace_lock:grant_lock]
+        assert ".with_for_update()" in source[grant_lock:]
+
+    assert 'ScanBatch.license_key == identity["agency"].owner_license_key' in audits_source
+    assert 'ScanBatch.license_key == identity["agency"].owner_license_key' in results_source
+    site_lock = submit_source.index("AgencyClientWebsite.agency_id == identity[\"agency\"].id")
+    assert grant_lock < site_lock
+    assert ".with_for_update()" in submit_source[site_lock:]
+
