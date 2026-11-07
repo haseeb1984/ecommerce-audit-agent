@@ -225,3 +225,79 @@ def test_worker_cycle_logs_outbox_reconciliation_counters(caplog):
     assert "billing_deferred=2" in caplog.text
     assert "billing_discarded=1" in caplog.text
     assert "auth_cleanup_status=deferred" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_current_scan_worker_route_accepts_cron_secret_and_requested_batch_size(monkeypatch):
+    import scan_worker_api
+
+    monkeypatch.setenv("CRON_SECRET", "configured-cron-secret")
+    monkeypatch.delenv("SCAN_WORKER_TOKEN", raising=False)
+    calls = []
+
+    async def fake_process_scan_queue(*, max_jobs):
+        calls.append(max_jobs)
+        return {"claimed_slots": max_jobs, "processed": max_jobs}
+
+    monkeypatch.setattr(scan_worker_api, "process_scan_queue", fake_process_scan_queue)
+    result = await scan_worker_api.run_scan_worker(
+        max_jobs=4,
+        authorization="Bearer configured-cron-secret",
+    )
+
+    assert result == {"claimed_slots": 4, "processed": 4}
+    assert calls == [4]
+
+
+@pytest.mark.asyncio
+async def test_current_scan_worker_route_accepts_scan_worker_token(monkeypatch):
+    import scan_worker_api
+
+    monkeypatch.delenv("CRON_SECRET", raising=False)
+    monkeypatch.setenv("SCAN_WORKER_TOKEN", "worker-token")
+    calls = []
+
+    async def fake_process_scan_queue(*, max_jobs):
+        calls.append(max_jobs)
+        return {"claimed_slots": max_jobs}
+
+    monkeypatch.setattr(scan_worker_api, "process_scan_queue", fake_process_scan_queue)
+    result = await scan_worker_api.run_scan_worker(
+        max_jobs=2,
+        authorization="Bearer worker-token",
+    )
+
+    assert result == {"claimed_slots": 2}
+    assert calls == [2]
+
+
+@pytest.mark.asyncio
+async def test_current_scan_worker_route_fails_closed_without_secret(monkeypatch):
+    import scan_worker_api
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("CRON_SECRET", raising=False)
+    monkeypatch.delenv("SCAN_WORKER_TOKEN", raising=False)
+
+    with pytest.raises(HTTPException) as raised:
+        await scan_worker_api.run_scan_worker(
+            max_jobs=1,
+            authorization="Bearer anything",
+        )
+    assert raised.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_current_scan_worker_route_rejects_invalid_secret(monkeypatch):
+    import scan_worker_api
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("CRON_SECRET", "configured-cron-secret")
+    monkeypatch.delenv("SCAN_WORKER_TOKEN", raising=False)
+
+    with pytest.raises(HTTPException) as raised:
+        await scan_worker_api.run_scan_worker(
+            max_jobs=1,
+            authorization="Bearer wrong-secret",
+        )
+    assert raised.value.status_code == 401
