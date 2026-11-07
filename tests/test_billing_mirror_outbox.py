@@ -26,3 +26,25 @@ def test_billing_mirror_retry_locks_canonical_event_before_copying_state():
 
     assert "FOR UPDATE" in compiled
     assert "payment_webhook_events.event_id" in compiled
+
+
+
+def test_cross_database_outboxes_share_capped_exponential_retry_backoff():
+    from scan_worker import _outbox_retry_delay_seconds
+
+    assert _outbox_retry_delay_seconds(0) == 30
+    assert _outbox_retry_delay_seconds(1) == 60
+    assert _outbox_retry_delay_seconds(2) == 120
+    assert _outbox_retry_delay_seconds(6) == 1920
+    assert _outbox_retry_delay_seconds(7) == 3600
+    assert _outbox_retry_delay_seconds(12) == 3600
+    assert _outbox_retry_delay_seconds(-3) == 30
+
+
+def test_cross_database_outbox_retry_backoff_rejects_non_integer_attempts():
+    import pytest
+
+    from scan_worker import _outbox_retry_delay_seconds
+
+    with pytest.raises(ValueError):
+        _outbox_retry_delay_seconds("not-an-attempt-count")
