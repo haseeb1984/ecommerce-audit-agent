@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Working branch:** `integration/admin-agency-lifecycle`  
+**Merged baseline:** `main` at `ddf83c7b959fa8a477892baf4dc9022aa1208698`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -64,6 +64,6 @@
 ## Latest known verification snapshot
 
 - Historical CI run [40791577713](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40791577713) passed on commit d9430c2949d7ec80eadada868a65f847a3ea708a, reporting 661 passed and 55 warnings. This is not verification of the current integration branch.
-- Current integration PR [#194](https://github.com/haseeb1984/ecommerce-audit-agent/pull/194) is open, mergeable, and not merged. It consolidates the SaaS account, agency, customer, billing, WordPress and admin-operation workflows, including three integrated lifecycle regression suites.
-- Most recent completed backend workflow [42231370543](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42231370543) failed before runner startup (job has no steps); no tests executed. Checks for the latest integration head are pending.
+- Integration PR [#194](https://github.com/haseeb1984/ecommerce-audit-agent/pull/194) was merged into `main` as `ddf83c7b959fa8a477892baf4dc9022aa1208698` (65 commits, 48 changed files). PRs #192 and #193 were closed as superseded; their admin-console and agency/customer lifecycle scopes were consolidated into #194. Do not re-merge those stale branch heads.
+- The backend check on the merge commit [128483098090](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42398325059) failed before runner allocation and reported no executed steps; this is not a test assertion failure and provides no test results. The `process-scan-queue` check was skipped. The latest Vercel preview check was reported successful in PR #194.
 - Staging database/schema verification, provider sandbox journeys, browser QA, full test execution, and production readiness remain unverified. No production migration or deployment was performed.
