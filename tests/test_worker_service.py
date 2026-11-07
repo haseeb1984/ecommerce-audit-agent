@@ -203,3 +203,25 @@ async def test_legacy_worker_route_rejects_invalid_scheduler_secret(monkeypatch)
     with pytest.raises(HTTPException) as raised:
         await scan_worker_api.run_legacy_scan_worker("Bearer wrong-secret")
     assert raised.value.status_code == 401
+
+
+def test_worker_cycle_logs_outbox_reconciliation_counters(caplog):
+    import logging
+
+    from worker_service import _log_worker_cycle
+
+    result = {
+        "customer_lifecycle_sync": {"processed": 2, "deferred": 1},
+        "customer_email_identity_sync": {"processed": 3, "deferred": 0},
+        "billing_mirror_sync": {"processed": 4, "deferred": 2, "discarded": 1},
+        "authentication_cleanup": {"status": "deferred"},
+    }
+
+    with caplog.at_level(logging.INFO, logger="worker_service"):
+        _log_worker_cycle(result, claimed=0, processed=0)
+
+    assert "lifecycle_deferred=1" in caplog.text
+    assert "identity_processed=3" in caplog.text
+    assert "billing_deferred=2" in caplog.text
+    assert "billing_discarded=1" in caplog.text
+    assert "auth_cleanup_status=deferred" in caplog.text
