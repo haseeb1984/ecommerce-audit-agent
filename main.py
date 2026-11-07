@@ -56,7 +56,7 @@ from conversion_checks import run_conversion_paid_traffic_checks
 from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
-from hostinger_database import get_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
+from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
 from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
@@ -273,7 +273,7 @@ async def agency_team_portal():
 @app.get("/health-check")
 async def health_check(
     db: AsyncSession = Depends(get_async_db),
-    operational_db: AsyncSession = Depends(get_hostinger_db),
+    operational_db: AsyncSession | None = Depends(get_optional_hostinger_db),
 ):
     """Check licensing/audit PostgreSQL and SaaS operational MySQL independently."""
     licensing_tables = {
@@ -288,6 +288,10 @@ async def health_check(
         "billing_mirror_sync_outbox",
     }
     try:
+        # Optional dependency lets this endpoint normalize missing Hostinger
+        # configuration into the same structured 503 response as DB outages.
+        if operational_db is None:
+            raise RuntimeError("Hostinger operational database is not configured.")
         pg_ping = await db.execute(text("SELECT 1"))
         pg_table_result = await db.execute(text(
             "SELECT table_name FROM information_schema.tables "

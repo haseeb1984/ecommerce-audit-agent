@@ -58,3 +58,12 @@ async def get_hostinger_db():
         raise RuntimeError("Hostinger operational database is not configured.")
     async with HostingerAsyncSessionLocal() as session:
         yield session
+
+
+async def get_optional_hostinger_db():
+    """Yield an operational session when configured, or None for readiness reporting."""
+    if HostingerAsyncSessionLocal is None:
+        yield None
+        return
+    async with HostingerAsyncSessionLocal() as session:
+        yield session
