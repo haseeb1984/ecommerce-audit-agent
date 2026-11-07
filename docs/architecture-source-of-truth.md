@@ -70,15 +70,22 @@ duplicate work or duplicate usage deductions.
 This document records the agreed target architecture; it does not claim that all
 migration steps or live integrations are already complete.
 
-
 ## Bulk worker runtime configuration
 
 - Configure `HOSTINGER_DATABASE_URL` for the Hostinger MySQL operational database.
 - Configure `DATABASE_URL` for the Supabase PostgreSQL licensing/audit database.
-- Configure `SCAN_WORKER_TOKEN` as a long random secret. Configure the Vercel Cron
-  authorization secret to the same value so the scheduled request is authenticated.
-- Vercel Cron invokes `/internal/scan-worker/run` once per minute and requests up to
-  10 jobs per invocation. The worker's Supabase quota reservation enforces each
-  package's configured monthly allowance and maximum concurrent audits.
+- Configure `SCAN_WORKER_TOKEN` in Vercel as a long random secret accepted by the
+  protected worker endpoint.
+- Configure the GitHub repository variable `SCAN_WORKER_URL` with the HTTPS URL
+  of the protected worker endpoint, and the GitHub repository secret
+  `CRON_SECRET` with the same value as Vercel's `SCAN_WORKER_TOKEN`.
+- GitHub Actions workflow `.github/workflows/scan-worker.yml` invokes the worker
+  every five minutes and can also be started manually. Up to 10 jobs are requested
+  per invocation; Supabase quota reservation enforces each package's configured
+  monthly allowance and maximum concurrent audits.
+- The scheduled workflow deliberately does not skip when configuration is missing:
+  it fails at the configuration-validation step so an inactive scheduler is visible.
+- The worker request uses HTTPS and bearer-token authorization. The workflow retries
+  transient request failures and fails on non-success HTTP responses.
 - The Hostinger MySQL schema migration and the Supabase idempotency migration are
   separate operator-applied migrations. No application-startup DDL is performed.
