@@ -54,6 +54,27 @@ async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
     return {row.id: row for row in rows}
 
 
+def _billing_license_map(billing_rows, license_key_by_id):
+    """Resolve email ownership only when every billing event agrees on one license."""
+    candidates = {}
+    for row in billing_rows:
+        email = (row.recipient_email or "").strip().lower()
+        license_key = license_key_by_id.get(row.license_id)
+        if email and license_key:
+            candidates.setdefault(email, set()).add(license_key)
+
+    resolved = {
+        email: next(iter(license_keys))
+        for email, license_keys in candidates.items()
+        if len(license_keys) == 1
+    }
+    ambiguous = {
+        email for email, license_keys in candidates.items()
+        if len(license_keys) > 1
+    }
+    return resolved, ambiguous
+
+
 async def _copy_rows(source, target, source_model, target_model, transform, key_name):
     rows = (await source.execute(select(source_model))).scalars().all()
     copied = 0
@@ -257,20 +278,23 @@ async def migrate(apply_changes: bool) -> None:
 
         # Legacy support notes were keyed only by email. Associate each note with
         # the most recently linked license when that mapping is unambiguous.
-        billing_by_email = {}
-        for row in billing_rows:
-            email = (row.recipient_email or "").strip().lower()
-            license_key = license_key_by_id.get(row.license_id)
-            if email and license_key:
-                billing_by_email.setdefault(email, license_key)
+        billing_by_email, ambiguous_billing_emails = _billing_license_map(
+            billing_rows, license_key_by_id
+        )
         note_rows = (await source.execute(select(SaaSAdminCustomerNote))).scalars().all()
         note_copied = 0
-        note_skipped = 0
+        note_already_present = 0
+        note_ambiguous = 0
+        note_unmapped = 0
         for row in note_rows:
             email = row.customer_email.strip().lower()
+            if email in ambiguous_billing_emails:
+                # Never attach an email-only support note to an arbitrary tenant.
+                note_ambiguous += 1
+                continue
             license_key = billing_by_email.get(email)
             if not license_key:
-                note_skipped += 1
+                note_unmapped += 1
                 continue
             existing = await target.get(AdminCustomerNote, row.id)
             if existing is None:
@@ -284,11 +308,13 @@ async def migrate(apply_changes: bool) -> None:
                 ))
                 note_copied += 1
             else:
-                note_skipped += 1
+                note_already_present += 1
         reports["admin_customer_notes"] = {
             "source": len(note_rows),
             "to_copy": note_copied,
-            "already_present_or_unmapped": note_skipped,
+            "already_present": note_already_present,
+            "ambiguous_license_mapping": note_ambiguous,
+            "unmapped_email": note_unmapped,
         }
 
         for name, report in reports.items():
