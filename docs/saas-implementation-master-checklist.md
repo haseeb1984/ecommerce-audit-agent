@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `ddf83c7b959fa8a477892baf4dc9022aa1208698`  
+**Merged baseline:** `main` at `80d4242d7b9ac4c006d83703292df02d6baf903a`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -34,7 +34,8 @@
 | Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; browser and staging authorization checks pending. |
 | Admin operations/health visibility | Implemented / verification pending | Operational event and overview endpoints exist; production schema/configuration acceptance pending. |
 | Email delivery | Implemented / verification pending | Explicit-recipient report delivery and configured sender checks exist; real SMTP inbox delivery requires approved staging credentials. |
-| Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks required tables/columns/configuration and now critical indexes; run against staging with approved environment. |
+| Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks PostgreSQL and Hostinger tables/columns/indexes plus application configuration; run against staging with approved environment. |
+| Legacy operational-data migration | Implemented / verification pending | `scripts/migrate_operational_data_to_hostinger.py` is dry-run by default and preserves PostgreSQL sources. Ambiguous email-to-license support-note ownership is now skipped and reported separately; run dry-run and reconcile counts in staging before any `--apply`. |\n| Durable scan worker scheduling | Implemented / verification pending | GitHub Actions invokes `/internal/scan-worker/run` every five minutes, validates the HTTPS URL and bearer secret visibly, and has a bounded retry window. Verify GitHub/Vercel configuration and run controlled staging acceptance; no live worker invocation has been performed. |
 | Deployment, production migration and live-provider verification | Blocked / approval required | No production migration or deployment without explicit approval. |
 
 ## Audit engine scope
@@ -59,11 +60,15 @@
 - Report **implementation progress** separately from **CI verification** and **production readiness**.
 - A passing CI run does not mean the whole SaaS is production-ready.
 - Keep PDF/audit-report presentation refinement for the final phase, as requested.
-- Do not merge, deploy, run production migrations, trigger real payments, or run live customer-site audits without explicit approval.
+- Do not deploy, run production migrations, trigger real payments, or run live customer-site audits without explicit approval. Source consolidation PRs may be merged when the requested implementation is complete and checks are reviewed.
 
 ## Latest known verification snapshot
 
-- Historical CI run [40791577713](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/40791577713) passed on commit d9430c2949d7ec80eadada868a65f847a3ea708a, reporting 661 passed and 55 warnings. This is not verification of the current integration branch.
-- Integration PR [#194](https://github.com/haseeb1984/ecommerce-audit-agent/pull/194) was merged into `main` as `ddf83c7b959fa8a477892baf4dc9022aa1208698` (65 commits, 48 changed files). PRs #192 and #193 were closed as superseded; their admin-console and agency/customer lifecycle scopes were consolidated into #194. Do not re-merge those stale branch heads.
-- The backend check on the merge commit [128483098090](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42398325059) failed before runner allocation and reported no executed steps; this is not a test assertion failure and provides no test results. The `process-scan-queue` check was skipped. The latest Vercel preview check was reported successful in PR #194.
-- Staging database/schema verification, provider sandbox journeys, browser QA, full test execution, and production readiness remain unverified. No production migration or deployment was performed.
+- Current `main` baseline: `80d4242d7b9ac4c006d83703292df02d6baf903a`.
+- PR [#197](https://github.com/haseeb1984/ecommerce-audit-agent/pull/197) consolidated admin billing session-race protection and regression tests.
+- PR [#198](https://github.com/haseeb1984/ecommerce-audit-agent/pull/198) made missing scan-worker scheduler configuration fail visibly and aligned the architecture/runbook with the actual GitHub Actions five-minute schedule.
+- PR [#199](https://github.com/haseeb1984/ecommerce-audit-agent/pull/199) made legacy support-note migration tenant-safe: emails tied to multiple license keys are reported as ambiguous and are not copied to an arbitrary customer.
+- PR [#200](https://github.com/haseeb1984/ecommerce-audit-agent/pull/200) aligned the scheduler timeout with its bounded retry window, stopped retrying all HTTP errors, and added a scheduler contract test.
+- Vercel preview checks were successful on the PR heads for #198, #199 and #200. This is not evidence that Python tests ran. The latest backend CI execution previously failed before runner allocation with zero executed steps; current full-suite CI is still not established.
+- No live GitHub worker invocation, staging database migration, Hostinger/Supabase schema acceptance, Paddle sandbox lifecycle, SMTP inbox acceptance, WordPress runtime acceptance, or production deployment was performed.
+- PDF/private-storage refinement remains reserved for the final phase.

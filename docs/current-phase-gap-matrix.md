@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main`; bounded-crawl expansion committed during the 2026-10-21 implementation session. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `80d4242d7b9ac4c006d83703292df02d6baf903a` after the 2026-11-08 worker-scheduler and migration-safety consolidation. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -68,6 +68,15 @@
 
 - The frontend CDN dependency advisory checker now streams the OSV batch response and stops reading once it exceeds the 1,000,000-byte budget, before JSON parsing. An oversized response is handled as an incomplete/not-tested lookup, never as a clean dependency scan. The regression test covers this path; neither the new test nor the broader suite has been executed in this batch.
 - This is a defensive reliability improvement, not full software composition analysis. Lockfiles, bundled/self-hosted assets, server dependencies, and live release acceptance remain open.
+
+## Latest SaaS integration and operational-safety batch — 2026-11-08
+
+- PR #198 is merged: the GitHub Actions scan-worker scheduler no longer silently skips when `SCAN_WORKER_URL` is absent. It validates the HTTPS endpoint and bearer secret before invocation. Architecture and rollout docs now identify GitHub Actions as the five-minute scheduler rather than Vercel Cron.
+- PR #199 is merged: legacy support notes are copied only when the billing-event history maps the email to exactly one license. Multi-license email collisions are counted as ambiguous and left in PostgreSQL/uncopied rather than assigned to an arbitrary tenant. The migration remains dry-run by default and does not delete source rows.
+- PR #200 is merged: the scheduler timeout now accommodates its bounded curl retry window, and authentication/configuration HTTP failures are not retried indiscriminately. A scheduler contract test was added.
+- The migration utility `scripts/migrate_operational_data_to_hostinger.py` already exists on `main`; it was not recreated. Its mapping is limited to the operational records explicitly handled in that script. A dry-run, count reconciliation, schema verification and live migration have not been executed.
+- Vercel preview checks were successful for PR heads #198–#200. This is not a Python test-suite result. Backend CI execution remains unestablished because the previously inspected run failed before runner allocation with no test steps.
+- No GitHub worker workflow was manually dispatched, no customer scan was triggered, no production credentials or databases were accessed, and no production migration/deployment was performed. PDF/private report storage remains deferred to the final phase.
 
 ## Current evidence-backed matrix
 
