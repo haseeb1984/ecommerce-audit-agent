@@ -5450,6 +5450,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         now = datetime.now(timezone.utc)
         was_active = bool(license_obj.is_active)
+        latest_lifecycle_event = await _latest_paddle_subscription_lifecycle_event(
+            db, subscription_id
+        )
         provider_canceled = provider_status in {"canceled", "cancelled"}
         is_canceled = canceled is not None or provider_canceled
 
@@ -5468,7 +5471,11 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 
             if provider_status == "paused":
                 license_obj.is_active = False
-            elif provider_status in {"active", "trialing"} and linked_event.status == "subscription_paused":
+            elif (
+                provider_status in {"active", "trialing"}
+                and latest_lifecycle_event is not None
+                and latest_lifecycle_event.status == "subscription_paused"
+            ):
                 expiry = license_obj.expires_at
                 if expiry is not None and expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=timezone.utc)
