@@ -17,7 +17,7 @@ jobs:
     # Always start the job: missing deployment configuration must fail visibly
     # instead of silently skipping every scheduled invocation.
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    timeout-minutes: 8
     steps:
       - name: Validate worker configuration
         env:
@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           curl --silent --show-error --fail-with-body \
             --connect-timeout 10 --max-time 150 \
-            --retry 2 --retry-all-errors --retry-delay 5 \
+            --retry 2 --retry-delay 5 \
             --request GET \
             --header "Authorization: Bearer $CRON_SECRET" \
             "$SCAN_WORKER_URL"
