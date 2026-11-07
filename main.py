@@ -5021,10 +5021,10 @@ def _paddle_event_occurred_at(event: dict) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-async def _paddle_subscription_event_is_stale(
-    db: AsyncSession, subscription_id: str, occurred_at: datetime
-) -> bool:
-    """Reject out-of-order subscription state notifications before they mutate access."""
+async def _latest_paddle_subscription_lifecycle_event(
+    db: AsyncSession, subscription_id: str
+) -> PaymentWebhookEvent | None:
+    """Return the latest provider-timestamped subscription state transition."""
     from sqlalchemy import select
 
     lifecycle_statuses = {
@@ -5033,7 +5033,7 @@ async def _paddle_subscription_event_is_stale(
         "subscription_updated_past_due", "subscription_updated",
         "subscription_update_unmapped_price", "subscription_past_due",
     }
-    latest = (await db.execute(
+    return (await db.execute(
         select(PaymentWebhookEvent)
         .where(
             PaymentWebhookEvent.subscription_id == subscription_id,
@@ -5046,6 +5046,13 @@ async def _paddle_subscription_event_is_stale(
         )
         .limit(1)
     )).scalar_one_or_none()
+
+
+async def _paddle_subscription_event_is_stale(
+    db: AsyncSession, subscription_id: str, occurred_at: datetime
+) -> bool:
+    """Reject out-of-order subscription state notifications before they mutate access."""
+    latest = await _latest_paddle_subscription_lifecycle_event(db, subscription_id)
     if latest is None:
         return False
     latest_at = latest.updated_at or latest.created_at
@@ -5618,7 +5625,17 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 expiry = linked_license.expires_at
                 if expiry is not None and expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=timezone.utc)
-                linked_license.is_active = expiry is None or expiry > datetime.now(timezone.utc)
+                latest_lifecycle_event = await _latest_paddle_subscription_lifecycle_event(
+                    db, subscription_id
+                )
+                subscription_is_paused = (
+                    latest_lifecycle_event is not None
+                    and latest_lifecycle_event.status == "subscription_paused"
+                )
+                linked_license.is_active = (
+                    not subscription_is_paused
+                    and (expiry is None or expiry > datetime.now(timezone.utc))
+                )
                 renewal_customer_id = str(
                     transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
