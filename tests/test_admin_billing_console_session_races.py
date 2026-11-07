@@ -12,7 +12,7 @@ def _function(source: str, start: str, end: str) -> str:
 
 def test_payment_event_refresh_ignores_stale_filter_and_previous_admin_session():
     source = PORTAL.read_text(encoding="utf-8")
-    loader = _function(source, "async function refreshPaymentEvents", "async function refreshAgencies")
+    loader = _function(source, "async function refreshPaymentEvents", "async function showAgencyDetail")
 
     assert "paymentEventRequestVersion=0" in source
     assert "const requestSessionVersion=adminSessionVersion,requestVersion=++paymentEventRequestVersion;" in loader
