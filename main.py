@@ -6012,10 +6012,20 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
     """Mirror a committed billing event and durably queue failed cross-database delivery."""
     from sqlalchemy import select
     try:
+        # Match the worker's lock order (outbox row, then canonical event row)
+        # so a live webhook update cannot race a retry or deadlock with it.
+        pending = (await db.execute(
+            select(BillingMirrorSyncOutbox)
+            .where(BillingMirrorSyncOutbox.event_id == event_id)
+            .with_for_update()
+        )).scalar_one_or_none()
         event = (await db.execute(
-            select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+            select(PaymentWebhookEvent)
+            .where(PaymentWebhookEvent.event_id == event_id)
+            .with_for_update()
         )).scalar_one_or_none()
         if event is None or event.license_id is None:
+            await db.rollback()
             return False
         license_key = await db.scalar(
             select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
@@ -6054,7 +6064,6 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
             except Exception as exc:
                 mirror_error = type(exc).__name__
 
-        pending = await db.get(BillingMirrorSyncOutbox, event_id)
         if mirror_error:
             if pending is None:
                 db.add(BillingMirrorSyncOutbox(
@@ -6079,7 +6088,8 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
 
         if pending is not None:
             await db.delete(pending)
-            await db.commit()
+        # Release both row locks before the caller proceeds with any other work.
+        await db.commit()
         return True
     except Exception as exc:
         await db.rollback()
