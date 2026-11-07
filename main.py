@@ -5262,6 +5262,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 if is_transaction_failure else None,
             subscription_id=subscription_id or None,
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
+            created_at=occurred_at,
+            updated_at=occurred_at,
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
