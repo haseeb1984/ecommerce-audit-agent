@@ -203,3 +203,55 @@ def test_support_note_migration_refuses_ambiguous_email_to_license_mapping():
 
     assert resolved == {"single@example.com": "license-three"}
     assert ambiguous == {"shared@example.com"}
+
+
+
+def test_legacy_customer_account_id_is_stable_and_tenant_scoped():
+    from scripts.migrate_operational_data_to_hostinger import _legacy_account_id
+
+    first = _legacy_account_id("LICENSE-A", "Customer@Example.com")
+    repeated = _legacy_account_id("license-a", "customer@example.com")
+    another_license = _legacy_account_id("license-b", "customer@example.com")
+
+    assert first == repeated
+    assert first.startswith("legacy-")
+    assert len(first) == len("legacy-") + 48
+    assert first != another_license
+
+
+def test_operational_migration_defaults_to_rollback_and_only_commits_on_apply():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    migrate_function = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
+    )
+    commit_calls = [
+        node for node in ast.walk(migrate_function)
+        if isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "commit"
+    ]
+    rollback_calls = [
+        node for node in ast.walk(migrate_function)
+        if isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "rollback"
+    ]
+
+    assert len(commit_calls) == 1
+    assert len(rollback_calls) == 1
+    commit_if = next(
+        node for node in ast.walk(migrate_function)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "apply_changes"
+    )
+    assert commit_calls[0] in ast.walk(commit_if)
+    assert rollback_calls[0] not in ast.walk(commit_if)
