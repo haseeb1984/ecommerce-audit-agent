@@ -653,6 +653,15 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
     return counts
 
 
+def _billing_mirror_source_event_query(event_id: str):
+    """Build a row-locking read so mirror retries cannot overwrite newer webhook state."""
+    return (
+        select(PaymentWebhookEvent)
+        .where(PaymentWebhookEvent.event_id == event_id)
+        .with_for_update()
+    )
+
+
 async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
     """Retry canonical PostgreSQL billing events into Hostinger with bounded backoff."""
     if batch_size < 1 or batch_size > 200:
@@ -676,7 +685,7 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
             event_id = item.event_id
             try:
                 event = (await licensing_db.execute(
-                    select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
+                    _billing_mirror_source_event_query(event_id)
                 )).scalar_one_or_none()
                 if event is None or event.license_id is None:
                     await licensing_db.delete(item)
