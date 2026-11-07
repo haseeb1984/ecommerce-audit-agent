@@ -7,7 +7,7 @@ This document follows the product's agreed database boundary. It does not connec
 - **Supabase PostgreSQL (Vercel licensing/audit engine):** license records and entitlements, API keys, quota reservations/consumption, canonical audit leads/results, plan entitlement catalogue, and the minimum Paddle webhook idempotency/lifecycle state needed to provision or update licenses.
 - **Hostinger MySQL (SaaS operational database):** customer accounts and sessions, login/email challenges, WordPress installations, white-label branding, customer website inventory, scan batches/jobs/results, usage and activity history, customer billing-event history, admin support notes, and administrator action history.
 - **Hostinger private file storage:** customer reports, PDFs, and uploaded/generated files. Report-file metadata belongs in Hostinger MySQL; file bytes must not be stored in Supabase PostgreSQL.
-- **Vercel:** application hosting, API execution, scheduled worker invocation, and communication between the customer-facing SaaS, Hostinger operations, and the licensing/audit engine.
+- **Vercel:** application hosting, API execution, and secure communication between the customer-facing SaaS, Hostinger operations, and the licensing/audit engine. GitHub Actions is the configured scheduler for durable scan-worker invocation.
 
 No foreign keys cross database boundaries. license_key is the stable operational reference validated against the PostgreSQL licensing service.
 
@@ -49,7 +49,10 @@ Configure secrets directly in the hosting provider's encrypted environment setti
 | Email | SMTP_HOST, SMTP_PORT, SMTP_FROM, SMTP_TLS_MODE; optional paired SMTP_USERNAME and SMTP_PASSWORD |
 | PageSpeed | GOOGLE_PAGESPEED_API_KEY or PAGE_SPEED_API_KEY |
 | AI analysis | GROQ_API_KEY |
-| Scan worker | SCAN_WORKER_TOKEN; configure Vercel Cron authorization with the same secret |
+| Scan worker application | SCAN_WORKER_TOKEN in Vercel |
+| Scan worker scheduler | SCAN_WORKER_URL repository variable and CRON_SECRET repository secret in GitHub Actions; CRON_SECRET must match SCAN_WORKER_TOKEN |
+
+The production readiness script validates application-side worker authentication configuration, but cannot inspect GitHub repository variables or secrets. Verify scheduler configuration by running the **Durable scan worker** workflow manually after setting both GitHub values; the workflow fails visibly if either value is missing, the URL is not HTTPS, or the worker returns a non-success response.
 
 Paddle environment, API key, client token, price IDs and webhook secret must all belong to the same sandbox or production environment. SMTP username and password must either both be configured or both be absent.
 
