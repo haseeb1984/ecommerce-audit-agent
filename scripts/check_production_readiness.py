@@ -53,7 +53,7 @@ REQUIRED_ENV_GROUPS = {
     "customer_account_auth": ("ACCOUNT_AUTH_SECRET",),
     "hostinger_operational_database": ("HOSTINGER_DATABASE_URL",),
     "public_app_url": ("PUBLIC_APP_URL",),
-    "scheduled_scan_worker": ("SCAN_WORKER_TOKEN",),
+    "scheduled_scan_worker": ("SCAN_WORKER_URL",),
 }
 
 
@@ -74,6 +74,24 @@ def _valid_public_app_url(value: str) -> bool:
         return False
 
 
+def _valid_scan_worker_url(value: str) -> bool:
+    """Require a public HTTPS endpoint for the scheduled worker invocation."""
+    candidate = value.strip()
+    if not candidate:
+        return False
+    try:
+        parsed = urlsplit(candidate)
+        return bool(
+            parsed.scheme == "https"
+            and parsed.hostname
+            and not parsed.username
+            and not parsed.password
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
 def _configuration_status() -> tuple[list[str], list[str]]:
     """Return failed configuration group names and non-secret explanations."""
     failed: list[str] = []
@@ -81,10 +99,16 @@ def _configuration_status() -> tuple[list[str], list[str]]:
 
     for group, names in REQUIRED_ENV_GROUPS.items():
         if group == "scheduled_scan_worker":
-            ready = bool(
+            worker_url_ready = _valid_scan_worker_url(os.getenv("SCAN_WORKER_URL", ""))
+            worker_secret_ready = bool(
                 os.getenv("CRON_SECRET", "").strip()
                 or os.getenv("SCAN_WORKER_TOKEN", "").strip()
             )
+            ready = worker_url_ready and worker_secret_ready
+            if not worker_url_ready:
+                details.append("SCAN_WORKER_URL must be a valid HTTPS URL without embedded credentials or a fragment")
+            if not worker_secret_ready:
+                details.append("CRON_SECRET or SCAN_WORKER_TOKEN must be configured for the scheduled scan worker")
         elif group == "pagespeed_audits":
             ready = any(os.getenv(name, "").strip() for name in names)
         elif group == "paddle_price_catalog":
