@@ -69,3 +69,39 @@ def test_admin_customer_lifecycle_audit_is_attempted_before_operational_mutation
     assert audit_write < session_mutation
     assert '"operational_sync": "queued"' in source
     assert '"changed_count": changed' not in source
+
+
+
+def test_customer_lifecycle_outbox_claim_preserves_per_license_event_order():
+    from datetime import datetime, timezone
+    from sqlalchemy.dialects import postgresql
+    from scan_worker import _customer_lifecycle_outbox_claim_statement
+
+    statement = _customer_lifecycle_outbox_claim_statement(
+        datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
+    )
+    sql = str(statement.compile(dialect=postgresql.dialect())).lower().replace('"', "")
+
+    # A newer lifecycle event cannot overtake an older pending event for
+    # the same license, even while the older event is deferred for retry.
+    assert "not (exists (select" in sql
+    assert "customer_lifecycle_sync_outbox_1.license_key = customer_lifecycle_sync_outbox.license_key" in sql
+    assert "customer_lifecycle_sync_outbox_1.status = %(status_1)s" in sql
+    assert "customer_lifecycle_sync_outbox_1.created_at < customer_lifecycle_sync_outbox.created_at" in sql
+    assert "customer_lifecycle_sync_outbox_1.id < customer_lifecycle_sync_outbox.id" in sql
+    assert "customer_lifecycle_sync_outbox.next_attempt_at <= " in sql
+    assert "order by customer_lifecycle_sync_outbox.created_at asc, customer_lifecycle_sync_outbox.id asc" in sql
+    assert "for update skip locked" in sql
+
+
+def test_customer_lifecycle_outbox_ordering_is_per_license():
+    from datetime import datetime, timezone
+    from scan_worker import _customer_lifecycle_outbox_claim_statement
+
+    statement = _customer_lifecycle_outbox_claim_statement(
+        datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
+    )
+    sql = str(statement.compile()).lower()
+
+    assert "customer_lifecycle_sync_outbox_1.license_key = customer_lifecycle_sync_outbox.license_key" in sql
+    assert "customer_lifecycle_sync_outbox_1.license_key !=" not in sql

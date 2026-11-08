@@ -505,6 +505,36 @@ async def process_one_scan(worker_id: str) -> dict:
         await asyncio.gather(heartbeat_task, return_exceptions=True)
 
 
+def _customer_lifecycle_outbox_claim_statement(now: datetime):
+    """Claim only the oldest pending lifecycle event for each customer license."""
+    older = aliased(CustomerLifecycleSyncOutbox)
+    earlier_pending = select(older.id).where(
+        older.license_key == CustomerLifecycleSyncOutbox.license_key,
+        older.status == "pending",
+        or_(
+            older.created_at < CustomerLifecycleSyncOutbox.created_at,
+            and_(
+                older.created_at == CustomerLifecycleSyncOutbox.created_at,
+                older.id < CustomerLifecycleSyncOutbox.id,
+            ),
+        ),
+    ).exists()
+    return (
+        select(CustomerLifecycleSyncOutbox)
+        .where(
+            CustomerLifecycleSyncOutbox.status == "pending",
+            CustomerLifecycleSyncOutbox.next_attempt_at <= now,
+            ~earlier_pending,
+        )
+        .order_by(
+            CustomerLifecycleSyncOutbox.created_at.asc(),
+            CustomerLifecycleSyncOutbox.id.asc(),
+        )
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+
+
 async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
     """Apply canonical PostgreSQL admin lifecycle actions to Hostinger operational records."""
     if batch_size < 1 or batch_size > 200:
@@ -514,14 +544,7 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
     async with AsyncSessionLocal() as licensing_db:
         for _ in range(batch_size):
             event = (await licensing_db.execute(
-                select(CustomerLifecycleSyncOutbox)
-                .where(
-                    CustomerLifecycleSyncOutbox.status == "pending",
-                    CustomerLifecycleSyncOutbox.next_attempt_at <= now,
-                )
-                .order_by(CustomerLifecycleSyncOutbox.created_at.asc())
-                .limit(1)
-                .with_for_update(skip_locked=True)
+                _customer_lifecycle_outbox_claim_statement(now)
             )).scalar_one_or_none()
             if event is None:
                 break
