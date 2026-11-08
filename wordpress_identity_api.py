@@ -193,8 +193,6 @@ async def claim_wordpress_site_identity(
         await operational_db.commit()
         raise HTTPException(status_code=410, detail="WordPress link code has expired. Generate a new code.")
 
-    if license_obj is None or not bool(license_obj.is_active):
-        raise HTTPException(status_code=403, detail="The linked SaaS license is not active.")
     license_expiry = license_obj.expires_at
     if license_expiry is not None:
         if license_expiry.tzinfo is None:
