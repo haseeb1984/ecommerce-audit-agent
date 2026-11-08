@@ -8801,6 +8801,9 @@ async def admin_customer_account_action(
                 ),
                 [{"license_key": key} for key in identity_batch],
             )
+    except Exception:
+        await db.rollback()
+        raise
     finally:
         if identity_stream is not None:
             await identity_stream.close()
@@ -8848,6 +8851,9 @@ async def admin_customer_account_action(
                 )
                 for license_key in batch_license_keys
             ])
+        if locked_stream is not None:
+            await locked_stream.close()
+            locked_stream = None
         if license_count == 0:
             await db.rollback()
             raise HTTPException(status_code=404, detail="Customer account not found.")
