@@ -141,3 +141,26 @@ def test_agency_wordpress_heartbeat_revalidates_credential_under_lifecycle_locks
     assert 'workspace.status != "active"' in source[workspace_lock:site_recheck]
     assert 'AgencyClientWebsite.site_token_hash == token_hash' in source[site_recheck:heartbeat]
     assert 'AgencyClientWebsite.status == "active"' in source[site_recheck:heartbeat]
+
+
+def test_agency_team_audit_results_support_bounded_pagination():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.list_agency_team_workspace_audit_results)
+    assert "limit: int = Query(25, ge=1, le=100)" in source
+    assert "offset: int = Query(0, ge=0, le=1000000)" in source
+    assert ".offset(offset).limit(limit)" in source
+
+
+def test_agency_team_portal_loads_all_saved_findings_in_pages():
+    portal = (Path(__file__).resolve().parents[1] / "agency_portal.html").read_text()
+    start = portal.index('const view=document.createElement("button");view.type="button";view.className="secondary";view.textContent="View saved findings";')
+    end = portal.index('row.append(title,detail,view,evidence);', start)
+    source = portal[start:end]
+    assert "let evidenceOffset=0;" in source
+    assert "const evidencePageSize=25;" in source
+    assert '&offset="+offset' in source
+    assert "Load more saved findings" in source
+    assert "loadEvidencePage(evidenceOffset,true)" in source
+    assert "evidenceOffset=offset+saved.items.length;" in source
