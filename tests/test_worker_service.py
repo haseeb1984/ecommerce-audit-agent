@@ -301,3 +301,60 @@ async def test_current_scan_worker_route_rejects_invalid_secret(monkeypatch):
             authorization="Bearer wrong-secret",
         )
     assert raised.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_audit_failure_cleans_up_lease_monitor_task(monkeypatch):
+    import asyncio
+    import scan_worker
+
+    started = asyncio.Event()
+    lease_unconfirmed = asyncio.Event()
+    monitor_tasks = []
+
+    async def failing_audit(_target):
+        started.set()
+        raise ValueError("audit failed")
+
+    monkeypatch.setattr(scan_worker, "_execute_audit", failing_audit)
+    with pytest.raises(ValueError, match="audit failed"):
+        await scan_worker._run_audit_with_lease_guard(
+            "https://shop.example", lease_unconfirmed
+        )
+
+    assert started.is_set()
+    assert not [
+        task for task in asyncio.all_tasks()
+        if task is not asyncio.current_task()
+        and task.get_coro().__qualname__ == "Event.wait"
+        and not task.done()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_lease_loss_cancels_running_audit_and_monitor(monkeypatch):
+    import asyncio
+    import scan_worker
+
+    audit_started = asyncio.Event()
+    audit_cancelled = asyncio.Event()
+    lease_unconfirmed = asyncio.Event()
+
+    async def waiting_audit(_target):
+        audit_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            audit_cancelled.set()
+
+    monkeypatch.setattr(scan_worker, "_execute_audit", waiting_audit)
+    task = asyncio.create_task(
+        scan_worker._run_audit_with_lease_guard("https://shop.example", lease_unconfirmed)
+    )
+    await audit_started.wait()
+    lease_unconfirmed.set()
+
+    with pytest.raises(RuntimeError, match="SCAN_JOB_LEASE_UNCONFIRMED"):
+        await task
+
+    assert audit_cancelled.is_set()
