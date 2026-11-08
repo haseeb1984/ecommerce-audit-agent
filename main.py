@@ -7733,27 +7733,41 @@ async def admin_overview(
     monthly_leads = (await db.execute(select(sql_func.count(AuditLead.id)).where(
         AuditLead.created_at >= month_start
     ))).scalar_one()
-    # Aggregate per-license metrics in bounded queries instead of issuing several
-    # round trips for every client. This keeps the operator overview responsive as
-    # the SaaS customer count grows and avoids an N+1 query pattern.
-    monthly_rows = (await db.execute(
-        select(AuditLead.license_id, sql_func.count(AuditLead.id))
-        .where(AuditLead.created_at >= month_start)
-        .group_by(AuditLead.license_id)
-    )).all()
-    audit_rows = (await db.execute(
-        select(AuditLead.license_id, sql_func.count(AuditLead.id), sql_func.max(AuditLead.created_at))
-        .group_by(AuditLead.license_id)
-    )).all()
-    report_rows = (await db.execute(
-        select(AuditReport.license_id, sql_func.count(AuditReport.id))
-        .group_by(AuditReport.license_id)
-    )).all()
-    reservation_rows = (await db.execute(
-        select(AuditQuotaReservation.license_id, sql_func.count(AuditQuotaReservation.id))
-        .where(AuditQuotaReservation.expires_at > now)
-        .group_by(AuditQuotaReservation.license_id)
-    )).all()
+    # Aggregate only the visible page's per-license metrics. Global summary
+    # counters above remain global SQL counts, while these grouped result sets
+    # stay bounded by the current page instead of growing with every tenant.
+    visible_license_ids = [item.id for item in licenses]
+    monthly_rows = []
+    audit_rows = []
+    report_rows = []
+    reservation_rows = []
+    if visible_license_ids:
+        monthly_rows = (await db.execute(
+            select(AuditLead.license_id, sql_func.count(AuditLead.id))
+            .where(
+                AuditLead.license_id.in_(visible_license_ids),
+                AuditLead.created_at >= month_start,
+            )
+            .group_by(AuditLead.license_id)
+        )).all()
+        audit_rows = (await db.execute(
+            select(AuditLead.license_id, sql_func.count(AuditLead.id), sql_func.max(AuditLead.created_at))
+            .where(AuditLead.license_id.in_(visible_license_ids))
+            .group_by(AuditLead.license_id)
+        )).all()
+        report_rows = (await db.execute(
+            select(AuditReport.license_id, sql_func.count(AuditReport.id))
+            .where(AuditReport.license_id.in_(visible_license_ids))
+            .group_by(AuditReport.license_id)
+        )).all()
+        reservation_rows = (await db.execute(
+            select(AuditQuotaReservation.license_id, sql_func.count(AuditQuotaReservation.id))
+            .where(
+                AuditQuotaReservation.license_id.in_(visible_license_ids),
+                AuditQuotaReservation.expires_at > now,
+            )
+            .group_by(AuditQuotaReservation.license_id)
+        )).all()
     monthly_by_license = {row[0]: int(row[1] or 0) for row in monthly_rows}
     audits_by_license = {row[0]: (int(row[1] or 0), row[2]) for row in audit_rows}
     reports_by_license = {row[0]: int(row[1] or 0) for row in report_rows}
@@ -7764,14 +7778,25 @@ async def admin_overview(
     contact_email_by_license = {}
     if licenses:
         visible_license_keys = [item.license_key for item in licenses]
+        ranked_contact_rows = select(
+            CustomerBillingEvent.license_key.label("license_key"),
+            CustomerBillingEvent.recipient_email.label("recipient_email"),
+            sql_func.row_number().over(
+                partition_by=CustomerBillingEvent.license_key,
+                order_by=(
+                    CustomerBillingEvent.updated_at.desc(),
+                    CustomerBillingEvent.created_at.desc(),
+                    CustomerBillingEvent.event_id.desc(),
+                ),
+            ).label("contact_rank"),
+        ).where(
+            CustomerBillingEvent.license_key.in_(visible_license_keys)
+        ).subquery("ranked_customer_contacts")
         contact_email_rows = (await operational_db.execute(
-            select(CustomerBillingEvent.license_key, CustomerBillingEvent.recipient_email)
-            .where(CustomerBillingEvent.license_key.in_(visible_license_keys))
-            .order_by(
-                CustomerBillingEvent.updated_at.desc(),
-                CustomerBillingEvent.created_at.desc(),
-                CustomerBillingEvent.event_id.desc(),
-            )
+            select(
+                ranked_contact_rows.c.license_key,
+                ranked_contact_rows.c.recipient_email,
+            ).where(ranked_contact_rows.c.contact_rank == 1)
         )).all()
         license_id_by_key = {item.license_key: item.id for item in licenses}
         for license_key, recipient_email in contact_email_rows:
@@ -7780,10 +7805,25 @@ async def admin_overview(
                 contact_email_by_license.setdefault(license_id, recipient_email)
         missing_contact_ids = [item.id for item in licenses if item.id not in contact_email_by_license]
         if missing_contact_ids:
+            ranked_legacy_contacts = select(
+                PaymentWebhookEvent.license_id.label("license_id"),
+                PaymentWebhookEvent.recipient_email.label("recipient_email"),
+                sql_func.row_number().over(
+                    partition_by=PaymentWebhookEvent.license_id,
+                    order_by=(
+                        PaymentWebhookEvent.updated_at.desc(),
+                        PaymentWebhookEvent.created_at.desc(),
+                        PaymentWebhookEvent.event_id.desc(),
+                    ),
+                ).label("contact_rank"),
+            ).where(
+                PaymentWebhookEvent.license_id.in_(missing_contact_ids)
+            ).subquery("ranked_legacy_contacts")
             legacy_contacts = (await db.execute(
-                select(PaymentWebhookEvent.license_id, PaymentWebhookEvent.recipient_email)
-                .where(PaymentWebhookEvent.license_id.in_(missing_contact_ids))
-                .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
+                select(
+                    ranked_legacy_contacts.c.license_id,
+                    ranked_legacy_contacts.c.recipient_email,
+                ).where(ranked_legacy_contacts.c.contact_rank == 1)
             )).all()
             for license_id, recipient_email in legacy_contacts:
                 contact_email_by_license.setdefault(license_id, recipient_email)
