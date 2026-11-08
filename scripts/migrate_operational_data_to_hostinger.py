@@ -11,7 +11,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func, literal, select, tuple_, union_all
+from sqlalchemy import func, literal, select, tuple_, union, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
@@ -51,11 +51,22 @@ def _legacy_account_id(license_key: str, email: str) -> str:
 
 
 async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
-    """Load only the license identity fields needed for tenant mapping."""
-    result = await source.stream(
+    """Load only license identities referenced by legacy operational rows."""
+    referenced_ids = union(
+        select(AccountLoginChallenge.license_id).where(AccountLoginChallenge.license_id.is_not(None)),
+        select(AccountSession.license_id).where(AccountSession.license_id.is_not(None)),
+        select(AccountEmailChangeChallenge.license_id).where(AccountEmailChangeChallenge.license_id.is_not(None)),
+        select(WordPressSite.license_id).where(WordPressSite.license_id.is_not(None)),
+        select(WhiteLabelBranding.license_id).where(WhiteLabelBranding.license_id.is_not(None)),
+        select(PaymentWebhookEvent.license_id).where(PaymentWebhookEvent.license_id.is_not(None)),
+        select(SaaSOperationEvent.license_id).where(SaaSOperationEvent.license_id.is_not(None)),
+    ).subquery("referenced_legacy_license_ids")
+    statement = (
         select(SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name)
+        .join(referenced_ids, referenced_ids.c.license_id == SoftwareLicense.id)
         .execution_options(yield_per=MIGRATION_BATCH_SIZE)
     )
+    result = await source.stream(statement)
     licenses = {}
     try:
         async for row in result:
@@ -63,7 +74,6 @@ async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
     finally:
         await result.close()
     return licenses
-
 
 async def _stream_rows(source: AsyncSession, model):
     """Yield source ORM rows without materializing the complete table."""
