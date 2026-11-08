@@ -9,7 +9,6 @@ import argparse
 import asyncio
 import hashlib
 import logging
-from itertools import islice
 from datetime import datetime, timezone
 
 from sqlalchemy import func, literal, select, tuple_, union_all
@@ -104,31 +103,6 @@ def _verification_gaps(reports):
         if missing or mismatched:
             gaps[name] = {"missing": missing, "field_mismatches": mismatched}
     return gaps
-
-
-def _billing_license_map(billing_rows, license_key_by_id):
-    """Resolve email ownership only when every billing event agrees on one license."""
-    candidates = {}
-    for row in billing_rows:
-        email = (row.recipient_email or "").strip().lower()
-        license_key = license_key_by_id.get(row.license_id)
-        if email and license_key:
-            candidates.setdefault(email, set()).add(license_key)
-    return _resolve_billing_license_candidates(candidates)
-
-
-def _resolve_billing_license_candidates(candidates):
-    resolved = {
-        email: next(iter(license_keys))
-        for email, license_keys in candidates.items()
-        if len(license_keys) == 1
-    }
-    ambiguous = {
-        email for email, license_keys in candidates.items()
-        if len(license_keys) > 1
-    }
-    return resolved, ambiguous
-
 
 
 async def _stream_billing_license_ownership(source):
