@@ -2893,13 +2893,13 @@ async def verify_agency_team_login(payload: AgencyTeamLoginVerify, request: Requ
     auth_secret = os.getenv("ACCOUNT_AUTH_SECRET", "").strip()
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Agency team sign-in is temporarily unavailable.")
-    now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     # The per-email lock serializes OTP verification with requests across every
     # agency sharing this address. Read the challenge only after acquiring it so
     # the selected challenge cannot become stale while this request waits.
     await _lock_customer_login_email(operational_db, email)
+    now = datetime.now(timezone.utc)
     # Continue with agency -> challenge locks, matching suspension/revocation.
     candidate = await operational_db.scalar(select(AgencyTeamLoginChallenge).where(
         AgencyTeamLoginChallenge.email == email,
