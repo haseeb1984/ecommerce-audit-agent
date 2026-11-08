@@ -144,6 +144,9 @@ def test_agency_wordpress_heartbeat_revalidates_credential_under_lifecycle_locks
 
 
 def test_agency_team_audit_results_support_bounded_pagination():
+    import inspect
+    import main
+
     source = inspect.getsource(main.list_agency_team_workspace_audit_results)
     assert "limit: int = Query(25, ge=1, le=100)" in source
     assert "offset: int = Query(0, ge=0, le=1000000)" in source
