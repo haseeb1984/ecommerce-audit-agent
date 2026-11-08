@@ -969,6 +969,7 @@ def test_agency_team_inventory_is_paginated_and_grants_are_scoped_to_loaded_work
     assert "offset: int = Query(default=0, ge=0, le=1000000)" in source
     assert "func.count(AgencyTeamMember.id)" in source
     assert ".offset(offset).limit(limit)" in source
+    assert "workspace_ids: list[str] = Query(default=[], max_length=100)" in source
     assert "AgencyWorkspaceAccess.workspace_id.in_(workspace_ids)" in source
     assert "AgencyClientWorkspace.agency_id == agency.id" in source
     assert "if member_ids and workspace_ids:" in source
