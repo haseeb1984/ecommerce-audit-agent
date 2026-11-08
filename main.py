@@ -8486,6 +8486,8 @@ async def admin_customer_directory(
 @app.get("/api/v1/admin/customers/detail")
 async def admin_customer_account_detail(
     email: str = Query(..., min_length=3, max_length=254),
+    license_limit: int = Query(default=100, ge=1, le=100),
+    license_offset: int = Query(default=0, ge=0, le=1000000),
     request: Request = None,
     response: Response = None,
     db: AsyncSession = Depends(get_async_db),
@@ -8497,27 +8499,47 @@ async def admin_customer_account_detail(
     normalized = email.strip().lower()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    customer_license_keys = set((await operational_db.execute(
-        select(CustomerBillingEvent.license_key).where(
-            sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
-        ).distinct()
-    )).scalars().all())
-    customer_license_keys.update((await operational_db.execute(
-        select(CustomerAccount.license_key).where(
-            sql_func.lower(CustomerAccount.email) == normalized
-        ).distinct()
-    )).scalars().all())
-    rows_by_id = {item.id: item for item in (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.license_key.in_(customer_license_keys))
-        .order_by(SoftwareLicense.created_at.desc())
-    )).scalars().all()} if customer_license_keys else {}
-    legacy_rows = (await db.execute(select(SoftwareLicense).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized)
-    .distinct().order_by(SoftwareLicense.created_at.desc()))).scalars().all()
-    rows_by_id.update({item.id: item for item in legacy_rows})
-    rows = sorted(rows_by_id.values(), key=lambda item: (item.created_at, item.id), reverse=True)
-    if not rows:
+    # Bound cross-database identity transfer and paginate the license inventory.
+    # The Hostinger identity union is streamed and capped at 1,001 keys so one
+    # unusually large account cannot allocate an unbounded Python set.
+    identity_keys_query = select(CustomerBillingEvent.license_key.label("license_key")).where(
+        sql_func.lower(CustomerBillingEvent.recipient_email) == normalized,
+        CustomerBillingEvent.license_key.is_not(None),
+    ).union(
+        select(CustomerAccount.license_key.label("license_key")).where(
+            sql_func.lower(CustomerAccount.email) == normalized,
+            CustomerAccount.license_key.is_not(None),
+        )
+    ).order_by("license_key").limit(1001)
+    identity_key_result = await operational_db.execute(identity_keys_query)
+    customer_license_keys = list(identity_key_result.scalars().all())
+    identity_keys_truncated = len(customer_license_keys) > 1000
+    customer_license_keys = customer_license_keys[:1000]
+
+    from sqlalchemy import union
+    license_id_sources = []
+    if customer_license_keys:
+        license_id_sources.append(
+            select(SoftwareLicense.id.label("license_id")).where(
+                SoftwareLicense.license_key.in_(customer_license_keys)
+            )
+        )
+    license_id_sources.append(
+        select(SoftwareLicense.id.label("license_id")).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized)
+    )
+    matched_license_ids = union(*license_id_sources).subquery("admin_customer_matched_license_ids")
+    license_total = int((await db.execute(
+        select(sql_func.count()).select_from(matched_license_ids)
+    )).scalar_one() or 0)
+    rows = (await db.execute(
+        select(SoftwareLicense)
+        .join(matched_license_ids, matched_license_ids.c.license_id == SoftwareLicense.id)
+        .order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
+        .offset(license_offset).limit(license_limit)
+    )).scalars().all()
+    if not rows and license_offset == 0:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
     license_keys = [item.license_key for item in rows]
@@ -8545,6 +8567,13 @@ async def admin_customer_account_detail(
     now = datetime.now(timezone.utc)
     return {
         "email": normalized,
+        "license_page": {
+            "limit": license_limit,
+            "offset": license_offset,
+            "total": license_total,
+            "has_more": license_offset + len(rows) < license_total,
+            "identity_keys_truncated": identity_keys_truncated,
+        },
         "licenses": [{
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
             "is_active": bool(item.is_active), "expired": bool(item.expires_at and (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) < now),

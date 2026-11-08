@@ -85,3 +85,27 @@ def test_admin_customer_directory_streams_distinct_email_counts_and_closes_both_
     assert "await legacy_email_stream.close()" in source
     assert "operational_emails = set(" not in source
     assert "legacy_emails = set(" not in source
+
+
+def test_admin_customer_detail_bounds_identity_keys_and_paginates_license_inventory():
+    import inspect
+
+    from main import admin_customer_account_detail
+
+    source = inspect.getsource(admin_customer_account_detail)
+    assert 'license_limit: int = Query(default=100, ge=1, le=100)' in source
+    assert 'license_offset: int = Query(default=0, ge=0, le=1000000)' in source
+    assert '.limit(1001)' in source
+    assert 'identity_keys_truncated = len(customer_license_keys) > 1000' in source
+    assert 'select(sql_func.count()).select_from(matched_license_ids)' in source
+    assert '.offset(license_offset).limit(license_limit)' in source
+    assert '"has_more": license_offset + len(rows) < license_total' in source
+
+
+def test_admin_customer_detail_ui_supports_load_more_license_pages():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
+    assert 'Load more licenses' in source
+    assert 'license_offset=' in source
+    assert 'license_page.has_more' in source
