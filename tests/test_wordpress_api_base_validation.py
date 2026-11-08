@@ -58,3 +58,19 @@ def test_uninstall_uses_equivalent_api_base_validation_before_both_disconnects()
     assert "array_key_exists('fragment', $parts)" in UNINSTALL
     assert "array_key_exists('user', $parts)" in UNINSTALL
     assert "array_key_exists('pass', $parts)" in UNINSTALL
+
+
+def test_raw_api_base_is_validated_before_url_sanitization():
+    api_base = PLUGIN[
+        PLUGIN.index("function eaa_wp_api_base"):
+        PLUGIN.index("function eaa_wp_api_request")
+    ]
+    save_handler = PLUGIN[
+        PLUGIN.index("function eaa_wp_handle_save_settings"):
+        PLUGIN.index("add_action('admin_post_eaa_save_white_label'")
+    ]
+
+    assert api_base.index("eaa_wp_is_valid_api_base($base)") < api_base.index("esc_url_raw($base)")
+    assert save_handler.index("eaa_wp_is_valid_api_base($api_base)") < save_handler.index("esc_url_raw($api_base)")
+    assert "$api_base_raw =" in UNINSTALL
+    assert UNINSTALL.count("!$eaa_is_valid_api_base($api_base_raw)") == 2
