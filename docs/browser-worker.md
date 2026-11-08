@@ -10,9 +10,13 @@ docker build -f browser-worker/Dockerfile -t ecommerce-audit-browser-worker .
 Run one worker process per container. Set `BROWSER_AUDIT_SHARED_SECRET` to a
 random secret of at least 32 characters. Set the same secret and
 `BROWSER_AUDIT_SERVICE_URL=https://<private-browser-service-host>` on the
-existing scan worker. The scan worker refuses non-HTTPS service URLs and does not
-send audit requests unless both settings are present. Requests use HMAC-SHA256
-over the timestamp and exact request body; signatures expire after five minutes.
+existing scan worker. The service URL must be an HTTPS origin only: no embedded
+credentials, path, query string, or fragment. The client appends the fixed
+`/v1/audit` path and disables redirects, so configuration cannot redirect
+signed audit requests to a different endpoint. Requests use HMAC-SHA256 over
+the timestamp and exact request body; signatures expire after five minutes.
+The client also rejects non-object JSON and malformed result shapes before
+returning browser findings to the queue worker.
 
 ## Network and isolation requirements
 
