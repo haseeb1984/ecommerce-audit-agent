@@ -2778,3 +2778,128 @@ async def test_crawl_records_visible_product_offer_consistency_per_product_url(m
         "Visible product currency differs from structured offer currency",
         "Visible stock status differs from structured offer availability",
     }]) == 3
+
+
+
+def test_catalog_query_parameter_signature_classifies_only_value_free_ecommerce_parameters():
+    signature = crawl_checks._catalog_query_parameter_signature(
+        "https://shop.example/collections/shoes?"
+        "filter.v.option.color=red&page=2&sort_by=price-ascending&variant=sku-123&utm_source=ads"
+    )
+
+    assert signature is not None
+    path, parameters = signature
+    assert path == "/collections/shoes"
+    assert dict(parameters) == {
+        "filter.v.option.color": "filtering",
+        "page": "pagination",
+        "sort_by": "sorting",
+        "variant": "variant",
+    }
+    assert "red" not in repr(signature)
+    assert "sku-123" not in repr(signature)
+    assert "price-ascending" not in repr(signature)
+    assert "ads" not in repr(signature)
+    assert crawl_checks._catalog_query_parameter_signature(
+        "https://shop.example/?utm_source=campaign&gclid=tracking"
+    ) is None
+    assert crawl_checks._catalog_query_parameter_signature(
+        "https://shop.example/blog?page=2&sort_by=recent"
+    ) is None
+    assert crawl_checks._catalog_query_parameter_signature(
+        "https://shop.example/collections/shoes?page=2&sort_by=price"
+    ) == (
+        "/collections/shoes",
+        (("page", "pagination"), ("sort_by", "sorting")),
+    )
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_reports_parameterized_catalog_links_without_persisting_values(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+    requested = []
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        requested.append(url)
+        if url == "https://shop.example/":
+            return 200, (
+                '<html><head><title>Store</title></head><body>'
+                '<a href="/collections/shoes?filter.v.option.color=red&page=2&sort_by=price-ascending&variant=sku-123&utm_source=ads">Filtered shoes</a>'
+                '<a href="/?utm_campaign=fall">Tracking only</a>'
+                '</body></html>'
+            ), {"content-type": "text/html"}, url
+        if url == "https://shop.example/collections/shoes":
+            return 200, (
+                '<html><head><title>Shoes</title></head><body><h1>Shoes</h1></body></html>'
+            ), {"content-type": "text/html"}, url
+        if url in {
+            "https://shop.example/robots.txt",
+            "https://shop.example/llms.txt",
+            "https://shop.example/sitemap.xml",
+        }:
+            return 404, "", {"content-type": "text/plain"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    findings, checked, limitations = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    finding = next(item for item in findings if item.title == "Parameterized internal catalog URLs detected")
+    assert finding.category == "ecommerce_catalog"
+    assert "filter.v.option.color" in finding.evidence
+    assert "pagination, sorting, variant" in finding.evidence
+    assert "red" not in finding.evidence
+    assert "sku-123" not in finding.evidence
+    assert "price-ascending" not in finding.evidence
+    assert "utm_source" not in finding.evidence
+    assert "https://shop.example/collections/shoes" in checked
+    assert "https://shop.example/collections/shoes?filter.v.option.color=red" not in requested
+    outcome = next(item for item in outcomes if item.check_id == "ecommerce_catalog.parameterized_internal_urls")
+    assert outcome.outcome == "warning"
+    assert "Query values are intentionally omitted" in outcome.evidence
+    assert any("Query values were not stored" in item for item in limitations)
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_does_not_flag_tracking_only_query_links(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body><a href="/?utm_source=newsletter&gclid=abc">Home</a></body></html>', {"content-type": "text/html"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    findings, _, _ = await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    assert not any(item.title == "Parameterized internal catalog URLs detected" for item in findings)
+    outcome = next(item for item in outcomes if item.check_id == "ecommerce_catalog.parameterized_internal_urls")
+    assert outcome.outcome == "not_assessed"
+    assert "No product, category, collection, catalog or search page" in outcome.evidence
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_passes_query_inventory_only_after_sampling_catalog_page(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body><a href="/collections/shoes">Shoes</a></body></html>', {"content-type": "text/html"}, url
+        if url == "https://shop.example/collections/shoes":
+            return 200, '<html><head><title>Shoes</title></head><body><h1>Shoes</h1></body></html>', {"content-type": "text/html"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    outcome = next(item for item in outcomes if item.check_id == "ecommerce_catalog.parameterized_internal_urls")
+    assert outcome.outcome == "pass"
+    assert "No recognized variant, filter, pagination, sorting or search query patterns" in outcome.evidence

@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from defusedxml import ElementTree as ET
-from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urldefrag, urljoin, urlsplit, urlunsplit
 
 import aiohttp
 import json
@@ -826,6 +826,57 @@ class _LinkParser(HTMLParser):
 
 
 
+def _catalog_query_parameter_signature(url: str) -> tuple[str, tuple[tuple[str, str], ...]] | None:
+    """Return a value-free signature for recognized ecommerce query parameters."""
+    try:
+        parts = urlsplit(url)
+        if not parts.query:
+            return None
+        pairs = parse_qsl(parts.query, keep_blank_values=True, max_num_fields=50)
+    except (ValueError, UnicodeError):
+        return None
+
+    variant_names = {"variant", "variant_id", "sku", "option", "attribute"}
+    pagination_names = {"page", "paged", "p", "offset", "start", "cursor", "after", "before"}
+    sorting_names = {"sort", "sort_by", "order", "orderby"}
+    facet_names = {
+        "brand", "category", "color", "size", "price", "min_price", "max_price",
+        "price_min", "price_max", "availability", "vendor", "product_type", "tag",
+    }
+    search_names = {"q", "query", "search", "keyword"}
+    path = parts.path or "/"
+    catalog_path = bool(
+        PRODUCT_DETAIL_PATH.search(path)
+        or re.search(r"(?:^|/)(?:collections?|categories?|category|catalog|shop)(?:/|$)", path, re.I)
+    )
+    search_path = bool(re.search(r"(?:^|/)search(?:/|$)", path, re.I))
+    recognized: dict[str, str] = {}
+    for raw_name, _value in pairs:
+        name = raw_name.strip().lower()
+        if not re.fullmatch(r"[a-z0-9_.\[\]-]{1,80}", name):
+            continue
+        if name in variant_names or name.startswith("variant_") or name.startswith("options["):
+            kind = "variant"
+        elif name.startswith(("filter.", "filter_", "facet")):
+            kind = "filtering"
+        elif name in facet_names and catalog_path:
+            kind = "filtering"
+        elif name in pagination_names and catalog_path:
+            kind = "pagination"
+        elif name in sorting_names and (catalog_path or search_path):
+            kind = "sorting"
+        elif name in search_names and (catalog_path or search_path):
+            kind = "search"
+        else:
+            # Tracking, session, unrelated content pagination and unknown parameters are omitted.
+            continue
+        recognized[name] = kind
+
+    if not recognized:
+        return None
+    return parts.path or "/", tuple(sorted(recognized.items()))
+
+
 def _canonical_page_url(url: str) -> str:
     """Normalize crawl keys so equivalent default-port URLs do not consume extra page slots."""
     parts = urlsplit(urldefrag(url)[0])
@@ -1392,6 +1443,18 @@ async def run_bounded_site_crawl(
         link_parser.feed(homepage)
         candidates: list[str] = []
         seen: set[str] = set()
+        parameterized_url_signatures: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+        parameterized_parameter_names: set[str] = set()
+        parameterized_parameter_kinds: set[str] = set()
+
+        def record_parameterized_url(value: str) -> None:
+            signature = _catalog_query_parameter_signature(value)
+            if signature is None or signature in parameterized_url_signatures:
+                return
+            parameterized_url_signatures.add(signature)
+            parameterized_parameter_names.update(name for name, _kind in signature[1])
+            parameterized_parameter_kinds.update(kind for _name, kind in signature[1])
+
         final_origin = urlsplit(final_home)
 
         # Use the conventional sitemap as a secondary discovery source. A sitemap
@@ -1821,16 +1884,17 @@ async def run_bounded_site_crawl(
                 # the implicit HTTPS port (or :80 and implicit HTTP) are equivalent.
                 if not _same_origin(absolute, final_home):
                     continue
-                candidate = _canonical_page_url(absolute)
-                if candidate in seen or candidate == _canonical_page_url(final_home):
+                suffix = parts.path.lower()
+                if suffix.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
+                                     ".css", ".js", ".woff", ".woff2", ".zip", ".xml")):
                     continue
+                candidate = _canonical_page_url(absolute)
                 if not _robots_path_allowed(candidate, robots_rules):
                     continue
-                suffix = urlsplit(candidate).path.lower()
+                record_parameterized_url(absolute)
+                if candidate in seen or candidate == _canonical_page_url(final_home):
+                    continue
             except (ValueError, UnicodeError):
-                continue
-            if suffix.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
-                                 ".css", ".js", ".woff", ".woff2", ".zip", ".xml")):
                 continue
             seen.add(candidate)
             candidates.append(candidate)
@@ -2024,15 +2088,16 @@ async def run_bounded_site_crawl(
                         if not _same_origin(absolute, final_home):
                             continue
                         candidate_url = _canonical_page_url(absolute)
-                        if candidate_url in queued_urls:
-                            continue
-                        if not _robots_path_allowed(candidate_url, robots_rules):
-                            continue
-                        path = urlsplit(candidate_url).path.lower()
+                        path = parts.path.lower()
                         if path.endswith((
                             ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
                             ".pdf", ".css", ".js", ".woff", ".woff2", ".zip", ".xml",
                         )):
+                            continue
+                        if not _robots_path_allowed(candidate_url, robots_rules):
+                            continue
+                        record_parameterized_url(absolute)
+                        if candidate_url in queued_urls:
                             continue
                         queued_urls.add(candidate_url)
                         crawl_queue.append(candidate_url)
@@ -2823,6 +2888,60 @@ async def run_bounded_site_crawl(
         limitations.append(
             f"{unchecked_sitemap_count} discovered sitemap URL(s) were not fetched during this audit because sitemap discovery shares the bounded crawl page budget; sitemap inclusion alone does not establish URL status, canonical consistency, or indexability."
         )
+    if parameterized_url_signatures:
+        kinds = ", ".join(sorted(parameterized_parameter_kinds))
+        names = ", ".join(sorted(parameterized_parameter_names)[:20])
+        findings.append(_finding(
+            "ecommerce_catalog",
+            "Parameterized internal catalog URLs detected",
+            "manual_review_required",
+            "low",
+            f"Observed {len(parameterized_url_signatures)} unique same-origin internal URL pattern(s) with recognized ecommerce query parameters in the bounded link sample. Parameter classes: {kinds or 'not classified'}. Parameter names: {names or 'not available'}. Query values were not stored; query variants were normalized away from crawl keys and were not fetched as separate pages.",
+            "Variant, pagination, sorting, search, and faceted-filter parameters can represent useful catalog states or create duplicate crawl paths. Their presence alone does not prove duplicate indexing, crawl-budget waste, or an incorrect canonical strategy.",
+            "Review representative parameterized product and category URLs. Confirm that pagination and variants expose the intended products, filtered/sorted states have an intentional canonical or noindex strategy, and important products remain reachable through ordinary links.",
+            ["Inspect representative URLs using the listed parameter names without sharing session or tracking values.", "Compare visible product sets and canonical/noindex directives for the base and parameterized states.", "Confirm pagination changes the product set and that variant URLs identify the intended variant."],
+            normalized,
+        ))
+        limitations.append(
+            "Parameterized ecommerce URL signals come from the bounded same-origin link sample. Query values were not stored and query variants were not fetched as separate crawl pages."
+        )
+    if outcome_records is not None:
+        catalog_page_sampled = any(
+            PRODUCT_DETAIL_PATH.search(urlsplit(page_url).path)
+            or re.search(r"(?:^|/)(?:collections?|categories?|category|catalog|shop)(?:/|$)", urlsplit(page_url).path, re.I)
+            for page_url in pages_checked
+        )
+        if parameterized_url_signatures:
+            query_outcome = "warning"
+            query_evidence = (
+                f"Unique recognized parameterized URL patterns: {len(parameterized_url_signatures)}; "
+                f"parameter classes: {', '.join(sorted(parameterized_parameter_kinds)) or 'none detected'}; "
+                f"parameter names: {', '.join(sorted(parameterized_parameter_names)[:20]) or 'none detected'}. "
+                "Query values are intentionally omitted; absence in this bounded sample does not prove the site has no parameterized URLs."
+            )
+        elif catalog_page_sampled:
+            query_outcome = "pass"
+            query_evidence = (
+                "No recognized variant, filter, pagination, sorting or search query patterns were found in the bounded internal-link sample for inspected catalog pages. "
+                "Query values are intentionally omitted; absence in this sample does not prove the site has no parameterized URLs."
+            )
+        else:
+            query_outcome = "not_assessed"
+            query_evidence = (
+                "No product, category, collection, catalog or search page was identified in the fetched sample; "
+                "parameterized catalog URL behavior was not assessed."
+            )
+        outcome_records.append(CheckOutcome(
+            check_id="ecommerce_catalog.parameterized_internal_urls",
+            category="ecommerce_catalog",
+            page_url=normalized,
+            outcome=query_outcome,
+            observed_at_utc=datetime.now(timezone.utc).isoformat(),
+            method="bounded same-origin internal-link query-parameter inventory",
+            evidence=query_evidence,
+            evidence_ref="ecommerce_catalog.parameterized_internal_urls",
+        ))
+
     # The link-response category is assessed only for the bounded same-origin
     # pages that were actually fetched. Never infer a pass when the homepage
     # could not be fetched or the crawler produced no page denominator.
