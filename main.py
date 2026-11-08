@@ -4502,6 +4502,8 @@ async def create_account_billing_portal(
         ),
         None,
     )
+    if not customer_id:
+        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     subscription_rows = await db.execute(
         select(PaymentWebhookEvent.subscription_id)
         .where(
@@ -4520,8 +4522,6 @@ async def create_account_billing_portal(
         for subscription_id in subscription_rows.scalars().all()
         if isinstance(subscription_id, str) and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id)
     ]
-    if not customer_id:
-        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     payload = {"subscription_ids": subscription_ids} if subscription_ids else {}
     try:
         result = await asyncio.to_thread(
