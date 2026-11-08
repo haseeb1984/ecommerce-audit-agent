@@ -135,3 +135,8 @@
 ### Agency WordPress disconnect hardening
 
 The client-site disconnect endpoint now resolves tenant identity without locking, then serializes mutations in agency → workspace → website order (matching heartbeat, connection-token issuance, archive and suspension). It also consumes any pending connection challenges for that workspace before commit so a token issued concurrently cannot be used to reconnect after the disconnect.
+
+
+### Admin WordPress disconnect serialization
+
+Admin-initiated customer-site disconnect now locks the canonical PostgreSQL license before the Hostinger installation, matching registration, identity claim and customer disconnect ordering. It also consumes outstanding single-use WordPress identity challenges before the site disconnect commits, preventing a pending claim from reconnecting the site immediately after an operator revokes it.
