@@ -13,7 +13,7 @@ from scripts.check_production_readiness import (
     "value",
     [
         "https://app.example.com/internal/scan-worker/run",
-        "https://worker.example.com/run?batch=5",
+        "https://worker.example.com/internal/scan-worker/run?batch=5",
     ],
 )
 def test_scan_worker_url_accepts_secure_absolute_urls(value):
@@ -27,7 +27,9 @@ def test_scan_worker_url_accepts_secure_absolute_urls(value):
         "http://app.example.com/internal/scan-worker/run",
         "https:///internal/scan-worker/run",
         "https://user:password@app.example.com/run",
-        "https://app.example.com/run#fragment",
+        "https://app.example.com/internal/scan-worker/run#fragment",
+        "https://app.example.com/wrong/path",
+        "https://app.example.com:bad/internal/scan-worker/run",
         "not-a-url",
     ],
 )
@@ -74,13 +76,22 @@ def test_readiness_requires_worker_url_and_scheduler_secret(monkeypatch, capsys)
     assert "scheduled_scan_worker" in REQUIRED_ENV_GROUPS
 
 
-@pytest.mark.parametrize("secret_name", ["CRON_SECRET", "SCAN_WORKER_TOKEN"])
-def test_readiness_accepts_configured_worker_url_and_supported_secret(monkeypatch, secret_name):
+def test_readiness_accepts_worker_url_and_required_scheduler_secret(monkeypatch):
     _set_complete_configuration(monkeypatch)
-    monkeypatch.delenv("CRON_SECRET")
-    monkeypatch.setenv(secret_name, "worker-test-secret")
 
     failed, details = _configuration_status()
 
     assert "scheduled_scan_worker" not in failed
     assert not any("SCAN_WORKER_URL" in detail for detail in details)
+    assert not any("CRON_SECRET" in detail for detail in details)
+
+
+def test_direct_worker_token_does_not_mask_missing_scheduler_secret(monkeypatch):
+    _set_complete_configuration(monkeypatch)
+    monkeypatch.delenv("CRON_SECRET")
+    monkeypatch.setenv("SCAN_WORKER_TOKEN", "direct-api-token")
+
+    failed, details = _configuration_status()
+
+    assert "scheduled_scan_worker" in failed
+    assert any("CRON_SECRET" in detail for detail in details)

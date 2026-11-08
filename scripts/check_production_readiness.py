@@ -53,7 +53,7 @@ REQUIRED_ENV_GROUPS = {
     "customer_account_auth": ("ACCOUNT_AUTH_SECRET",),
     "hostinger_operational_database": ("HOSTINGER_DATABASE_URL",),
     "public_app_url": ("PUBLIC_APP_URL",),
-    "scheduled_scan_worker": ("SCAN_WORKER_URL",),
+    "scheduled_scan_worker": ("SCAN_WORKER_URL", "CRON_SECRET"),
 }
 
 
@@ -87,6 +87,9 @@ def _valid_scan_worker_url(value: str) -> bool:
             and not parsed.username
             and not parsed.password
             and not parsed.fragment
+            and parsed.path.rstrip("/") == "/internal/scan-worker/run"
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
+            and not any(character.isspace() for character in parsed.netloc)
         )
     except ValueError:
         return False
@@ -100,15 +103,14 @@ def _configuration_status() -> tuple[list[str], list[str]]:
     for group, names in REQUIRED_ENV_GROUPS.items():
         if group == "scheduled_scan_worker":
             worker_url_ready = _valid_scan_worker_url(os.getenv("SCAN_WORKER_URL", ""))
-            worker_secret_ready = bool(
-                os.getenv("CRON_SECRET", "").strip()
-                or os.getenv("SCAN_WORKER_TOKEN", "").strip()
-            )
+            # The scheduled GitHub Actions workflow injects CRON_SECRET.
+            # SCAN_WORKER_TOKEN is accepted by direct API invocations only.
+            worker_secret_ready = bool(os.getenv("CRON_SECRET", "").strip())
             ready = worker_url_ready and worker_secret_ready
             if not worker_url_ready:
                 details.append("SCAN_WORKER_URL must be a valid HTTPS URL without embedded credentials or a fragment")
             if not worker_secret_ready:
-                details.append("CRON_SECRET or SCAN_WORKER_TOKEN must be configured for the scheduled scan worker")
+                details.append("CRON_SECRET must be configured for the scheduled GitHub Actions scan worker")
         elif group == "pagespeed_audits":
             ready = any(os.getenv(name, "").strip() for name in names)
         elif group == "paddle_price_catalog":
