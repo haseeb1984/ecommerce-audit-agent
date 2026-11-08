@@ -7120,6 +7120,7 @@ async def admin_payment_events(
     pg_id_stream = await db.stream_scalars(
         pg_ids_statement.order_by(PaymentWebhookEvent.event_id.asc())
     )
+    pg_stream_closed = False
     try:
         async with HostingerAsyncSessionLocal() as operational_db:
             host_ids_statement = select(CustomerBillingEvent.event_id)
@@ -7134,6 +7135,8 @@ async def admin_payment_events(
                 )
             finally:
                 await host_id_stream.close()
+                await pg_id_stream.close()
+                pg_stream_closed = True
             candidate_limit = offset + limit
             host_rows = (await operational_db.execute(
                 host_statement.order_by(
@@ -7172,7 +7175,8 @@ async def admin_payment_events(
         )).all()
         license_ids = {key: license_id for license_id, key in rows}
     finally:
-        await pg_id_stream.close()
+        if not pg_stream_closed:
+            await pg_id_stream.close()
 
     return {
         "items": [
