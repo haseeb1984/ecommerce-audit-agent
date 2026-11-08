@@ -8,7 +8,7 @@ For each successfully fetched HTML page, the bounded crawler records independent
 
 - Ecommerce catalog navigation and product/category signals.
 - Sensitive-looking fields in GET forms.
-- Accessible-name and ARIA relationships, including native and custom `role=button` / `role=link` controls, labels, duplicate IDs, focusable content hidden from assistive technology, and unnamed input button/submit/reset controls.
+- Accessible-name and ARIA relationships, including native and custom `role=button` / `role=link` controls, labels, duplicate IDs, focusable content hidden from assistive technology, unnamed input button/submit/reset controls, embedded iframe titles, and linked image-map area names.
 - Product structured-data inspection, including a clean no-signal result.
 - Hreflang and international SEO declarations.
 - Analytics/pixel tags and visible consent-interface signals.

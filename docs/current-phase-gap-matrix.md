@@ -895,3 +895,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Added regression contracts for both the transform arity and timestamp preservation. Existing bounded batching, resumable commits, read-only verification and source-retention behavior are unchanged.
 - This is a source-level correction only. Backend CI has not executed these tests, and no live Hostinger/Supabase migration or data mutation was performed. Migration remains **implemented / verification pending**.
 - PDF/private-storage and final audit-result refinement remain reserved for the final phase.
+
+
+## 2026-11-08 — accessibility embedded-content and image-map coverage
+
+- Extended the static accessibility parser to inspect iframe accessible names (title, aria-label, or a resolvable aria-labelledby reference).
+- Added a separate review signal for linked image-map area elements without a meaningful accessible name; non-linked area elements are not treated as interactive links.
+- Added regression coverage for unnamed and named frames, broken frame label references, unnamed linked areas, and non-linked map areas.
+- These are conservative source-level review signals only. They do not assess embedded third-party document accessibility, image-map coordinate accuracy, or establish WCAG conformance. Tests are committed pending CI execution; no production audit or external payment/video content was accessed.
+- PDF/report and final audit-result refinement remain reserved for the final phase.
