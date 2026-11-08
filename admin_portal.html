@@ -241,7 +241,6 @@ async function loadCustomerAccount(email){
  const licenseBox=el("div",undefined,"historybox");licenseBox.append(el("h4","Linked licenses"));
  const appendLicenseRows=(target,items)=>{for(const x of items){target.append(el("div",x.client_name+" · #"+x.id+" · "+String(x.tier).toUpperCase()+" · "+(x.is_active?"Enabled":"Disabled")+(x.expired?" · Expired":"")+" · Monthly quota "+x.monthly_limit+" · Expiry "+date(x.expires_at),"historyitem"))}};
  appendLicenseRows(licenseBox,d.licenses);
- if(d.license_page&&d.license_page.identity_keys_truncated)licenseBox.append(el("p","This account has more than 1,000 operational identity keys. The displayed license total covers the first 1,000 keys plus legacy billing records; review the migration/identity mapping before relying on it as a complete total.","muted"));
  if(d.license_page&&d.license_page.has_more){
   const more=el("button","Load more licenses","secondary");more.addEventListener("click",async()=>{more.disabled=true;try{const next=await api("/api/v1/admin/customers/detail?email="+encodeURIComponent(d.email)+"&license_offset="+(d.license_page.offset+d.license_page.limit)+"&license_limit="+d.license_page.limit);if(selectedCustomerEmail!==d.email)return;appendLicenseRows(licenseBox,next.licenses);d.license_page=next.license_page;if(!next.license_page.has_more)more.remove();else more.disabled=false}catch(e){more.disabled=false;status(e.message,"error")}});licenseBox.append(more);
  }
