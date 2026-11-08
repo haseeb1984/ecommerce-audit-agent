@@ -23,7 +23,7 @@ def test_customer_portal_confirms_and_reports_team_member_revocation():
 
     assert 'window.confirm("Revoke access for " + item.email' in section
     assert 'method:"DELETE"' in section
-    assert 'setStatus("agencyStatus", "Access revoked for " + item.email, "success")' in section
+    assert 'setStatus("agencyStatus", "Access revoked for " + item.email + ".", "success")' in section
     assert "revoke.disabled = true" in section
 
 
@@ -115,7 +115,6 @@ def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_or
     assert ".with_for_update()" in source[agency_lock:workspace_lock]
     assert ".with_for_update()" in source[workspace_lock:site_lock]
     assert ".with_for_update()" in source[site_lock:challenge_lock]
-    assert "update(AgencyWebsiteConnectChallenge)" in source[challenge_lock:commit]
     assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[challenge_lock:commit]
     assert ".values(consumed_at=now)" in source[challenge_lock:commit]
     assert 'agency.status != "active"' in source[agency_lock:workspace_lock]

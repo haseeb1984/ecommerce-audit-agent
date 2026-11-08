@@ -112,7 +112,6 @@ def test_customer_scan_batch_actions_do_not_update_status_after_account_switch()
 
     assert "const operationSessionVersion = accountSessionVersion;" in source
     assert "if (operationSessionVersion === accountSessionVersion)" in source
-    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
 
 
 

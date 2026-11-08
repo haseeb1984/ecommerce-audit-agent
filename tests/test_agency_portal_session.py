@@ -24,7 +24,7 @@ def test_agency_portal_protects_workspace_and_saved_audit_requests():
     assert '"/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset, {}, expectedVersion' in script
     assert '"/api/v1/agency/team/auth/me",{},expectedVersion' in script
     assert '"/audits?limit="+historyPageSize+"&offset="+offset,{},actionVersion' in script
-    assert '"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},evidenceVersion' in script
+    assert '"/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit="+evidencePageSize+"&offset="+offset,{},evidenceVersion' in script
     assert '},actionVersion);' in script
 
 
@@ -83,7 +83,7 @@ def test_customer_portal_confirms_and_reports_team_member_revocation():
 
     assert 'window.confirm("Revoke access for " + item.email' in section
     assert 'method:"DELETE"' in section
-    assert 'setStatus("agencyStatus", "Access revoked for " + item.email, "success")' in section
+    assert 'setStatus("agencyStatus", "Access revoked for " + item.email + ".", "success")' in section
     assert "revoke.disabled = true" in section
 
 

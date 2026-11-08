@@ -348,8 +348,9 @@ def test_scan_lease_renewal_rejects_expired_owner_and_bounds_lease_window():
     assert "lease_seconds: int = 900" in renewal
     assert "renewal_cutoff = _scan_lease_cutoff(now, lease_seconds)" in renewal
     assert "WebsiteScanJob.locked_at >= renewal_cutoff" in renewal
-    assert "isinstance(lease_seconds, bool)" in renewal
-    assert "1 <= lease_seconds <= 3600" in renewal
+    cutoff = inspect.getsource(scan_queue._scan_lease_cutoff)
+    assert "isinstance(lease_seconds, bool)" in cutoff
+    assert "1 <= lease_seconds <= 3600" in cutoff
 
 
 def test_scan_worker_heartbeat_runs_well_inside_lease_window():
