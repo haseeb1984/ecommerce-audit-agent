@@ -350,6 +350,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             } if license_key_by_id.get(row.license_id) else None),
             "id",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
         reports["customer_sessions"] = await _copy_rows(
             source, target, AccountSession, CustomerSession,
@@ -463,6 +464,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             }),
             "legacy_source_id",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
 
         # Resolve each note's email ownership in SQL; no email->license map is
