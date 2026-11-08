@@ -8488,6 +8488,12 @@ async def admin_customer_account_detail(
     email: str = Query(..., min_length=3, max_length=254),
     license_limit: int = Query(default=100, ge=1, le=100),
     license_offset: int = Query(default=0, ge=0, le=1000000),
+    session_limit: int = Query(default=50, ge=1, le=100),
+    session_offset: int = Query(default=0, ge=0, le=1000000),
+    wordpress_limit: int = Query(default=50, ge=1, le=100),
+    wordpress_offset: int = Query(default=0, ge=0, le=1000000),
+    note_limit: int = Query(default=50, ge=1, le=100),
+    note_offset: int = Query(default=0, ge=0, le=1000000),
     request: Request = None,
     response: Response = None,
     db: AsyncSession = Depends(get_async_db),
@@ -8568,7 +8574,16 @@ async def admin_customer_account_detail(
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
     license_keys = [item.license_key for item in rows]
-    sessions = (await operational_db.execute(select(CustomerSession).where(CustomerSession.license_key.in_(license_keys)).order_by(CustomerSession.created_at.desc()).limit(200))).scalars().all()
+    hostinger_identity_keys = identity_keys_query.subquery("admin_customer_hostinger_identity_keys")
+    hostinger_license_keys = select(hostinger_identity_keys.c.license_key)
+    session_base = select(CustomerSession).where(CustomerSession.license_key.in_(hostinger_license_keys))
+    session_total = int((await operational_db.execute(
+        select(sql_func.count()).select_from(session_base.subquery())
+    )).scalar_one() or 0)
+    sessions = (await operational_db.execute(
+        session_base.order_by(CustomerSession.created_at.desc(), CustomerSession.token_hash.desc())
+        .offset(session_offset).limit(session_limit)
+    )).scalars().all()
     payments = (await operational_db.execute(
         select(CustomerBillingEvent).where(CustomerBillingEvent.license_key.in_(license_keys))
         .order_by(CustomerBillingEvent.updated_at.desc()).limit(200)
@@ -8583,12 +8598,26 @@ async def admin_customer_account_detail(
     payments.extend(item for item in legacy_payments if item.event_id not in known_event_ids)
     payments.sort(key=lambda item: item.updated_at or item.created_at, reverse=True)
     payments = payments[:200]
-    notes = (await operational_db.execute(select(AdminCustomerNote).where(
+    note_base = select(AdminCustomerNote).where(
         sql_func.lower(AdminCustomerNote.customer_email) == normalized
-    ).order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc()).limit(100))).scalars().all()
-    wordpress_sites = (await operational_db.execute(select(WordPressInstallation).where(
-        WordPressInstallation.license_key.in_(license_keys)
-    ).order_by(WordPressInstallation.created_at.desc()).limit(100))).scalars().all()
+    )
+    note_total = int((await operational_db.execute(
+        select(sql_func.count()).select_from(note_base.subquery())
+    )).scalar_one() or 0)
+    notes = (await operational_db.execute(
+        note_base.order_by(AdminCustomerNote.created_at.desc(), AdminCustomerNote.id.desc())
+        .offset(note_offset).limit(note_limit)
+    )).scalars().all()
+    wordpress_base = select(WordPressInstallation).where(
+        WordPressInstallation.license_key.in_(hostinger_license_keys)
+    )
+    wordpress_total = int((await operational_db.execute(
+        select(sql_func.count()).select_from(wordpress_base.subquery())
+    )).scalar_one() or 0)
+    wordpress_sites = (await operational_db.execute(
+        wordpress_base.order_by(WordPressInstallation.created_at.desc(), WordPressInstallation.id.desc())
+        .offset(wordpress_offset).limit(wordpress_limit)
+    )).scalars().all()
     now = datetime.now(timezone.utc)
     return {
         "email": normalized,
@@ -8597,7 +8626,7 @@ async def admin_customer_account_detail(
             "offset": license_offset,
             "total": license_total,
             "has_more": license_offset + len(rows) < license_total,
-            "identity_keys_truncated": identity_keys_truncated,
+            "identity_keys_truncated": False,
         },
         "licenses": [{
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
@@ -8607,6 +8636,18 @@ async def admin_customer_account_detail(
             "billing_period_ends_at": item.billing_period_ends_at.isoformat() if item.billing_period_ends_at else None,
             "created_at": item.created_at.isoformat() if item.created_at else None,
         } for item in rows],
+        "session_page": {
+            "limit": session_limit, "offset": session_offset, "total": session_total,
+            "has_more": session_offset + len(sessions) < session_total,
+        },
+        "wordpress_page": {
+            "limit": wordpress_limit, "offset": wordpress_offset, "total": wordpress_total,
+            "has_more": wordpress_offset + len(wordpress_sites) < wordpress_total,
+        },
+        "note_page": {
+            "limit": note_limit, "offset": note_offset, "total": note_total,
+            "has_more": note_offset + len(notes) < note_total,
+        },
         "sessions": [{
             "email": item.email,
             "license_id": next((lic.id for lic in rows if lic.license_key == item.license_key), None),

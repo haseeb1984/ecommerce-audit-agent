@@ -20,3 +20,10 @@ Apply `migrations/20261031_admin_customer_lifecycle.sql` before deploying this r
 ## Paddle subscription cancellation
 
 The account detail view exposes a confirmed cancellation request for linked Paddle subscriptions. The operator must re-enter the exact subscription ID and provide a reason. The default action schedules cancellation at the next billing period; the API also supports an explicitly requested immediate cancellation. The backend calls Paddle with server-side credentials, verifies the returned subscription ID, and writes an administrator action record. It does not directly mutate local license entitlements. The verified Paddle subscription webhook remains authoritative for local subscription and access state.
+
+
+## Customer detail sublist pagination
+
+Browser sessions, linked WordPress installations, and internal support notes have independent offset/limit pagination. Each endpoint sublist defaults to 50 rows, accepts a maximum of 100 rows per request, and returns its own total and `has_more` metadata. The operator console exposes a separate Load more control for each list. Session ordering uses creation time plus the session primary key for deterministic pagination; session token hashes are never returned.
+
+Billing lifecycle events remain a bounded cross-database merged sample (up to 200 events) because PostgreSQL legacy events and Hostinger mirror events must be deduplicated and globally ordered. Independent billing-event pagination/count metadata remains follow-up work.
