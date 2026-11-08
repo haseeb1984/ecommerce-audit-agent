@@ -1,5 +1,6 @@
 """License-scoped, one-time WordPress identity linking for standard customer accounts."""
 import hashlib
+import ipaddress
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -45,16 +46,30 @@ def _normalize_site_url(value: str) -> tuple[str, str]:
         raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
     if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
         raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
-    try:
-        host = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
-    except UnicodeError as exc:
-        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from exc
-    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+    raw_host = parsed.hostname.rstrip(".")
+    if "%" in raw_host:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    try:
+        address = ipaddress.ip_address(raw_host)
+    except ValueError:
+        # A dotted numeric host is intended to be IPv4, not a DNS name.
+        # Reject invalid IPv4 literals instead of accepting them as hostnames.
+        if re.fullmatch(r"[0-9.]+", raw_host):
+            raise HTTPException(status_code=422, detail="WordPress site IP address is invalid.")
+        try:
+            host = raw_host.encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from exc
+        if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+            raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+        authority = host
+    else:
+        host = address.compressed.lower()
+        authority = f"[{host}]" if address.version == 6 else host
     if port not in (None, 443):
         raise HTTPException(status_code=422, detail="WordPress site URL must use the standard HTTPS port.")
     path = parsed.path.rstrip("/")
-    canonical = f"https://{host}{path}/" if path else f"https://{host}/"
+    canonical = f"https://{authority}{path}/" if path else f"https://{authority}/"
     return canonical, host
 
 
