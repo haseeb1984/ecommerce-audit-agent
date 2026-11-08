@@ -33,10 +33,11 @@ def test_cross_database_outboxes_share_capped_exponential_retry_backoff():
     from scan_worker import _outbox_retry_delay_seconds
 
     assert _outbox_retry_delay_seconds(0) == 30
-    assert _outbox_retry_delay_seconds(1) == 60
-    assert _outbox_retry_delay_seconds(2) == 120
-    assert _outbox_retry_delay_seconds(6) == 1920
-    assert _outbox_retry_delay_seconds(7) == 3600
+    assert _outbox_retry_delay_seconds(1) == 30
+    assert _outbox_retry_delay_seconds(2) == 60
+    assert _outbox_retry_delay_seconds(3) == 120
+    assert _outbox_retry_delay_seconds(7) == 1920
+    assert _outbox_retry_delay_seconds(8) == 3600
     assert _outbox_retry_delay_seconds(12) == 3600
     assert _outbox_retry_delay_seconds(-3) == 30
 
