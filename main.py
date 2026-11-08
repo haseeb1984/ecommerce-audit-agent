@@ -5251,19 +5251,65 @@ async def _filter_recovered_billing_attention_events(
     if not failures:
         return events
     subscription_ids = {item.subscription_id for item in failures}
-    from sqlalchemy import select
+    from sqlalchemy import select, func as sql_func
+
+    # Only the latest recovery per affected subscription can change whether its
+    # failure alert is visible. Rank in each database so historical renewals do
+    # not create an unbounded Python list.
+    pg_ranked_recoveries = select(
+        PaymentWebhookEvent.subscription_id.label("subscription_id"),
+        PaymentWebhookEvent.updated_at.label("updated_at"),
+        PaymentWebhookEvent.created_at.label("created_at"),
+        PaymentWebhookEvent.event_id.label("event_id"),
+        sql_func.row_number().over(
+            partition_by=PaymentWebhookEvent.subscription_id,
+            order_by=(
+                sql_func.coalesce(
+                    PaymentWebhookEvent.updated_at,
+                    PaymentWebhookEvent.created_at,
+                ).desc(),
+                PaymentWebhookEvent.event_id.desc(),
+            ),
+        ).label("recovery_rank"),
+    ).where(
+        PaymentWebhookEvent.subscription_id.in_(subscription_ids),
+        PaymentWebhookEvent.status.in_(recovery_statuses),
+    ).subquery("ranked_pg_subscription_recoveries")
+    host_ranked_recoveries = select(
+        CustomerBillingEvent.subscription_id.label("subscription_id"),
+        CustomerBillingEvent.updated_at.label("updated_at"),
+        CustomerBillingEvent.created_at.label("created_at"),
+        CustomerBillingEvent.event_id.label("event_id"),
+        sql_func.row_number().over(
+            partition_by=CustomerBillingEvent.subscription_id,
+            order_by=(
+                sql_func.coalesce(
+                    CustomerBillingEvent.updated_at,
+                    CustomerBillingEvent.created_at,
+                ).desc(),
+                CustomerBillingEvent.event_id.desc(),
+            ),
+        ).label("recovery_rank"),
+    ).where(
+        CustomerBillingEvent.subscription_id.in_(subscription_ids),
+        CustomerBillingEvent.status.in_(recovery_statuses),
+    ).subquery("ranked_host_subscription_recoveries")
     pg_recoveries = (await db.execute(
-        select(PaymentWebhookEvent).where(
-            PaymentWebhookEvent.subscription_id.in_(subscription_ids),
-            PaymentWebhookEvent.status.in_(recovery_statuses),
-        )
-    )).scalars().all()
+        select(
+            pg_ranked_recoveries.c.subscription_id,
+            pg_ranked_recoveries.c.updated_at,
+            pg_ranked_recoveries.c.created_at,
+            pg_ranked_recoveries.c.event_id,
+        ).where(pg_ranked_recoveries.c.recovery_rank == 1)
+    )).all()
     host_recoveries = (await operational_db.execute(
-        select(CustomerBillingEvent).where(
-            CustomerBillingEvent.subscription_id.in_(subscription_ids),
-            CustomerBillingEvent.status.in_(recovery_statuses),
-        )
-    )).scalars().all()
+        select(
+            host_ranked_recoveries.c.subscription_id,
+            host_ranked_recoveries.c.updated_at,
+            host_ranked_recoveries.c.created_at,
+            host_ranked_recoveries.c.event_id,
+        ).where(host_ranked_recoveries.c.recovery_rank == 1)
+    )).all()
     recoveries = [*pg_recoveries, *host_recoveries]
 
     def ordering(item):
@@ -5285,6 +5331,8 @@ async def _filter_recovered_billing_attention_events(
                 continue
         unresolved.append(item)
     return unresolved
+
+
 
 
 async def _lock_paddle_webhook_resource(db: AsyncSession, resource_id: str, parameter_name: str = "subscription_id") -> None:
