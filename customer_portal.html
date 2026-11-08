@@ -1891,8 +1891,8 @@
             if (!window.confirm("Request cancellation for this scan batch? Jobs already completed will remain completed.")) return;
             cancel.disabled = true;
             cancel.textContent = "Requesting cancellation…";
+            const operationSessionVersion = accountSessionVersion;
             try {
-              const operationSessionVersion = accountSessionVersion;
               await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
               if (operationSessionVersion !== accountSessionVersion) return;
               setStatus("bulkScanStatus", "Cancellation request recorded. In-progress jobs may finish before the batch settles.", "success");
