@@ -8883,20 +8883,26 @@ async def admin_list_client_sessions(
     license_id: int,
     request: Request,
     response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List customer session metadata without exposing bearer tokens or token digests."""
     _require_admin_key(request)
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     client = (await db.execute(
         select(SoftwareLicense).where(SoftwareLicense.id == license_id)
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
+    session_base = select(CustomerSession).where(CustomerSession.license_key == client.license_key)
+    total = int((await operational_db.execute(
+        select(func.count()).select_from(session_base.subquery())
+    )).scalar_one() or 0)
     rows = (await operational_db.execute(
-        select(CustomerSession).where(CustomerSession.license_key == client.license_key)
-        .order_by(CustomerSession.created_at.desc()).limit(100)
+        session_base.order_by(CustomerSession.created_at.desc(), CustomerSession.token_hash.desc())
+        .offset(offset).limit(limit)
     )).scalars().all()
     now = datetime.now(timezone.utc)
     items = []
@@ -8915,7 +8921,10 @@ async def admin_list_client_sessions(
         })
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"client_id": license_id, "items": items, "limit": 100}
+    return {
+        "client_id": license_id, "items": items, "limit": limit, "offset": offset,
+        "total": total, "has_more": offset + len(items) < total,
+    }
 
 
 @app.post("/api/v1/admin/clients/{license_id}/sessions/revoke-all")
