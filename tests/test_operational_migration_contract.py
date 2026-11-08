@@ -394,14 +394,14 @@ def test_account_and_support_note_migration_streams_source_and_batches_target_lo
     )
     migrate_segment = ast.get_source_segment(source, migrate_function)
 
-    assert "_stream_rows(source, AccountSession)" in migrate_segment
-    assert "_stream_rows(source, WordPressSite)" in migrate_segment
-    assert "source.stream_scalars(billing_statement)" in migrate_segment
+    assert "source.stream(_account_candidate_statement())" in migrate_segment
+    assert "_stream_rows(source, AccountSession)" not in migrate_segment
+    assert "_stream_rows(source, WordPressSite)" not in migrate_segment
+    assert "account_candidates = {}" not in migrate_segment
+    assert '"source": account_candidate_count' in migrate_segment
     assert "_stream_rows(source, SaaSAdminCustomerNote)" in migrate_segment
     assert "tuple_(CustomerAccount.license_key, CustomerAccount.email).in_(identity_keys)" in migrate_segment
     assert "AdminCustomerNote.id.in_(list(expected_by_id))" in migrate_segment
-    assert "account_candidate_iterator = iter(account_candidates.items())" in migrate_segment
-    assert "list(account_candidates.items())" not in migrate_segment
     assert '"source": note_source_count' in migrate_segment
 
 
@@ -484,3 +484,35 @@ def test_billing_email_license_ownership_is_grouped_and_streamed_by_postgres():
     migrate_segment = ast.get_source_segment(source, migrate)
     assert "await _stream_billing_license_ownership(source)" in migrate_segment
     assert "billing_license_candidates" not in migrate_segment
+
+
+def test_account_candidate_deduplication_is_database_side_and_streamed():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    query = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_account_candidate_statement"
+    )
+    segment = ast.get_source_segment(source, query)
+
+    assert "union_all(sessions, sites, billing)" in segment
+    assert "func.row_number().over" in segment
+    assert "partition_by=(candidates.c.license_key, candidates.c.email)" in segment
+    assert "candidates.c.source_priority.asc()" in segment
+    assert "candidates.c.candidate_updated_at.desc()" in segment
+    assert ".execution_options(yield_per=MIGRATION_BATCH_SIZE)" in segment
+
+    migrate = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
+    )
+    migrate_segment = ast.get_source_segment(source, migrate)
+    assert "source.stream(_account_candidate_statement())" in migrate_segment
+    assert "account_candidates" not in migrate_segment
+    assert "account_batch.append(row)" in migrate_segment
+    assert "await candidate_result.close()" in migrate_segment
