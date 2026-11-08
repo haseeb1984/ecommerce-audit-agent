@@ -294,3 +294,15 @@ def test_operational_migration_cli_offers_mutually_exclusive_apply_and_verify_mo
     assert '"--verify"' in source_segment
     assert "verify_only=args.verify" in source_segment
     assert "raise SystemExit(1)" in source_segment
+
+
+
+def test_dry_run_and_verify_never_stage_target_inserts():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+
+    assert "if stage_missing:\n                target.add(target_model(**values))" in source
+    assert "if apply_changes:\n                    target.add(CustomerAccount(" in source
+    assert "if apply_changes:\n                    target.add(AdminCustomerNote(" in source
+    assert source.count("stage_missing=apply_changes") == 8
