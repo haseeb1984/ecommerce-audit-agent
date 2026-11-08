@@ -99,3 +99,19 @@ def test_agency_portal_otp_attempts_ignore_stale_responses():
     assert 'if(actionVersion===sessionVersion&&attemptVersion===authAttemptVersion)button.disabled=false;' in script
     assert "authAttemptVersion += 1;" in script
     assert 'if(!result.access_token)throw new Error("The server did not return an agency session.");' in script
+
+
+
+def test_agency_team_scan_submission_reuses_idempotency_key_for_same_payload_retry():
+    portal = Path("agency_portal.html").read_text(encoding="utf-8")
+    start = portal.index('const submitForm=document.createElement("form");')
+    end = portal.index('const button=document.createElement("button");button.type="button";button.textContent="View audit history";', start)
+    source = portal[start:end]
+
+    assert 'let pendingRequestFingerprint="";' in source
+    assert 'let pendingRequestId="";' in source
+    assert "const requestFingerprint=JSON.stringify(urls);" in source
+    assert "if(requestFingerprint!==pendingRequestFingerprint||!pendingRequestId)" in source
+    assert "request_id:pendingRequestId" in source
+    assert 'pendingRequestFingerprint="";' in source
+    assert 'pendingRequestId="";' in source
