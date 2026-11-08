@@ -11,7 +11,7 @@ def test_email_identity_outbox_claim_preserves_per_license_event_order():
     statement = _customer_email_identity_outbox_claim_statement(
         datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
     )
-    sql = str(statement.compile(dialect=mysql.dialect())).lower()
+    sql = str(statement.compile(dialect=mysql.dialect())).lower().replace("`", "")
 
     # A newer event for the same license remains blocked while any older event
     # is pending, including one deferred until a future retry time.
