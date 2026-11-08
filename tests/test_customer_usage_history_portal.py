@@ -36,6 +36,7 @@ def test_customer_bulk_scan_reuses_request_id_until_success_or_payload_change():
     assert "request_id:pendingBulkScanRequestId" in source
     assert 'pendingBulkScanFingerprint="";' in source
     assert 'pendingBulkScanRequestId="";' in source
+    assert source.index("await loadScanBatches();") < source.index('pendingBulkScanRequestId="";')
 
 
 def test_customer_account_switch_clears_pending_bulk_scan_idempotency_key():
