@@ -6687,7 +6687,7 @@ async def admin_update_business_agency(
 ):
     """Suspend or reactivate a Business agency; suspension revokes all team sessions."""
     _require_admin_key(request)
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     agency = await operational_db.scalar(
         select(AgencyAccount).where(AgencyAccount.id == agency_id).with_for_update()
     )
@@ -6697,26 +6697,24 @@ async def admin_update_business_agency(
     previous_status = agency.status
     agency.status = payload.status
     if payload.status == "suspended":
-        sessions = (await operational_db.execute(select(AgencyTeamSession).where(
+        # Apply lifecycle invalidation in SQL rather than loading every session,
+        # challenge, and invitation into application memory.
+        await operational_db.execute(update(AgencyTeamSession).where(
             AgencyTeamSession.agency_id == agency.id,
             AgencyTeamSession.revoked_at.is_(None),
-        ))).scalars().all()
-        for session in sessions:
-            session.revoked_at = now
-        challenges = (await operational_db.execute(select(AgencyTeamLoginChallenge).where(
+        ).values(revoked_at=now))
+        await operational_db.execute(update(AgencyTeamLoginChallenge).where(
             AgencyTeamLoginChallenge.agency_id == agency.id,
             AgencyTeamLoginChallenge.consumed_at.is_(None),
-        ))).scalars().all()
-        for challenge in challenges:
-            challenge.consumed_at = now
-        invitations = (await operational_db.execute(select(AgencyTeamMember).where(
+        ).values(consumed_at=now))
+        await operational_db.execute(update(AgencyTeamMember).where(
             AgencyTeamMember.agency_id == agency.id,
             AgencyTeamMember.status == "invited",
-        ).with_for_update())).scalars().all()
-        for member in invitations:
-            member.status = "revoked"
-            member.invitation_token_hash = None
-            member.invitation_expires_at = None
+        ).values(
+            status="revoked",
+            invitation_token_hash=None,
+            invitation_expires_at=None,
+        ))
     agency.updated_at = now
     await operational_db.commit()
     if previous_status != agency.status:
