@@ -5,6 +5,7 @@ calling enqueue_scan_request. This module owns operational persistence only;
 license/quota decisions remain with the Supabase licensing boundary.
 """
 import hashlib
+import ipaddress
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -41,6 +42,12 @@ def _normalize_site_hostname(value: str) -> str:
     host = str(value).strip().lower().rstrip(".")
     if not host:
         raise ValueError("Every audit URL must include a valid website hostname.")
+    # Public IP literals are valid website hosts too. Canonicalize IPv6
+    # rather than treating its colons as an authority port separator.
+    try:
+        return ipaddress.ip_address(host).compressed.lower()
+    except ValueError:
+        pass
     # Hostname columns contain hostnames, not URL authorities. Reject port,
     # credentials, path and bracket syntax rather than comparing ambiguously.
     if any(character in host for character in "/\\\\@:#[]"):
@@ -218,7 +225,8 @@ async def enqueue_scan_request(
             await db.flush()
 
             for target_url in chunk:
-                host = target_url.split("/", 3)[2].split("@")[-1].split(":")[0].lower()
+                parsed_target = urlsplit(target_url)
+                host = _normalize_site_hostname(parsed_target.hostname or "")
                 # Serialize archived-site reactivation with concurrent inventory
                 # archive operations. The per-license batch-sequence lock already
                 # protects duplicate submissions; this row lock protects the
