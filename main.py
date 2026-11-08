@@ -4998,6 +4998,13 @@ def _paddle_billing_period_end(payload: dict) -> datetime | None:
         return parsed.astimezone(timezone.utc)
     return None
 
+def _is_supported_paddle_subscription_status(value: object) -> bool:
+    """Only recognized provider states may change a subscription entitlement."""
+    return isinstance(value, str) and value.strip().lower() in {
+        "active", "trialing", "paused", "past_due", "canceled", "cancelled",
+    }
+
+
 def _apply_paddle_billing_period(license_obj: SoftwareLicense, payload: dict, *, extend_expiry: bool = False) -> datetime | None:
     """Persist Paddle's current period and optionally extend a finite license expiry."""
     period_end = _paddle_billing_period_end(payload)
@@ -5481,8 +5488,15 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         if provider_status is not None and not isinstance(provider_status, str):
             raise HTTPException(status_code=400, detail="Paddle subscription status must be a string.")
         provider_status = (provider_status or "").strip().lower()
-        if provider_status and provider_status not in {"active", "trialing", "paused", "past_due", "canceled", "cancelled"}:
-            logger.info("Paddle subscription update has an unrecognized status (subscription_id=%s)", subscription_id)
+        status_supported = _is_supported_paddle_subscription_status(provider_status)
+        if not status_supported:
+            # Do not apply a new plan, billing period, or entitlement state from
+            # an unfamiliar provider status. Persist the event for visibility,
+            # but wait for a recognized snapshot or explicit reconciliation.
+            logger.warning(
+                "Paddle subscription update has an unrecognized status (subscription_id=%s)",
+                subscription_id,
+            )
 
         items = transaction.get("items") or []
         if not isinstance(items, list):
@@ -5511,7 +5525,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             # Both a newly reported cancellation and a previously confirmed
             # cancellation must leave the linked license disabled.
             license_obj.is_active = False
-        else:
+        elif status_supported:
             if plan is not None:
                 license_obj.tier = plan["tier"]
                 license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
@@ -5542,6 +5556,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             event_status = "subscription_updated_past_due"
         elif provider_status in {"active", "trialing"}:
             event_status = "subscription_updated_active"
+        elif not status_supported:
+            event_status = "subscription_update_unrecognized_status"
         else:
             event_status = "subscription_updated" if plan is not None else "subscription_update_unmapped_price"
 
@@ -5553,7 +5569,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         ))
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
-        if was_active != bool(license_obj.is_active) or (plan is not None and not is_canceled):
+        if was_active != bool(license_obj.is_active) or (plan is not None and not is_canceled and status_supported):
             await _record_operation_event(db, event_status, license_obj.id, None, None)
         if is_canceled:
             return {"status": "ignored_after_cancellation" if canceled is not None else "cancellation_applied",
@@ -5564,6 +5580,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             return {"status": "subscription_past_due", "event_id": event_id, "license_id": license_obj.id}
         if provider_status in {"active", "trialing"}:
             return {"status": "plan_reconciled" if plan is not None else "subscription_active_unmapped_price",
+                    "event_id": event_id, "license_id": license_obj.id}
+        if not status_supported:
+            return {"status": "unrecognized_subscription_status_ignored",
                     "event_id": event_id, "license_id": license_obj.id}
         return {"status": "plan_reconciled" if plan is not None else "unmapped_price_ignored",
                 "event_id": event_id, "license_id": license_obj.id}
