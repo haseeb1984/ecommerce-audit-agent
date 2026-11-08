@@ -9391,7 +9391,7 @@ async def admin_unlink_client_wordpress_site(
 ):
     """Disconnect one customer WordPress installation with an auditable operator reason."""
     _require_admin_key(request)
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     # Serialize with plugin registration, identity claims and customer
     # disconnect by taking the canonical PostgreSQL license lock first.
     client = await db.scalar(
