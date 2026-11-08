@@ -333,3 +333,24 @@ def test_customer_usage_history_uses_text_nodes_and_clears_on_account_switch():
     assert 'metadata.innerHTML' not in portal
     assert 'renderUsageHistory([]);' in portal
     assert 'Connect your account to view usage history.' in portal
+
+
+def test_agency_wordpress_disconnect_uses_tenant_lock_order_and_revokes_pending_connect_tokens():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.disconnect_agency_wordpress_site)
+    candidate_lookup = source.index("select(AgencyClientWebsite)")
+    agency_lock = source.index("AgencyAccount.id == candidate.agency_id")
+    workspace_lock = source.index("AgencyClientWorkspace.id == candidate.workspace_id")
+    website_lock = source.index("AgencyClientWebsite.id == candidate.id")
+    revoke_challenges = source.index("update(AgencyWebsiteConnectChallenge)")
+    commit = source.index("await operational_db.commit()")
+
+    assert candidate_lookup < agency_lock < workspace_lock < website_lock < revoke_challenges < commit
+    assert ".with_for_update()" in source[agency_lock:workspace_lock]
+    assert ".with_for_update()" in source[workspace_lock:website_lock]
+    assert ".with_for_update()" in source[website_lock:revoke_challenges]
+    assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[revoke_challenges:commit]
+    assert ".values(consumed_at=disconnected_at)" in source[revoke_challenges:commit]
+    assert "AgencyClientWorkspace.agency_id == agency.id" in source[workspace_lock:website_lock]

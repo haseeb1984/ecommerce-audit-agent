@@ -2807,22 +2807,54 @@ async def get_agency_wordpress_site_status(request: Request, response: Response,
 @app.post("/api/v1/integrations/wordpress/agency/sites/disconnect")
 async def disconnect_agency_wordpress_site(request: Request, response: Response,
                                            operational_db: AsyncSession = Depends(get_hostinger_db)):
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     raw_token = (request.headers.get("x-agency-site-token") or "").strip()
     if len(raw_token) < 32 or len(raw_token) > 200:
         raise HTTPException(status_code=401, detail="Agency site authentication is required.")
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    # Resolve tenant identity without a row lock, then follow the same
+    # agency -> workspace -> website order used by heartbeat, token issuance,
+    # archive and suspension. This prevents cross-workflow lock inversion.
+    candidate = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.site_token_hash == token_hash,
+        AgencyClientWebsite.status == "active",
+    ))
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection not found.")
+    agency = await operational_db.scalar(select(AgencyAccount).where(
+        AgencyAccount.id == candidate.agency_id,
+    ).with_for_update())
+    if agency is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection not found.")
+    workspace = await operational_db.scalar(select(AgencyClientWorkspace).where(
+        AgencyClientWorkspace.id == candidate.workspace_id,
+        AgencyClientWorkspace.agency_id == agency.id,
+    ).with_for_update())
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Agency WordPress connection not found.")
     site = await operational_db.scalar(select(AgencyClientWebsite).where(
+        AgencyClientWebsite.id == candidate.id,
+        AgencyClientWebsite.agency_id == agency.id,
+        AgencyClientWebsite.workspace_id == workspace.id,
         AgencyClientWebsite.site_token_hash == token_hash,
         AgencyClientWebsite.status == "active",
     ).with_for_update())
     if site is None:
         raise HTTPException(status_code=404, detail="Agency WordPress connection not found.")
+    disconnected_at = datetime.now(timezone.utc)
     site.status = "disconnected"
-    site.disconnected_at = datetime.now(timezone.utc)
+    site.disconnected_at = disconnected_at
     site.site_token_hash = None
+    # A pending connection token must not be usable after the currently
+    # connected site is disconnected; issuance and claim share these locks.
+    await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+        AgencyWebsiteConnectChallenge.agency_id == agency.id,
+        AgencyWebsiteConnectChallenge.workspace_id == workspace.id,
+        AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+    ).values(consumed_at=disconnected_at))
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {"status": "disconnected", "site_id": site.id}
 
 

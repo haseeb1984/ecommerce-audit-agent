@@ -130,3 +130,8 @@
 - The temporary-table/cross-database path has regression contract coverage but tests have not been executed and live MySQL/PostgreSQL runtime acceptance is pending.
 - Customer detail sublists remain bounded: sessions 200, billing events 200, WordPress sites 100, support notes 100. Independent pagination/count metadata for these sublists remains follow-up work.
 - No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed. PDF/private-storage and final audit-result presentation remain reserved for the final phase.
+
+
+### Agency WordPress disconnect hardening
+
+The client-site disconnect endpoint now resolves tenant identity without locking, then serializes mutations in agency → workspace → website order (matching heartbeat, connection-token issuance, archive and suspension). It also consumes any pending connection challenges for that workspace before commit so a token issued concurrently cannot be used to reconnect after the disconnect.
