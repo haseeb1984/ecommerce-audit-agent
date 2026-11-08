@@ -971,7 +971,7 @@ def test_agency_team_inventory_is_paginated_and_grants_are_scoped_to_loaded_work
     assert ".offset(offset).limit(limit)" in source
     assert "AgencyWorkspaceAccess.workspace_id.in_(workspace_ids)" in source
     assert "AgencyClientWorkspace.agency_id == agency.id" in source
-    assert "sql_func.false()" in source
+    assert "if member_ids and workspace_ids:" in source
     assert '"has_more": offset + len(members) < total' in source
     assert ".limit(500)" not in source
 
