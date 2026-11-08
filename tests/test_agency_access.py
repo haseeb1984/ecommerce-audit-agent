@@ -839,3 +839,28 @@ def test_agency_owner_portal_loads_all_saved_findings_in_pages():
     assert "Load more saved findings" in source
     assert "loadPage(true)" in source
     assert "offset += items.length;" in source
+
+
+
+def test_agency_website_disconnect_is_idempotent_and_uses_latest_tenant_site():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.disconnect_agency_client_website)
+    agency_lock = source.index("AgencyAccount.owner_license_key")
+    workspace_lock = source.index("AgencyClientWorkspace.id == workspace_id")
+    site_lookup = source.index("site = await operational_db.scalar")
+    challenge_lock = source.index("AgencyWebsiteConnectChallenge.agency_id")
+    assert agency_lock < workspace_lock < site_lookup < challenge_lock
+    site_query = source[site_lookup:challenge_lock]
+    assert "AgencyClientWebsite.agency_id == agency.id" in site_query
+    assert "AgencyClientWebsite.workspace_id == workspace.id" in site_query
+    assert "AgencyClientWebsite.connected_at.desc()" in site_query
+    assert "AgencyClientWebsite.id.desc()" in site_query
+    assert ".limit(1).with_for_update()" in site_query
+    assert 'if site.status == "disconnected":' in source
+    already_branch = source[source.index('if site.status == "disconnected":'):source.index('if site.status != "active":')]
+    assert '"status": "already_disconnected"' in already_branch
+    assert "await operational_db.commit()" not in already_branch
+    assert "site.disconnected_at = now" in source
+    assert 'response.headers["Pragma"] = "no-cache"' in source
