@@ -35,3 +35,24 @@ def test_email_identity_outbox_ordering_is_per_license_not_global():
 
     assert "customer_email_identity_sync_outbox_1.license_key = customer_email_identity_sync_outbox.license_key" in sql
     assert "customer_email_identity_sync_outbox_1.license_key !=" not in sql
+
+
+
+def test_email_identity_worker_locks_canonical_license_before_billing_projection_update():
+    import inspect
+    import scan_worker
+    from sqlalchemy.dialects import postgresql
+    from scan_worker import _customer_email_identity_license_lock_query
+
+    statement = _customer_email_identity_license_lock_query("license-key")
+    sql = str(statement.compile(dialect=postgresql.dialect())).lower().replace('"', "")
+    assert "from software_licenses" in sql
+    assert "software_licenses.license_key =" in sql
+    assert "for update" in sql
+
+    source = inspect.getsource(scan_worker.reconcile_customer_email_identity_outbox)
+    lock_read = source.index("_customer_email_identity_license_lock_query(event.license_key)")
+    billing_update = source.index("_customer_email_identity_update_statement(", lock_read)
+    canonical_commit = source.index("await licensing_db.commit()", billing_update)
+    operational_complete = source.index('event.status = "completed"', canonical_commit)
+    assert lock_read < billing_update < canonical_commit < operational_complete
