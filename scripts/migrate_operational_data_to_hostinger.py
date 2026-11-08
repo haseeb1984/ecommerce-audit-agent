@@ -295,64 +295,31 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         license_key_by_id = {key: value.license_key for key, value in licenses.items()}
         reports = {}
 
-        # Restore customer account identities first, deriving them from legacy
-        # sessions, linked WordPress installations and verified billing emails.
-        account_candidates = {}
-        async for row in _stream_rows(source, AccountSession):
-            license_key = license_key_by_id.get(row.license_id)
-            if license_key:
-                account_candidates[(license_key, row.email.lower())] = (
-                    row.email.lower(), licenses[row.license_id].client_name, row.created_at
-                )
-        async for row in _stream_rows(source, WordPressSite):
-            license_key = license_key_by_id.get(row.license_id)
-            email = (row.customer_email or row.admin_email or "").strip().lower()
-            if license_key and email:
-                account_candidates.setdefault(
-                    (license_key, email), (email, licenses[row.license_id].client_name, row.created_at)
-                )
-
-
-        billing_statement = (
-            select(PaymentWebhookEvent)
-            .where(PaymentWebhookEvent.license_id.is_not(None))
-            .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
-            .execution_options(yield_per=MIGRATION_BATCH_SIZE)
-        )
-        billing_result = await source.stream_scalars(billing_statement)
-        try:
-            async for row in billing_result:
-                license_key = license_key_by_id.get(row.license_id)
-                email = (row.recipient_email or "").strip().lower()
-                if license_key and email:
-                    account_candidates.setdefault(
-                        (license_key, email),
-                        (email, licenses[row.license_id].client_name, row.created_at)
-                    )
-
-        finally:
-            await billing_result.close()
-
+        # Restore identities from a database-side deduplicated union, avoiding
+        # an unbounded Python dictionary of every distinct customer account.
         account_copied = 0
         account_skipped = 0
         account_mismatch_count = 0
         account_mismatch_fields = set()
-        account_candidate_iterator = iter(account_candidates.items())
-        while True:
-            candidate_batch = list(islice(account_candidate_iterator, MIGRATION_BATCH_SIZE))
-            if not candidate_batch:
-                break
+        account_candidate_count = 0
+        candidate_result = await source.stream(_account_candidate_statement())
+        account_batch = []
+
+        async def reconcile_account_batch(rows):
+            nonlocal account_copied, account_skipped, account_mismatch_count
             expected_by_identity = {}
-            for (license_key, email), (normalized_email, display_name, created_at) in candidate_batch:
-                expected_by_identity[(license_key, email)] = {
-                    "id": _legacy_account_id(license_key, normalized_email),
-                    "license_key": license_key,
-                    "email": normalized_email,
-                    "display_name": display_name,
+            for row in rows:
+                expected_by_identity[(row.license_key, row.email)] = {
+                    "id": _legacy_account_id(row.license_key, row.email),
+                    "license_key": row.license_key,
+                    "email": row.email,
+                    "display_name": row.display_name,
                     "status": "active",
-                    "created_at": created_at,
-                    "updated_at": created_at,
+                    "created_at": row.candidate_created_at,
+                    "updated_at": row.candidate_created_at,
                 }
+            if not expected_by_identity:
+                return
             identity_keys = list(expected_by_identity)
             existing_result = await target.execute(
                 select(CustomerAccount).where(
@@ -360,8 +327,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 )
             )
             existing_by_identity = {
-                (row.license_key, row.email): row
-                for row in existing_result.scalars()
+                (row.license_key, row.email): row for row in existing_result.scalars()
             }
             for identity, expected_account in expected_by_identity.items():
                 existing = existing_by_identity.get(identity)
@@ -377,12 +343,21 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                         account_mismatch_fields.update(fields)
             if apply_changes:
                 await target.commit()
-                logger.info(
-                    "Committed customer-account migration batch: rows=%s",
-                    len(expected_by_identity),
-                )
+                logger.info("Committed customer-account migration batch: rows=%s", len(expected_by_identity))
+
+        try:
+            async for row in candidate_result:
+                account_candidate_count += 1
+                account_batch.append(row)
+                if len(account_batch) >= MIGRATION_BATCH_SIZE:
+                    await reconcile_account_batch(account_batch)
+                    account_batch.clear()
+            if account_batch:
+                await reconcile_account_batch(account_batch)
+        finally:
+            await candidate_result.close()
         reports["customer_accounts"] = {
-            "source_candidates": len(account_candidates),
+            "source_candidates": account_candidate_count,
             "to_copy": account_copied,
             "already_present": account_skipped,
             "field_mismatches": account_mismatch_count,
