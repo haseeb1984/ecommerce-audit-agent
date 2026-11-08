@@ -187,9 +187,18 @@ def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bo
     return action == "revoke_sessions"
 
 
-def _outbox_retry_delay_seconds(attempts: int) -> int:
-    """Return capped exponential retry delay shared by all cross-database outboxes."""
-    normalized_attempts = max(0, int(attempts or 0))
+def _outbox_retry_delay_seconds(attempts: int | None) -> int:
+    """Return capped exponential retry delay shared by all cross-database outboxes.
+
+    Persisted attempt counters are integers. Reject malformed values rather than
+    silently truncating floats or accepting booleans as retry counts.
+    """
+    if attempts is None:
+        normalized_attempts = 0
+    elif isinstance(attempts, bool) or not isinstance(attempts, int):
+        raise ValueError("Outbox retry attempts must be an integer.")
+    else:
+        normalized_attempts = max(0, attempts)
     return min(3600, 30 * (2 ** min(normalized_attempts, 7)))
 
 
@@ -648,7 +657,7 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 if retry_event is not None:
                     retry_event.attempts = int(retry_event.attempts or 0) + 1
                     retry_event.last_error = type(exc).__name__[:120]
-                    delay = min(3600, 30 * (2 ** min(retry_event.attempts, 7)))
+                    delay = _outbox_retry_delay_seconds(retry_event.attempts)
                     retry_event.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
                     await operational_db.commit()
                 counts["deferred"] += 1
