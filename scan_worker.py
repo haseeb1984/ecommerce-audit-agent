@@ -188,6 +188,14 @@ def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bo
         return license_is_active is True
     return action == "revoke_sessions"
 
+def _customer_lifecycle_license_lock_query(license_key: str):
+    """Lock canonical license state before mirroring lifecycle changes to Hostinger."""
+    return (
+        select(SoftwareLicense)
+        .where(SoftwareLicense.license_key == license_key)
+        .with_for_update()
+    )
+
 
 def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
     """Retain successful deliveries for bounded cleanup and operational visibility."""
@@ -555,9 +563,9 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                 # Outbox retries can arrive after a newer admin transition. The
                 # canonical license row decides whether suspend/reactivate is
                 # still current, preventing an old retry from reversing state.
-                canonical_license = await licensing_db.scalar(select(SoftwareLicense).where(
-                    SoftwareLicense.license_key == license_key
-                ))
+                canonical_license = await licensing_db.scalar(
+                    _customer_lifecycle_license_lock_query(license_key)
+                )
                 license_is_active = bool(canonical_license.is_active) if canonical_license is not None else None
                 action_applies = _lifecycle_action_applies(action, license_is_active)
                 async with HostingerAsyncSessionLocal() as operational_db:

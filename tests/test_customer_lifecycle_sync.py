@@ -105,3 +105,23 @@ def test_customer_lifecycle_outbox_ordering_is_per_license():
 
     assert "customer_lifecycle_sync_outbox_1.license_key = customer_lifecycle_sync_outbox.license_key" in sql
     assert "customer_lifecycle_sync_outbox_1.license_key !=" not in sql
+
+
+
+def test_customer_lifecycle_worker_locks_canonical_license_before_operational_mirror():
+    from sqlalchemy.dialects import postgresql
+    from scan_worker import _customer_lifecycle_license_lock_query
+    import inspect
+    import scan_worker
+
+    statement = _customer_lifecycle_license_lock_query("license-key")
+    sql = str(statement.compile(dialect=postgresql.dialect())).lower().replace('"', "")
+
+    assert "from software_licenses" in sql
+    assert "software_licenses.license_key =" in sql
+    assert "for update" in sql
+
+    worker_source = inspect.getsource(scan_worker.reconcile_customer_lifecycle_outbox)
+    lock_read = worker_source.index("_customer_lifecycle_license_lock_query(license_key)")
+    operational_write = worker_source.index("async with HostingerAsyncSessionLocal() as operational_db:", lock_read)
+    assert lock_read < operational_write

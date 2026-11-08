@@ -867,3 +867,13 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Hostinger mirror updates use database-side email-to-license subqueries after the canonical PostgreSQL commit, avoiding reconstruction of an unbounded cross-database key list. Admin action metadata records the affected license count rather than an account-sized ID array.
 - Added source-contract regressions for bounded identity transfer, ordered row locking, batch outbox creation, and operational-side mirror subqueries. Tests are committed but have not been executed; live MySQL/PostgreSQL transaction and high-cardinality acceptance remain pending.
 - No customer data, live migration, external provider, production deployment, PDF, or audit-result workflow was changed.
+
+
+## 2026-11-08 — canonical license locking during lifecycle reconciliation
+
+- Customer lifecycle outbox reconciliation now obtains a PostgreSQL row lock on the canonical `SoftwareLicense` record before deciding whether a pending suspend/reactivate action still applies.
+- The worker retains that lock while applying the corresponding Hostinger account/session mutation and committing the outbox event. This serializes the mirror operation against concurrent admin lifecycle actions, which already lock canonical license rows before their operational mirror writes.
+- Stale lifecycle events continue to be evaluated against the canonical active flag, and per-license outbox ordering remains in place. Explicit session revocation remains independent of active/suspended state.
+- Added a PostgreSQL SQL-compilation regression asserting the canonical row lock and a source-order contract asserting the lock read precedes the Hostinger mutation.
+- Tests are committed but have not been executed in this batch. CI runner availability remains unverified; no live database, migration, deployment, or customer account mutation was performed.
+- PDF/private-storage and final audit-result presentation remain reserved for the final phase.
