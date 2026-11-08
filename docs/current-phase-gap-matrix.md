@@ -848,3 +848,13 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - PR #278 exposes safe stale license-email retry in admin customer history and the global payment-event view.
 - All listed PRs are merged to `main`. Regression contracts were added, but backend CI continues to fail before runner startup (`steps: null`); no Python tests are claimed as executed. Vercel preview attempts remain blocked by the daily build-rate limit.
 - No live Hostinger/Supabase migration, SMTP send, Paddle action, WordPress install, or production deployment was performed. PDF/private-storage and final audit-result refinement remain deferred.
+
+
+## 2026-11-08 — isolated browser-worker client hardening
+
+- Browser service configuration is now parsed as an HTTPS origin only. Embedded credentials, custom paths, query strings, fragments, malformed ports, whitespace, and backslash-based authority/path ambiguity are rejected before any signed request is sent.
+- The client appends the fixed `/v1/audit` endpoint and continues to disable redirects, preventing an environment value from silently changing the signed request destination.
+- Browser responses must be JSON objects with the expected request ID and list-shaped `findings` and `check_outcomes`; a present `summary` must be an object. Non-object JSON and malformed result shapes fail closed as `BrowserAuditUnavailable`.
+- Regression coverage now includes invalid service URL variants, non-object JSON payloads, malformed result shapes, valid origin normalization, and the existing HMAC request-signing contract.
+- Tests are committed but have not been executed. No browser service deployment, live Chromium acceptance, customer-site audit, or production configuration change was performed. Browser-worker integration remains **implemented / verification pending**.
+- PDF/private-storage and final audit-result presentation remain reserved for the final phase.
