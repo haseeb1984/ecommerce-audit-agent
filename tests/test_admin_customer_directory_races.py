@@ -109,3 +109,16 @@ def test_admin_customer_detail_ui_supports_load_more_license_pages():
     assert 'Load more licenses' in source
     assert 'license_offset=' in source
     assert 'license_page.has_more' in source
+
+
+def test_admin_customer_note_chooses_canonical_key_with_database_minima():
+    import inspect
+
+    from main import admin_add_customer_note
+
+    source = inspect.getsource(admin_add_customer_note)
+    assert 'select(sql_func.min(operational_note_keys.c.license_key))' in source
+    assert 'sql_func.min(SoftwareLicense.license_key)' in source
+    assert 'candidate_note_keys = [key for key in (operational_note_key, legacy_note_key) if key]' in source
+    assert 'note_license_keys = set(' not in source
+    assert 'note_license_keys.update(' not in source

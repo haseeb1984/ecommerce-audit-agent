@@ -8737,24 +8737,29 @@ async def admin_add_customer_note(
     _require_admin_key(request)
     from sqlalchemy import select, func as sql_func
     normalized = email.strip().lower()
-    note_license_keys = set((await operational_db.execute(
-        select(CustomerBillingEvent.license_key).where(
-            sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
-        ).distinct()
-    )).scalars().all())
-    note_license_keys.update((await operational_db.execute(
-        select(CustomerAccount.license_key).where(
-            sql_func.lower(CustomerAccount.email) == normalized
-        ).distinct()
-    )).scalars().all())
-    note_license_keys.update((await db.execute(select(SoftwareLicense.license_key).join(
+    operational_note_keys = select(CustomerBillingEvent.license_key.label("license_key")).where(
+        sql_func.lower(CustomerBillingEvent.recipient_email) == normalized,
+        CustomerBillingEvent.license_key.is_not(None),
+    ).union(
+        select(CustomerAccount.license_key.label("license_key")).where(
+            sql_func.lower(CustomerAccount.email) == normalized,
+            CustomerAccount.license_key.is_not(None),
+        )
+    ).subquery("admin_customer_note_operational_keys")
+    operational_note_key = await operational_db.scalar(
+        select(sql_func.min(operational_note_keys.c.license_key))
+    )
+    legacy_note_key = await db.scalar(select(sql_func.min(SoftwareLicense.license_key)).join(
         PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
-    )).scalars().all())
-    if not note_license_keys:
+    ).where(
+        sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized,
+        SoftwareLicense.license_key.is_not(None),
+    ))
+    candidate_note_keys = [key for key in (operational_note_key, legacy_note_key) if key]
+    if not candidate_note_keys:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     created = AdminCustomerNote(
-        license_key=sorted(note_license_keys)[0],
+        license_key=min(candidate_note_keys),
         customer_email=normalized,
         note=payload.note.strip(),
         created_by="admin",
