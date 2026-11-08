@@ -7134,12 +7134,12 @@ async def admin_payment_events(
                 )
             finally:
                 await host_id_stream.close()
-        candidate_limit = offset + limit
-        host_rows = (await operational_db.execute(
-            host_statement.order_by(
-                CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()
-            ).limit(candidate_limit)
-        )).scalars().all()
+            candidate_limit = offset + limit
+            host_rows = (await operational_db.execute(
+                host_statement.order_by(
+                    CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()
+                ).limit(candidate_limit)
+            )).scalars().all()
     pg_rows = (await db.execute(
         pg_statement.order_by(
             PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()
