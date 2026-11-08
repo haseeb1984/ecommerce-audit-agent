@@ -428,3 +428,41 @@ async def test_customer_workspace_scan_serializes_agency_workspace_and_site_life
     assert lock_tables == [
         "agency_accounts", "agency_client_workspaces", "agency_client_websites",
     ]
+
+
+@pytest.mark.asyncio
+async def test_customer_website_detail_paginates_only_owning_license_scan_history():
+    from scan_api import get_customer_website
+
+    license_obj = SimpleNamespace(license_key="license-customer-a")
+    website = SimpleNamespace(
+        id="website-a", url="https://shop-a.example/", host="shop-a.example",
+        label="Main store", status="active", created_at=None, updated_at=None,
+    )
+    jobs = [SimpleNamespace(
+        id="job-a", batch_id="batch-a", status="completed", attempt_count=1,
+        last_error_code=None, created_at=None, completed_at=None,
+        result_reference="result-a",
+    )]
+    db = WebsiteInventorySession(
+        scalar_rows=[website],
+        execute_results=[WebsiteInventoryResult(value=3), WebsiteInventoryResult(rows=jobs)],
+    )
+    response = Response()
+
+    result = await get_customer_website(
+        "website-a", response, limit=1, offset=1,
+        license_obj=license_obj, db=db,
+    )
+
+    assert result["scan_history"][0]["job_id"] == "job-a"
+    assert result["history_page"] == {"limit": 1, "offset": 1, "total": 3, "has_more": True}
+    assert len(db.execute_statements) == 2
+    for statement in db.execute_statements:
+        sql = str(statement).lower()
+        assert "website_scan_jobs.license_key" in sql
+        assert "license-customer-a" in statement.compile().params.values()
+    assert "offset" in str(db.execute_statements[1]).lower()
+    assert "limit" in str(db.execute_statements[1]).lower()
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
