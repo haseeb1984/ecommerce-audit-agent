@@ -376,3 +376,37 @@ def test_stale_scan_lease_recovery_is_bounded_ordered_and_nonblocking():
     assert ".order_by(WebsiteScanJob.locked_at.asc(), WebsiteScanJob.id.asc())" in recovery_query
     assert ".limit(100)" in recovery_query
     assert ".with_for_update(skip_locked=True)" in recovery_query
+
+
+
+def test_every_worker_owned_queue_mutation_rejects_expired_leases():
+    import inspect
+    import scan_queue
+
+    for function in (
+        scan_queue.complete_scan_job,
+        scan_queue.fail_or_retry_scan_job,
+        scan_queue.defer_scan_job,
+        scan_queue.renew_scan_job_lease,
+    ):
+        source = inspect.getsource(function)
+        assert "lease_seconds: int = 900" in source
+        assert "WebsiteScanJob.locked_at >=" in source
+        assert "_scan_lease_cutoff(now, lease_seconds)" in source
+
+
+@pytest.mark.parametrize("lease_seconds", [0, -1, 3601, True, 900.0, "900"])
+def test_scan_lease_cutoff_rejects_invalid_durations(lease_seconds):
+    from datetime import datetime, timezone
+    from scan_queue import _scan_lease_cutoff
+
+    with pytest.raises(ValueError, match="between 1 and 3600"):
+        _scan_lease_cutoff(datetime.now(timezone.utc), lease_seconds)
+
+
+def test_scan_lease_cutoff_accepts_valid_integer_duration():
+    from datetime import datetime, timedelta, timezone
+    from scan_queue import _scan_lease_cutoff
+
+    now = datetime.now(timezone.utc)
+    assert _scan_lease_cutoff(now, 900) == now - timedelta(seconds=900)
