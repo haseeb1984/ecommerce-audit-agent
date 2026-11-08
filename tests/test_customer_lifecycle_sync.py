@@ -53,3 +53,19 @@ def test_delayed_explicit_session_revocation_is_bounded_to_sessions_existing_at_
     assert "CustomerSession.created_at <= event.created_at" in revoke_branch
     assert "CustomerSession.created_at <= now" in admin_source
 
+
+
+def test_admin_customer_lifecycle_audit_is_attempted_before_operational_mutation():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.admin_customer_account_action)
+    canonical_commit = source.index("await db.commit()")
+    read_rollback = source.index("await operational_db.rollback()")
+    audit_write = source.index('await _write_admin_log(db, "customer.account_"')
+    operational_mutation = source.index("await operational_db.execute(update(CustomerAccount)")
+    session_mutation = source.index("await operational_db.execute(update(CustomerSession)")
+    assert canonical_commit < read_rollback < audit_write < operational_mutation
+    assert audit_write < session_mutation
+    assert '"operational_sync": "queued"' in source
+    assert '"changed_count": changed' not in source
