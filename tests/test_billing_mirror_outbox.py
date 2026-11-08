@@ -30,7 +30,7 @@ def test_billing_mirror_retry_locks_canonical_event_before_copying_state():
 
 
 def test_cross_database_outboxes_share_capped_exponential_retry_backoff():
-    from scan_worker import _outbox_retry_delay_seconds
+    from outbox_retry import outbox_retry_delay_seconds as _outbox_retry_delay_seconds
 
     assert _outbox_retry_delay_seconds(0) == 30
     assert _outbox_retry_delay_seconds(1) == 30
@@ -63,7 +63,7 @@ def test_cross_database_outboxes_treat_missing_attempt_count_as_first_retry():
 
 
 def test_outbox_attempt_counter_increments_valid_values_without_coercion():
-    from scan_worker import _next_outbox_attempt_count
+    from outbox_retry import next_outbox_attempt_count as _next_outbox_attempt_count
 
     assert _next_outbox_attempt_count(None) == 1
     assert _next_outbox_attempt_count(0) == 1
@@ -78,3 +78,15 @@ def test_outbox_attempt_counter_rejects_malformed_persisted_values():
     for malformed in (True, 1.5, "2", "invalid"):
         with pytest.raises(ValueError):
             _next_outbox_attempt_count(malformed)
+
+
+
+def test_live_billing_mirror_failure_uses_persisted_exponential_retry_state():
+    import inspect
+    import main
+
+    source = inspect.getsource(main._sync_billing_event_to_hostinger)
+
+    assert "next_outbox_attempt_count(" in source
+    assert "outbox_retry_delay_seconds(retry_attempts)" in source
+    assert "pending.attempts = retry_attempts" in source
