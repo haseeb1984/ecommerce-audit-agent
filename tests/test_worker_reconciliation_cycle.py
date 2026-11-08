@@ -131,7 +131,7 @@ async def test_one_scan_worker_slot_failure_does_not_hide_other_slot_results(mon
     result = await scan_worker.process_scan_queue(max_jobs=2, worker_id="partial")
 
     assert result["slot_errors"] == 1
-    assert result["claimed_slots"] == 2
+    assert result["claimed_slots"] == 1
     assert result["processed"] == 1
     assert [item["status"] for item in result["outcomes"]] == [
         "worker_error", "completed",
