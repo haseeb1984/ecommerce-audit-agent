@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `088da70f973255cd79eabe01c1e11330484a330b` after the 2026-11-08 agency OTP and durable scan-worker lease-ownership hardening. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `528f54fd9d819a7459b380aad84f0241ed8d4895` after the 2026-11-08 admin billing and overview scalability work. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -787,3 +787,14 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Regression tests were added to `tests/test_agency_team_revocation.py` and `tests/test_scan_queue.py`. They have **not been executed** in this batch; relevant workflow runs were unavailable and Vercel reported its daily deployment-rate limit. These statuses are not evidence of Python test failures or passes.
 - No live Hostinger/Supabase database, migration, SMTP, Paddle action, WordPress installation, live customer-site audit, or production deployment was performed. The durable worker remains **implemented / verification pending** until controlled staging and CI acceptance are available.
 - PDF/private-storage and final audit-result presentation work remain reserved for the final phase.
+
+
+
+## 2026-11-08 — admin billing and overview scalability
+
+- PR #252 is merged: the admin payment-events endpoint now counts the union of canonical PostgreSQL and Hostinger event IDs with the existing constant-memory sorted-stream helper. It preserves the status filter, canonical PostgreSQL precedence, bounded page fetch and response pagination.
+- PR #253 is merged: admin overview's monthly audit, all-time audit, saved-report and active-reservation aggregates are scoped to the visible license page. Global summary counters remain global.
+- PR #253 also replaces loading every billing event for each visible customer with deterministic SQL `ROW_NUMBER()` selection of one latest contact per license, for both Hostinger operational events and the legacy PostgreSQL fallback.
+- Regression contracts were added in `tests/test_billing_attention_recovery.py` and `tests/test_admin_overview_scalability.py`. They have **not been executed**; no Python CI pass is claimed.
+- No live billing/customer data, production migration, external provider action, or production deployment was performed. Admin operations remain **implemented / verification pending** pending CI and staging acceptance.
+- PDF/private-storage and final audit-result presentation remain reserved for the final phase.
