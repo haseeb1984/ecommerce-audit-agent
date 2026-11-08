@@ -105,3 +105,17 @@ def test_wordpress_identity_claim_locks_canonical_license_before_operational_cha
 
     assert reference_read < canonical_lock < locked_challenge_read < operational_lock
     assert "All identity mutations acquire the canonical PostgreSQL license lock" in source
+
+
+
+def test_wordpress_identity_claim_rechecks_token_expiry_after_both_database_locks():
+    import inspect
+    from wordpress_identity_api import claim_wordpress_site_identity
+
+    source = inspect.getsource(claim_wordpress_site_identity)
+    license_lock = source.index(".with_for_update()")
+    challenge_lock = source.index(".with_for_update()", license_lock + 1)
+    expiry_check = source.index("expires_at <= now")
+    refreshed_clock = source.rindex("now = datetime.now(timezone.utc)", 0, expiry_check)
+
+    assert license_lock < challenge_lock < refreshed_clock < expiry_check
