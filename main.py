@@ -58,7 +58,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -1967,7 +1967,14 @@ async def disconnect_wordpress_site(
     db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Disconnect a site without deleting license, customer, billing, or audit history."""
-    from sqlalchemy import select
+    from sqlalchemy import select, update
+    # Keep the same cross-database lock order as identity claims so a disconnect
+    # cannot race a claim while holding the Hostinger installation row first.
+    locked_license = await db.scalar(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_obj.id).with_for_update()
+    )
+    if locked_license is None:
+        raise HTTPException(status_code=404, detail="Customer license not found.")
     site = (await operational_db.execute(select(WordPressInstallation).where(
         WordPressInstallation.id == payload.site_id,
         WordPressInstallation.license_key == license_obj.license_key,
@@ -1975,8 +1982,17 @@ async def disconnect_wordpress_site(
     if site is None:
         raise HTTPException(status_code=404, detail="WordPress site connection not found.")
     if site.status == "active":
+        disconnected_at = datetime.now(timezone.utc)
         site.status = "disconnected"
-        site.disconnected_at = datetime.now(timezone.utc)
+        site.disconnected_at = disconnected_at
+        await operational_db.execute(
+            update(WordPressSiteLinkChallenge)
+            .where(
+                WordPressSiteLinkChallenge.license_key == license_obj.license_key,
+                WordPressSiteLinkChallenge.consumed_at.is_(None),
+            )
+            .values(consumed_at=disconnected_at)
+        )
         await operational_db.commit()
         result_status = "disconnected"
     else:
@@ -2076,12 +2092,21 @@ async def customer_disconnect_wordpress_site(
     site_id: str,
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_customer_account),
+    db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Let an authenticated customer disconnect only a site owned by the selected license."""
-    from sqlalchemy import select
+    """Disconnect an owned site and revoke link codes issued before the disconnect."""
+    from sqlalchemy import select, update
     if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", site_id):
         raise HTTPException(status_code=422, detail="Invalid WordPress site identifier.")
+    # Match the identity-claim lock order: canonical PostgreSQL license first,
+    # then Hostinger operational rows. This also serializes disconnect against
+    # a claim already in flight across the two independent databases.
+    locked_license = await db.scalar(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_obj.id).with_for_update()
+    )
+    if locked_license is None:
+        raise HTTPException(status_code=404, detail="Customer license not found.")
     site = (await operational_db.execute(select(WordPressInstallation).where(
         WordPressInstallation.id == site_id,
         WordPressInstallation.license_key == license_obj.license_key,
@@ -2089,8 +2114,19 @@ async def customer_disconnect_wordpress_site(
     if site is None:
         raise HTTPException(status_code=404, detail="Connected WordPress site not found.")
     if site.status == "active":
+        disconnected_at = datetime.now(timezone.utc)
         site.status = "disconnected"
-        site.disconnected_at = datetime.now(timezone.utc)
+        site.disconnected_at = disconnected_at
+        # A code generated before disconnect must not silently reconnect this
+        # or another store after the customer believes the connection is revoked.
+        await operational_db.execute(
+            update(WordPressSiteLinkChallenge)
+            .where(
+                WordPressSiteLinkChallenge.license_key == license_obj.license_key,
+                WordPressSiteLinkChallenge.consumed_at.is_(None),
+            )
+            .values(consumed_at=disconnected_at)
+        )
         await operational_db.commit()
         result_status = "disconnected"
     else:
