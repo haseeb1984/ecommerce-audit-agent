@@ -33,3 +33,9 @@ Billing lifecycle events use the independent cross-database pagination described
 ## Cross-database billing event pagination
 
 The customer detail billing history now has independent offset/limit pagination (default 50, maximum 100) and returns total/has-more metadata. The count merges sorted unique event-ID streams from Hostinger mirrors and PostgreSQL legacy events in constant application memory. Page candidates are fetched from both stores up to the requested offset plus page size, canonical PostgreSQL rows take precedence for duplicate event IDs, and the merged candidates are ordered by update timestamp and event ID. Legacy PostgreSQL events are matched by the normalized account email in addition to the currently visible license IDs so later license pages do not hide older billing history. The operator console exposes a separate Load more control for billing events.
+
+
+
+## Per-license browser session history
+
+The individual customer history panel now pages browser sessions independently (default 50, maximum 100), returns the total and `has_more` state, and provides a Load more control. Session rows are ordered by creation time and the non-secret session token hash as a deterministic tie-breaker; token hashes are never serialized to the browser.
