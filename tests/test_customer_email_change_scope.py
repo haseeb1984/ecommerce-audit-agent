@@ -125,3 +125,33 @@ def test_email_change_verification_serializes_with_old_email_login_otp():
     assert "_lock_customer_login_email(operational_db, locked_email)" in source[login_email_lock:session_lock]
     assert "if old_email != locked_email:" in source[session_lock:challenge_lock]
     assert "_customer_email_change_operational_updates" in source
+
+
+def test_email_change_collision_check_streams_operational_identity_in_bounded_batches():
+    import inspect
+    import main
+
+    source = inspect.getsource(main._billing_email_has_other_license)
+    assert "CREATE TEMP TABLE customer_email_change_license_keys" in source
+    assert "operational_db.stream(operational_identity_query)" in source
+    assert "identity_values.fetchmany(500)" in source
+    assert "await identity_stream.close()" in source
+    assert "SoftwareLicense.id != current_license_id" in source
+    assert "PaymentWebhookEvent.license_id != current_license_id" in source
+    assert ".limit(1)" in source
+    assert "DROP TABLE IF EXISTS customer_email_change_license_keys" in source
+    assert ".scalars().all()" not in source
+    assert "set(" not in source
+
+
+def test_email_change_request_and_verification_use_bounded_collision_check():
+    import inspect
+    import main
+
+    request_source = inspect.getsource(main.request_customer_email_change)
+    verify_source = inspect.getsource(main.verify_customer_email_change)
+
+    assert "_billing_email_has_other_license" in request_source
+    assert "_billing_email_has_other_license" in verify_source
+    assert "new_license_ids" not in request_source
+    assert "new_license_ids" not in verify_source
