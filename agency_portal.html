@@ -80,6 +80,10 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       const submitButton=document.createElement("button");submitButton.type="submit";submitButton.textContent="Queue client audit";submitButton.disabled=!canSubmit;
       const permission=document.createElement("p");permission.className="muted";permission.textContent=canSubmit?"Audits use the agency's shared Business quota and must match the connected client website.":"Viewer access is read-only. Ask the agency owner for Analyst or Admin workspace access to submit audits.";
       submitForm.append(urlsLabel,submitButton,permission);
+      // Reuse an idempotency key after an uncertain network response. A changed
+      // URL list gets a fresh key; a successful response clears the pending key.
+      let pendingRequestFingerprint="";
+      let pendingRequestId="";
       submitForm.addEventListener("submit",async event=>{
         event.preventDefault();
         const actionVersion = sessionVersion;
@@ -87,10 +91,16 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
         if(!urls.length){$("workspaceStatus").textContent="Enter at least one client page URL.";return;}
         submitButton.disabled=true;$("workspaceStatus").textContent="Queueing client audit…";
         try{
-          const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);
-          const requestId="team-"+Array.from(bytes,value=>value.toString(16).padStart(2,"0")).join("");
-          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/scan-batches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,request_id:requestId})},actionVersion);
+          const requestFingerprint=JSON.stringify(urls);
+          if(requestFingerprint!==pendingRequestFingerprint||!pendingRequestId){
+            const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);
+            pendingRequestId="team-"+Array.from(bytes,value=>value.toString(16).padStart(2,"0")).join("");
+            pendingRequestFingerprint=requestFingerprint;
+          }
+          const result=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/scan-batches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,request_id:pendingRequestId})},actionVersion);
           assertCurrentSession(actionVersion);
+          pendingRequestFingerprint="";
+          pendingRequestId="";
           urlsInput.value="";
           $("workspaceStatus").textContent="Queued "+result.submitted_urls+" URL(s) across "+result.batch_count+" batch(es) under the shared Business allowance.";
           button.click();
