@@ -882,7 +882,8 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     if slot_errors == max_jobs:
         raise RuntimeError("All scan worker slots failed before producing outcomes.")
 
-    active = [item for item in outcomes if item["status"] not in ("idle", "worker_error")]
+    reported = [item for item in outcomes if item["status"] != "idle"]
+    claimed = [item for item in reported if item["status"] != "worker_error"]
     return {
         "worker_id": worker_id,
         "slot_errors": slot_errors,
@@ -890,7 +891,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
         "customer_email_identity_sync": identity_sync,
         "customer_lifecycle_sync": lifecycle_sync,
         "billing_mirror_sync": billing_mirror_sync,
-        "claimed_slots": len(active),
-        "processed": sum(1 for item in active if item["status"] == "completed"),
-        "outcomes": active,
+        "claimed_slots": len(claimed),
+        "processed": sum(1 for item in claimed if item["status"] == "completed"),
+        "outcomes": reported,
     }
