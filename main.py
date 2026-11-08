@@ -8590,7 +8590,9 @@ async def admin_customer_account_detail(
     # Canonical PostgreSQL events and Hostinger mirrors may share an event_id.
     billing_host_keys = select(hostinger_identity_keys.c.license_key)
     host_billing_filter = CustomerBillingEvent.license_key.in_(billing_host_keys)
-    pg_billing_filter = PaymentWebhookEvent.license_id.in_(ids)
+    pg_billing_filter = PaymentWebhookEvent.license_id.in_(
+        select(matched_license_ids.c.license_id)
+    )
     host_event_ids = await operational_db.stream_scalars(
         select(CustomerBillingEvent.event_id).where(host_billing_filter).order_by(CustomerBillingEvent.event_id.asc())
     )
