@@ -858,3 +858,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Regression coverage now includes invalid service URL variants, non-object JSON payloads, malformed result shapes, valid origin normalization, and the existing HMAC request-signing contract.
 - Tests are committed but have not been executed. No browser service deployment, live Chromium acceptance, customer-site audit, or production configuration change was performed. Browser-worker integration remains **implemented / verification pending**.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
+
+
+## 2026-11-08 — bounded admin account-wide lifecycle actions
+
+- Account-wide suspend, reactivate, and session-revocation actions no longer materialize every operational license key or canonical license ID in Python sets/lists.
+- Hostinger billing/account identity keys are streamed into a transaction-scoped PostgreSQL temporary table in batches of 500. Matching canonical license rows are then streamed and locked in ascending license-ID order, with outbox records and entitlement changes prepared in bounded 500-license batches.
+- Hostinger mirror updates use database-side email-to-license subqueries after the canonical PostgreSQL commit, avoiding reconstruction of an unbounded cross-database key list. Admin action metadata records the affected license count rather than an account-sized ID array.
+- Added source-contract regressions for bounded identity transfer, ordered row locking, batch outbox creation, and operational-side mirror subqueries. Tests are committed but have not been executed; live MySQL/PostgreSQL transaction and high-cardinality acceptance remain pending.
+- No customer data, live migration, external provider, production deployment, PDF, or audit-result workflow was changed.
