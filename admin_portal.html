@@ -79,17 +79,30 @@ async function loadClientSessions(id,expectedDetailVersion=clientDetailVersion){
  if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
  $("refreshClientSessions").disabled=true;$("revokeClientSessions").disabled=true;
  const container=$("clientSessions");container.replaceChildren(el("p","Loading browser sessions…","muted"));
- const data=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/sessions");
- if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
- container.replaceChildren();
- if(!Array.isArray(data.items)||!data.items.length){container.append(el("p","No customer browser sessions have been created for this account.","muted"))}
- else for(const item of data.items){
+ const appendItems=(items)=>{for(const item of items){
   const row=el("div",undefined,"historyitem");
   row.append(el("strong",(item.email||"Unknown email")+" · "+String(item.status||"unknown").toUpperCase()));
   row.append(el("span","Created "+date(item.created_at)+" · Last seen "+date(item.last_seen_at)+" · Expires "+date(item.expires_at)+(item.revoked_at?" · Revoked "+date(item.revoked_at):""),"small"));
   container.append(row);
- }
- if(expectedDetailVersion===clientDetailVersion&&currentHistoryId===id){$("refreshClientSessions").disabled=false;$("revokeClientSessions").disabled=false;}
+ }};
+ try{
+  const data=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/sessions?limit=50&offset=0");
+  if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
+  container.replaceChildren();
+  if(!Array.isArray(data.items)||!data.items.length){container.append(el("p","No customer browser sessions have been created for this account.","muted"))}
+  else appendItems(data.items);
+  if(data.has_more){
+   const more=el("button","Load more sessions","secondary");
+   more.addEventListener("click",async()=>{more.disabled=true;try{
+    const next=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/sessions?limit="+data.limit+"&offset="+(data.offset+data.limit));
+    if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
+    appendItems(next.items);data.offset=next.offset;data.has_more=next.has_more;
+    if(!next.has_more)more.remove();else more.disabled=false;
+   }catch(error){more.disabled=false;status(error.message,"error")}});
+   container.append(more);
+  }
+ }catch(error){container.replaceChildren(el("p",error.message,"error"))}
+ finally{if(expectedDetailVersion===clientDetailVersion&&currentHistoryId===id){$("refreshClientSessions").disabled=false;$("revokeClientSessions").disabled=false;}}
 }
 async function revokeClientSessions(){
  if(currentHistoryId===null){status("Open a client's history first.","error");return}
