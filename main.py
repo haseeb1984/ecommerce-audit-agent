@@ -3624,13 +3624,22 @@ async def revoke_business_agency_team_member(
     ).with_for_update())
     if member is None:
         raise HTTPException(status_code=404, detail="Team member was not found.")
+    now = datetime.now(timezone.utc)
     member.status = "revoked"
     from sqlalchemy import update
+    # Revoke both established sessions and unused OTP challenges. The agency
+    # lock serializes this with OTP verification, which also locks the agency
+    # before consuming a challenge and issuing a session.
     await operational_db.execute(update(AgencyTeamSession).where(
         AgencyTeamSession.agency_id == agency.id,
         AgencyTeamSession.team_member_id == member.id,
         AgencyTeamSession.revoked_at.is_(None),
-    ).values(revoked_at=datetime.now(timezone.utc)))
+    ).values(revoked_at=now))
+    await operational_db.execute(update(AgencyTeamLoginChallenge).where(
+        AgencyTeamLoginChallenge.agency_id == agency.id,
+        AgencyTeamLoginChallenge.team_member_id == member.id,
+        AgencyTeamLoginChallenge.consumed_at.is_(None),
+    ).values(consumed_at=now))
     member.invitation_token_hash = None
     member.invitation_expires_at = None
     await operational_db.execute(delete(AgencyWorkspaceAccess).where(
