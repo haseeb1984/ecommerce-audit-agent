@@ -835,3 +835,16 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - The global payment-event queue exposed retry for both `email_pending` and `email_sending` without distinguishing a fresh in-progress delivery from a stale claim. Customer-detail billing history did not expose the retry action.
 - The admin console now shows retry only for linked-license `email_pending` events or `email_sending` events whose `updated_at` is at least 10 minutes old. The same eligibility helper is used in the global queue, payment-history cards, and selected customer billing history.
 - Added a frontend contract regression test. CI and browser behavior have not been verified; no SMTP message was sent and no payment event was changed.
+
+
+## 2026-11-08 — operational migration scalability completion batch
+
+- PR #275 streams legacy account sessions, WordPress installations, billing events, support notes, and license identity projections; account and support-note reconciliation uses bounded target batches.
+- PR #276 commits each 500-row apply batch independently, making interrupted migrations safely resumable without overwriting existing target rows or deleting source records. `--verify` remains read-only.
+- PR #277 moves normalized billing-email ownership aggregation into PostgreSQL.
+- PR #279 replaces the Python customer-account candidate dictionary with a PostgreSQL `UNION ALL` / `ROW_NUMBER()` deduplication query and streams 500-row candidate batches.
+- PR #280 limits license mapping to referenced legacy IDs; PR #282 goes further and resolves license keys per 500-row source batch, removing the global license identity map.
+- PR #281 joins support notes directly to grouped billing-email ownership in PostgreSQL. The migration no longer materializes a Python email-to-license map or ambiguous-email set; notes are copied only when exactly one license owns the email.
+- PR #278 exposes safe stale license-email retry in admin customer history and the global payment-event view.
+- All listed PRs are merged to `main`. Regression contracts were added, but backend CI continues to fail before runner startup (`steps: null`); no Python tests are claimed as executed. Vercel preview attempts remain blocked by the daily build-rate limit.
+- No live Hostinger/Supabase migration, SMTP send, Paddle action, WordPress install, or production deployment was performed. PDF/private-storage and final audit-result refinement remain deferred.
