@@ -75,6 +75,7 @@
 <div class="report-actions" style="margin-top:12px"><button id="createAgencyClient" type="button" disabled>Add client workspace</button><button id="refreshAgencyClients" class="secondary" type="button" disabled>Refresh clients</button></div>
 <h3>Shared Business quota and client usage</h3>
 <div id="agencyUsage" class="reports" aria-live="polite"><p class="muted">Usage will appear when the agency loads.</p></div>
+<div class="report-actions"><button id="loadMoreAgencyUsage" class="secondary" type="button" hidden disabled>Load more client usage</button></div>
 <div id="agencyClients" class="reports" aria-live="polite"><p class="muted">Connect a Business account to manage agency clients.</p></div>
 <h3>Agency team</h3>
 <p class="muted">Invite team members by email and assign an agency role. Invitations expire after 48 hours.</p>
@@ -194,6 +195,10 @@
   let billingLoading = false;
   let billingLoadingSessionVersion = -1;
   let billingRequestVersion = 0;
+  let agencyUsageOffset = 0;
+  let agencyUsageHasMore = false;
+  let agencyUsageLoading = false;
+  let agencyUsageRequestVersion = 0;
   let websiteOffset = 0;
   let websiteHasMore = false;
   let websitesLoading = false;
@@ -202,7 +207,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
@@ -700,25 +705,54 @@
       setStatus("brandingStatus", error.message, "error");
     } finally { button.disabled = !credential && !sessionToken; }
   }
-  async function loadAgencyUsage() {
-    const response = await api("/api/v1/account/agency/usage");
-    const data = await response.json();
-    const container = $("agencyUsage"); container.replaceChildren();
-    const summary = document.createElement("p");
-    summary.textContent = "Shared monthly allowance: " + data.monthly_limit +
-      " · Account used / pending: " + data.account_used_and_pending +
-      " · Remaining: " + data.account_remaining +
-      " · Active concurrency: " + data.active_concurrent_audits + " / " + data.concurrent_limit;
-    container.append(summary);
-    const agencyTotal = document.createElement("p"); agencyTotal.className = "muted";
-    agencyTotal.textContent = "Completed agency client audits this month: " + data.agency_completed +
-      " · Period: " + data.period_start + " to " + data.period_end;
-    container.append(agencyTotal);
-    for (const item of (Array.isArray(data.items) ? data.items : [])) {
-      const row = document.createElement("div"); row.className = "report";
-      const name = document.createElement("strong"); name.textContent = item.workspace_name;
-      const count = document.createElement("small"); count.textContent = item.completed_audits + " completed audits · " + item.status;
-      row.append(name, count); container.append(row);
+  async function loadAgencyUsage(append = false) {
+    if (append && agencyUsageLoading) return;
+    const requestVersion = append ? agencyUsageRequestVersion : ++agencyUsageRequestVersion;
+    const sessionVersion = accountSessionVersion;
+    if (!append) {
+      agencyUsageOffset = 0;
+      agencyUsageHasMore = false;
+      $("agencyUsage").replaceChildren();
+    }
+    agencyUsageLoading = true;
+    const moreButton = $("loadMoreAgencyUsage");
+    moreButton.disabled = true;
+    moreButton.hidden = true;
+    try {
+      const response = await api("/api/v1/account/agency/usage?limit=100&offset=" + agencyUsageOffset);
+      const data = await response.json();
+      if (requestVersion !== agencyUsageRequestVersion || sessionVersion !== accountSessionVersion) return;
+      const container = $("agencyUsage");
+      if (!append) {
+        const summary = document.createElement("p");
+        summary.textContent = "Shared monthly allowance: " + data.monthly_limit +
+          " · Account used / pending: " + data.account_used_and_pending +
+          " · Remaining: " + data.account_remaining +
+          " · Active concurrency: " + data.active_concurrent_audits + " / " + data.concurrent_limit;
+        container.append(summary);
+        const agencyTotal = document.createElement("p"); agencyTotal.className = "muted";
+        agencyTotal.textContent = "Completed agency client audits this month: " + data.agency_completed +
+          " · Period: " + data.period_start + " to " + data.period_end;
+        container.append(agencyTotal);
+      }
+      const items = Array.isArray(data.items) ? data.items : [];
+      for (const item of items) {
+        const row = document.createElement("div"); row.className = "report";
+        const name = document.createElement("strong"); name.textContent = item.workspace_name;
+        const count = document.createElement("small"); count.textContent = item.completed_audits + " completed audits · " + item.status;
+        row.append(name, count); container.append(row);
+      }
+      agencyUsageOffset = Number(data.page?.offset ?? agencyUsageOffset) + items.length;
+      agencyUsageHasMore = Boolean(data.page?.has_more);
+      moreButton.hidden = !agencyUsageHasMore;
+      moreButton.disabled = false;
+    } catch (error) {
+      if (requestVersion === agencyUsageRequestVersion && sessionVersion === accountSessionVersion) throw error;
+    } finally {
+      if (requestVersion === agencyUsageRequestVersion) {
+        agencyUsageLoading = false;
+        moreButton.disabled = false;
+      }
     }
   }
   async function loadAgencyDashboard() {
@@ -1887,6 +1921,13 @@
     // Invalidate in-flight API-key list requests before clearing account-owned data.
     apiKeyRequestVersion += 1;
     deviceSessionsRequestId += 1;
+    agencyUsageRequestVersion += 1;
+    agencyUsageOffset = 0;
+    agencyUsageHasMore = false;
+    agencyUsageLoading = false;
+    $("agencyUsage").replaceChildren();
+    $("loadMoreAgencyUsage").hidden = true;
+    $("loadMoreAgencyUsage").disabled = true;
     $("deviceSessions").replaceChildren();
     const deviceNote = document.createElement("p");
     deviceNote.className = "muted";
@@ -2187,6 +2228,10 @@
     $("wordpressLinkCode").textContent = ""; $("wordpressLinkCodePanel").hidden = true;
   });
   $("createAgencyClient").addEventListener("click", createAgencyClient);
+  $("loadMoreAgencyUsage").addEventListener("click", async () => {
+    try { await loadAgencyUsage(true); }
+    catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
   $("inviteAgencyTeam").addEventListener("click", inviteAgencyTeam);
   $("refreshAgencyTeam").addEventListener("click", async () => {
     try { await loadAgencyTeam(); } catch (error) { setStatus("agencyStatus", error.message, "error"); }
