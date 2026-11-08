@@ -7117,19 +7117,32 @@ async def admin_payment_events(
     pg_ids_statement = select(PaymentWebhookEvent.event_id)
     if status:
         pg_ids_statement = pg_ids_statement.where(PaymentWebhookEvent.status == status)
-    pg_event_ids = set((await db.execute(pg_ids_statement)).scalars().all())
-    async with HostingerAsyncSessionLocal() as operational_db:
-        host_ids_statement = select(CustomerBillingEvent.event_id)
-        if status:
-            host_ids_statement = host_ids_statement.where(CustomerBillingEvent.status == status)
-        host_event_ids = set((await operational_db.execute(host_ids_statement)).scalars().all())
-        total = len(pg_event_ids | host_event_ids)
-        candidate_limit = offset + limit
-        host_rows = (await operational_db.execute(
-            host_statement.order_by(
-                CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()
-            ).limit(candidate_limit)
-        )).scalars().all()
+    pg_id_stream = await db.stream_scalars(
+        pg_ids_statement.order_by(PaymentWebhookEvent.event_id.asc())
+    )
+    pg_stream_closed = False
+    try:
+        async with HostingerAsyncSessionLocal() as operational_db:
+            host_ids_statement = select(CustomerBillingEvent.event_id)
+            if status:
+                host_ids_statement = host_ids_statement.where(CustomerBillingEvent.status == status)
+            host_id_stream = await operational_db.stream_scalars(
+                host_ids_statement.order_by(CustomerBillingEvent.event_id.asc())
+            )
+            try:
+                total = await _count_sorted_billing_event_id_union(
+                    pg_id_stream, host_id_stream
+                )
+            finally:
+                await host_id_stream.close()
+                await pg_id_stream.close()
+                pg_stream_closed = True
+            candidate_limit = offset + limit
+            host_rows = (await operational_db.execute(
+                host_statement.order_by(
+                    CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()
+                ).limit(candidate_limit)
+            )).scalars().all()
     pg_rows = (await db.execute(
         pg_statement.order_by(
             PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()
@@ -7161,6 +7174,10 @@ async def admin_payment_events(
             .where(SoftwareLicense.license_key.in_(license_keys))
         )).all()
         license_ids = {key: license_id for license_id, key in rows}
+    finally:
+        if not pg_stream_closed:
+            await pg_id_stream.close()
+
     return {
         "items": [
             {
