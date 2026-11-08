@@ -332,6 +332,31 @@ async def _execute_audit(target_url: str) -> dict:
     }
 
 
+
+async def _run_audit_with_lease_guard(target_url: str, lease_unconfirmed: asyncio.Event) -> dict:
+    """Run an audit only while its queue lease is confirmed, cleaning up both tasks on every exit."""
+    audit_task = asyncio.create_task(_execute_audit(target_url))
+    lease_check_task = asyncio.create_task(lease_unconfirmed.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {audit_task, lease_check_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if lease_check_task in done and lease_unconfirmed.is_set():
+            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
+        result = audit_task.result()
+        if lease_unconfirmed.is_set():
+            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
+        return result
+    finally:
+        # Audit exceptions and caller cancellation must not leave a waiter or
+        # billable audit running after this worker has left the guarded section.
+        pending = [task for task in (audit_task, lease_check_task) if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
 async def process_one_scan(worker_id: str) -> dict:
     if HostingerAsyncSessionLocal is None:
         raise RuntimeError("Hostinger operational database is not configured.")
@@ -390,21 +415,7 @@ async def process_one_scan(worker_id: str) -> dict:
             else:
                 reserved_at = existing_lead.created_at or datetime.now(timezone.utc)
 
-        audit_task = asyncio.create_task(_execute_audit(target_url))
-        lease_check_task = asyncio.create_task(lease_unconfirmed.wait())
-        done, _ = await asyncio.wait(
-            {audit_task, lease_check_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if lease_check_task in done and lease_unconfirmed.is_set():
-            audit_task.cancel()
-            await asyncio.gather(audit_task, return_exceptions=True)
-            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
-        lease_check_task.cancel()
-        await asyncio.gather(lease_check_task, return_exceptions=True)
-        result = audit_task.result()
-        if lease_unconfirmed.is_set():
-            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
+        result = await _run_audit_with_lease_guard(target_url, lease_unconfirmed)
 
         # Persist the successful quota consumption in Supabase exactly once per scan job.
         async with AsyncSessionLocal() as licensing_db:
