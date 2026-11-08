@@ -11,7 +11,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
@@ -51,8 +51,30 @@ def _legacy_account_id(license_key: str, email: str) -> str:
 
 
 async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
-    rows = (await source.execute(select(SoftwareLicense))).scalars().all()
-    return {row.id: row for row in rows}
+    """Load only the license identity fields needed for tenant mapping."""
+    result = await source.stream(
+        select(SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name)
+        .execution_options(yield_per=MIGRATION_BATCH_SIZE)
+    )
+    licenses = {}
+    try:
+        async for row in result:
+            licenses[row.id] = row
+    finally:
+        await result.close()
+    return licenses
+
+
+async def _stream_rows(source: AsyncSession, model):
+    """Yield source ORM rows without materializing the complete table."""
+    result = await source.stream_scalars(
+        select(model).execution_options(yield_per=MIGRATION_BATCH_SIZE)
+    )
+    try:
+        async for row in result:
+            yield row
+    finally:
+        await result.close()
 
 
 def _normalized_value(value):
@@ -91,7 +113,10 @@ def _billing_license_map(billing_rows, license_key_by_id):
         license_key = license_key_by_id.get(row.license_id)
         if email and license_key:
             candidates.setdefault(email, set()).add(license_key)
+    return _resolve_billing_license_candidates(candidates)
 
+
+def _resolve_billing_license_candidates(candidates):
     resolved = {
         email: next(iter(license_keys))
         for email, license_keys in candidates.items()
@@ -185,62 +210,81 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         # Restore customer account identities first, deriving them from legacy
         # sessions, linked WordPress installations and verified billing emails.
         account_candidates = {}
-        legacy_sessions = (await source.execute(select(AccountSession))).scalars().all()
-        for row in legacy_sessions:
+        async for row in _stream_rows(source, AccountSession):
             license_key = license_key_by_id.get(row.license_id)
             if license_key:
                 account_candidates[(license_key, row.email.lower())] = (
                     row.email.lower(), licenses[row.license_id].client_name, row.created_at
                 )
-        legacy_sites = (await source.execute(select(WordPressSite))).scalars().all()
-        for row in legacy_sites:
+        async for row in _stream_rows(source, WordPressSite):
             license_key = license_key_by_id.get(row.license_id)
             email = (row.customer_email or row.admin_email or "").strip().lower()
             if license_key and email:
                 account_candidates.setdefault(
                     (license_key, email), (email, licenses[row.license_id].client_name, row.created_at)
                 )
-        billing_rows = (await source.execute(
+
+        billing_license_candidates = {}
+        billing_statement = (
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.license_id.is_not(None))
             .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
-        )).scalars().all()
-        for row in billing_rows:
-            license_key = license_key_by_id.get(row.license_id)
-            email = (row.recipient_email or "").strip().lower()
-            if license_key and email:
-                account_candidates.setdefault(
-                    (license_key, email), (email, licenses[row.license_id].client_name, row.created_at)
-                )
+            .execution_options(yield_per=MIGRATION_BATCH_SIZE)
+        )
+        billing_result = await source.stream_scalars(billing_statement)
+        try:
+            async for row in billing_result:
+                license_key = license_key_by_id.get(row.license_id)
+                email = (row.recipient_email or "").strip().lower()
+                if license_key and email:
+                    account_candidates.setdefault(
+                        (license_key, email),
+                        (email, licenses[row.license_id].client_name, row.created_at)
+                    )
+                    billing_license_candidates.setdefault(email, set()).add(license_key)
+        finally:
+            await billing_result.close()
 
         account_copied = 0
         account_skipped = 0
         account_mismatch_count = 0
         account_mismatch_fields = set()
-        for (license_key, email), (normalized_email, display_name, created_at) in account_candidates.items():
-            expected_account = {
-                "id": _legacy_account_id(license_key, normalized_email),
-                "license_key": license_key,
-                "email": normalized_email,
-                "display_name": display_name,
-                "status": "active",
-                "created_at": created_at,
-                "updated_at": created_at,
+        account_candidate_items = list(account_candidates.items())
+        for offset in range(0, len(account_candidate_items), MIGRATION_BATCH_SIZE):
+            candidate_batch = account_candidate_items[offset:offset + MIGRATION_BATCH_SIZE]
+            expected_by_identity = {}
+            for (license_key, email), (normalized_email, display_name, created_at) in candidate_batch:
+                expected_by_identity[(license_key, email)] = {
+                    "id": _legacy_account_id(license_key, normalized_email),
+                    "license_key": license_key,
+                    "email": normalized_email,
+                    "display_name": display_name,
+                    "status": "active",
+                    "created_at": created_at,
+                    "updated_at": created_at,
+                }
+            identity_keys = list(expected_by_identity)
+            existing_result = await target.execute(
+                select(CustomerAccount).where(
+                    tuple_(CustomerAccount.license_key, CustomerAccount.email).in_(identity_keys)
+                )
+            )
+            existing_by_identity = {
+                (row.license_key, row.email): row
+                for row in existing_result.scalars()
             }
-            existing = await target.scalar(select(CustomerAccount).where(
-                CustomerAccount.license_key == license_key,
-                CustomerAccount.email == normalized_email,
-            ).limit(1))
-            if existing is None:
-                if apply_changes:
-                    target.add(CustomerAccount(**expected_account))
-                account_copied += 1
-            else:
-                account_skipped += 1
-                fields = _mismatched_fields(existing, expected_account)
-                if fields:
-                    account_mismatch_count += 1
-                    account_mismatch_fields.update(fields)
+            for identity, expected_account in expected_by_identity.items():
+                existing = existing_by_identity.get(identity)
+                if existing is None:
+                    if apply_changes:
+                        target.add(CustomerAccount(**expected_account))
+                    account_copied += 1
+                else:
+                    account_skipped += 1
+                    fields = _mismatched_fields(existing, expected_account)
+                    if fields:
+                        account_mismatch_count += 1
+                        account_mismatch_fields.update(fields)
         reports["customer_accounts"] = {
             "source_candidates": len(account_candidates),
             "to_copy": account_copied,
@@ -374,47 +418,70 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
 
         # Legacy support notes were keyed only by email. Associate each note with
         # the most recently linked license when that mapping is unambiguous.
-        billing_by_email, ambiguous_billing_emails = _billing_license_map(
-            billing_rows, license_key_by_id
+        billing_by_email, ambiguous_billing_emails = _resolve_billing_license_candidates(
+            billing_license_candidates
         )
-        note_rows = (await source.execute(select(SaaSAdminCustomerNote))).scalars().all()
         note_copied = 0
         note_already_present = 0
         note_ambiguous = 0
         note_unmapped = 0
         note_mismatch_count = 0
         note_mismatch_fields = set()
-        for row in note_rows:
-            email = row.customer_email.strip().lower()
-            if email in ambiguous_billing_emails:
-                # Never attach an email-only support note to an arbitrary tenant.
-                note_ambiguous += 1
-                continue
-            license_key = billing_by_email.get(email)
-            if not license_key:
-                note_unmapped += 1
-                continue
-            expected_note = {
-                "id": row.id,
-                "license_key": license_key,
-                "customer_email": email,
-                "note": row.note,
-                "created_by": row.created_by,
-                "created_at": row.created_at,
-            }
-            existing = await target.get(AdminCustomerNote, row.id)
-            if existing is None:
-                if apply_changes:
-                    target.add(AdminCustomerNote(**expected_note))
-                note_copied += 1
-            else:
-                note_already_present += 1
-                fields = _mismatched_fields(existing, expected_note)
-                if fields:
-                    note_mismatch_count += 1
-                    note_mismatch_fields.update(fields)
+        note_source_count = 0
+        note_batch = []
+
+        async def reconcile_note_batch(rows):
+            nonlocal note_copied, note_already_present, note_ambiguous, note_unmapped
+            nonlocal note_mismatch_count
+            expected_by_id = {}
+            for row in rows:
+                email = row.customer_email.strip().lower()
+                if email in ambiguous_billing_emails:
+                    note_ambiguous += 1
+                    continue
+                license_key = billing_by_email.get(email)
+                if not license_key:
+                    note_unmapped += 1
+                    continue
+                expected_by_id[row.id] = {
+                    "id": row.id,
+                    "license_key": license_key,
+                    "customer_email": email,
+                    "note": row.note,
+                    "created_by": row.created_by,
+                    "created_at": row.created_at,
+                }
+            if not expected_by_id:
+                return
+            existing_result = await target.execute(
+                select(AdminCustomerNote).where(
+                    AdminCustomerNote.id.in_(list(expected_by_id))
+                )
+            )
+            existing_by_id = {row.id: row for row in existing_result.scalars()}
+            for note_id, expected_note in expected_by_id.items():
+                existing = existing_by_id.get(note_id)
+                if existing is None:
+                    if apply_changes:
+                        target.add(AdminCustomerNote(**expected_note))
+                    note_copied += 1
+                else:
+                    note_already_present += 1
+                    fields = _mismatched_fields(existing, expected_note)
+                    if fields:
+                        note_mismatch_count += 1
+                        note_mismatch_fields.update(fields)
+
+        async for row in _stream_rows(source, SaaSAdminCustomerNote):
+            note_source_count += 1
+            note_batch.append(row)
+            if len(note_batch) >= MIGRATION_BATCH_SIZE:
+                await reconcile_note_batch(note_batch)
+                note_batch.clear()
+        if note_batch:
+            await reconcile_note_batch(note_batch)
         reports["admin_customer_notes"] = {
-            "source": len(note_rows),
+            "source": note_source_count,
             "to_copy": note_copied,
             "already_present": note_already_present,
             "ambiguous_license_mapping": note_ambiguous,
