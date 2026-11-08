@@ -29,6 +29,13 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
+def _scan_lease_cutoff(now: datetime, lease_seconds: int) -> datetime:
+    """Return the ownership deadline used by every worker-owned queue mutation."""
+    if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600:
+        raise ValueError("Scan job lease must be between 1 and 3600 seconds.")
+    return now - timedelta(seconds=lease_seconds)
+
+
 def _validate_standard_license_site_binding(registered_hosts: Iterable[str], submitted_urls: Iterable[str]) -> None:
     """Keep ordinary customer licenses bound to one store; agency workspaces are exempt."""
     existing = {str(host).strip().lower().rstrip(".") for host in registered_hosts if host}
@@ -267,7 +274,7 @@ async def claim_next_scan_job(
 ) -> WebsiteScanJob | None:
     """Claim one URL from the oldest unfinished batch for its license."""
     now = _utcnow()
-    stale_before = now - timedelta(seconds=lease_seconds)
+    stale_before = _scan_lease_cutoff(now, lease_seconds)
     try:
         # Reconcile expired leases and batch counters atomically before claiming more work.
         expired_jobs = (await db.execute(
@@ -364,11 +371,13 @@ async def complete_scan_job(
     worker_id: str,
     result_reference: str | None = None,
     quota_committed: bool = False,
+    lease_seconds: int = 900,
 ) -> bool:
     """Mark a claimed job complete and record quota usage exactly once."""
     if not quota_committed:
         raise ValueError("A scan can only complete after the licensing service confirms quota consumption.")
     now = _utcnow()
+    lease_cutoff = _scan_lease_cutoff(now, lease_seconds)
     try:
         job = await db.scalar(
             select(WebsiteScanJob)
@@ -376,6 +385,7 @@ async def complete_scan_job(
                 WebsiteScanJob.id == job_id,
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_by == worker_id[:128],
+                WebsiteScanJob.locked_at >= lease_cutoff,
             )
             .with_for_update()
         )
@@ -462,9 +472,11 @@ async def fail_or_retry_scan_job(
     error_code: str,
     retry_delay_seconds: int = 60,
     retryable: bool = True,
+    lease_seconds: int = 900,
 ) -> str:
     """Persist a bounded retry or terminal failure; never silently drops a job."""
     now = _utcnow()
+    lease_cutoff = _scan_lease_cutoff(now, lease_seconds)
     safe_error = "".join(ch for ch in error_code.upper() if ch.isalnum() or ch in "_-")[:80] or "SCAN_FAILED"
     try:
         job = await db.scalar(
@@ -473,6 +485,7 @@ async def fail_or_retry_scan_job(
                 WebsiteScanJob.id == job_id,
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_by == worker_id[:128],
+                WebsiteScanJob.locked_at >= lease_cutoff,
             )
             .with_for_update()
         )
@@ -528,9 +541,11 @@ async def defer_scan_job(
     job_id: str,
     worker_id: str,
     delay_seconds: int = 30,
+    lease_seconds: int = 900,
 ) -> bool:
     """Return a claimed job to the queue when package concurrency is temporarily full."""
     now = _utcnow()
+    lease_cutoff = _scan_lease_cutoff(now, lease_seconds)
     try:
         job = await db.scalar(
             select(WebsiteScanJob)
@@ -538,6 +553,7 @@ async def defer_scan_job(
                 WebsiteScanJob.id == job_id,
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_by == worker_id[:128],
+                WebsiteScanJob.locked_at >= lease_cutoff,
             )
             .with_for_update()
         )
@@ -733,10 +749,8 @@ async def renew_scan_job_lease(
     lease_seconds: int = 900,
 ) -> bool:
     """Renew only a still-live lease; an expired owner cannot resurrect itself."""
-    if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600:
-        raise ValueError("Scan job lease must be between 1 and 3600 seconds.")
     now = _utcnow()
-    renewal_cutoff = now - timedelta(seconds=lease_seconds)
+    renewal_cutoff = _scan_lease_cutoff(now, lease_seconds)
     try:
         result = await db.execute(
             update(WebsiteScanJob)
