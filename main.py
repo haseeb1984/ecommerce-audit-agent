@@ -5370,18 +5370,36 @@ async def _latest_paddle_subscription_lifecycle_event(
 
 
 async def _paddle_subscription_event_is_stale(
-    db: AsyncSession, subscription_id: str, occurred_at: datetime
+    db: AsyncSession,
+    subscription_id: str,
+    occurred_at: datetime,
+    event_id: str | None = None,
 ) -> bool:
-    """Reject out-of-order subscription state notifications before they mutate access."""
+    """Reject out-of-order subscription events using provider time and stable ID tie-break."""
     latest = await _latest_paddle_subscription_lifecycle_event(db, subscription_id)
     if latest is None:
         return False
-    latest_at = latest.updated_at or latest.created_at
-    if latest_at is None:
+    latest_updated_at = latest.updated_at or latest.created_at
+    latest_created_at = latest.created_at or latest_updated_at
+    if latest_updated_at is None:
         return False
-    if latest_at.tzinfo is None:
-        latest_at = latest_at.replace(tzinfo=timezone.utc)
-    return occurred_at < latest_at.astimezone(timezone.utc)
+
+    def as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    latest_order = (
+        as_utc(latest_updated_at),
+        as_utc(latest_created_at),
+        str(getattr(latest, "event_id", "") or ""),
+    )
+    incoming_order = (
+        as_utc(occurred_at),
+        as_utc(occurred_at),
+        str(event_id or ""),
+    )
+    return incoming_order <= latest_order if latest_order[2] and incoming_order[2] else incoming_order[:2] < latest_order[:2]
 
 
 async def _filter_recovered_billing_attention_events(
@@ -5659,7 +5677,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription lifecycle event has no subscription ID.")
         from sqlalchemy import select
         await _lock_paddle_webhook_resource(db, subscription_id)
-        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at, event_id):
             return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
@@ -5728,7 +5746,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
         # Serialize lifecycle transitions for this subscription. The advisory lock
         # is transaction-scoped and avoids a late renewal racing a cancellation.
         await _lock_paddle_webhook_resource(db, subscription_id)
-        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at, event_id):
             return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate_cancellation = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
@@ -5776,7 +5794,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription update has no subscription ID.")
         from sqlalchemy import select
         await _lock_paddle_webhook_resource(db, subscription_id)
-        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at):
+        if await _paddle_subscription_event_is_stale(db, subscription_id, occurred_at, event_id):
             return {"status": "ignored_stale_subscription_event", "event_id": event_id}
         duplicate = (await db.execute(
             select(PaymentWebhookEvent).where(PaymentWebhookEvent.event_id == event_id)
