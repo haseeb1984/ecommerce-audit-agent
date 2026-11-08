@@ -182,3 +182,35 @@ def test_team_revocation_consumes_pending_login_codes_under_agency_lock():
     assert "AgencyTeamLoginChallenge.consumed_at.is_(None)" in source[challenge_revoke:grant_cleanup]
     assert ").values(consumed_at=now)" in source[challenge_revoke:grant_cleanup]
     assert "datetime.now(timezone.utc)" in source
+
+
+def test_agency_team_otp_request_serializes_shared_email_before_membership_lookup():
+    source = Path("main.py").read_text(encoding="utf-8")
+    start = source.index("async def request_agency_team_login")
+    end = source.index('@app.post("/api/v1/agency/team/auth/verify-code")', start)
+    route = source[start:end]
+
+    email_lock = route.index("_lock_customer_login_email(operational_db, email)")
+    membership_lookup = route.index("AgencyTeamMember.normalized_email == email")
+    agency_lock = route.index("AgencyAccount.id == candidate.agency_id")
+    member_lock = route.index("AgencyTeamMember.id == candidate.id")
+    challenge_insert = route.index("operational_db.add(challenge)")
+
+    assert email_lock < membership_lookup < agency_lock < member_lock < challenge_insert
+
+
+def test_agency_team_otp_verification_refreshes_challenge_after_shared_email_lock():
+    source = Path("main.py").read_text(encoding="utf-8")
+    start = source.index("async def verify_agency_team_login")
+    end = source.index('@app.get("/api/v1/agency/team/auth/me")', start)
+    route = source[start:end]
+
+    email_lock = route.index("_lock_customer_login_email(operational_db, email)")
+    candidate_lookup = route.index("AgencyTeamLoginChallenge.email == email")
+    agency_lock = route.index("AgencyAccount.id == candidate.agency_id")
+    challenge_lock = route.index("AgencyTeamLoginChallenge.id == candidate.id")
+    session_insert = route.index("operational_db.add(AgencyTeamSession(")
+
+    assert email_lock < candidate_lookup < agency_lock < challenge_lock < session_insert
+    assert "AgencyTeamLoginChallenge.consumed_at.is_(None)" in route[candidate_lookup:agency_lock]
+    assert ".order_by(AgencyTeamLoginChallenge.created_at.desc()).limit(1)" in route[candidate_lookup:agency_lock]
