@@ -2906,33 +2906,41 @@ async def run_bounded_site_crawl(
             "Parameterized ecommerce URL signals come from the bounded same-origin link sample. Query values were not stored and query variants were not fetched as separate crawl pages."
         )
     if outcome_records is not None:
-        if pages_checked:
-            outcome_records.append(CheckOutcome(
-                check_id="ecommerce_catalog.parameterized_internal_urls",
-                category="ecommerce_catalog",
-                page_url=normalized,
-                outcome="warning" if parameterized_url_signatures else "pass",
-                observed_at_utc=datetime.now(timezone.utc).isoformat(),
-                method="bounded same-origin internal-link query-parameter inventory",
-                evidence=(
-                    f"Unique recognized parameterized URL patterns: {len(parameterized_url_signatures)}; "
-                    f"parameter classes: {', '.join(sorted(parameterized_parameter_kinds)) or 'none detected'}; "
-                    f"parameter names: {', '.join(sorted(parameterized_parameter_names)[:20]) or 'none detected'}. "
-                    "Query values are intentionally omitted; absence in this bounded sample does not prove the site has no parameterized URLs."
-                ),
-                evidence_ref="ecommerce_catalog.parameterized_internal_urls",
-            ))
+        catalog_page_sampled = any(
+            PRODUCT_DETAIL_PATH.search(urlsplit(page_url).path)
+            or re.search(r"(?:^|/)(?:collections?|categories?|category|catalog|shop)(?:/|$)", urlsplit(page_url).path, re.I)
+            for page_url in pages_checked
+        )
+        if parameterized_url_signatures:
+            query_outcome = "warning"
+            query_evidence = (
+                f"Unique recognized parameterized URL patterns: {len(parameterized_url_signatures)}; "
+                f"parameter classes: {', '.join(sorted(parameterized_parameter_kinds)) or 'none detected'}; "
+                f"parameter names: {', '.join(sorted(parameterized_parameter_names)[:20]) or 'none detected'}. "
+                "Query values are intentionally omitted; absence in this bounded sample does not prove the site has no parameterized URLs."
+            )
+        elif catalog_page_sampled:
+            query_outcome = "pass"
+            query_evidence = (
+                "No recognized variant, filter, pagination, sorting or search query patterns were found in the bounded internal-link sample for inspected catalog pages. "
+                "Query values are intentionally omitted; absence in this sample does not prove the site has no parameterized URLs."
+            )
         else:
-            outcome_records.append(CheckOutcome(
-                check_id="ecommerce_catalog.parameterized_internal_urls",
-                category="ecommerce_catalog",
-                page_url=normalized,
-                outcome="not_assessed",
-                observed_at_utc=datetime.now(timezone.utc).isoformat(),
-                method="bounded same-origin internal-link query-parameter inventory",
-                evidence="No page was successfully fetched; parameterized internal catalog URLs could not be inventoried.",
-                evidence_ref="ecommerce_catalog.parameterized_internal_urls",
-            ))
+            query_outcome = "not_assessed"
+            query_evidence = (
+                "No product, category, collection, catalog or search page was identified in the fetched sample; "
+                "parameterized catalog URL behavior was not assessed."
+            )
+        outcome_records.append(CheckOutcome(
+            check_id="ecommerce_catalog.parameterized_internal_urls",
+            category="ecommerce_catalog",
+            page_url=normalized,
+            outcome=query_outcome,
+            observed_at_utc=datetime.now(timezone.utc).isoformat(),
+            method="bounded same-origin internal-link query-parameter inventory",
+            evidence=query_evidence,
+            evidence_ref="ecommerce_catalog.parameterized_internal_urls",
+        ))
 
     # The link-response category is assessed only for the bounded same-origin
     # pages that were actually fetched. Never infer a pass when the homepage
