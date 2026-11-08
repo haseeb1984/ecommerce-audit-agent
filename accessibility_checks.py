@@ -39,6 +39,8 @@ class _AccessibilityParser(HTMLParser):
         self.links: list[dict[str, str | bool]] = []
         self.buttons: list[dict[str, str | bool]] = []
         self.images_missing_alt: int = 0
+        self.embedded_frames: list[dict[str, str]] = []
+        self.image_map_areas: list[dict[str, str]] = []
         self.aria_hidden_focusables: list[tuple[str, str]] = []
         self.aria_hidden_descendant_focusables: list[tuple[str, str]] = []
         self._aria_hidden_stack: list[tuple[str, bool]] = []
@@ -148,6 +150,19 @@ class _AccessibilityParser(HTMLParser):
             # alt may be correct for decorative imagery, so it is not flagged here.
             if "alt" not in values and values.get("role", "").lower() not in {"presentation", "none"}:
                 self.images_missing_alt += 1
+        elif tag == "iframe":
+            self.embedded_frames.append({
+                "title": values.get("title", "").strip(),
+                "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+            })
+        elif tag == "area" and values.get("href"):
+            self.image_map_areas.append({
+                "alt": values.get("alt", "").strip(),
+                "aria_label": values.get("aria-label", "").strip(),
+                "aria_labelledby": values.get("aria-labelledby", "").strip(),
+                "title": values.get("title", "").strip(),
+            })
             if self._active_link is not None and values.get("alt", "").strip():
                 self._active_link["has_image_alt"] = True
             if self._active_button is not None and values.get("alt", "").strip():
@@ -288,6 +303,70 @@ def inspect_static_accessibility_signals(html: str, page_url: str) -> list[Audit
             and parser.id_text.get(identifier, "").strip()
             for identifier in identifiers
         )
+
+    unnamed_frames = [
+        item for item in parser.embedded_frames
+        if not (item["title"] or item["aria_label"] or has_resolvable_labelledby(item))
+    ]
+    if unnamed_frames:
+        findings.append(AuditFinding(
+            category="accessibility",
+            title="Embedded frames may lack accessible titles",
+            status="manual_review_required",
+            severity="medium",
+            evidence=(
+                f"Found {len(unnamed_frames)} iframe(s) without a non-empty title, aria-label, "
+                f"or resolvable aria-labelledby name in returned HTML for {page_url}."
+            ),
+            explanation=(
+                "Embedded frames can contain payment providers, video, maps, or other interactive "
+                "content. A meaningful accessible name helps users understand each frame's purpose "
+                "before entering it; static source inspection cannot assess the embedded document itself."
+            ),
+            recommendation=(
+                "Give each iframe a concise title describing its content or purpose, such as "
+                "'Secure card payment' or 'Product demonstration video'. Verify the computed name "
+                "and the embedded experience in the rendered accessibility tree."
+            ),
+            verification_steps=[
+                "Inspect each iframe's computed accessible name in the rendered accessibility tree.",
+                "Test keyboard and screen-reader navigation into and out of each embedded experience.",
+            ],
+            source_url=page_url,
+        ))
+
+    unnamed_image_map_areas = [
+        item for item in parser.image_map_areas
+        if not (
+            item["alt"] or item["aria_label"] or item["title"]
+            or has_resolvable_labelledby(item)
+        )
+    ]
+    if unnamed_image_map_areas:
+        findings.append(AuditFinding(
+            category="accessibility",
+            title="Clickable image-map areas may lack accessible names",
+            status="manual_review_required",
+            severity="medium",
+            evidence=(
+                f"Found {len(unnamed_image_map_areas)} linked area element(s) without a non-empty "
+                f"alt, aria-label, title, or resolvable aria-labelledby name in returned HTML for {page_url}."
+            ),
+            explanation=(
+                "An area element makes a region of an image map interactive. Without a meaningful "
+                "name, assistive-technology users may not know the destination or action represented "
+                "by that region. The checker does not assess the visual accuracy or usability of map coordinates."
+            ),
+            recommendation=(
+                "Provide concise alt text for every linked area that describes its destination or action. "
+                "Confirm the associated image map and each target in the rendered page."
+            ),
+            verification_steps=[
+                "Inspect each area element and confirm its accessible name describes the linked destination.",
+                "Navigate the image map using a keyboard and screen reader in the rendered page.",
+            ],
+            source_url=page_url,
+        ))
 
     unlabeled_inputs = [item for item in parser.inputs if not (
         item["aria_label"] or has_resolvable_labelledby(item) or item["title"] or
