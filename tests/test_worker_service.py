@@ -362,3 +362,51 @@ async def test_lease_loss_cancels_running_audit_and_monitor(monkeypatch):
         await task
 
     assert audit_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_scan_releases_quota_reservation(monkeypatch):
+    import scan_worker
+
+    captured = []
+    session = object()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return session
+        async def __aexit__(self, *_args):
+            return None
+
+    async def release(db, reservation_id):
+        captured.append((db, reservation_id))
+
+    monkeypatch.setattr(scan_worker, "AsyncSessionLocal", SessionContext)
+    monkeypatch.setattr(scan_worker, "release_audit_reservation", release)
+
+    await scan_worker._release_scan_reservation(812)
+
+    assert captured == [(session, 812)]
+
+
+@pytest.mark.asyncio
+async def test_missing_scan_reservation_does_not_open_database(monkeypatch):
+    import scan_worker
+
+    def unexpected_session():
+        raise AssertionError("No reservation means no database work.")
+
+    monkeypatch.setattr(scan_worker, "AsyncSessionLocal", unexpected_session)
+    await scan_worker._release_scan_reservation(None)
+
+
+def test_scan_worker_cancellation_releases_reservation_before_propagating():
+    import inspect
+    import scan_worker
+
+    source = inspect.getsource(scan_worker.process_one_scan)
+    cancellation = source.index("except asyncio.CancelledError:")
+    release = source.index("_release_scan_reservation(reservation_id)", cancellation)
+    propagate = source.index("raise", release)
+    runtime_handler = source.index("except RuntimeError as exc:", cancellation)
+
+    assert cancellation < release < propagate < runtime_handler

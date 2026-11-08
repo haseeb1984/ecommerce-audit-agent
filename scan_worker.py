@@ -357,6 +357,20 @@ async def _run_audit_with_lease_guard(target_url: str, lease_unconfirmed: asynci
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
+async def _release_scan_reservation(reservation_id: int | None) -> None:
+    """Best-effort release of quota held by a worker cancelled before audit commit."""
+    if reservation_id is None:
+        return
+    try:
+        async with AsyncSessionLocal() as licensing_db:
+            await release_audit_reservation(licensing_db, reservation_id)
+    except Exception as cleanup_error:
+        logger.warning(
+            "Cancelled scan quota reservation cleanup failed (error_type=%s)",
+            type(cleanup_error).__name__,
+        )
+
+
 async def process_one_scan(worker_id: str) -> dict:
     if HostingerAsyncSessionLocal is None:
         raise RuntimeError("Hostinger operational database is not configured.")
@@ -482,6 +496,11 @@ async def process_one_scan(worker_id: str) -> dict:
             if not completed:
                 raise RuntimeError("SCAN_JOB_LEASE_LOST")
         return {"status": "completed", "job_id": job_id, "finding_count": len(result["findings"])}
+    except asyncio.CancelledError:
+        # Cancellation bypasses Exception handlers. Release any quota hold before
+        # propagating shutdown/request cancellation; the queue lease will recover.
+        await _release_scan_reservation(reservation_id)
+        raise
     except RuntimeError as exc:
         if str(exc) == "SCAN_JOB_LEASE_UNCONFIRMED":
             if reservation_id is not None:
