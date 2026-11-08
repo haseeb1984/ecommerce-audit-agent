@@ -682,6 +682,10 @@
               await api("/api/v1/account/wordpress-sites/" + encodeURIComponent(site.site_id) + "/disconnect", {method:"POST"});
               if (operationSessionVersion !== accountSessionVersion) return;
               setStatus("wordpressSitesStatus", "WordPress site disconnected. License and audit reports were not deleted.", "success");
+              // Supersede any in-flight page request so the refreshed first page
+              // reflects the just-completed disconnect.
+              wordpressSitesRequestVersion += 1;
+              wordpressSitesLoading = false;
               await loadWordPressSites();
             } catch (error) {
               if (operationSessionVersion === accountSessionVersion) {
