@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `80d4242d7b9ac4c006d83703292df02d6baf903a`  
+**Merged baseline:** `main` at `088da70f973255cd79eabe01c1e11330484a330b`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -36,6 +36,7 @@
 | Email delivery | Implemented / verification pending | Explicit-recipient report delivery and configured sender checks exist; real SMTP inbox delivery requires approved staging credentials. |
 | Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks PostgreSQL and Hostinger tables/columns/indexes plus application configuration; run against staging with approved environment. |
 | Legacy operational-data migration | Implemented / verification pending | `scripts/migrate_operational_data_to_hostinger.py` is dry-run by default and preserves PostgreSQL sources. Ambiguous email-to-license support-note ownership is now skipped and reported separately; run dry-run and reconcile counts in staging before any `--apply`. |\n| Durable scan worker scheduling | Implemented / verification pending | GitHub Actions invokes `/internal/scan-worker/run` every five minutes, validates the HTTPS URL and bearer secret visibly, and has a bounded retry window. Verify GitHub/Vercel configuration and run controlled staging acceptance; no live worker invocation has been performed. |
+| Durable scan worker lease ownership and recovery | Implemented / verification pending | Worker renewal, completion, retry/failure and defer require a still-live 900-second lease; stale recovery is ordered, bounded to 100 rows and uses `SKIP LOCKED`. Regression tests were added but not executed; run CI and controlled multi-worker staging acceptance. |
 | Deployment, production migration and live-provider verification | Blocked / approval required | No production migration or deployment without explicit approval. |
 
 ## Audit engine scope
@@ -72,3 +73,16 @@
 - Vercel preview checks were successful on the PR heads for #198, #199 and #200. This is not evidence that Python tests ran. The latest backend CI execution previously failed before runner allocation with zero executed steps; current full-suite CI is still not established.
 - No live GitHub worker invocation, staging database migration, Hostinger/Supabase schema acceptance, Paddle sandbox lifecycle, SMTP inbox acceptance, WordPress runtime acceptance, or production deployment was performed.
 - PDF/private-storage refinement remains reserved for the final phase.
+
+
+
+## Latest implementation baseline — 2026-11-08
+
+- Current `main`: `088da70f973255cd79eabe01c1e11330484a330b`.
+- PR #247: agency team OTP request/verification now serialize on the shared per-email login lock; regression coverage added.
+- PR #248: expired scan-worker leases cannot be renewed after the persisted lease deadline.
+- PR #249: stale scan lease recovery is deterministic, bounded to 100 rows per claim, and nonblocking across competing claimers through `SKIP LOCKED`.
+- PR #250: completion, retry/failure and defer paths also enforce active lease expiry, using one strict lease-duration validator.
+- The relevant regression tests are committed but have not been executed. Backend workflow runs were unavailable; Vercel preview/deployment status is blocked by its daily deployment-rate limit. Neither is reported as a passing test suite.
+- No live worker invocation, production migration, database mutation, external payment/email action, or production deployment was performed. All implementation areas remain subject to CI and controlled staging acceptance.
+- PDF/private-storage and final audit-result presentation remain deferred to the final phase.
