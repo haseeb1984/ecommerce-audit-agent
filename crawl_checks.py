@@ -844,6 +844,12 @@ def _catalog_query_parameter_signature(url: str) -> tuple[str, tuple[tuple[str, 
         "price_min", "price_max", "availability", "vendor", "product_type", "tag",
     }
     search_names = {"q", "query", "search", "keyword"}
+    path = parts.path or "/"
+    catalog_path = bool(
+        PRODUCT_DETAIL_PATH.search(path)
+        or re.search(r"(?:^|/)(?:collections?|categories?|category|catalog|shop)(?:/|$)", path, re.I)
+    )
+    search_path = bool(re.search(r"(?:^|/)search(?:/|$)", path, re.I))
     recognized: dict[str, str] = {}
     for raw_name, _value in pairs:
         name = raw_name.strip().lower()
@@ -851,16 +857,18 @@ def _catalog_query_parameter_signature(url: str) -> tuple[str, tuple[tuple[str, 
             continue
         if name in variant_names or name.startswith("variant_") or name.startswith("options["):
             kind = "variant"
-        elif name in pagination_names or re.fullmatch(r"page\[[a-z0-9_-]+\]", name):
-            kind = "pagination"
-        elif name in sorting_names:
-            kind = "sorting"
-        elif name.startswith(("filter.", "filter_", "facet")) or name in facet_names:
+        elif name.startswith(("filter.", "filter_", "facet")):
             kind = "filtering"
-        elif name in search_names:
+        elif name in facet_names and catalog_path:
+            kind = "filtering"
+        elif name in pagination_names and catalog_path:
+            kind = "pagination"
+        elif name in sorting_names and (catalog_path or search_path):
+            kind = "sorting"
+        elif name in search_names and (catalog_path or search_path):
             kind = "search"
         else:
-            # Tracking, session and unknown parameters are deliberately omitted.
+            # Tracking, session, unrelated content pagination and unknown parameters are omitted.
             continue
         recognized[name] = kind
 
