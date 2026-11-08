@@ -85,6 +85,7 @@
 <label for="agencyTeamWorkspaces">Client workspaces this member can be assigned to (optional)</label><select id="agencyTeamWorkspaces" multiple size="4" style="width:100%;padding:10px;border:1px solid #b8c7d8;border-radius:8px"></select>
 <div class="report-actions" style="margin-top:12px"><button id="inviteAgencyTeam" type="button" disabled>Send invitation</button><button id="refreshAgencyTeam" class="secondary" type="button" disabled>Refresh team</button></div>
 <div id="agencyTeam" class="reports" aria-live="polite"><p class="muted">No team members loaded.</p></div>
+<div class="report-actions"><button id="loadMoreAgencyTeam" class="secondary" type="button" hidden disabled>Load more team members</button></div>
 <div id="agencyStatus" class="status" role="status" aria-live="polite">Business plan required.</div>
 </section>
 <section class="panel" aria-labelledby="wordpressSitesHeading">
@@ -204,6 +205,10 @@
   let agencyClientHasMore = false;
   let agencyClientLoading = false;
   let agencyClientRequestVersion = 0;
+  let agencyTeamOffset = 0;
+  let agencyTeamHasMore = false;
+  let agencyTeamLoading = false;
+  let agencyTeamRequestVersion = 0;
   let websiteOffset = 0;
   let websiteHasMore = false;
   let websitesLoading = false;
@@ -212,7 +217,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
@@ -1071,13 +1076,29 @@
       message.textContent = error.message; target.append(message);
     }
   }
-  async function loadAgencyTeam() {
-    const response = await api("/api/v1/account/agency/team");
+  async function loadAgencyTeam(append = false) {
+    if (append && agencyTeamLoading) return;
+    const requestVersion = append ? agencyTeamRequestVersion : ++agencyTeamRequestVersion;
+    const sessionVersion = accountSessionVersion;
+    if (!append) { agencyTeamOffset = 0; agencyTeamHasMore = false; }
+    agencyTeamLoading = true;
+    const moreButton = $("loadMoreAgencyTeam");
+    moreButton.disabled = true;
+    moreButton.hidden = true;
+    try {
+    const query = new URLSearchParams();
+    query.set("limit", "100");
+    query.set("offset", String(agencyTeamOffset));
+    for (const option of Array.from($("agencyTeamWorkspaces").options)) {
+      if (option.value) query.append("workspace_ids", option.value);
+    }
+    const response = await api("/api/v1/account/agency/team?" + query.toString());
     const data = await response.json();
+    if (requestVersion !== agencyTeamRequestVersion || sessionVersion !== accountSessionVersion) return;
     const container = $("agencyTeam");
-    container.replaceChildren();
+    if (!append) container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) {
+    if (!append && !items.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No team invitations or members yet."; container.append(empty);
     }
@@ -1208,6 +1229,18 @@
         actions.append(revoke);
       }
       card.append(info, accessEditor, actions); container.append(card);
+    }
+    agencyTeamOffset = Number(data.page?.offset ?? agencyTeamOffset) + items.length;
+    agencyTeamHasMore = Boolean(data.page?.has_more);
+    moreButton.hidden = !agencyTeamHasMore;
+    moreButton.disabled = false;
+    if (!items.length && append) setStatus("agencyStatus", "All team members are already loaded.", "success");
+    } finally {
+      if (requestVersion === agencyTeamRequestVersion) {
+        agencyTeamLoading = false;
+        moreButton.hidden = !agencyTeamHasMore;
+        moreButton.disabled = false;
+      }
     }
   }
   async function inviteAgencyTeam() {
@@ -1965,6 +1998,13 @@
     deviceSessionsRequestId += 1;
     agencyUsageRequestVersion += 1;
     agencyClientRequestVersion += 1;
+    agencyTeamRequestVersion += 1;
+    agencyTeamOffset = 0;
+    agencyTeamHasMore = false;
+    agencyTeamLoading = false;
+    $("agencyTeam").replaceChildren();
+    $("loadMoreAgencyTeam").hidden = true;
+    $("loadMoreAgencyTeam").disabled = true;
     agencyClientOffset = 0;
     agencyClientHasMore = false;
     agencyClientLoading = false;
@@ -2284,6 +2324,10 @@
   $("inviteAgencyTeam").addEventListener("click", inviteAgencyTeam);
   $("refreshAgencyTeam").addEventListener("click", async () => {
     try { await loadAgencyTeam(); } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
+  $("loadMoreAgencyTeam").addEventListener("click", async () => {
+    try { await loadAgencyTeam(true); }
+    catch (error) { setStatus("agencyStatus", error.message, "error"); }
   });
   $("loadMoreAgencyClients").addEventListener("click", async () => {
     try { await loadAgencyDashboard(true); }

@@ -957,3 +957,49 @@ def test_agency_team_workspace_access_save_preserves_grants_for_unloaded_client_
     assert 'visibleWorkspaceIds.has(workspace.workspace_id) && !selected.has(workspace.workspace_id)' in source
     assert 'if (!selected.has(workspace.workspace_id))' not in source
     assert 'for (const workspaceId of selected)' in source
+
+
+
+def test_agency_team_inventory_is_paginated_and_grants_are_scoped_to_loaded_workspaces():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.list_business_agency_team)
+    assert "limit: int = Query(default=100, ge=1, le=100)" in source
+    assert "offset: int = Query(default=0, ge=0, le=1000000)" in source
+    assert "func.count(AgencyTeamMember.id)" in source
+    assert ".offset(offset).limit(limit)" in source
+    assert "workspace_ids: list[str] = Query(default=[], max_length=100)" in source
+    assert "AgencyWorkspaceAccess.workspace_id.in_(workspace_ids)" in source
+    assert "AgencyClientWorkspace.agency_id == agency.id" in source
+    assert "if member_ids and workspace_ids:" in source
+    assert '"has_more": offset + len(members) < total' in source
+    assert ".limit(500)" not in source
+
+
+def test_agency_team_portal_loads_member_pages_with_only_visible_workspace_grants():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("async function loadAgencyTeam(")
+    end = portal.index("async function inviteAgencyTeam(", start)
+    source = portal[start:end]
+    assert "async function loadAgencyTeam(append = false)" in source
+    assert 'query.set("limit", "100")' in source
+    assert 'query.set("offset", String(agencyTeamOffset))' in source
+    assert 'query.append("workspace_ids", option.value)' in source
+    assert "agencyTeamRequestVersion" in source
+    assert "accountSessionVersion" in source
+    assert "if (!append) container.replaceChildren();" in source
+    assert "data.page?.has_more" in source
+    assert 'id="loadMoreAgencyTeam"' in portal
+    assert "loadAgencyTeam(true)" in portal
+
+
+def test_account_clear_invalidates_pending_agency_team_page_requests():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("function clearAccountView()")
+    end = portal.index('$("requestLoginCode")', start)
+    source = portal[start:end]
+    assert "agencyTeamRequestVersion += 1;" in source
+    assert '$("loadMoreAgencyTeam").hidden = true;' in source

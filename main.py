@@ -3352,12 +3352,15 @@ async def list_business_agency_client_audits(
 @app.get("/api/v1/account/agency/team")
 async def list_business_agency_team(
     response: Response,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    workspace_ids: list[str] = Query(default=[], max_length=100),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency team management is available on the Business plan.")
-    from sqlalchemy import select
+    from sqlalchemy import select, func as sql_func
     # Match the admin suspension lock order: agency first, then member/grants.
     # A concurrent suspension therefore commits before a new invite can be persisted.
     agency = await operational_db.scalar(select(AgencyAccount).where(
@@ -3365,18 +3368,27 @@ async def list_business_agency_team(
     ).with_for_update())
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="Active agency workspace was not found.")
+    member_filter = AgencyTeamMember.agency_id == agency.id
+    total = int((await operational_db.execute(
+        select(sql_func.count(AgencyTeamMember.id)).where(member_filter)
+    )).scalar_one() or 0)
     members = (await operational_db.execute(select(AgencyTeamMember).where(
-        AgencyTeamMember.agency_id == agency.id
-    ).order_by(AgencyTeamMember.created_at.desc()).limit(500))).scalars().all()
+        member_filter
+    ).order_by(
+        AgencyTeamMember.created_at.desc(),
+        AgencyTeamMember.id.desc(),
+    ).offset(offset).limit(limit))).scalars().all()
     member_ids = [item.id for item in members]
     access_rows = []
-    if member_ids:
+    if member_ids and workspace_ids:
         access_rows = (await operational_db.execute(
             select(AgencyWorkspaceAccess, AgencyClientWorkspace.display_name)
             .join(AgencyClientWorkspace, AgencyClientWorkspace.id == AgencyWorkspaceAccess.workspace_id)
             .where(
                 AgencyWorkspaceAccess.agency_id == agency.id,
                 AgencyWorkspaceAccess.team_member_id.in_(member_ids),
+                AgencyClientWorkspace.agency_id == agency.id,
+                AgencyWorkspaceAccess.workspace_id.in_(workspace_ids),
             )
         )).all()
     access_by_member = {}
@@ -3394,7 +3406,14 @@ async def list_business_agency_team(
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "accepted_at": item.accepted_at.isoformat() if item.accepted_at else None,
         "invitation_expires_at": item.invitation_expires_at.isoformat() if item.invitation_expires_at else None,
-    } for item in members]}
+    } for item in members],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(members) < total,
+        },
+    }
 
 
 @app.post("/api/v1/account/agency/team/invitations", status_code=201)
