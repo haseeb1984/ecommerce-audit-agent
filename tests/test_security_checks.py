@@ -738,3 +738,34 @@ def test_valid_x_frame_options_remains_a_framing_fallback():
         "https://shop.example/",
     )
     assert findings == []
+
+
+def test_referrer_policy_accepts_comma_separated_fallback_values():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "unknown-policy, strict-origin-when-cross-origin",
+            "permissions-policy": "camera=()",
+            "content-security-policy": "frame-ancestors 'self'",
+        },
+        "https://shop.example/",
+    )
+    assert findings == []
+
+
+def test_wildcard_frame_ancestors_is_not_counted_as_a_framing_restriction():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "permissions-policy": "camera=()",
+            "content-security-policy": "frame-ancestors *",
+        },
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert "a framing restriction" in findings[0].evidence
