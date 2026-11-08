@@ -3121,8 +3121,11 @@ async def list_agency_team_workspaces(response: Response, identity=Depends(requi
             AgencyWorkspaceAccess.team_member_id == identity["member"].id,
             AgencyClientWorkspace.agency_id == identity["agency"].id,
             AgencyClientWorkspace.status == "active",
-        ).order_by(AgencyClientWorkspace.display_name.asc()).limit(500)
+        ).order_by(AgencyClientWorkspace.id.asc()).limit(500).with_for_update()
     )).all()
+    # Lock rows in stable workspace-ID order to match grant mutation ordering;
+    # restore the customer-facing name sort after the locks are acquired.
+    rows.sort(key=lambda row: ((row[0].display_name or "").casefold(), row[0].id))
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"items": [{"id": workspace.id, "display_name": workspace.display_name, "role": role}

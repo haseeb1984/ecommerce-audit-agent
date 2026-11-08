@@ -1003,3 +1003,18 @@ def test_account_clear_invalidates_pending_agency_team_page_requests():
     source = portal[start:end]
     assert "agencyTeamRequestVersion += 1;" in source
     assert '$("loadMoreAgencyTeam").hidden = true;' in source
+
+
+def test_agency_team_workspace_listing_locks_current_grants_in_stable_order():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.list_agency_team_workspaces)
+    order_by = source.index("order_by(AgencyClientWorkspace.id.asc())")
+    lock = source.index(".with_for_update()", order_by)
+    sort_for_display = source.index("rows.sort(", lock)
+
+    assert order_by < lock < sort_for_display
+    assert "AgencyWorkspaceAccess.team_member_id == identity[\"member\"].id" in source
+    assert "AgencyClientWorkspace.agency_id == identity[\"agency\"].id" in source
+    assert "AgencyClientWorkspace.status == \"active\"" in source
