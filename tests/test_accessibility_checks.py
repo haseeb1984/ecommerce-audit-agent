@@ -485,3 +485,67 @@ def test_named_custom_aria_role_links_and_buttons_are_recognized():
         }
         for finding in findings
     )
+
+
+def test_iframe_without_accessible_name_is_flagged_but_named_frames_are_not():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main>'
+        '<iframe src="https://payments.example/checkout"></iframe>'
+        '<iframe src="https://video.example/demo" title="Product demonstration"></iframe>'
+        '<iframe src="https://maps.example/store" aria-label="Store locations"></iframe>'
+        '</main></body></html>',
+        "https://shop.example/checkout",
+    )
+    finding = next(
+        item for item in findings
+        if item.title == "Embedded frames may lack accessible titles"
+    )
+    assert finding.status == "manual_review_required"
+    assert "1 iframe(s)" in finding.evidence
+
+
+def test_iframe_aria_labelledby_requires_a_real_nonempty_unique_target():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main>'
+        '<span id="payment-label">Secure payment</span>'
+        '<iframe src="/payment" aria-labelledby="payment-label"></iframe>'
+        '<iframe src="/missing" aria-labelledby="not-present"></iframe>'
+        '</main></body></html>',
+        "https://shop.example/checkout",
+    )
+    finding = next(
+        item for item in findings
+        if item.title == "Embedded frames may lack accessible titles"
+    )
+    assert "1 iframe(s)" in finding.evidence
+
+
+def test_linked_image_map_areas_without_names_are_flagged():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main>'
+        '<map name="departments">'
+        '<area href="/women" coords="0,0,50,50" shape="rect">'
+        '<area href="/men" alt="Men department" coords="50,0,100,50" shape="rect">'
+        '<area href="/sale" aria-label="Sale items" coords="0,50,50,100" shape="rect">'
+        '</map></main></body></html>',
+        "https://shop.example/",
+    )
+    finding = next(
+        item for item in findings
+        if item.title == "Clickable image-map areas may lack accessible names"
+    )
+    assert finding.status == "manual_review_required"
+    assert "1 linked area element(s)" in finding.evidence
+
+
+def test_image_map_areas_without_href_are_not_treated_as_interactive_links():
+    findings = inspect_static_accessibility_signals(
+        '<html lang="en"><body><main><map name="decorative">'
+        '<area coords="0,0,50,50" shape="rect">'
+        '</map></main></body></html>',
+        "https://shop.example/",
+    )
+    assert not any(
+        item.title == "Clickable image-map areas may lack accessible names"
+        for item in findings
+    )
