@@ -176,6 +176,15 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
                 mismatch_count += 1
                 mismatch_fields.update(fields)
 
+        if stage_missing:
+            # Each committed batch is independently safe to replay: existing
+            # target rows are never overwritten and source rows are retained.
+            await target.commit()
+            logger.info(
+                "Committed operational migration batch: table=%s rows=%s",
+                target_model.__tablename__, len(expected_by_key),
+            )
+
     statement = select(source_model).execution_options(yield_per=MIGRATION_BATCH_SIZE)
     result = await source.stream_scalars(statement)
     try:
@@ -288,6 +297,12 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                     if fields:
                         account_mismatch_count += 1
                         account_mismatch_fields.update(fields)
+            if apply_changes:
+                await target.commit()
+                logger.info(
+                    "Committed customer-account migration batch: rows=%s",
+                    len(expected_by_identity),
+                )
         reports["customer_accounts"] = {
             "source_candidates": len(account_candidates),
             "to_copy": account_copied,
@@ -474,6 +489,12 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                     if fields:
                         note_mismatch_count += 1
                         note_mismatch_fields.update(fields)
+            if apply_changes:
+                await target.commit()
+                logger.info(
+                    "Committed support-note migration batch: rows=%s",
+                    len(expected_by_id),
+                )
 
         async for row in _stream_rows(source, SaaSAdminCustomerNote):
             note_source_count += 1

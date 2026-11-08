@@ -245,16 +245,22 @@ def test_operational_migration_defaults_to_rollback_and_only_commits_on_apply():
         and node.value.func.attr == "rollback"
     ]
 
-    assert len(commit_calls) == 1
+    assert len(commit_calls) == 3  # account batches, note batches, and final flush
     assert len(rollback_calls) == 1
-    commit_if = next(
+    apply_guards = [
         node for node in ast.walk(migrate_function)
         if isinstance(node, ast.If)
         and isinstance(node.test, ast.Name)
         and node.test.id == "apply_changes"
+    ]
+    assert all(
+        any(call in ast.walk(guard) for guard in apply_guards)
+        for call in commit_calls
     )
-    assert commit_calls[0] in ast.walk(commit_if)
-    assert rollback_calls[0] not in ast.walk(commit_if)
+    assert all(
+        rollback_calls[0] not in ast.walk(guard)
+        for guard in apply_guards
+    )
 
 
 
@@ -416,3 +422,36 @@ def test_operational_license_identity_map_uses_streaming_projection():
     assert "SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name" in segment
     assert ".scalars().all()" not in segment
     assert "await result.close()" in segment
+
+
+def test_generic_operational_copy_commits_each_apply_batch_but_not_dry_run():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    copy_rows = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_copy_rows"
+    )
+    reconcile = next(
+        node for node in copy_rows.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "reconcile_batch"
+    )
+    apply_guard = next(
+        node for node in reconcile.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "stage_missing"
+    )
+    commits = [
+        node for node in ast.walk(reconcile)
+        if isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "commit"
+    ]
+
+    assert len(commits) == 1
+    assert commits[0] in ast.walk(apply_guard)
