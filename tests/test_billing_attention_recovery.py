@@ -276,3 +276,37 @@ def test_billing_attention_recovery_queries_only_latest_event_per_subscription()
     assert "host_ranked_recoveries.c.recovery_rank == 1" in source
     assert "sql_func.coalesce(" in source
     assert ".scalars().all()" not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "incoming_event_id, expected_stale",
+    [
+        ("evt_older", True),
+        ("evt_same", True),
+        ("evt_newer", False),
+    ],
+)
+async def test_equal_timestamp_subscription_events_use_event_id_tie_break(
+    incoming_event_id, expected_stale
+):
+    timestamp = datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
+    latest = SimpleNamespace(
+        event_id="evt_same",
+        updated_at=timestamp,
+        created_at=timestamp,
+    )
+
+    class _LatestLifecycleDB:
+        async def execute(self, statement):
+            class _Result:
+                def scalar_one_or_none(self):
+                    return latest
+            return _Result()
+
+    assert await main._paddle_subscription_event_is_stale(
+        _LatestLifecycleDB(),
+        "sub-equal-time",
+        timestamp,
+        incoming_event_id,
+    ) is expected_stale
