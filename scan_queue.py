@@ -36,16 +36,28 @@ def _scan_lease_cutoff(now: datetime, lease_seconds: int) -> datetime:
     return now - timedelta(seconds=lease_seconds)
 
 
+def _normalize_site_hostname(value: str) -> str:
+    """Canonicalize stored and submitted hostnames with the same IDNA rules."""
+    host = str(value).strip().lower().rstrip(".")
+    if not host:
+        raise ValueError("Every audit URL must include a valid website hostname.")
+    # Hostname columns contain hostnames, not URL authorities. Reject port,
+    # credentials, path and bracket syntax rather than comparing ambiguously.
+    if any(character in host for character in "/\\\\@?#[]"):
+        raise ValueError("Every audit URL must include a valid website hostname.")
+    return host.encode("idna").decode("ascii").lower().rstrip(".")
+
+
 def _validate_standard_license_site_binding(registered_hosts: Iterable[str], submitted_urls: Iterable[str]) -> None:
     """Keep ordinary customer licenses bound to one store; agency workspaces are exempt."""
-    existing = {str(host).strip().lower().rstrip(".") for host in registered_hosts if host}
+    existing = {_normalize_site_hostname(host) for host in registered_hosts if host}
     submitted = set()
     for value in submitted_urls:
         parsed = urlsplit(str(value))
         host = parsed.hostname
         if not host:
             raise ValueError("Every audit URL must include a valid website hostname.")
-        submitted.add(host.encode("idna").decode("ascii").lower().rstrip("."))
+        submitted.add(_normalize_site_hostname(host))
     if len(submitted) != 1:
         raise ValueError("A standard customer license can audit pages from one ecommerce website only.")
     if len(existing) > 1:
@@ -76,14 +88,26 @@ async def enqueue_scan_request(
     URLs must already be normalized and SSRF-validated by the API boundary.
     batch_size is intentionally restricted to the agreed 10/11 URL grouping.
     """
-    if batch_size not in (10, 11):
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size not in (10, 11):
         raise ValueError("Scan batch size must be 10 or 11.")
-    if not license_key or not request_id:
-        raise ValueError("License key and request ID are required.")
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or not 1 <= max_attempts <= 10:
+        raise ValueError("Maximum scan attempts must be between 1 and 10.")
+    if not isinstance(license_key, str) or not license_key.strip() or len(license_key) > 100:
+        raise ValueError("License key is required and must not exceed 100 characters.")
+    if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
+        raise ValueError("Request ID is required and must not exceed 128 characters.")
+    if not isinstance(package_tier, str) or not package_tier.strip() or len(package_tier) > 50:
+        raise ValueError("Package tier is required and must not exceed 50 characters.")
+    if requested_by is not None and (not isinstance(requested_by, str) or len(requested_by) > 254):
+        raise ValueError("Requester identity must not exceed 254 characters.")
+    if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id or len(workspace_id) > 64):
+        raise ValueError("Workspace ID must be between 1 and 64 characters.")
 
     normalized_urls = list(dict.fromkeys(
         str(url).strip() for url in urls if str(url).strip()
     ))
+    if any(len(url) > 2048 for url in normalized_urls):
+        raise ValueError("Every audit URL must not exceed 2048 characters.")
     if not normalized_urls:
         raise ValueError("At least one website URL is required.")
 
