@@ -1917,13 +1917,16 @@
         loadMore.dataset.loadMoreScanBatches = "true";
         loadMore.textContent = "Load older scan batches";
         loadMore.addEventListener("click", async () => {
+          const operationSessionVersion = accountSessionVersion;
           loadMore.disabled = true;
           loadMore.textContent = "Loading…";
           try { await loadScanBatches({append: true}); }
           catch (error) {
-            loadMore.disabled = false;
-            loadMore.textContent = "Load older scan batches";
-            setStatus("bulkScanStatus", error.message || "Older scan batches could not be loaded.", "error");
+            if (operationSessionVersion === accountSessionVersion) {
+              loadMore.disabled = false;
+              loadMore.textContent = "Load older scan batches";
+              setStatus("bulkScanStatus", error.message || "Older scan batches could not be loaded.", "error");
+            }
           }
         });
         container.append(loadMore);
