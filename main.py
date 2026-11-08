@@ -5375,28 +5375,31 @@ async def _paddle_subscription_event_is_stale(
     occurred_at: datetime,
     event_id: str | None = None,
 ) -> bool:
-    """Reject out-of-order subscription events using timestamp and stable ID tie-break."""
+    """Reject out-of-order subscription events using provider time and stable ID tie-break."""
     latest = await _latest_paddle_subscription_lifecycle_event(db, subscription_id)
     if latest is None:
         return False
-    latest_at = latest.updated_at or latest.created_at
-    if latest_at is None:
+    latest_updated_at = latest.updated_at or latest.created_at
+    latest_created_at = latest.created_at or latest_updated_at
+    if latest_updated_at is None:
         return False
-    if latest_at.tzinfo is None:
-        latest_at = latest_at.replace(tzinfo=timezone.utc)
-    incoming_at = occurred_at
-    if incoming_at.tzinfo is None:
-        incoming_at = incoming_at.replace(tzinfo=timezone.utc)
-    latest_at = latest_at.astimezone(timezone.utc)
-    incoming_at = incoming_at.astimezone(timezone.utc)
-    if incoming_at != latest_at:
-        return incoming_at < latest_at
-    # The lifecycle query orders event_id descending after timestamp fields.
-    # Apply the same deterministic tie-break here so equal-time redeliveries
-    # cannot apply an older event after a newer event has already been stored.
-    latest_event_id = str(getattr(latest, "event_id", "") or "")
-    incoming_event_id = str(event_id or "")
-    return bool(latest_event_id and incoming_event_id and incoming_event_id <= latest_event_id)
+
+    def as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    latest_order = (
+        as_utc(latest_updated_at),
+        as_utc(latest_created_at),
+        str(getattr(latest, "event_id", "") or ""),
+    )
+    incoming_order = (
+        as_utc(occurred_at),
+        as_utc(occurred_at),
+        str(event_id or ""),
+    )
+    return incoming_order <= latest_order if latest_order[2] and incoming_order[2] else incoming_order[:2] < latest_order[:2]
 
 
 async def _filter_recovered_billing_attention_events(
