@@ -127,18 +127,18 @@ class LeadDossier(BaseModel):
 
 
 _UNSUPPORTED_PITCH_BUSINESS_TERMS = re.compile(
-    r"\\b(?:revenue|sales|conversion(?:s|\\s+rate)?|ad\\s+spend|ad\\s+budget|profit|roi)\\b",
+    r"\b(?:revenue|sales|conversion(?:s|\s+rate)?|ad\s+spend|ad\s+budget|profit|roi)\b",
     re.IGNORECASE,
 )
 _UNSUPPORTED_PITCH_QUANTIFICATION = re.compile(
-    r"(?:[$£€]\\s*\\d|\\b\\d+(?:\\.\\d+)?\\s*(?:%|percent|x|times)\\b)",
+    r"(?:[$£€]\s*\d|\b\d+(?:\.\d+)?\s*(?:%|percent|x|times)\b)",
     re.IGNORECASE,
 )
 _UNSUPPORTED_PITCH_CAUSALITY = re.compile(
-    r"\\b(?:burn(?:ing|s)?|wast(?:e|es|ing)|cost(?:s|ing)?|los(?:e|es|ing|t)|reduc(?:e|es|ing)|"
+    r"\b(?:burn(?:ing|s)?|wast(?:e|es|ing)|cost(?:s|ing)?|los(?:e|es|ing|t)|reduc(?:e|es|ing)|"
     r"lower(?:s|ing)?|hurt(?:s|ing)?|damage(?:s|d)?|increase(?:s|d|ing)?|boost(?:s|ed|ing)?|"
-    r"improv(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|drive(?:s|n|ing)?)\\b"
-    r"(?:\\s+\\w+){0,4}\\s+\\b(?:revenue|sales|conversion(?:s|\\s+rate)?|ad\\s+spend|ad\\s+budget|profit)\\b",
+    r"improv(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|drive(?:s|n|ing)?)\b"
+    r"(?:\s+\w+){0,4}\s+\b(?:revenue|sales|conversion(?:s|\s+rate)?|ad\s+spend|ad\s+budget|profit)\b",
     re.IGNORECASE,
 )
 
