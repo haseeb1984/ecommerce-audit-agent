@@ -89,6 +89,11 @@ class _DisconnectSession:
         self.commits += 1
 
 
+class _CanonicalLicenseSession:
+    async def scalar(self, statement):
+        return SimpleNamespace(id=1, license_key="license-test")
+
+
 @pytest.mark.asyncio
 async def test_customer_wordpress_disconnect_is_idempotent_after_successful_disconnect():
     from types import SimpleNamespace
@@ -107,7 +112,8 @@ async def test_customer_wordpress_disconnect_is_idempotent_after_successful_disc
     result = await customer_disconnect_wordpress_site(
         site_id=site.id,
         response=response,
-        license_obj=SimpleNamespace(license_key="license-test"),
+        license_obj=SimpleNamespace(id=1, license_key="license-test"),
+        db=_CanonicalLicenseSession(),
         operational_db=operational_db,
     )
 
