@@ -77,3 +77,17 @@ def test_wordpress_plugin_uses_admin_nonce_for_identity_claim():
     assert "wp_verify_nonce($nonce, 'eaa_link_customer_identity')" in plugin
     assert "eaa_wp_dashboard_capability()" in plugin
     assert "/api/v1/integrations/wordpress/sites/claim" in plugin
+
+
+def test_wordpress_disconnect_clears_license_scoped_identity_metadata():
+    plugin = Path("wordpress-plugin/ecommerce-audit-agent/ecommerce-audit-agent.php").read_text(encoding="utf-8")
+    start = plugin.index("function eaa_wp_clear_identity_link_settings")
+    end = plugin.index("add_action('admin_menu'", start)
+    lifecycle = plugin[start:end]
+
+    assert "identity_site_id" in lifecycle
+    assert "identity_wp_user_login" in lifecycle
+    assert "identity_linked_at" in lifecycle
+    assert lifecycle.count("eaa_wp_clear_identity_link_settings($settings);") == 3
+    assert lifecycle.index("agency/sites/disconnect") < lifecycle.index("eaa_wp_clear_identity_link_settings($settings);")
+    assert lifecycle.index("sites/disconnect") < lifecycle.rindex("eaa_wp_clear_identity_link_settings($settings);")
