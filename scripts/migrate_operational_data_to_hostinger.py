@@ -12,7 +12,7 @@ import logging
 from itertools import islice
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, literal, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
@@ -161,6 +161,52 @@ async def _stream_billing_license_ownership(source):
         await result.close()
     return resolved, ambiguous
 
+
+def _account_candidate_statement():
+    """Deduplicate legacy account identities in PostgreSQL before streaming."""
+    sessions = (
+        select(SoftwareLicense.license_key.label("license_key"),
+            func.lower(func.trim(AccountSession.email)).label("email"),
+            SoftwareLicense.client_name.label("display_name"),
+            AccountSession.created_at.label("candidate_created_at"),
+            AccountSession.created_at.label("candidate_updated_at"),
+            literal(0).label("source_priority"),
+        ).join(SoftwareLicense, SoftwareLicense.id == AccountSession.license_id)
+        .where(AccountSession.email.is_not(None), func.trim(AccountSession.email) != "")
+    )
+    site_email = func.coalesce(func.nullif(func.trim(WordPressSite.customer_email), ""),
+        func.nullif(func.trim(WordPressSite.admin_email), ""))
+    sites = (
+        select(SoftwareLicense.license_key.label("license_key"),
+            func.lower(site_email).label("email"),
+            SoftwareLicense.client_name.label("display_name"),
+            WordPressSite.created_at.label("candidate_created_at"),
+            WordPressSite.created_at.label("candidate_updated_at"),
+            literal(1).label("source_priority"),
+        ).join(SoftwareLicense, SoftwareLicense.id == WordPressSite.license_id)
+        .where(site_email.is_not(None))
+    )
+    billing = (
+        select(SoftwareLicense.license_key.label("license_key"),
+            func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email"),
+            SoftwareLicense.client_name.label("display_name"),
+            PaymentWebhookEvent.created_at.label("candidate_created_at"),
+            func.coalesce(PaymentWebhookEvent.updated_at, PaymentWebhookEvent.created_at).label("candidate_updated_at"),
+            literal(2).label("source_priority"),
+        ).join(SoftwareLicense, SoftwareLicense.id == PaymentWebhookEvent.license_id)
+        .where(PaymentWebhookEvent.recipient_email.is_not(None), func.trim(PaymentWebhookEvent.recipient_email) != "")
+    )
+    candidates = union_all(sessions, sites, billing).subquery("legacy_account_candidates")
+    ranked = select(candidates.c.license_key, candidates.c.email, candidates.c.display_name,
+        candidates.c.candidate_created_at,
+        func.row_number().over(partition_by=(candidates.c.license_key, candidates.c.email),
+            order_by=(candidates.c.source_priority.asc(), candidates.c.candidate_updated_at.desc(),
+                candidates.c.candidate_created_at.desc())).label("candidate_rank"),
+    ).subquery("ranked_legacy_account_candidates")
+    return select(ranked.c.license_key, ranked.c.email, ranked.c.display_name,
+        ranked.c.candidate_created_at).where(ranked.c.candidate_rank == 1)
+        .order_by(ranked.c.license_key.asc(), ranked.c.email.asc())
+        .execution_options(yield_per=MIGRATION_BATCH_SIZE)
 
 MIGRATION_BATCH_SIZE = 500
 
