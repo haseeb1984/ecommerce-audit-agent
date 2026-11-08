@@ -276,7 +276,9 @@ async def claim_next_scan_job(
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_at < stale_before,
             )
-            .with_for_update()
+            .order_by(WebsiteScanJob.locked_at.asc(), WebsiteScanJob.id.asc())
+            .limit(100)
+            .with_for_update(skip_locked=True)
         )).scalars().all()
         for expired in expired_jobs:
             batch = await db.scalar(
