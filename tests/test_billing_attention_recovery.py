@@ -114,3 +114,51 @@ def test_admin_operations_surfaces_unknown_paddle_subscription_states():
     source = inspect.getsource(main.admin_operations)
     assert '"subscription_update_unrecognized_status"' in source
     assert '"subscription_unrecognized_status_events": billing_attention_counts["subscription_update_unrecognized_status"]' in source
+
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_subscription_status_attention_clears_after_later_verified_recovery():
+    now = datetime.now(timezone.utc)
+    unknown = SimpleNamespace(
+        event_id="evt-unknown-status",
+        status="subscription_update_unrecognized_status",
+        subscription_id="sub-status-recovered",
+        created_at=now - timedelta(hours=2),
+        updated_at=now - timedelta(hours=2),
+    )
+    recovery = SimpleNamespace(
+        event_id="evt-known-status",
+        status="subscription_updated_active",
+        subscription_id="sub-status-recovered",
+        created_at=now - timedelta(hours=1),
+        updated_at=now - timedelta(hours=1),
+    )
+
+    visible = await main._filter_recovered_billing_attention_events(
+        [unknown],
+        _RecoveryDB([recovery]),
+        _RecoveryDB(),
+    )
+
+    assert visible == []
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_subscription_status_attention_remains_without_later_recovery():
+    now = datetime.now(timezone.utc)
+    unknown = SimpleNamespace(
+        event_id="evt-unknown-status-open",
+        status="subscription_update_unrecognized_status",
+        subscription_id="sub-status-open",
+        created_at=now,
+        updated_at=now,
+    )
+
+    visible = await main._filter_recovered_billing_attention_events(
+        [unknown],
+        _RecoveryDB(),
+        _RecoveryDB(),
+    )
+
+    assert visible == [unknown]

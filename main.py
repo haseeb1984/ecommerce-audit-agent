@@ -5127,7 +5127,10 @@ async def _filter_recovered_billing_attention_events(
     operational_db: AsyncSession,
 ) -> list:
     """Hide stale failure alerts when a later verified subscription recovery exists."""
-    failure_statuses = {"payment_failed", "subscription_past_due", "subscription_updated_past_due"}
+    failure_statuses = {
+        "payment_failed", "subscription_past_due", "subscription_updated_past_due",
+        "subscription_update_unrecognized_status",
+    }
     recovery_statuses = {
         "delivered", "subscription_renewed", "subscription_updated_active",
         "subscription_resumed", "subscription_activated",
