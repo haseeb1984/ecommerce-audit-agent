@@ -31,7 +31,7 @@ def test_email_identity_outbox_ordering_is_per_license_not_global():
     statement = _customer_email_identity_outbox_claim_statement(
         datetime(2026, 11, 8, 12, 0, tzinfo=timezone.utc)
     )
-    sql = str(statement.compile(dialect=mysql.dialect())).lower()
+    sql = str(statement.compile(dialect=mysql.dialect())).lower().replace("`", "")
 
     assert "customer_email_identity_sync_outbox_1.license_key = customer_email_identity_sync_outbox.license_key" in sql
     assert "customer_email_identity_sync_outbox_1.license_key !=" not in sql
