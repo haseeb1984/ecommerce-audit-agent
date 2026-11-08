@@ -8220,6 +8220,42 @@ async def admin_cancel_subscription(
     }
 
 
+async def _count_sorted_admin_customer_email_union(operational_emails, legacy_emails):
+    """Count two distinct, ascending email streams without materializing either source."""
+    operational_iter = operational_emails.__aiter__()
+    legacy_iter = legacy_emails.__aiter__()
+    sentinel = object()
+
+    async def next_value(iterator):
+        try:
+            return await iterator.__anext__()
+        except StopAsyncIteration:
+            return sentinel
+
+    operational_value = await next_value(operational_iter)
+    legacy_value = await next_value(legacy_iter)
+    total = 0
+    while operational_value is not sentinel and legacy_value is not sentinel:
+        if operational_value == legacy_value:
+            total += 1
+            operational_value = await next_value(operational_iter)
+            legacy_value = await next_value(legacy_iter)
+        elif operational_value < legacy_value:
+            total += 1
+            operational_value = await next_value(operational_iter)
+        else:
+            total += 1
+            legacy_value = await next_value(legacy_iter)
+
+    while operational_value is not sentinel:
+        total += 1
+        operational_value = await next_value(operational_iter)
+    while legacy_value is not sentinel:
+        total += 1
+        legacy_value = await next_value(legacy_iter)
+    return total
+
+
 def _merge_admin_customer_directory_candidates(operational_candidates, legacy_candidates):
     """Merge cross-database customer candidates with deterministic newest-first ordering."""
     def timestamp(value):
@@ -8298,15 +8334,22 @@ async def admin_customer_directory(
     # contains operational customer identities. Merge both sources on every
     # request; a partially migrated customer must not disappear merely because
     # another customer's operational mirror is already present.
-    operational_emails = set((await operational_db.execute(
+    operational_email_stream = await operational_db.stream(
         select(identity_sources.c.email).distinct().where(
             *([operational_filter] if operational_filter is not None else [])
+        ).order_by(identity_sources.c.email.asc())
+    )
+    legacy_email_stream = await db.stream(
+        select(legacy_email).where(*legacy_filters).distinct().order_by(legacy_email.asc())
+    )
+    try:
+        total = await _count_sorted_admin_customer_email_union(
+            operational_email_stream.scalars(),
+            legacy_email_stream.scalars(),
         )
-    )).scalars().all())
-    legacy_emails = set((await db.execute(
-        select(legacy_email).where(*legacy_filters).distinct()
-    )).scalars().all())
-    total = len(operational_emails | legacy_emails)
+    finally:
+        await operational_email_stream.close()
+        await legacy_email_stream.close()
 
     candidate_limit = offset + limit
     operational_candidates_query = select(
