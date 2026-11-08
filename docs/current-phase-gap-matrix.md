@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `528f54fd9d819a7459b380aad84f0241ed8d4895` after the 2026-11-08 admin billing and overview scalability work. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `071cfa4d73f3e393ea3d258bed26bc7015ae19a3` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -797,4 +797,15 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - PR #253 also replaces loading every billing event for each visible customer with deterministic SQL `ROW_NUMBER()` selection of one latest contact per license, for both Hostinger operational events and the legacy PostgreSQL fallback.
 - Regression contracts were added in `tests/test_billing_attention_recovery.py` and `tests/test_admin_overview_scalability.py`. They have **not been executed**; no Python CI pass is claimed.
 - No live billing/customer data, production migration, external provider action, or production deployment was performed. Admin operations remain **implemented / verification pending** pending CI and staging acceptance.
+- PDF/private-storage and final audit-result presentation remain reserved for the final phase.
+
+
+## 2026-11-08 — customer directory and agency detail scalability
+
+- PR #255 is merged: admin customer-directory license counts now resolve all license keys on the visible page in one PostgreSQL query rather than issuing one query per customer.
+- PR #256 is merged: the exact cross-database customer-email union total is counted by merging ordered Hostinger and PostgreSQL email streams. Application memory remains constant with respect to the total number of distinct customer emails, and both streams are closed even if the second stream fails to initialize.
+- PR #257 is merged: agency detail now returns at most the latest 100 website connections per workspace, while separate grouped counts expose the full number of connections and clearly mark truncated workspace lists in the admin portal.
+- PR #258 is merged: agency suspension now revokes active team sessions, consumes pending login challenges, and revokes outstanding invitations through three targeted SQL updates instead of loading every affected row into Python.
+- Regression tests were added/updated in `tests/test_admin_customer_directory_races.py` and `tests/test_agency_access.py`. They have **not been executed**; no Python CI pass is claimed. Vercel preview attempts continue to report the daily deployment-rate limit, which is not a code/test result.
+- No live customer data, production database, migration, Paddle/SMTP action, WordPress installation, live-site audit, or production deployment was performed. Admin/customer and agency workflows remain **implemented / verification pending** until CI and controlled staging acceptance.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
