@@ -33,10 +33,34 @@ jobs:
             echo "Repository secret CRON_SECRET is not configured." >&2
             exit 1
           fi
-          case "$SCAN_WORKER_URL" in
-            https://*) ;;
-            *) echo "SCAN_WORKER_URL must use HTTPS." >&2; exit 1 ;;
-          esac
+          python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlsplit
+
+          value = os.environ["SCAN_WORKER_URL"].strip()
+          try:
+              parsed = urlsplit(value)
+              valid = (
+                  parsed.scheme == "https"
+                  and bool(parsed.hostname)
+                  and parsed.username is None
+                  and parsed.password is None
+                  and not parsed.fragment
+                  and parsed.path.rstrip("/") == "/internal/scan-worker/run"
+                  and (parsed.port is None or 1 <= parsed.port <= 65535)
+                  and not any(character.isspace() for character in parsed.netloc)
+              )
+          except ValueError:
+              valid = False
+          if not valid:
+              print(
+                  "SCAN_WORKER_URL must be a valid HTTPS URL targeting "
+                  "/internal/scan-worker/run, without embedded credentials or a fragment.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          PY
 
       - name: Invoke protected scan worker
         env:
