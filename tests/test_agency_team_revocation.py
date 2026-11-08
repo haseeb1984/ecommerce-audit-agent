@@ -164,3 +164,21 @@ def test_agency_team_portal_loads_all_saved_findings_in_pages():
     assert "Load more saved findings" in source
     assert "loadEvidencePage(evidenceOffset,true)" in source
     assert "evidenceOffset=offset+saved.items.length;" in source
+
+
+def test_team_revocation_consumes_pending_login_codes_under_agency_lock():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.revoke_business_agency_team_member)
+    agency_lock = source.index("AgencyAccount.owner_license_key")
+    member_lock = source.index("AgencyTeamMember.id == member_id")
+    session_revoke = source.index("AgencyTeamSession.team_member_id == member.id")
+    challenge_revoke = source.index("AgencyTeamLoginChallenge.team_member_id == member.id")
+    grant_cleanup = source.index("delete(AgencyWorkspaceAccess)")
+    commit = source.index("await operational_db.commit()")
+
+    assert agency_lock < member_lock < session_revoke < challenge_revoke < grant_cleanup < commit
+    assert "AgencyTeamLoginChallenge.consumed_at.is_(None)" in source[challenge_revoke:grant_cleanup]
+    assert ").values(consumed_at=now)" in source[challenge_revoke:grant_cleanup]
+    assert "datetime.now(timezone.utc)" in source
