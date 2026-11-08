@@ -209,7 +209,17 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       workspaceLoadMore.type = "button";
       workspaceLoadMore.className = "secondary";
       workspaceLoadMore.textContent = "Load more client workspaces";
-      workspaceLoadMore.addEventListener("click", () => loadWorkspaces(expectedVersion, workspaceOffset, true));
+      workspaceLoadMore.addEventListener("click", () => {
+        if (!workspaceLoadMore || workspaceLoadMore.disabled) return;
+        workspaceLoadMore.disabled = true;
+        const nextOffset = workspaceOffset;
+        loadWorkspaces(expectedVersion, nextOffset, true).catch(error => {
+          if (expectedVersion === sessionVersion) {
+            $("workspaceStatus").textContent = error.message;
+            if (workspaceLoadMore) workspaceLoadMore.disabled = false;
+          }
+        });
+      });
       $("workspaces").append(workspaceLoadMore);
     }
   }
