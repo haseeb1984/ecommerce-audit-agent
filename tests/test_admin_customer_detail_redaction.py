@@ -80,6 +80,9 @@ def test_admin_customer_detail_sublist_pagination_is_independent_and_bounded():
     assert '"session_page"' in source
     assert '"wordpress_page"' in source
     assert '"note_page"' in source
+    assert "hostinger_identity_keys = identity_keys_query.subquery" in source
+    assert "CustomerSession.license_key.in_(hostinger_license_keys)" in source
+    assert "WordPressInstallation.license_key.in_(hostinger_license_keys)" in source
     assert "session_offset).limit(session_limit)" in source
     assert "wordpress_offset).limit(wordpress_limit)" in source
     assert "note_offset).limit(note_limit)" in source
