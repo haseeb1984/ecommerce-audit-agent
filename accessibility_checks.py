@@ -150,6 +150,10 @@ class _AccessibilityParser(HTMLParser):
             # alt may be correct for decorative imagery, so it is not flagged here.
             if "alt" not in values and values.get("role", "").lower() not in {"presentation", "none"}:
                 self.images_missing_alt += 1
+            if self._active_link is not None and values.get("alt", "").strip():
+                self._active_link["has_image_alt"] = True
+            if self._active_button is not None and values.get("alt", "").strip():
+                self._active_button["has_image_alt"] = True
         elif tag == "iframe":
             self.embedded_frames.append({
                 "title": values.get("title", "").strip(),
@@ -163,10 +167,6 @@ class _AccessibilityParser(HTMLParser):
                 "aria_labelledby": values.get("aria-labelledby", "").strip(),
                 "title": values.get("title", "").strip(),
             })
-            if self._active_link is not None and values.get("alt", "").strip():
-                self._active_link["has_image_alt"] = True
-            if self._active_button is not None and values.get("alt", "").strip():
-                self._active_button["has_image_alt"] = True
         if tag == "svg":
             self._inside_svg += 1
             self._active_svg_control = (
