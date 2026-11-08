@@ -2459,13 +2459,23 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
     ).with_for_update())
     if workspace is None or workspace.status != "active":
         raise HTTPException(status_code=404, detail="Active client workspace not found.")
+    # Select the latest tenant-scoped connection, not only an active row, so
+    # retries after a lost disconnect response remain safe and deterministic.
     site = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
         AgencyClientWebsite.workspace_id == workspace.id,
-        AgencyClientWebsite.status == "active",
-    ).with_for_update())
+    ).order_by(
+        AgencyClientWebsite.connected_at.desc(),
+        AgencyClientWebsite.id.desc(),
+    ).limit(1).with_for_update())
     if site is None:
-        raise HTTPException(status_code=404, detail="Active client website connection not found.")
+        raise HTTPException(status_code=404, detail="Client website connection not found.")
+    if site.status == "disconnected":
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        return {"status": "already_disconnected", "site_id": site.id}
+    if site.status != "active":
+        raise HTTPException(status_code=409, detail="Client website connection is not active.")
     now = datetime.now(timezone.utc)
     site.status = "disconnected"
     site.disconnected_at = now
@@ -2479,6 +2489,7 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
         challenge.consumed_at = now
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {"status": "disconnected", "site_id": site.id}
 
 
