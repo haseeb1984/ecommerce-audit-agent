@@ -26,7 +26,7 @@ The account detail view exposes a confirmed cancellation request for linked Padd
 
 Browser sessions, linked WordPress installations, and internal support notes have independent offset/limit pagination. Each endpoint sublist defaults to 50 rows, accepts a maximum of 100 rows per request, and returns its own total and `has_more` metadata. The operator console exposes a separate Load more control for each list. Session ordering uses creation time plus the session primary key for deterministic pagination; session token hashes are never returned.
 
-Billing lifecycle events remain a bounded cross-database merged sample (up to 200 events) because PostgreSQL legacy events and Hostinger mirror events must be deduplicated and globally ordered. Independent billing-event pagination/count metadata remains follow-up work.
+Billing lifecycle events use the independent cross-database pagination described below; the former 200-event sample limit has been removed.
 
 
 
