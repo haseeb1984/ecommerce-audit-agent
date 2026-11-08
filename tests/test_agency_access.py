@@ -401,7 +401,7 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     from main import AgencyTeamLoginRequest, request_agency_team_login
 
     now = datetime.now(timezone.utc)
-    member = SimpleNamespace(id="member-1", agency_id="agency-1")
+    member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active", email_verified_at=now)
     agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
     recent = SimpleNamespace(created_at=now - timedelta(seconds=10))
 
