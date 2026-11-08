@@ -423,7 +423,9 @@ function eaa_wp_sync_site_status() {
             $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
             if (404 === $http_status) {
                 unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
-                      $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+                      $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at'],
+                      $settings['last_status']);
+                eaa_wp_clear_identity_link_settings($settings);
                 $settings['connection_error'] = __('This agency client site was disconnected by the agency owner.', 'ecommerce-audit-agent');
             } else {
                 $settings['connection_error'] = $response->get_error_message();
@@ -446,6 +448,7 @@ function eaa_wp_sync_site_status() {
         if (404 === $http_status) {
             // The SaaS customer portal can disconnect this site remotely.
             unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+            eaa_wp_clear_identity_link_settings($settings);
             $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
         } else {
             $settings['connection_error'] = $response->get_error_message();

@@ -142,3 +142,29 @@ def test_wordpress_site_url_normalizes_ipv4_and_ipv6_literals(url, expected):
 def test_wordpress_site_url_rejects_malformed_ip_literals(url):
     with pytest.raises(HTTPException):
         _normalize_site_url(url)
+
+
+def test_remote_agency_disconnect_clears_identity_and_cached_status_metadata():
+    from pathlib import Path
+
+    plugin = Path("wordpress-plugin/ecommerce-audit-agent/ecommerce-audit-agent.php").read_text(encoding="utf-8")
+    start = plugin.index("function eaa_wp_sync_site_status")
+    end = plugin.index("if (empty($settings['license_key'])", start)
+    agency_sync = plugin[start:end]
+
+    assert "agency/sites/status" in agency_sync
+    assert "unset($settings['last_status']);" in agency_sync
+    assert "eaa_wp_clear_identity_link_settings($settings);" in agency_sync
+
+
+def test_remote_customer_disconnect_clears_linked_identity_metadata():
+    from pathlib import Path
+
+    plugin = Path("wordpress-plugin/ecommerce-audit-agent/ecommerce-audit-agent.php").read_text(encoding="utf-8")
+    start = plugin.index("function eaa_wp_sync_site_status")
+    end = plugin.index("update_option(EAA_WP_OPTION, $settings, false);", start)
+    customer_sync = plugin[end:]
+    remote_disconnect = customer_sync[customer_sync.index("This site was disconnected from your SaaS account") - 400:
+                                     customer_sync.index("This site was disconnected from your SaaS account")]
+
+    assert "eaa_wp_clear_identity_link_settings($settings);" in remote_disconnect
