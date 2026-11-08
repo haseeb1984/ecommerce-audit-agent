@@ -8753,88 +8753,129 @@ async def admin_customer_account_action(
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Apply an explicit account-wide lifecycle action with email confirmation and audit logging."""
+    """Apply an explicit account-wide lifecycle action with bounded identity streaming."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func, update
+    from sqlalchemy import select, func as sql_func, update, union, table, column, String
     normalized = payload.confirm_email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
         raise HTTPException(status_code=422, detail="Enter a valid customer email for confirmation.")
-    account_license_keys = set((await operational_db.execute(
-        select(CustomerBillingEvent.license_key).where(
-            sql_func.lower(CustomerBillingEvent.recipient_email) == normalized
-        ).distinct()
-    )).scalars().all())
-    account_license_keys.update((await operational_db.execute(
-        select(CustomerAccount.license_key).where(
-            sql_func.lower(CustomerAccount.email) == normalized
-        ).distinct()
-    )).scalars().all())
-    # Always union both sources because operational-data migration is incremental.
-    ids = set((await db.execute(
-        select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(account_license_keys))
-    )).scalars().all()) if account_license_keys else set()
-    legacy_ids = (await db.execute(select(SoftwareLicense.id).join(
-        PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-    ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized).distinct()
-    )).scalars().all()
-    ids.update(legacy_ids)
-    ids = sorted(ids)
-    if not ids:
-        raise HTTPException(status_code=404, detail="Customer account not found.")
-    # Serialize account-wide lifecycle changes with per-license admin updates.
-    # Stable primary-key ordering prevents two multi-license actions from
-    # acquiring overlapping license locks in opposite orders.
-    locked_licenses = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id.in_(ids))
-        .order_by(SoftwareLicense.id.asc()).with_for_update()
-    )).scalars().all()
-    ids = [item.id for item in locked_licenses]
-    if not locked_licenses:
-        raise HTTPException(status_code=404, detail="Customer account not found.")
+
+    # Transfer the operational identity union into PostgreSQL in fixed-size batches.
+    # The temporary table avoids an account-sized Python set / IN clause and lets
+    # canonical license rows be locked in deterministic primary-key order.
+    identity_table = table(
+        "admin_customer_action_license_keys",
+        column("license_key", String(100)),
+    )
+    await db.execute(text(
+        "CREATE TEMP TABLE admin_customer_action_license_keys "
+        "(license_key VARCHAR(100) PRIMARY KEY) ON COMMIT DROP"
+    ))
+    operational_identity_query = select(
+        CustomerBillingEvent.license_key.label("license_key")
+    ).where(
+        sql_func.lower(CustomerBillingEvent.recipient_email) == normalized,
+        CustomerBillingEvent.license_key.is_not(None),
+    ).union(
+        select(CustomerAccount.license_key.label("license_key")).where(
+            sql_func.lower(CustomerAccount.email) == normalized,
+            CustomerAccount.license_key.is_not(None),
+        )
+    ).order_by("license_key")
+    identity_stream = None
+    locked_stream = None
+    license_count = 0
+    changed = 0
     now = datetime.now(timezone.utc)
-    license_keys = [item.license_key for item in locked_licenses]
-    if payload.action in {"suspend", "reactivate"}:
-        active = payload.action == "reactivate"
-        # PostgreSQL is canonical for entitlement state. Persist the decision and
-        # its retryable Hostinger mirror event before touching the operational DB.
-        result = await db.execute(update(SoftwareLicense).where(
-            SoftwareLicense.id.in_(ids)
-        ).values(is_active=active))
-        for license_key in license_keys:
-            db.add(CustomerLifecycleSyncOutbox(
-                id=secrets.token_urlsafe(24),
-                license_key=license_key,
-                action=payload.action,
-                status="pending",
-                attempts=0,
-                next_attempt_at=now,
-                created_at=now,
-            ))
-        await db.commit()
-        changed = int(result.rowcount or 0)
-    else:
-        for license_key in license_keys:
-            db.add(CustomerLifecycleSyncOutbox(
-                id=secrets.token_urlsafe(24),
-                license_key=license_key,
-                action="revoke_sessions",
-                status="pending",
-                attempts=0,
-                next_attempt_at=now,
-                created_at=now,
-            ))
-        await db.commit()
-        changed = 0
+    try:
+        identity_stream = await operational_db.stream(operational_identity_query)
+        identity_values = identity_stream.scalars()
+        while True:
+            identity_batch = await identity_values.fetchmany(500)
+            if not identity_batch:
+                break
+            await db.execute(
+                text(
+                    "INSERT INTO admin_customer_action_license_keys (license_key) "
+                    "VALUES (:license_key) ON CONFLICT (license_key) DO NOTHING"
+                ),
+                [{"license_key": key} for key in identity_batch],
+            )
+    finally:
+        if identity_stream is not None:
+            await identity_stream.close()
 
-    # Release the read-only Hostinger transaction before opening the independent
-    # audit-log session; this also avoids exhausting a single-connection pool.
+    matched_license_ids = union(
+        select(SoftwareLicense.id.label("license_id")).join(
+            identity_table, identity_table.c.license_key == SoftwareLicense.license_key
+        ),
+        select(SoftwareLicense.id.label("license_id")).join(
+            PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized),
+    ).subquery("admin_customer_action_license_ids")
+    locked_query = (
+        select(SoftwareLicense)
+        .join(matched_license_ids, matched_license_ids.c.license_id == SoftwareLicense.id)
+        .order_by(SoftwareLicense.id.asc())
+        .with_for_update()
+    )
+    try:
+        locked_stream = await db.stream(locked_query)
+        locked_rows = locked_stream.scalars()
+        while True:
+            batch = await locked_rows.fetchmany(500)
+            if not batch:
+                break
+            batch_ids = [item.id for item in batch]
+            batch_license_keys = [item.license_key for item in batch]
+            license_count += len(batch)
+            if payload.action in {"suspend", "reactivate"}:
+                active = payload.action == "reactivate"
+                result = await db.execute(update(SoftwareLicense).where(
+                    SoftwareLicense.id.in_(batch_ids)
+                ).values(is_active=active))
+                changed += int(result.rowcount or 0)
+            outbox_action = payload.action if payload.action in {"suspend", "reactivate"} else "revoke_sessions"
+            db.add_all([
+                CustomerLifecycleSyncOutbox(
+                    id=secrets.token_urlsafe(24),
+                    license_key=license_key,
+                    action=outbox_action,
+                    status="pending",
+                    attempts=0,
+                    next_attempt_at=now,
+                    created_at=now,
+                )
+                for license_key in batch_license_keys
+            ])
+        if license_count == 0:
+            await db.rollback()
+            raise HTTPException(status_code=404, detail="Customer account not found.")
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        if locked_stream is not None:
+            await locked_stream.close()
+
+    # Use operational-side email/license subqueries for mirror updates. This avoids
+    # rebuilding the full cross-database license-key set after the canonical commit.
+    operational_license_keys = select(
+        CustomerBillingEvent.license_key.label("license_key")
+    ).where(
+        sql_func.lower(CustomerBillingEvent.recipient_email) == normalized,
+        CustomerBillingEvent.license_key.is_not(None),
+    ).union(
+        select(CustomerAccount.license_key.label("license_key")).where(
+            sql_func.lower(CustomerAccount.email) == normalized,
+            CustomerAccount.license_key.is_not(None),
+        )
+    )
+    # Release the read-only Hostinger transaction before the independent audit log.
     await operational_db.rollback()
-
-    # Record the operator's action immediately after the canonical commit. This
-    # makes the audit attempt independent of a later Hostinger mutation failure.
     await _write_admin_log(db, "customer.account_" + payload.action, "customer", normalized, {
-        "license_ids": ids,
-        "license_count": len(ids),
+        "license_count": license_count,
         "reason": payload.reason.strip(),
         "operational_sync": "queued",
     })
@@ -8842,26 +8883,26 @@ async def admin_customer_account_action(
     if payload.action in {"suspend", "reactivate"}:
         active = payload.action == "reactivate"
         await operational_db.execute(update(CustomerAccount).where(
-            CustomerAccount.license_key.in_(license_keys)
+            CustomerAccount.license_key.in_(operational_license_keys)
         ).values(status="active" if active else "suspended", updated_at=now))
         if not active:
             session_result = await operational_db.execute(update(CustomerSession).where(
-                CustomerSession.license_key.in_(license_keys),
+                CustomerSession.license_key.in_(operational_license_keys),
                 CustomerSession.revoked_at.is_(None),
             ).values(revoked_at=now))
             changed += int(session_result.rowcount or 0)
     else:
-        result = await operational_db.execute(update(CustomerSession).where(
-            CustomerSession.license_key.in_(license_keys),
+        session_result = await operational_db.execute(update(CustomerSession).where(
+            CustomerSession.license_key.in_(operational_license_keys),
             CustomerSession.created_at <= now,
             CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now))
-        changed = int(result.rowcount or 0)
+        changed = int(session_result.rowcount or 0)
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     action_status = {"suspend": "suspended", "reactivate": "reactivated", "revoke_sessions": "sessions_revoked"}[payload.action]
-    return {"status": action_status, "email": normalized, "license_count": len(ids), "changed_count": changed}
+    return {"status": action_status, "email": normalized, "license_count": license_count, "changed_count": changed}
 
 
 @app.post("/api/v1/admin/customers/notes")
