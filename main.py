@@ -8339,17 +8339,21 @@ async def admin_customer_directory(
             *([operational_filter] if operational_filter is not None else [])
         ).order_by(identity_sources.c.email.asc())
     )
-    legacy_email_stream = await db.stream(
-        select(legacy_email).where(*legacy_filters).distinct().order_by(legacy_email.asc())
-    )
+    legacy_email_stream = None
     try:
+        legacy_email_stream = await db.stream(
+            select(legacy_email).where(*legacy_filters).distinct().order_by(legacy_email.asc())
+        )
         total = await _count_sorted_admin_customer_email_union(
             operational_email_stream.scalars(),
             legacy_email_stream.scalars(),
         )
     finally:
-        await operational_email_stream.close()
-        await legacy_email_stream.close()
+        try:
+            await operational_email_stream.close()
+        finally:
+            if legacy_email_stream is not None:
+                await legacy_email_stream.close()
 
     candidate_limit = offset + limit
     operational_candidates_query = select(
