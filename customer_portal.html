@@ -170,6 +170,8 @@
 (() => {
   const $ = id => document.getElementById(id);
   let credential = "";
+  let pendingBulkScanFingerprint = "";
+  let pendingBulkScanRequestId = "";
   let sessionToken = "";
   let headerName = "X-License-Key";
   // Invalidate in-flight authenticated requests whenever the connected identity changes
@@ -1957,19 +1959,27 @@
     if (urls.length > 1000) { setStatus("bulkScanStatus", "A single submission can contain at most 1,000 URLs.", "error"); return; }
     const button = $("submitBulkScans"); button.disabled = true;
     try {
-      const requestId = window.crypto && typeof window.crypto.randomUUID === "function"
-        ? window.crypto.randomUUID()
-        : "bulk-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+      const batchSize=Number($("bulkBatchSize").value);
+      const workspaceId=$("agencyAuditWorkspaceField").hidden || !$("agencyAuditWorkspace").value
+        ? null : $("agencyAuditWorkspace").value;
+      const requestFingerprint=JSON.stringify({urls,batch_size:batchSize,workspace_id:workspaceId});
+      if(requestFingerprint!==pendingBulkScanFingerprint||!pendingBulkScanRequestId){
+        pendingBulkScanRequestId=window.crypto&&typeof window.crypto.randomUUID==="function"
+          ? window.crypto.randomUUID()
+          : "bulk-"+Date.now()+"-"+Math.random().toString(36).slice(2);
+        pendingBulkScanFingerprint=requestFingerprint;
+      }
       const response = await api("/api/v1/scan-batches", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          urls, request_id:requestId, batch_size:Number($("bulkBatchSize").value),
-          ...($("agencyAuditWorkspaceField").hidden || !$("agencyAuditWorkspace").value
-            ? {} : {workspace_id:$("agencyAuditWorkspace").value})
+          urls, request_id:pendingBulkScanRequestId, batch_size:batchSize,
+          ...(workspaceId ? {workspace_id:workspaceId} : {})
         })
       });
       const result = await response.json();
+      pendingBulkScanFingerprint="";
+      pendingBulkScanRequestId="";
       setStatus("bulkScanStatus",
         result.new_jobs + " new website scan job(s) queued in " + result.batch_count +
         " batch(es). Request ID: " + result.request_id +
@@ -1993,6 +2003,8 @@
   });
 
   function clearAccountView() {
+    pendingBulkScanFingerprint = "";
+    pendingBulkScanRequestId = "";
     // Invalidate in-flight API-key list requests before clearing account-owned data.
     apiKeyRequestVersion += 1;
     deviceSessionsRequestId += 1;
