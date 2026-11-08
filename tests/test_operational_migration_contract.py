@@ -455,3 +455,32 @@ def test_generic_operational_copy_commits_each_apply_batch_but_not_dry_run():
 
     assert len(commits) == 1
     assert commits[0] in ast.walk(apply_guard)
+
+
+def test_billing_email_license_ownership_is_grouped_and_streamed_by_postgres():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    resolver = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_stream_billing_license_ownership"
+    )
+    segment = ast.get_source_segment(source, resolver)
+
+    assert "func.count(func.distinct(SoftwareLicense.license_key))" in segment
+    assert ".group_by(normalized_email)" in segment
+    assert "source.stream(statement)" in segment
+    assert "await result.close()" in segment
+    assert "candidates.setdefault(email, set())" not in segment
+
+    migrate = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
+    )
+    migrate_segment = ast.get_source_segment(source, migrate)
+    assert "await _stream_billing_license_ownership(source)" in migrate_segment
+    assert "billing_license_candidates" not in migrate_segment
