@@ -27,12 +27,15 @@ def test_customer_login_request_locks_stable_email_row_before_rate_limit_reads()
         if getattr(route, "path", None) == "/api/v1/account/auth/request-code"
     )
     source = inspect.getsource(endpoint)
-    lock_insert = source.index("mysql_insert(CustomerLoginThrottle)")
-    lock_read = source.index(".with_for_update()", lock_insert)
+    helper_source = inspect.getsource(main._lock_customer_login_email)
+    lock_call = source.index("_lock_customer_login_email(operational_db, email)")
     count_read = source.index("select(func.count(CustomerLoginChallenge.id))")
     latest_read = source.index("select(CustomerLoginChallenge)")
-    assert lock_insert < lock_read < count_read < latest_read
-    assert ".on_duplicate_key_update(" in source
+    assert lock_call < count_read < latest_read
+    lock_insert = helper_source.index("mysql_insert(CustomerLoginThrottle)")
+    lock_read = helper_source.index(".with_for_update()", lock_insert)
+    assert lock_insert < lock_read
+    assert ".on_duplicate_key_update(" in helper_source
 
 
 def test_existing_hostinger_databases_have_idempotent_throttle_table_migration():
