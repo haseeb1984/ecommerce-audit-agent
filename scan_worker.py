@@ -882,7 +882,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     if slot_errors == max_jobs:
         raise RuntimeError("All scan worker slots failed before producing outcomes.")
 
-    active = [item for item in outcomes if item["status"] != "idle"]
+    active = [item for item in outcomes if item["status"] not in ("idle", "worker_error")]
     return {
         "worker_id": worker_id,
         "slot_errors": slot_errors,
