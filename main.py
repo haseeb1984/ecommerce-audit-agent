@@ -8574,7 +8574,9 @@ async def admin_customer_account_detail(
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
     license_keys = [item.license_key for item in rows]
-    session_base = select(CustomerSession).where(CustomerSession.license_key.in_(license_keys))
+    hostinger_identity_keys = identity_keys_query.subquery("admin_customer_hostinger_identity_keys")
+    hostinger_license_keys = select(hostinger_identity_keys.c.license_key)
+    session_base = select(CustomerSession).where(CustomerSession.license_key.in_(hostinger_license_keys))
     session_total = int((await operational_db.execute(
         select(sql_func.count()).select_from(session_base.subquery())
     )).scalar_one() or 0)
@@ -8607,7 +8609,7 @@ async def admin_customer_account_detail(
         .offset(note_offset).limit(note_limit)
     )).scalars().all()
     wordpress_base = select(WordPressInstallation).where(
-        WordPressInstallation.license_key.in_(license_keys)
+        WordPressInstallation.license_key.in_(hostinger_license_keys)
     )
     wordpress_total = int((await operational_db.execute(
         select(sql_func.count()).select_from(wordpress_base.subquery())
