@@ -62,3 +62,20 @@ async def test_billing_history_union_count_handles_empty_and_disjoint_streams():
     assert await _count_sorted_billing_event_id_union(
         _AsyncValues(["a", "c"]), _AsyncValues(["b", "d"])
     ) == 4
+
+
+
+def test_admin_payment_event_total_uses_streamed_sorted_union():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.admin_payment_events)
+    assert "db.stream_scalars(" in source
+    assert "operational_db.stream_scalars(" in source
+    assert "_count_sorted_billing_event_id_union(" in source
+    assert "pg_ids_statement.order_by(PaymentWebhookEvent.event_id.asc())" in source
+    assert "host_ids_statement.order_by(CustomerBillingEvent.event_id.asc())" in source
+    assert "await host_id_stream.close()" in source
+    assert "await pg_id_stream.close()" in source
+    assert "set((await db.execute(pg_ids_statement)).scalars().all())" not in source
+    assert "set((await operational_db.execute(host_ids_statement)).scalars().all())" not in source
