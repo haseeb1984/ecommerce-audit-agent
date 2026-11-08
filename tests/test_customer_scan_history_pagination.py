@@ -63,3 +63,54 @@ def test_customer_website_inventory_clear_invalidates_in_flight_requests():
     assert 'websiteOffset = 0;' in source
     assert 'websiteHasMore = false;' in source
     assert '$("loadMoreWebsites").hidden = true;' in source
+
+
+
+def test_customer_scan_batches_are_scoped_to_the_active_account_session():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("async function loadScanBatches")
+    end = portal.index("async function loadScanBatchDetail", start)
+    source = portal[start:end]
+
+    assert "const requestSessionVersion = accountSessionVersion;" in source
+    assert "scanBatchesLoadingSessionVersion === requestSessionVersion" in source
+    assert "const requestVersion = ++scanBatchesRequestVersion;" in source
+    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
+    assert "if (requestVersion === scanBatchesRequestVersion)" in source
+
+
+def test_customer_activity_refreshes_can_be_superseded_after_account_switch():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("async function loadActivity")
+    end = portal.index("async function loadReports", start)
+    source = portal[start:end]
+
+    assert "const requestSessionVersion = accountSessionVersion;" in source
+    assert "activityLoadingSessionVersion === requestSessionVersion" in source
+    assert "const requestVersion = ++activityRequestVersion;" in source
+    assert "requestVersion !== activityRequestVersion || requestSessionVersion !== accountSessionVersion" in source
+    assert "requestVersion === activityRequestVersion && requestSessionVersion === accountSessionVersion" in source
+
+
+def test_customer_activity_and_scan_batch_requests_are_invalidated_on_account_clear():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("function clearAccountView")
+    end = portal.index('$("requestLoginCode").addEventListener', start)
+    source = portal[start:end]
+
+    assert "activityRequestVersion += 1;" in source
+    assert "activityLoading = false;" in source
+    assert "scanBatchesRequestVersion += 1;" in source
+    assert "scanBatchesLoading = false;" in source
+
+
+
+def test_customer_scan_batch_actions_do_not_update_status_after_account_switch():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index('$("refreshScanBatches").addEventListener')
+    end = portal.index("function clearAccountView", start)
+    source = portal[start:end]
+
+    assert "const operationSessionVersion = accountSessionVersion;" in source
+    assert "if (operationSessionVersion === accountSessionVersion)" in source
+    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
