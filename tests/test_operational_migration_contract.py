@@ -273,7 +273,53 @@ def test_operational_migration_verification_counts_only_missing_mapped_rows():
         },
     }
 
-    assert _verification_gaps(reports) == {"customer_accounts": 2}
+    assert _verification_gaps(reports) == {
+        "customer_accounts": {"missing": 2, "field_mismatches": 0}
+    }
+
+
+def test_operational_migration_verification_fails_on_existing_field_divergence():
+    from scripts.migrate_operational_data_to_hostinger import (
+        _mismatched_fields,
+        _verification_gaps,
+    )
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    existing = SimpleNamespace(
+        license_key="license-a",
+        email="customer@example.com",
+        display_name="Old name",
+        created_at=datetime(2026, 1, 1),
+    )
+    expected = {
+        "license_key": "license-a",
+        "email": "customer@example.com",
+        "display_name": "New name",
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+    }
+
+    assert _mismatched_fields(existing, expected) == ["display_name"]
+    assert _verification_gaps({
+        "customer_accounts": {
+            "to_copy": 0,
+            "field_mismatches": 1,
+            "mismatched_fields": ["display_name"],
+        }
+    }) == {
+        "customer_accounts": {"missing": 0, "field_mismatches": 1}
+    }
+
+
+def test_operational_migration_verification_normalizes_timezone_equivalent_datetimes():
+    from scripts.migrate_operational_data_to_hostinger import _mismatched_fields
+    from types import SimpleNamespace
+    from datetime import datetime, timezone, timedelta
+
+    expected = datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=5)))
+    existing = SimpleNamespace(created_at=datetime(2026, 1, 1, 7, tzinfo=timezone.utc))
+
+    assert _mismatched_fields(existing, {"created_at": expected}) == []
 
 
 def test_operational_migration_cli_offers_mutually_exclusive_apply_and_verify_modes():
