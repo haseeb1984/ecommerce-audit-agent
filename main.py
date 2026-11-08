@@ -3738,6 +3738,8 @@ async def revoke_business_agency_team_member(
 @app.get("/api/v1/account/agency/clients")
 async def list_business_agency_clients(
     response: Response,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -3754,10 +3756,15 @@ async def list_business_agency_clients(
     )
     if agency is None or agency.status != "active":
         raise HTTPException(status_code=404, detail="An active agency workspace is required before managing clients.")
+    workspace_filter = AgencyClientWorkspace.agency_id == agency.id
+    total = int((await operational_db.execute(
+        select(sql_func.count(AgencyClientWorkspace.id)).where(workspace_filter)
+    )).scalar_one() or 0)
     clients = (await operational_db.execute(
-        select(AgencyClientWorkspace).where(
-            AgencyClientWorkspace.agency_id == agency.id
-        ).order_by(AgencyClientWorkspace.created_at.desc()).limit(500)
+        select(AgencyClientWorkspace).where(workspace_filter).order_by(
+            AgencyClientWorkspace.created_at.desc(),
+            AgencyClientWorkspace.id.desc(),
+        ).offset(offset).limit(limit)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -3768,7 +3775,14 @@ async def list_business_agency_clients(
         "status": item.status,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-    } for item in clients]}
+    } for item in clients],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(clients) < total,
+        },
+    }
 
 
 @app.post("/api/v1/account/agency/clients")
