@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 def test_customer_billing_history_new_session_supersedes_old_in_flight_load():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
