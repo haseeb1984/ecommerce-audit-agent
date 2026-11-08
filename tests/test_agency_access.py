@@ -942,3 +942,18 @@ def test_agency_client_portal_uses_batched_website_status_and_keeps_manual_refre
     assert "if (!website) {" in source
     assert '"/website"' in source
     assert 'refreshWebsite.addEventListener("click", () => refreshWebsiteStatus())' in source
+
+
+
+def test_agency_team_workspace_access_save_preserves_grants_for_unloaded_client_pages():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index('saveAccess.addEventListener("click"')
+    end = portal.index('accessEditor.append(accessLabel, accessSelect, roleLabel, accessRole, saveAccess);', start)
+    source = portal[start:end]
+
+    assert 'const visibleWorkspaceIds = new Set(' in source
+    assert 'visibleWorkspaceIds.has(workspace.workspace_id) && !selected.has(workspace.workspace_id)' in source
+    assert 'if (!selected.has(workspace.workspace_id))' not in source
+    assert 'for (const workspaceId of selected)' in source
