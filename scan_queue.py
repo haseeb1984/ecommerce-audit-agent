@@ -728,9 +728,13 @@ async def renew_scan_job_lease(
     *,
     job_id: str,
     worker_id: str,
+    lease_seconds: int = 900,
 ) -> bool:
-    """Extend an active worker lease only while the caller still owns the job."""
+    """Renew only a still-live lease; an expired owner cannot resurrect itself."""
+    if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600:
+        raise ValueError("Scan job lease must be between 1 and 3600 seconds.")
     now = _utcnow()
+    renewal_cutoff = now - timedelta(seconds=lease_seconds)
     try:
         result = await db.execute(
             update(WebsiteScanJob)
@@ -738,6 +742,7 @@ async def renew_scan_job_lease(
                 WebsiteScanJob.id == job_id,
                 WebsiteScanJob.status == "processing",
                 WebsiteScanJob.locked_by == worker_id[:128],
+                WebsiteScanJob.locked_at >= renewal_cutoff,
             )
             .values(locked_at=now)
         )
