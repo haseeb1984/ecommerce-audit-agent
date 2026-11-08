@@ -8970,6 +8970,31 @@ async def admin_customer_account_detail(
         wordpress_base.order_by(WordPressInstallation.created_at.desc(), WordPressInstallation.id.desc())
         .offset(wordpress_offset).limit(wordpress_limit)
     )).scalars().all()
+    # The visible license page is independent of the account's session and
+    # billing pages. Resolve license IDs for only the current sublist rows so
+    # off-page licenses still retain their correct tenant association.
+    related_license_keys = {
+        item.license_key
+        for item in sessions
+        if item.license_key
+    }
+    related_license_keys.update(
+        key for key in (
+            getattr(item, "license_key", None)
+            for item in payments
+        ) if key
+    )
+    related_license_ids = {}
+    if related_license_keys:
+        related_license_rows = (await db.execute(
+            select(SoftwareLicense.id, SoftwareLicense.license_key).where(
+                SoftwareLicense.license_key.in_(related_license_keys)
+            )
+        )).all()
+        related_license_ids = {
+            license_key: license_id
+            for license_id, license_key in related_license_rows
+        }
     now = datetime.now(timezone.utc)
     return {
         "email": normalized,
@@ -9006,7 +9031,7 @@ async def admin_customer_account_detail(
         },
         "sessions": [{
             "email": item.email,
-            "license_id": next((lic.id for lic in rows if lic.license_key == item.license_key), None),
+            "license_id": related_license_ids.get(item.license_key),
             "status": "revoked" if item.revoked_at else ("expired" if (item.expires_at.replace(tzinfo=timezone.utc) if item.expires_at.tzinfo is None else item.expires_at) <= now else "active"),
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
@@ -9014,7 +9039,7 @@ async def admin_customer_account_detail(
             "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
         } for item in sessions],
         "billing_events": [{
-            "event_id": item.event_id, "license_id": next((lic.id for lic in rows if lic.license_key == getattr(item, "license_key", None)), getattr(item, "license_id", None)), "status": item.status,
+            "event_id": item.event_id, "license_id": related_license_ids.get(getattr(item, "license_key", None), getattr(item, "license_id", None)), "status": item.status,
             "transaction_id": item.transaction_id, "subscription_id": item.subscription_id,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
