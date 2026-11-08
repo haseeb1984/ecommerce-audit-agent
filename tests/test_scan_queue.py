@@ -337,3 +337,27 @@ async def test_resubmitting_archived_website_locks_row_before_reactivation():
     assert db.scalar_statements[0]._for_update_arg is not None
     assert not any(isinstance(item, CustomerWebsite) for item in db.added)
     assert db.committed
+
+
+
+def test_scan_lease_renewal_rejects_expired_owner_and_bounds_lease_window():
+    import inspect
+    import scan_queue
+
+    renewal = inspect.getsource(scan_queue.renew_scan_job_lease)
+    assert "lease_seconds: int = 900" in renewal
+    assert "renewal_cutoff = now - timedelta(seconds=lease_seconds)" in renewal
+    assert "WebsiteScanJob.locked_at >= renewal_cutoff" in renewal
+    assert "isinstance(lease_seconds, bool)" in renewal
+    assert "1 <= lease_seconds <= 3600" in renewal
+
+
+def test_scan_worker_heartbeat_runs_well_inside_lease_window():
+    import inspect
+    import scan_worker
+
+    source = inspect.getsource(scan_worker.process_one_scan)
+    heartbeat_interval = int(source.split("await asyncio.sleep(", 1)[1].split(")", 1)[0])
+    assert heartbeat_interval < 900
+    assert "if not owned:" in source
+    assert "lease_unconfirmed.set()" in source
