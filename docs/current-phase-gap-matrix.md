@@ -913,3 +913,11 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Framing protection now requires a non-empty effective CSP `frame-ancestors` source list or a supported X-Frame-Options value (`DENY` / `SAMEORIGIN`); empty CSP directives and arbitrary X-Frame-Options strings no longer count as protection.
 - Added regression cases for malformed values, empty frame-ancestors, and valid X-Frame-Options fallback. Signals remain low-severity hardening advice, not vulnerability or compliance claims.
 - Tests are committed pending CI execution; no live site headers or production configuration were changed. PDF/report work remains reserved for the final phase.
+
+
+## Durable scan enqueue boundary hardening
+
+- The operational queue now validates persisted identifier lengths and types before opening its transaction: license key, request ID, package tier, requester, workspace ID, and target URL are checked against their Hostinger column limits.
+- Scan batch size and retry-attempt limits reject booleans, non-integers, and out-of-range values rather than allowing implicit Python type coercion or invalid retry configuration into durable jobs.
+- Standard-license website binding now canonicalizes both historical inventory hostnames and submitted URL hostnames through the same IDNA normalization path, including case and trailing-dot normalization. Malformed legacy authority-like values fail closed instead of being treated as hostnames.
+- Regression contracts cover invalid retry limits, overlong request IDs, Unicode/punycode hostname equivalence, and malformed legacy hostname values. These tests are committed for CI; they have not yet been executed.
