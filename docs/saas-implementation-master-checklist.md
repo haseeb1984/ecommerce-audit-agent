@@ -140,3 +140,8 @@ The client-site disconnect endpoint now resolves tenant identity without locking
 ### Admin WordPress disconnect serialization
 
 Admin-initiated customer-site disconnect now locks the canonical PostgreSQL license before the Hostinger installation, matching registration, identity claim and customer disconnect ordering. It also consumes outstanding single-use WordPress identity challenges before the site disconnect commits, preventing a pending claim from reconnecting the site immediately after an operator revokes it.
+
+
+### Agency suspension revokes WordPress credentials
+
+Suspending a Business agency now disconnects every active client WordPress site, clears its site-token hash, and consumes all outstanding workspace connection challenges in the same Hostinger transaction as team-session/invitation revocation. Reactivating the agency therefore does not restore old plugin credentials; each client site must be explicitly connected again.
