@@ -1884,18 +1884,18 @@ async def run_bounded_site_crawl(
                 # the implicit HTTPS port (or :80 and implicit HTTP) are equivalent.
                 if not _same_origin(absolute, final_home):
                     continue
-                candidate = _canonical_page_url(absolute)
-                if candidate in seen or candidate == _canonical_page_url(final_home):
+                suffix = parts.path.lower()
+                if suffix.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
+                                     ".css", ".js", ".woff", ".woff2", ".zip", ".xml")):
                     continue
+                candidate = _canonical_page_url(absolute)
                 if not _robots_path_allowed(candidate, robots_rules):
                     continue
-                suffix = urlsplit(candidate).path.lower()
+                record_parameterized_url(absolute)
+                if candidate in seen or candidate == _canonical_page_url(final_home):
+                    continue
             except (ValueError, UnicodeError):
                 continue
-            if suffix.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
-                                 ".css", ".js", ".woff", ".woff2", ".zip", ".xml")):
-                continue
-            record_parameterized_url(absolute)
             seen.add(candidate)
             candidates.append(candidate)
             if any(candidate == _canonical_page_url(item) for item in sitemap_urls):
@@ -2088,17 +2088,17 @@ async def run_bounded_site_crawl(
                         if not _same_origin(absolute, final_home):
                             continue
                         candidate_url = _canonical_page_url(absolute)
-                        if candidate_url in queued_urls:
-                            continue
-                        if not _robots_path_allowed(candidate_url, robots_rules):
-                            continue
-                        path = urlsplit(candidate_url).path.lower()
+                        path = parts.path.lower()
                         if path.endswith((
                             ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
                             ".pdf", ".css", ".js", ".woff", ".woff2", ".zip", ".xml",
                         )):
                             continue
+                        if not _robots_path_allowed(candidate_url, robots_rules):
+                            continue
                         record_parameterized_url(absolute)
+                        if candidate_url in queued_urls:
+                            continue
                         queued_urls.add(candidate_url)
                         crawl_queue.append(candidate_url)
                     except (ValueError, UnicodeError):
