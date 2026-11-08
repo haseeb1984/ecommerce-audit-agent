@@ -222,7 +222,7 @@ async def test_comprehensive_audit_merges_isolated_rendered_browser_findings_and
         assert any(item.check_id == "browser.rendered_viewport" and item.outcome == "pass" for item in reported.check_outcomes)
         saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
         metadata = __import__("json").loads(saved_report.coverage_json)
-        assert metadata["audit_run_context"]["modules"]["browser_rendered"] == "completed"
+        assert metadata["audit_run_context"]["module_statuses"]["browser_rendered"] == "completed"
         assert any("Rendered-browser diagnostics completed" in item for item in reported.limitations)
     finally:
         main.app.dependency_overrides.clear()

@@ -39,6 +39,8 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
 
     result = await list_account_wordpress_sites(
         response=response,
+        limit=100,
+        offset=0,
         license_obj=SimpleNamespace(license_key="license-test"),
         operational_db=operational_db,
     )

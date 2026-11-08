@@ -402,7 +402,7 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
 
     now = datetime.now(timezone.utc)
     member = SimpleNamespace(id="member-1", agency_id="agency-1")
-    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license")
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
     recent = SimpleNamespace(created_at=now - timedelta(seconds=10))
 
     class OperationalSession:
@@ -563,6 +563,8 @@ async def test_agency_team_list_exposes_invitation_expiry_without_token_material
 
     result = await list_business_agency_team(
         Response(),
+        limit=100,
+        offset=0,
         license_obj=SimpleNamespace(license_key="business-license", tier="business"),
         operational_db=db,
     )
