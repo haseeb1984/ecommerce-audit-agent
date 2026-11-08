@@ -410,3 +410,37 @@ def test_scan_worker_cancellation_releases_reservation_before_propagating():
     runtime_handler = source.index("except RuntimeError as exc:", cancellation)
 
     assert cancellation < release < propagate < runtime_handler
+
+
+@pytest.mark.parametrize(
+    ("failures", "poll_seconds", "expected"),
+    [
+        (1, 5, 10),
+        (2, 5, 20),
+        (3, 5, 40),
+        (1, 1, 2),
+        (9, 5, 300),
+        (100, 300, 300),
+        (0, 5, 10),
+    ],
+)
+def test_worker_retry_delay_uses_capped_exponential_backoff(
+    failures, poll_seconds, expected
+):
+    from worker_service import _worker_retry_delay
+
+    assert _worker_retry_delay(failures, poll_seconds) == expected
+
+
+def test_worker_loop_resets_consecutive_failures_after_success():
+    import inspect
+    import worker_service
+
+    source = inspect.getsource(worker_service.run_worker)
+    reset = source.index("consecutive_failures = 0", source.index("while not stop.is_set()"))
+    success = source.index("result = await process_scan_queue", reset)
+    reset_after_success = source.index("consecutive_failures = 0", success)
+
+    assert success < reset_after_success
+    assert "consecutive_failures += 1" in source
+    assert "_worker_retry_delay(consecutive_failures, poll_seconds)" in source
