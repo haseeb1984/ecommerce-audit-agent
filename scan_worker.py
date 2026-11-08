@@ -204,6 +204,15 @@ def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
     item.last_error = None
 
 
+def _customer_email_identity_license_lock_query(license_key: str):
+    """Lock the canonical tenant before changing its billing identity projection."""
+    return (
+        select(SoftwareLicense)
+        .where(SoftwareLicense.license_key == license_key)
+        .with_for_update()
+    )
+
+
 def _customer_email_identity_update_statement(license_id: int, old_email: str, new_email: str):
     """Build a tenant-scoped, case-insensitive billing-recipient identity update."""
     return update(PaymentWebhookEvent).where(
@@ -674,15 +683,13 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 # canonical license and scope the billing-history rewrite to that
                 # tenant so a shared/previously-used email cannot cross-update accounts.
                 async with AsyncSessionLocal() as licensing_db:
-                    license_id = await licensing_db.scalar(
-                        select(SoftwareLicense.id).where(
-                            SoftwareLicense.license_key == event.license_key
-                        )
+                    canonical_license = await licensing_db.scalar(
+                        _customer_email_identity_license_lock_query(event.license_key)
                     )
-                    if license_id is None:
+                    if canonical_license is None:
                         raise RuntimeError("LicenseReferenceUnavailable")
                     await licensing_db.execute(_customer_email_identity_update_statement(
-                        license_id, event.old_email, event.new_email
+                        canonical_license.id, event.old_email, event.new_email
                     ))
                     await licensing_db.commit()
                 event.status = "completed"
