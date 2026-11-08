@@ -8503,7 +8503,7 @@ async def admin_customer_account_detail(
 ):
     """Return an account-wide view across licenses, billing, sessions and support notes."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func
+    from sqlalchemy import select, func as sql_func, or_
     normalized = email.strip().lower()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -8590,8 +8590,11 @@ async def admin_customer_account_detail(
     # Canonical PostgreSQL events and Hostinger mirrors may share an event_id.
     billing_host_keys = select(hostinger_identity_keys.c.license_key)
     host_billing_filter = CustomerBillingEvent.license_key.in_(billing_host_keys)
-    pg_billing_filter = PaymentWebhookEvent.license_id.in_(
-        select(matched_license_ids.c.license_id)
+    # The temporary identity table is committed/dropped before this point.
+    # Match every legacy event by the account email as well as the visible page IDs.
+    pg_billing_filter = or_(
+        PaymentWebhookEvent.license_id.in_(ids),
+        sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized,
     )
     host_event_ids = await operational_db.stream_scalars(
         select(CustomerBillingEvent.event_id).where(host_billing_filter).order_by(CustomerBillingEvent.event_id.asc())
