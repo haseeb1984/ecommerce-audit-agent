@@ -3429,7 +3429,7 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
         )
 
     update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
-        "data": {"id": "sub_update123", "customer_id": "ctm_update123",
+        "data": {"id": "sub_update123", "customer_id": "ctm_update123", "status": "active",
         "items": [{"price": {"id": "pri_updatepro123"}, "quantity": 1}]}}
     changed = await send(update)
     assert changed.status_code == 200, changed.text
@@ -3442,10 +3442,10 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
         before_unknown = (license_obj.tier, license_obj.max_monthly_audits)
 
     unknown = {"event_id": "evt_update_unknown", "event_type": "subscription.updated",
-        "data": {"id": "sub_update123", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
+        "data": {"id": "sub_update123", "status": "active", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
     ignored = await send(unknown)
     assert ignored.status_code == 200, ignored.text
-    assert ignored.json()["status"] == "unmapped_price_ignored"
+    assert ignored.json()["status"] == "subscription_active_unmapped_price"
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(select(SoftwareLicense).where(
             SoftwareLicense.id == license_id))).scalar_one()
@@ -3611,7 +3611,7 @@ async def test_paddle_subscription_update_refreshes_billing_period_end(client, m
         await db.commit()
 
     event = {"event_id": "evt_period_update", "event_type": "subscription.updated",
-        "data": {"id": "sub_period_update123",
+        "data": {"id": "sub_period_update123", "status": "active",
             "items": [{"price": {"id": "pri_periodupdatepro123"}, "quantity": 1}],
             "current_billing_period": {"starts_at": "2026-10-01T00:00:00Z",
                 "ends_at": "2026-11-15T00:00:00Z"}}}
