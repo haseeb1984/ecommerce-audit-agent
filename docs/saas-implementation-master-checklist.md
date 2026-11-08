@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `088da70f973255cd79eabe01c1e11330484a330b`  
+**Merged baseline:** `main` at `528f54fd9d819a7459b380aad84f0241ed8d4895`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -33,6 +33,7 @@
 | Payment webhook idempotency/reconciliation | Implemented / verification pending | Event persistence, cancellation/payment-failure handling and reconciliation exist; run current CI and sandbox lifecycle acceptance. |
 | Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; browser and staging authorization checks pending. |
 | Admin operations/health visibility | Implemented / verification pending | Operational event and overview endpoints exist; production schema/configuration acceptance pending. |
+| Admin billing and overview scalability | Implemented / verification pending | Payment-event union totals use constant-memory sorted streams; overview aggregates are page-scoped and contact selection uses deterministic per-license ranking. Regression tests are committed but not executed; verify on CI and staging data. |
 | Email delivery | Implemented / verification pending | Explicit-recipient report delivery and configured sender checks exist; real SMTP inbox delivery requires approved staging credentials. |
 | Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks PostgreSQL and Hostinger tables/columns/indexes plus application configuration; run against staging with approved environment. |
 | Legacy operational-data migration | Implemented / verification pending | `scripts/migrate_operational_data_to_hostinger.py` is dry-run by default and preserves PostgreSQL sources. Ambiguous email-to-license support-note ownership is now skipped and reported separately; run dry-run and reconcile counts in staging before any `--apply`. |
@@ -87,3 +88,13 @@
 - The relevant regression tests are committed but have not been executed. Backend workflow runs were unavailable; Vercel preview/deployment status is blocked by its daily deployment-rate limit. Neither is reported as a passing test suite.
 - No live worker invocation, production migration, database mutation, external payment/email action, or production deployment was performed. All implementation areas remain subject to CI and controlled staging acceptance.
 - PDF/private-storage and final audit-result presentation remain deferred to the final phase.
+
+
+
+## Latest admin scalability baseline — 2026-11-08
+
+- Current `main`: `528f54fd9d819a7459b380aad84f0241ed8d4895`.
+- PR #252: admin payment-event totals no longer materialize every PostgreSQL and Hostinger event ID in Python sets; the sorted-stream union counter uses constant application memory.
+- PR #253: per-license dashboard aggregates are scoped to the visible customer page; latest Hostinger and legacy PostgreSQL billing contacts are selected with deterministic row ranking.
+- Regression coverage is committed but not executed. Vercel deployment-rate limiting is not a Python test result; no CI pass is claimed.
+- No production customer data, migrations, external billing/email action, or production deployment was touched. PDF/private-storage and final report presentation remain reserved for the final phase.
