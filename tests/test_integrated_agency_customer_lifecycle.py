@@ -354,3 +354,25 @@ def test_agency_wordpress_disconnect_uses_tenant_lock_order_and_revokes_pending_
     assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[revoke_challenges:commit]
     assert ".values(consumed_at=disconnected_at)" in source[revoke_challenges:commit]
     assert "AgencyClientWorkspace.agency_id == agency.id" in source[workspace_lock:website_lock]
+
+
+
+def test_agency_suspension_revokes_client_wordpress_credentials_and_pending_tokens():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.admin_update_business_agency)
+    agency_lock = source.index("AgencyAccount.id == agency_id")
+    suspend_branch = source.index('if payload.status == "suspended":')
+    site_revoke = source.index("update(AgencyClientWebsite)", suspend_branch)
+    challenge_revoke = source.index("update(AgencyWebsiteConnectChallenge)", site_revoke)
+    commit = source.index("await operational_db.commit()", challenge_revoke)
+
+    assert ".with_for_update()" in source[agency_lock:suspend_branch]
+    assert "AgencyClientWebsite.agency_id == agency.id" in source[site_revoke:challenge_revoke]
+    assert 'AgencyClientWebsite.status == "active"' in source[site_revoke:challenge_revoke]
+    assert 'status="disconnected"' in source[site_revoke:challenge_revoke]
+    assert "site_token_hash=None" in source[site_revoke:challenge_revoke]
+    assert "AgencyWebsiteConnectChallenge.agency_id == agency.id" in source[challenge_revoke:commit]
+    assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[challenge_revoke:commit]
+    assert "wordpress_connections_revoked" in source
