@@ -484,3 +484,23 @@ def test_customer_scan_mutation_endpoints_disable_shared_caching():
         source = inspect.getsource(handler)
         assert 'response.headers["Cache-Control"] = "no-store, private"' in source
         assert 'response.headers["Pragma"] = "no-cache"' in source
+
+
+def test_customer_scan_pagination_offsets_are_bounded():
+    import inspect
+    from scan_api import (
+        get_customer_website,
+        list_customer_websites,
+        list_scan_batches,
+        list_scan_history,
+    )
+
+    for handler in (
+        list_scan_batches,
+        list_scan_history,
+        list_customer_websites,
+        get_customer_website,
+    ):
+        offset = inspect.signature(handler).parameters["offset"].default
+        assert offset.ge == 0
+        assert offset.le == 1_000_000
