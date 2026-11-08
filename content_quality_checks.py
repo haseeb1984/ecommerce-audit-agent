@@ -94,7 +94,7 @@ def inspect_content_quality(
 
     if word_count < MIN_VISIBLE_WORDS:
         evidence = (
-            f"The bounded static HTML source-text extractor found {word_count} word(s) "
+            f"The bounded static HTML source-text extractor found {word_count} visible word(s) "
             f"against a {MIN_VISIBLE_WORDS}-word review threshold. CSS visibility and JavaScript-rendered text are not evaluated. This is a low-volume signal, "
             "not a judgment of content quality or page usefulness."
         )
