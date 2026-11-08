@@ -114,3 +114,46 @@ def test_configuration_gate_uses_public_app_url_validator() -> None:
 
     assert "public_app_url" in failed
     assert any("PUBLIC_APP_URL must be an HTTPS URL" in detail for detail in details)
+
+
+
+def test_hostinger_schema_contract_includes_tenant_and_workspace_foreign_keys():
+    import hostinger_models  # noqa: F401 - register all operational models
+    from hostinger_database import HostingerBase
+
+    namespace = runpy.run_path(str(SCRIPT))
+    required = namespace["_hostinger_foreign_key_contract"](HostingerBase)
+
+    assert (
+        "agency_client_workspaces",
+        ("agency_id",),
+        "agency_accounts",
+        ("id",),
+    ) in required
+    assert (
+        "agency_client_websites",
+        ("workspace_id",),
+        "agency_client_workspaces",
+        ("id",),
+    ) in required
+    assert (
+        "agency_workspace_access",
+        ("team_member_id",),
+        "agency_team_members",
+        ("id",),
+    ) in required
+
+
+def test_hostinger_schema_readiness_reports_missing_foreign_key_signatures():
+    namespace = runpy.run_path(str(SCRIPT))
+    required = {
+        ("agency_client_workspaces", ("agency_id",), "agency_accounts", ("id",)),
+        ("agency_workspace_access", ("workspace_id",), "agency_client_workspaces", ("id",)),
+    }
+    observed = {
+        ("agency_client_workspaces", ("agency_id",), "agency_accounts", ("id",)),
+    }
+
+    assert namespace["_missing_foreign_keys"](required, observed) == {
+        ("agency_workspace_access", ("workspace_id",), "agency_client_workspaces", ("id",))
+    }

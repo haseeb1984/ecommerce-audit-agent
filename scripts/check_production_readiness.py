@@ -39,6 +39,31 @@ def _postgres_schema_contract(base):
     return required_tables, required_columns, required_indexes
 
 
+
+def _hostinger_foreign_key_contract(base):
+    """Represent operational ORM foreign keys without relying on generated names."""
+    required = set()
+    for table in base.metadata.tables.values():
+        for constraint in table.foreign_key_constraints:
+            elements = tuple(constraint.elements)
+            if not elements:
+                continue
+            remote_tables = {element.column.table.name for element in elements}
+            if len(remote_tables) != 1:
+                continue
+            required.add((
+                table.name,
+                tuple(element.parent.name for element in elements),
+                next(iter(remote_tables)),
+                tuple(element.column.name for element in elements),
+            ))
+    return required
+
+
+def _missing_foreign_keys(required, observed):
+    """Return required operational foreign-key signatures absent from MySQL."""
+    return set(required) - set(observed)
+
 REQUIRED_ENV_GROUPS = {
     "admin_access": ("ADMIN_API_KEY",),
     "paddle_checkout_and_provisioning": (
@@ -221,6 +246,7 @@ async def main() -> int:
     # independently; a healthy Supabase connection does not imply Hostinger is ready.
     hostinger_missing: list[str] = []
     hostinger_missing_indexes: list[str] = []
+    hostinger_missing_foreign_keys: list[tuple] = []
     try:
         from sqlalchemy import UniqueConstraint
         from hostinger_database import HostingerBase, hostinger_engine
@@ -257,6 +283,14 @@ async def main() -> int:
                     FROM information_schema.statistics
                     WHERE table_schema = DATABASE()
                 """))).all()
+                hostinger_foreign_key_rows = (await operational_db.execute(text("""
+                    SELECT table_name, constraint_name, column_name,
+                           referenced_table_name, referenced_column_name, ordinal_position
+                    FROM information_schema.key_column_usage
+                    WHERE table_schema = DATABASE()
+                      AND referenced_table_name IS NOT NULL
+                    ORDER BY table_name, constraint_name, ordinal_position
+                """))).all()
             hostinger_observed: dict[str, set[str]] = {}
             for table_name, column_name in hostinger_rows:
                 hostinger_observed.setdefault(table_name, set()).add(column_name)
@@ -268,12 +302,39 @@ async def main() -> int:
                     hostinger_missing.append(f"column:{table_name}.{column}")
             hostinger_observed_indexes = {row[0] for row in hostinger_index_rows}
             hostinger_missing_indexes = sorted(hostinger_required_indexes - hostinger_observed_indexes)
+            foreign_key_groups = {}
+            for table_name, constraint_name, column_name, referenced_table, referenced_column, ordinal in hostinger_foreign_key_rows:
+                group = foreign_key_groups.setdefault(
+                    (table_name, constraint_name),
+                    {"columns": [], "referenced_table": referenced_table, "referenced_columns": []},
+                )
+                group["columns"].append((ordinal, column_name))
+                group["referenced_columns"].append((ordinal, referenced_column))
+            hostinger_observed_foreign_keys = {
+                (
+                    table_name,
+                    tuple(column for _, column in sorted(group["columns"])),
+                    group["referenced_table"],
+                    tuple(column for _, column in sorted(group["referenced_columns"])),
+                )
+                for (table_name, _), group in foreign_key_groups.items()
+            }
+            hostinger_required_foreign_keys = _hostinger_foreign_key_contract(HostingerBase)
+            hostinger_missing_foreign_keys = sorted(
+                _missing_foreign_keys(hostinger_required_foreign_keys, hostinger_observed_foreign_keys)
+            )
             print(f"hostinger_connectivity: PASS ({len(hostinger_observed)} tables visible in current database)")
-            print("hostinger_schema_readiness: " + ("PASS" if not hostinger_missing and not hostinger_missing_indexes else "FAIL"))
+            print("hostinger_schema_readiness: " + ("PASS" if not hostinger_missing and not hostinger_missing_indexes and not hostinger_missing_foreign_keys else "FAIL"))
             for item in hostinger_missing:
                 print(f"hostinger_missing_schema_item: {item}")
             for index_name in hostinger_missing_indexes:
                 print(f"hostinger_missing_schema_index: {index_name}")
+            for table_name, columns, referenced_table, referenced_columns in hostinger_missing_foreign_keys:
+                print(
+                    "hostinger_missing_foreign_key: "
+                    f"{table_name}({','.join(columns)}) -> "
+                    f"{referenced_table}({','.join(referenced_columns)})"
+                )
             await hostinger_engine.dispose()
     except Exception as exc:
         hostinger_missing.append(f"inspection:{type(exc).__name__}")
@@ -285,7 +346,7 @@ async def main() -> int:
     for detail in details:
         print(f"configuration_detail: {detail}")
 
-    return 1 if missing or missing_indexes or hostinger_missing or hostinger_missing_indexes or failed_configuration else 0
+    return 1 if missing or missing_indexes or hostinger_missing or hostinger_missing_indexes or hostinger_missing_foreign_keys or failed_configuration else 0
 
 
 if __name__ == "__main__":
