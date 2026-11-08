@@ -155,3 +155,26 @@ def test_email_change_request_and_verification_use_bounded_collision_check():
     assert "_billing_email_has_other_license" in verify_source
     assert "new_license_ids" not in request_source
     assert "new_license_ids" not in verify_source
+
+
+def test_email_change_uses_case_insensitive_identity_matching_for_legacy_rows():
+    from datetime import datetime, timezone
+
+    from main import _customer_email_change_operational_updates
+
+    statements = _customer_email_change_operational_updates(
+        license_key="license-customer-a",
+        old_email="old@example.com",
+        new_email="new@example.com",
+        current_token_hash="current-session-hash",
+        now=datetime.now(timezone.utc),
+    )
+    by_table = {statement.table.name: str(statement).lower() for statement in statements}
+
+    assert "lower(customer_accounts.email)" in by_table["customer_accounts"]
+    assert "lower(customer_login_challenges.email)" in by_table["customer_login_challenges"]
+    assert "lower(customer_sessions.email)" in by_table["customer_sessions"]
+    # Billing and WordPress identity matching was already case-insensitive;
+    # keep all five operational updates on the same normalized email contract.
+    assert "lower(customer_billing_events.recipient_email)" in by_table["customer_billing_events"]
+    assert "lower(wordpress_installations.customer_email)" in by_table["wordpress_installations"]

@@ -1412,7 +1412,7 @@ def _customer_email_change_operational_updates(
     return (
         update(CustomerAccount).where(
             CustomerAccount.license_key == license_key,
-            CustomerAccount.email == old_email,
+            func.lower(CustomerAccount.email) == old_email,
         ).values(email=new_email, updated_at=now),
         update(CustomerBillingEvent).where(
             CustomerBillingEvent.license_key == license_key,
@@ -1424,12 +1424,12 @@ def _customer_email_change_operational_updates(
         ).values(customer_email=new_email),
         update(CustomerLoginChallenge).where(
             CustomerLoginChallenge.license_key == license_key,
-            CustomerLoginChallenge.email == old_email,
+            func.lower(CustomerLoginChallenge.email) == old_email,
             CustomerLoginChallenge.consumed_at.is_(None),
         ).values(consumed_at=now),
         update(CustomerSession).where(
             CustomerSession.license_key == license_key,
-            CustomerSession.email == old_email,
+            func.lower(CustomerSession.email) == old_email,
             CustomerSession.token_hash != current_token_hash,
             CustomerSession.created_at <= now,
             CustomerSession.revoked_at.is_(None),
