@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from main import _license_is_current
@@ -91,12 +92,14 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
     assert result["team_sessions_revoked"] is True
     from sqlalchemy.sql.dml import Update
 
-    assert len(db.statements) == 3
+    assert len(db.statements) == 5
     assert all(isinstance(statement, Update) for statement in db.statements)
     statement_sql = [str(statement) for statement in db.statements]
     assert any("agency_team_sessions" in sql and "revoked_at" in sql for sql in statement_sql)
     assert any("agency_team_login_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
     assert any("agency_team_members" in sql and "invitation_token_hash" in sql for sql in statement_sql)
+    assert any("agency_client_websites" in sql and "site_token_hash" in sql for sql in statement_sql)
+    assert any("agency_website_connect_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
     invitation_update = next(statement for statement in db.statements if "agency_team_members" in str(statement))
     invitation_values = invitation_update.compile().params
     assert "revoked" in invitation_values.values()
@@ -105,8 +108,8 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
 
 
 class AgencyWorkspaceGrantSession:
-    def __init__(self, agency, access):
-        self.rows = [agency, access]
+    def __init__(self, agency, member, workspace, access):
+        self.rows = [agency, member, workspace, access]
         self.deleted = []
         self.committed = False
 
@@ -130,7 +133,9 @@ async def test_owner_can_remove_one_team_workspace_grant_without_revoking_member
         id="grant-1", agency_id="agency-1",
         team_member_id="member-1", workspace_id="workspace-1",
     )
-    db = AgencyWorkspaceGrantSession(agency, grant)
+    member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active")
+    workspace = SimpleNamespace(id="workspace-1", agency_id="agency-1", status="active")
+    db = AgencyWorkspaceGrantSession(agency, member, workspace, grant)
     license_obj = SimpleNamespace(license_key="business-license", tier="business")
     monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
 
@@ -403,11 +408,14 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     class OperationalSession:
         def __init__(self):
             self.calls = []
+            self.execute_statements = []
         async def scalar(self, statement):
             self.calls.append(statement)
-            return [member, agency, recent][len(self.calls) - 1]
-        async def execute(self, _statement):
-            raise AssertionError("A recent challenge must stop OTP issuance.")
+            rows = [SimpleNamespace(email="teammate@example.com"), member, agency, member, recent]
+            return rows[len(self.calls) - 1]
+        async def execute(self, statement):
+            self.execute_statements.append(statement)
+            return SimpleNamespace(rowcount=0)
         async def commit(self):
             raise AssertionError("A cooldown response must not issue a new challenge.")
 
@@ -428,8 +436,9 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     )
 
     assert result["status"] == "accepted"
-    assert len(operational.calls) == 3
+    assert len(operational.calls) == 5
     assert operational.calls[0]._for_update_arg is not None
+    assert len(operational.execute_statements) == 1
 
 
 
@@ -454,7 +463,8 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
     suspend_invite_revoke = suspend_source.index("AgencyTeamMember.status == \"invited\"")
     assert suspend_agency_lock < suspend_invite_revoke
-    assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
+    assert "invitation_token_hash=None" in suspend_source[suspend_invite_revoke:]
+    assert "invitation_expires_at=None" in suspend_source[suspend_invite_revoke:]
 
 
 
@@ -884,7 +894,8 @@ def test_admin_agency_detail_caps_website_connections_per_workspace_and_reports_
     source = inspect.getsource(admin_get_business_agency_detail)
     assert "func.row_number().over(" in source
     assert "partition_by=AgencyClientWebsite.workspace_id" in source
-    assert "ranked_website_ids.c.site_rank <= 100" in source
+    assert "ranked_website_ids.c.site_rank > website_offset" in source
+    assert "ranked_website_ids.c.site_rank <= website_offset + website_limit" in source
     assert "website_count_rows" in source
     assert '"website_connection_count": website_counts.get(item.id, 0)' in source
     assert '"website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))' in source
@@ -895,8 +906,8 @@ def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_trunca
 
     source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
     assert "workspace.website_connection_count" in source
-    assert "workspace.website_connections_truncated" in source
-    assert "Showing latest 100" in source
+    assert "workspace.website_connections_page.has_more" in source
+    assert '"Load more websites"' in source
 
 
 
