@@ -92,7 +92,7 @@ def test_customer_wordpress_portal_loads_installations_in_session_safe_pages():
     assert "wordpressSitesLoading = true;" in source
     assert "wordpressSitesOffset = offset + items.length;" in source
     assert "wordpressSitesHasMore = Boolean(data.page && data.page.has_more);" in source
-    assert "loadWordPressSites(wordpressSitesOffset, true);" in source
+    assert "loadWordPressSites(wordpressSitesOffset, true).catch(() => {});" in source
     assert "requestVersion !== wordpressSitesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
     assert "wordpressSitesRequestVersion += 1;" in clear_source
     assert "wordpressSitesLoading = false;" in clear_source
