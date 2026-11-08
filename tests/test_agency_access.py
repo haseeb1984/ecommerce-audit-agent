@@ -941,3 +941,4 @@ def test_agency_client_portal_uses_batched_website_status_and_keeps_manual_refre
     assert "async function refreshWebsiteStatus(initialData = null)" in source
     assert "if (!website) {" in source
     assert '"/website"' in source
+    assert 'refreshWebsite.addEventListener("click", () => refreshWebsiteStatus())' in source
