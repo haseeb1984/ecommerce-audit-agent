@@ -203,10 +203,13 @@ def _account_candidate_statement():
             order_by=(candidates.c.source_priority.asc(), candidates.c.candidate_updated_at.desc(),
                 candidates.c.candidate_created_at.desc())).label("candidate_rank"),
     ).subquery("ranked_legacy_account_candidates")
-    return select(ranked.c.license_key, ranked.c.email, ranked.c.display_name,
-        ranked.c.candidate_created_at).where(ranked.c.candidate_rank == 1)
+    return (
+        select(ranked.c.license_key, ranked.c.email, ranked.c.display_name,
+            ranked.c.candidate_created_at)
+        .where(ranked.c.candidate_rank == 1)
         .order_by(ranked.c.license_key.asc(), ranked.c.email.asc())
         .execution_options(yield_per=MIGRATION_BATCH_SIZE)
+    )
 
 MIGRATION_BATCH_SIZE = 500
 
