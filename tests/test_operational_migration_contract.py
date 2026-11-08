@@ -636,3 +636,14 @@ def test_streamed_operational_copy_reports_existing_and_unmapped_rows_separately
     assert '"already_present": already_present' in segment
     assert '"unmapped": unmapped' in segment
     assert '"already_present_or_unmapped": skipped' in segment
+
+
+def test_streamed_operational_copy_counters_are_mutated_in_batch_scope():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    start = source.index("async def reconcile_batch(rows):")
+    end = source.index("\n\n    statement = select(source_model)", start)
+    segment = source[start:end]
+
+    assert "nonlocal copied, skipped, already_present, unmapped, mismatch_count" in segment
