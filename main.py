@@ -8494,6 +8494,8 @@ async def admin_customer_account_detail(
     wordpress_offset: int = Query(default=0, ge=0, le=1000000),
     note_limit: int = Query(default=50, ge=1, le=100),
     note_offset: int = Query(default=0, ge=0, le=1000000),
+    billing_limit: int = Query(default=50, ge=1, le=100),
+    billing_offset: int = Query(default=0, ge=0, le=1000000),
     request: Request = None,
     response: Response = None,
     db: AsyncSession = Depends(get_async_db),
@@ -8501,7 +8503,7 @@ async def admin_customer_account_detail(
 ):
     """Return an account-wide view across licenses, billing, sessions and support notes."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func
+    from sqlalchemy import select, func as sql_func, or_
     normalized = email.strip().lower()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -8584,20 +8586,52 @@ async def admin_customer_account_detail(
         session_base.order_by(CustomerSession.created_at.desc(), CustomerSession.token_hash.desc())
         .offset(session_offset).limit(session_limit)
     )).scalars().all()
+    # Count the cross-database event union without materializing every event ID.
+    # Canonical PostgreSQL events and Hostinger mirrors may share an event_id.
+    billing_host_keys = select(hostinger_identity_keys.c.license_key)
+    host_billing_filter = CustomerBillingEvent.license_key.in_(billing_host_keys)
+    # The temporary identity table is committed/dropped before this point.
+    # Match every legacy event by the account email as well as the visible page IDs.
+    pg_billing_filter = or_(
+        PaymentWebhookEvent.license_id.in_(ids),
+        sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized,
+    )
+    host_event_ids = await operational_db.stream_scalars(
+        select(CustomerBillingEvent.event_id).where(host_billing_filter).order_by(CustomerBillingEvent.event_id.asc())
+    )
+    pg_event_ids = await db.stream_scalars(
+        select(PaymentWebhookEvent.event_id).where(pg_billing_filter).order_by(PaymentWebhookEvent.event_id.asc())
+    )
+    try:
+        billing_total = await _count_sorted_billing_event_id_union(pg_event_ids, host_event_ids)
+    finally:
+        await pg_event_ids.close()
+        await host_event_ids.close()
+
+    candidate_limit = billing_offset + billing_limit
     payments = (await operational_db.execute(
-        select(CustomerBillingEvent).where(CustomerBillingEvent.license_key.in_(license_keys))
-        .order_by(CustomerBillingEvent.updated_at.desc()).limit(200)
+        select(CustomerBillingEvent).where(host_billing_filter)
+        .order_by(CustomerBillingEvent.updated_at.desc(), CustomerBillingEvent.event_id.desc())
+        .limit(candidate_limit)
     )).scalars().all()
-    # Keep the operational mirror and legacy PostgreSQL source visible together
-    # during gradual migration; a partially migrated customer must not lose history.
+    # Keep legacy PostgreSQL events visible during gradual migration; canonical
+    # PostgreSQL rows take precedence when the same event_id exists in both stores.
     legacy_payments = (await db.execute(
-        select(PaymentWebhookEvent).where(PaymentWebhookEvent.license_id.in_(ids))
-        .order_by(PaymentWebhookEvent.updated_at.desc()).limit(200)
+        select(PaymentWebhookEvent).where(pg_billing_filter)
+        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .limit(candidate_limit)
     )).scalars().all()
-    known_event_ids = {item.event_id for item in payments}
-    payments.extend(item for item in legacy_payments if item.event_id not in known_event_ids)
-    payments.sort(key=lambda item: item.updated_at or item.created_at, reverse=True)
-    payments = payments[:200]
+    merged_payments = {item.event_id: item for item in payments}
+    merged_payments.update({item.event_id: item for item in legacy_payments})
+    payments = sorted(
+        merged_payments.values(),
+        key=lambda item: (
+            item.updated_at.replace(tzinfo=timezone.utc) if item.updated_at and item.updated_at.tzinfo is None
+            else item.updated_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            item.event_id,
+        ),
+        reverse=True,
+    )[billing_offset:billing_offset + billing_limit]
     note_base = select(AdminCustomerNote).where(
         sql_func.lower(AdminCustomerNote.customer_email) == normalized
     )
@@ -8647,6 +8681,10 @@ async def admin_customer_account_detail(
         "note_page": {
             "limit": note_limit, "offset": note_offset, "total": note_total,
             "has_more": note_offset + len(notes) < note_total,
+        },
+        "billing_page": {
+            "limit": billing_limit, "offset": billing_offset, "total": billing_total,
+            "has_more": billing_offset + len(payments) < billing_total,
         },
         "sessions": [{
             "email": item.email,
