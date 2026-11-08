@@ -3380,7 +3380,7 @@ async def list_business_agency_team(
     ).offset(offset).limit(limit))).scalars().all()
     member_ids = [item.id for item in members]
     access_rows = []
-    if member_ids:
+    if member_ids and workspace_ids:
         access_rows = (await operational_db.execute(
             select(AgencyWorkspaceAccess, AgencyClientWorkspace.display_name)
             .join(AgencyClientWorkspace, AgencyClientWorkspace.id == AgencyWorkspaceAccess.workspace_id)
@@ -3388,7 +3388,7 @@ async def list_business_agency_team(
                 AgencyWorkspaceAccess.agency_id == agency.id,
                 AgencyWorkspaceAccess.team_member_id.in_(member_ids),
                 AgencyClientWorkspace.agency_id == agency.id,
-                AgencyWorkspaceAccess.workspace_id.in_(workspace_ids) if workspace_ids else sql_func.false(),
+                AgencyWorkspaceAccess.workspace_id.in_(workspace_ids),
             )
         )).all()
     access_by_member = {}
