@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `071cfa4d73f3e393ea3d258bed26bc7015ae19a3` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `111459cdd98e2a82151dd84344f2ec8f64a9d033` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -809,3 +809,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Regression tests were added/updated in `tests/test_admin_customer_directory_races.py` and `tests/test_agency_access.py`. They have **not been executed**; no Python CI pass is claimed. Vercel preview attempts continue to report the daily deployment-rate limit, which is not a code/test result.
 - No live customer data, production database, migration, Paddle/SMTP action, WordPress installation, live-site audit, or production deployment was performed. Admin/customer and agency workflows remain **implemented / verification pending** until CI and controlled staging acceptance.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
+
+
+## 2026-11-08 — admin customer detail pagination
+
+- PR #260 is merged: admin customer account detail now paginates linked licenses in pages of 100, uses a SQL-side deduplicated license-ID union/count, and exposes a Load more control.
+- Operational identity-key transfer is capped at 1,000 keys and explicitly marked as truncated when the cap is exceeded. In that exceptional case, the displayed total is not complete; this remains a known edge case for follow-up streaming/chunked cross-database resolution.
+- Related sessions and billing events remain bounded to 200 each, WordPress sites to 100, and support notes to 100. Full independent pagination/count metadata for those sublists remains a follow-up.
+- PR #261 is merged: support-note identity selection now uses database-side minimum-key aggregates rather than materializing all operational and legacy license keys.
+- Regression tests were added but not executed. CI, live data, production migration, provider acceptance, and deployment remain unverified.
