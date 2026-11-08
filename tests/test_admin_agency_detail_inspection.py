@@ -63,3 +63,22 @@ def test_admin_agency_detail_ui_loads_workspace_and_member_pages_independently()
     assert 'workspace_offset="+(p.workspace_offset+p.workspace_limit)' in portal
     assert 'member_offset="+(p.member_offset+p.member_limit)' in portal
     assert 'requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion' in portal
+
+
+
+def test_admin_agency_website_connections_have_per_workspace_pagination():
+    source = inspect.getsource(main.admin_get_business_agency_detail)
+    assert 'website_limit: int = Query(default=100, ge=1, le=100)' in source
+    assert 'website_offset: int = Query(default=0, ge=0, le=1000000)' in source
+    assert 'ranked_website_ids.c.site_rank > website_offset' in source
+    assert 'ranked_website_ids.c.site_rank <= website_offset + website_limit' in source
+    assert '"website_connections_page"' in source
+    assert '"has_more": website_offset + len(websites_by_workspace.get(item.id, [])) < website_counts.get(item.id, 0)' in source
+
+
+def test_admin_agency_website_load_more_is_workspace_scoped_and_guarded():
+    portal = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
+    assert '"Load more websites"' in portal
+    assert 'workspace_limit=1&workspace_offset="+workspaceOffset' in portal
+    assert 'website_offset="+(p.offset+p.limit)' in portal
+    assert 'appendWebsiteRows(nextWorkspace.website_connections)' in portal
