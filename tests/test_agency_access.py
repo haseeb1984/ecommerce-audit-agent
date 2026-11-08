@@ -815,3 +815,27 @@ def test_agency_team_workspace_audit_access_uses_workspace_grant_lock_order_and_
     assert grant_lock < site_lock
     assert ".with_for_update()" in submit_source[site_lock:]
 
+
+
+def test_agency_owner_audit_results_support_bounded_pagination():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.list_business_agency_client_audit_results)
+    assert "limit: int = Query(25, ge=1, le=100)" in source
+    assert "offset: int = Query(0, ge=0, le=1000000)" in source
+    assert ".offset(offset).limit(limit)" in source
+
+
+def test_agency_owner_portal_loads_all_saved_findings_in_pages():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("async function loadAgencyClientAuditResults(")
+    end = portal.index("async function loadAgencyClientAudits(", start)
+    source = portal[start:end]
+    assert "const pageSize = 25;" in source
+    assert '"&limit=" + pageSize + "&offset=" + offset' in source
+    assert "Load more saved findings" in source
+    assert "loadPage(true)" in source
+    assert "offset += items.length;" in source

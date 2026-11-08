@@ -906,47 +906,71 @@
     return agency;
   }
   async function loadAgencyClientAuditResults(workspaceId, batchId, target) {
+    const pageSize = 25;
+    let offset = 0;
+    let loadMore = null;
+    let loadingPage = false;
     target.replaceChildren();
-    const loading = document.createElement("p"); loading.className = "muted";
-    loading.textContent = "Loading saved audit findings and evidence…"; target.append(loading);
-    try {
-      const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(workspaceId) +
-        "/audit-results?batch_id=" + encodeURIComponent(batchId) + "&limit=25");
-      const data = await response.json();
-      target.replaceChildren();
-      const items = Array.isArray(data.items) ? data.items : [];
-      if (!items.length) {
-        const empty = document.createElement("p"); empty.className = "muted";
-        empty.textContent = "No completed audit results are available for this batch yet."; target.append(empty); return;
-      }
-      for (const item of items) {
-        const card = document.createElement("article"); card.className = "report";
-        const heading = document.createElement("strong"); heading.textContent = item.url + " · " + item.status;
-        card.append(heading);
-        if (item.result) {
-          const summary = document.createElement("p");
-          summary.textContent = "Score: " + (item.result.overall_score ?? "N/A") +
-            " · Findings: " + item.result.finding_count + " · Saved: " + (item.result.created_at || "");
-          card.append(summary);
-          for (const finding of (Array.isArray(item.result.findings) ? item.result.findings : [])) {
-            const detail = document.createElement("details");
-            const label = document.createElement("summary");
-            label.textContent = finding.title || finding.name || finding.check_id || "Audit finding";
-            const body = document.createElement("pre"); body.style.whiteSpace = "pre-wrap";
-            body.textContent = JSON.stringify(finding, null, 2);
-            detail.append(label, body); card.append(detail);
-          }
-        } else {
-          const pending = document.createElement("p"); pending.className = "muted";
-          pending.textContent = "This URL has no saved result yet."; card.append(pending);
+    async function loadPage(append) {
+      if (loadingPage) return;
+      loadingPage = true;
+      if (!append) { offset = 0; target.replaceChildren(); }
+      if (loadMore) loadMore.disabled = true;
+      const loading = document.createElement("p"); loading.className = "muted";
+      loading.textContent = append ? "Loading more saved findings…" : "Loading saved audit findings and evidence…";
+      target.append(loading);
+      try {
+        const response = await api("/api/v1/account/agency/clients/" + encodeURIComponent(workspaceId) +
+          "/audit-results?batch_id=" + encodeURIComponent(batchId) + "&limit=" + pageSize + "&offset=" + offset);
+        const data = await response.json();
+        loading.remove();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!append && !items.length) {
+          const empty = document.createElement("p"); empty.className = "muted";
+          empty.textContent = "No completed audit results are available for this batch yet."; target.append(empty);
         }
-        target.append(card);
+        for (const item of items) {
+          const card = document.createElement("article"); card.className = "report";
+          const heading = document.createElement("strong"); heading.textContent = item.url + " · " + item.status;
+          card.append(heading);
+          if (item.result) {
+            const summary = document.createElement("p");
+            summary.textContent = "Score: " + (item.result.overall_score ?? "N/A") +
+              " · Findings: " + item.result.finding_count + " · Saved: " + (item.result.created_at || "");
+            card.append(summary);
+            for (const finding of (Array.isArray(item.result.findings) ? item.result.findings : [])) {
+              const detail = document.createElement("details");
+              const label = document.createElement("summary");
+              label.textContent = finding.title || finding.name || finding.check_id || "Audit finding";
+              const body = document.createElement("pre"); body.style.whiteSpace = "pre-wrap";
+              body.textContent = JSON.stringify(finding, null, 2);
+              detail.append(label, body); card.append(detail);
+            }
+          } else {
+            const pending = document.createElement("p"); pending.className = "muted";
+            pending.textContent = "This URL has no saved result yet."; card.append(pending);
+          }
+          target.append(card);
+        }
+        offset += items.length;
+        if (loadMore) loadMore.remove();
+        loadMore = null;
+        if (items.length === pageSize) {
+          loadMore = document.createElement("button"); loadMore.type = "button";
+          loadMore.className = "secondary"; loadMore.textContent = "Load more saved findings";
+          loadMore.addEventListener("click", () => loadPage(true));
+          target.append(loadMore);
+        }
+      } catch (error) {
+        loading.remove();
+        const message = document.createElement("p"); message.className = "status error";
+        message.textContent = error.message; target.append(message);
+      } finally {
+        loadingPage = false;
+        if (loadMore) loadMore.disabled = false;
       }
-    } catch (error) {
-      target.replaceChildren();
-      const message = document.createElement("p"); message.className = "status error";
-      message.textContent = error.message; target.append(message);
     }
+    await loadPage(false);
   }
   async function loadAgencyClientAudits(workspaceId, target) {
     target.replaceChildren();

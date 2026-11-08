@@ -3094,7 +3094,7 @@ async def list_business_agency_client_audit_results(
     workspace_id: str,
     response: Response,
     batch_id: str | None = Query(default=None, min_length=1, max_length=64),
-    limit: int = Query(25, ge=1, le=25),
+    limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0, le=1000000),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     operational_db: AsyncSession = Depends(get_hostinger_db),
