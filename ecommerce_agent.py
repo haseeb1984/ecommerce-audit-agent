@@ -377,13 +377,50 @@ class UniversalEcommerceAgent:
                             }
                             else "provider unit"
                         )
-                        field_metrics[f"{scope_label}:{metric_name}"] = {
+                        field_metric = {
                             "percentile": percentile,
                             "normalized_value": normalized_value,
                             "unit": unit,
                             "category": category.strip().upper() if isinstance(category, str) and category.strip().upper() in FIELD_DATA_METRIC_CATEGORIES else None,
                             "source": f"PageSpeed {scope_key} field data",
                         }
+                        raw_distribution = metric.get("distributions")
+                        normalized_distribution = []
+                        if isinstance(raw_distribution, list):
+                            for band in raw_distribution[:5]:
+                                if not isinstance(band, dict):
+                                    continue
+                                minimum = band.get("min")
+                                maximum = band.get("max")
+                                proportion = band.get("proportion")
+                                if (
+                                    isinstance(minimum, bool) or not isinstance(minimum, (int, float))
+                                    or not math.isfinite(float(minimum)) or minimum < 0
+                                    or isinstance(proportion, bool) or not isinstance(proportion, (int, float))
+                                    or not math.isfinite(float(proportion)) or not 0 <= proportion <= 1
+                                ):
+                                    continue
+                                if maximum is not None and (
+                                    isinstance(maximum, bool) or not isinstance(maximum, (int, float))
+                                    or not math.isfinite(float(maximum)) or maximum < minimum
+                                ):
+                                    continue
+                                scale = 1000.0 if metric_name == "CUMULATIVE_LAYOUT_SHIFT_SCORE" else 1.0
+                                normalized_distribution.append({
+                                    "min": round(float(minimum) / scale, 6),
+                                    "max": round(float(maximum) / scale, 6) if maximum is not None else None,
+                                    "proportion": round(float(proportion), 6),
+                                })
+                        if normalized_distribution:
+                            field_metric["distribution"] = normalized_distribution
+                        field_metrics[f"{scope_label}:{metric_name}"] = field_metric
+            if field_metrics:
+                field_data_context.update({
+                    "provider": "PageSpeed Insights loadingExperience field data (Chrome UX Report)",
+                    "collection_window": "Rolling 28-day field-data window; exact first/last dates are not exposed by this response.",
+                    "sample_size": "Sample count is not exposed by this PageSpeed response.",
+                    "device_scope": "Device-specific field-data scope is not exposed; Lighthouse form_factor describes the lab run only.",
+                })
             lighthouse_version = lighthouse.get("lighthouseVersion")
             page_fetch_time = lighthouse.get("fetchTime")
             final_url = lighthouse.get("finalDisplayedUrl") or lighthouse.get("finalUrl")

@@ -81,7 +81,16 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
                     "id": "https://shop.example/",
                     "overall_category": "AVERAGE",
                     "metrics": {
-                        "LARGEST_CONTENTFUL_PAINT_MS": {"percentile": 2400, "category": "AVERAGE"},
+                        "LARGEST_CONTENTFUL_PAINT_MS": {
+                            "percentile": 2400, "category": "AVERAGE",
+                            "distributions": [
+                                {"min": 0, "max": 2500, "proportion": 0.7},
+                                {"min": 2500, "max": 4000, "proportion": 0.2},
+                                {"min": 4000, "max": None, "proportion": 0.1},
+                                {"min": -1, "max": 0, "proportion": 0.0},
+                                {"min": 0, "max": 1, "proportion": 2.0},
+                            ],
+                        },
                         "CUMULATIVE_LAYOUT_SHIFT_SCORE": {"percentile": 12, "category": "GOOD"},
                         "INTERACTION_TO_NEXT_PAINT": {"percentile": 180, "category": "GOOD"},
                     }
@@ -120,10 +129,19 @@ async def test_valid_pagespeed_report_converts_metrics(monkeypatch):
     assert result.tbt_ms == 125
     assert result.ttfb_ms == 350
     assert result.field_metrics["url:LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 2400
+    assert result.field_metrics["url:LARGEST_CONTENTFUL_PAINT_MS"]["distribution"] == [
+        {"min": 0.0, "max": 2500.0, "proportion": 0.7},
+        {"min": 2500.0, "max": 4000.0, "proportion": 0.2},
+        {"min": 4000.0, "max": None, "proportion": 0.1},
+    ]
     assert result.field_metrics["url:INTERACTION_TO_NEXT_PAINT"]["category"] == "GOOD"
     assert result.field_metrics["url:CUMULATIVE_LAYOUT_SHIFT_SCORE"]["normalized_value"] == 0.012
     assert result.field_metrics["origin:LARGEST_CONTENTFUL_PAINT_MS"]["percentile"] == 1900
     assert result.field_data_context["origin_overall_category"] == "GOOD"
+    assert result.field_data_context["provider"].startswith("PageSpeed Insights loadingExperience")
+    assert "Rolling 28-day" in result.field_data_context["collection_window"]
+    assert "not exposed" in result.field_data_context["sample_size"]
+    assert "Lighthouse form_factor describes the lab run only" in result.field_data_context["device_scope"]
     assert result.lighthouse_version == "12.8.0"
     assert result.form_factor == "mobile"
     assert result.is_slow is False
