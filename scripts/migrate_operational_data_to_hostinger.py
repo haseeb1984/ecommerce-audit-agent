@@ -11,7 +11,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func, literal, select, tuple_, union, union_all
+from sqlalchemy import func, literal, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
@@ -49,31 +49,6 @@ def _legacy_account_id(license_key: str, email: str) -> str:
     digest = hashlib.sha256(f"{license_key.lower()}:{email.lower()}".encode()).hexdigest()
     return f"legacy-{digest[:48]}"
 
-
-async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
-    """Load only license identities referenced by legacy operational rows."""
-    referenced_ids = union(
-        select(AccountLoginChallenge.license_id).where(AccountLoginChallenge.license_id.is_not(None)),
-        select(AccountSession.license_id).where(AccountSession.license_id.is_not(None)),
-        select(AccountEmailChangeChallenge.license_id).where(AccountEmailChangeChallenge.license_id.is_not(None)),
-        select(WordPressSite.license_id).where(WordPressSite.license_id.is_not(None)),
-        select(WhiteLabelBranding.license_id).where(WhiteLabelBranding.license_id.is_not(None)),
-        select(PaymentWebhookEvent.license_id).where(PaymentWebhookEvent.license_id.is_not(None)),
-        select(SaaSOperationEvent.license_id).where(SaaSOperationEvent.license_id.is_not(None)),
-    ).subquery("referenced_legacy_license_ids")
-    statement = (
-        select(SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name)
-        .join(referenced_ids, referenced_ids.c.license_id == SoftwareLicense.id)
-        .execution_options(yield_per=MIGRATION_BATCH_SIZE)
-    )
-    result = await source.stream(statement)
-    licenses = {}
-    try:
-        async for row in result:
-            licenses[row.id] = row
-    finally:
-        await result.close()
-    return licenses
 
 async def _stream_rows(source: AsyncSession, model):
     """Yield source ORM rows without materializing the complete table."""
@@ -195,7 +170,7 @@ def _account_candidate_statement():
 MIGRATION_BATCH_SIZE = 500
 
 
-async def _copy_rows(source, target, source_model, target_model, transform, key_name, stage_missing: bool):
+async def _copy_rows(source, target, source_model, target_model, transform, key_name, stage_missing: bool, resolve_license_keys: bool = False):
     """Stream source rows and reconcile target keys in bounded batches."""
     source_count = 0
     copied = 0
@@ -207,8 +182,23 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
     async def reconcile_batch(rows):
         nonlocal copied, skipped, mismatch_count
         expected_by_key = {}
+        license_key_by_id = {}
+        if resolve_license_keys:
+            license_ids = {
+                row.license_id for row in rows
+                if getattr(row, "license_id", None) is not None
+            }
+            if license_ids:
+                license_result = await source.execute(
+                    select(SoftwareLicense.id, SoftwareLicense.license_key).where(
+                        SoftwareLicense.id.in_(license_ids)
+                    )
+                )
+                license_key_by_id = {
+                    row.id: row.license_key for row in license_result
+                }
         for row in rows:
-            values = transform(row)
+            values = transform(row, license_key_by_id) if resolve_license_keys else transform(row)
             if values is None:
                 skipped += 1
                 continue
@@ -275,8 +265,6 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
     if AsyncSessionLocal is None or HostingerAsyncSessionLocal is None:
         raise RuntimeError("DATABASE_URL and HOSTINGER_DATABASE_URL must both be configured.")
     async with AsyncSessionLocal() as source, HostingerAsyncSessionLocal() as target:
-        licenses = await _license_map(source)
-        license_key_by_id = {key: value.license_key for key, value in licenses.items()}
         reports = {}
 
         # Restore identities from a database-side deduplicated union, avoiding
@@ -350,7 +338,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
 
         reports["customer_login_challenges"] = await _copy_rows(
             source, target, AccountLoginChallenge, CustomerLoginChallenge,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "id": row.id,
                 "license_key": license_key_by_id.get(row.license_id),
                 "email": row.email.lower(),
@@ -365,7 +353,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         )
         reports["customer_sessions"] = await _copy_rows(
             source, target, AccountSession, CustomerSession,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "token_hash": row.token_hash,
                 "license_key": license_key_by_id.get(row.license_id),
                 "email": row.email.lower(),
@@ -378,10 +366,11 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             } if license_key_by_id.get(row.license_id) else None),
             "token_hash",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
         reports["customer_email_change_challenges"] = await _copy_rows(
             source, target, AccountEmailChangeChallenge, CustomerEmailChangeChallenge,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "id": row.id,
                 "license_key": license_key_by_id.get(row.license_id),
                 "old_email": row.old_email.lower(),
@@ -394,10 +383,11 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             } if license_key_by_id.get(row.license_id) else None),
             "id",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
         reports["wordpress_installations"] = await _copy_rows(
             source, target, WordPressSite, WordPressInstallation,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "id": row.id,
                 "license_key": license_key_by_id.get(row.license_id),
                 "site_url": row.site_url,
@@ -414,10 +404,11 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             } if license_key_by_id.get(row.license_id) else None),
             "id",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
         reports["customer_branding"] = await _copy_rows(
             source, target, WhiteLabelBranding, CustomerBranding,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "license_key": license_key_by_id.get(row.license_id),
                 "brand_name": row.brand_name,
                 "logo_url": row.logo_url,
@@ -426,11 +417,12 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             } if license_key_by_id.get(row.license_id) else None),
             "license_key",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
 
         reports["customer_billing_events"] = await _copy_rows(
             source, target, PaymentWebhookEvent, CustomerBillingEvent,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "event_id": row.event_id,
                 "license_key": license_key_by_id.get(row.license_id),
                 "recipient_email": (row.recipient_email or "").strip().lower()[:254],
@@ -443,6 +435,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             } if license_key_by_id.get(row.license_id) else None),
             "event_id",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
         reports["admin_action_logs"] = await _copy_rows(
             source, target, SaaSAdminActionLog, AdminActionLog,
@@ -456,10 +449,11 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             }),
             "id",
             stage_missing=apply_changes,
+            resolve_license_keys=True,
         )
         reports["operational_diagnostic_events"] = await _copy_rows(
             source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
-            lambda row: ({
+            lambda row, license_key_by_id: ({
                 "legacy_source_id": row.id,
                 "event_type": row.event_type,
                 "license_key": license_key_by_id.get(row.license_id),
