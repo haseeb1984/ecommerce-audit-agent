@@ -294,7 +294,7 @@ async def test_comprehensive_audit_does_not_mark_empty_browser_response_as_compl
         assert response.status_code == 200
         saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
         metadata = __import__("json").loads(saved_report.coverage_json)
-        assert metadata["run_context"]["modules"]["browser_rendered"] == "partial"
+        assert metadata["audit_run_context"]["module_statuses"]["browser_rendered"] == "partial"
         assert any("could not complete page navigation" in item for item in captured[0].limitations)
     finally:
         main.app.dependency_overrides.clear()
