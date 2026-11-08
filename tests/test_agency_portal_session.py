@@ -21,7 +21,7 @@ def test_agency_portal_protects_workspace_and_saved_audit_requests():
     start = portal.index("(() => {")
     script = portal[start:portal.index("</script>", start)]
 
-    assert '"/api/v1/agency/team/workspaces", {}, expectedVersion' in script
+    assert '"/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset, {}, expectedVersion' in script
     assert '"/api/v1/agency/team/auth/me",{},expectedVersion' in script
     assert '"/audits?limit="+historyPageSize+"&offset="+offset,{},actionVersion' in script
     assert '"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},evidenceVersion' in script
@@ -77,8 +77,8 @@ def test_agency_member_role_api_updates_default_role_without_overwriting_custom_
 
 def test_customer_portal_confirms_and_reports_team_member_revocation():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadAgencyTeam()")
-    end = portal.index("async function inviteAgencyTeam()", start)
+    start = portal.index("async function loadAgencyTeam(")
+    end = portal.index("async function inviteAgencyTeam(", start)
     section = portal[start:end]
 
     assert 'window.confirm("Revoke access for " + item.email' in section
@@ -140,7 +140,7 @@ def test_agency_team_portal_loads_assigned_workspaces_in_session_guarded_pages()
     assert "let workspaceLoadMore = null;" in script
     assert '"/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset' in script
     assert 'workspaceLoadMore.textContent = "Load more client workspaces";' in script
-    assert "loadWorkspaces(expectedVersion, workspaceOffset, true)" in script
+    assert "loadWorkspaces(expectedVersion, nextOffset, true)" in script
     assert "assertCurrentSession(expectedVersion);" in script
 
 

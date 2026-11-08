@@ -33,9 +33,9 @@ import main
 
 def test_admin_activity_endpoint_supports_bounded_sanitized_filters():
     signature = inspect.signature(main.admin_action_history)
-    assert signature.parameters["action"].default.max_length == 100
-    assert signature.parameters["entity_type"].default.max_length == 80
-    assert signature.parameters["entity_id"].default.max_length == 160
+    assert any(getattr(item, "max_length", None) == 100 for item in signature.parameters["action"].default.metadata)
+    assert any(getattr(item, "max_length", None) == 80 for item in signature.parameters["entity_type"].default.metadata)
+    assert any(getattr(item, "max_length", None) == 160 for item in signature.parameters["entity_id"].default.metadata)
 
     source = inspect.getsource(main.admin_action_history)
     assert "AdminActionLog.action.ilike" in source
@@ -95,8 +95,8 @@ def test_agency_team_revocation_uses_agency_first_lock_order():
 
 def test_customer_portal_confirms_and_reports_team_member_revocation():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadAgencyTeam()")
-    end = portal.index("async function inviteAgencyTeam()", start)
+    start = portal.index("async function loadAgencyTeam(")
+    end = portal.index("async function inviteAgencyTeam(", start)
     section = portal[start:end]
 
     assert "window.confirm(\"Revoke access for \" + item.email" in section
@@ -269,7 +269,7 @@ def _portal():
 
 def _device_loader(source):
     start = source.index("  async function loadDeviceSessions() {")
-    end = source.index("  async function loadWordPressSites()", start)
+    end = source.index("  async function loadWordPressSites(", start)
     return source[start:end]
 
 

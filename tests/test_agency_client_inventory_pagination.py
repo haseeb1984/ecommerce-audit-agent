@@ -25,7 +25,8 @@ def test_agency_client_portal_appends_pages_without_dropping_existing_workspace_
     assert 'limit=100&offset=' in source
     assert "agencyClientRequestVersion" in source
     assert "accountSessionVersion" in source
-    assert "if (!append) workspaceSelect.replaceChildren();" in source
+    assert "if (!append) {" in source
+    assert "workspaceSelect.replaceChildren();" in source
     assert "if (!append) teamWorkspaceSelect.replaceChildren();" in source
     assert "if (!append) container.replaceChildren();" in source
     assert "data.page?.has_more" in source

@@ -17,8 +17,8 @@ def test_agency_team_revocation_uses_agency_first_lock_order():
 
 def test_customer_portal_confirms_and_reports_team_member_revocation():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadAgencyTeam()")
-    end = portal.index("async function inviteAgencyTeam()", start)
+    start = portal.index("async function loadAgencyTeam(")
+    end = portal.index("async function inviteAgencyTeam(", start)
     section = portal[start:end]
 
     assert 'window.confirm("Revoke access for " + item.email' in section
@@ -49,7 +49,7 @@ def test_workspace_grant_mutations_follow_agency_member_workspace_grant_lock_ord
     assert agency_lock < member_lock < workspace_lock < grant_lock
     assert grant_routes.count(".with_for_update()") >= 8
     assert "agency.status != \"active\"" in grant_routes
-    assert "workspace.status == \"active\"" in grant_routes
+    assert "AgencyClientWorkspace.status == \"active\"" in grant_routes
 
 
 def test_agency_workspace_creation_locks_active_agency_before_insert():
@@ -115,7 +115,9 @@ def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_or
     assert ".with_for_update()" in source[agency_lock:workspace_lock]
     assert ".with_for_update()" in source[workspace_lock:site_lock]
     assert ".with_for_update()" in source[site_lock:challenge_lock]
-    assert ".with_for_update()" in source[challenge_lock:commit]
+    assert "update(AgencyWebsiteConnectChallenge)" in source[challenge_lock:commit]
+    assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[challenge_lock:commit]
+    assert ".values(consumed_at=now)" in source[challenge_lock:commit]
     assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
     assert 'workspace.status != "active"' in source[workspace_lock:site_lock]
     assert "site.site_token_hash = None" in source[site_lock:challenge_lock]
