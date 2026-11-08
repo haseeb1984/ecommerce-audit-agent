@@ -6981,6 +6981,21 @@ async def admin_update_business_agency(
             invitation_token_hash=None,
             invitation_expires_at=None,
         ))
+        # Suspension is a durable access revocation, not a temporary gate:
+        # invalidate all client-site credentials so reactivation cannot
+        # silently restore previously issued WordPress plugin tokens.
+        await operational_db.execute(update(AgencyClientWebsite).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.status == "active",
+        ).values(
+            status="disconnected",
+            disconnected_at=now,
+            site_token_hash=None,
+        ))
+        await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+            AgencyWebsiteConnectChallenge.agency_id == agency.id,
+            AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+        ).values(consumed_at=now))
     agency.updated_at = now
     await operational_db.commit()
     if previous_status != agency.status:
@@ -6993,6 +7008,7 @@ async def admin_update_business_agency(
                 "previous_status": previous_status,
                 "new_status": agency.status,
                 "team_sessions_revoked": payload.status == "suspended",
+                "wordpress_connections_revoked": payload.status == "suspended",
             },
         )
     response.headers["Cache-Control"] = "no-store, private"
