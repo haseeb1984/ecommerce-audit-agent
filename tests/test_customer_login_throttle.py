@@ -55,13 +55,19 @@ def test_customer_login_verification_and_logout_all_share_email_lock_order():
     verify_source = inspect.getsource(main.verify_account_login_code)
     logout_source = inspect.getsource(main.logout_all_account_sessions)
 
-    for source in (request_source, verify_source, logout_source):
-        assert "_lock_customer_login_email(operational_db, email)" in source
+    assert "_lock_customer_login_email(operational_db, email)" in request_source
+    assert "_lock_customer_login_email(operational_db, email)" in verify_source
+    assert "_lock_customer_login_email(operational_db, email)" in logout_source
 
     assert verify_source.index("_lock_customer_login_email") < verify_source.index("CustomerLoginChallenge.email == email")
-    assert logout_source.index("_lock_customer_login_email") < logout_source.index("CustomerLoginChallenge.email == email")
-    assert logout_source.index("CustomerLoginChallenge.consumed_at.is_(None)") < logout_source.index("update(CustomerSession)")
-    assert ".with_for_update()" in logout_source
+    account_lock = logout_source.index("_lock_customer_email_change_license")
+    refreshed_identity = logout_source.index("refreshed = await operational_db.scalar")
+    email_lock = logout_source.index("_lock_customer_login_email")
+    session_lock = logout_source.index(".with_for_update()", email_lock)
+    challenge_update = logout_source.index("CustomerLoginChallenge.consumed_at.is_(None)")
+    session_update = logout_source.index("update(CustomerSession)")
+    assert account_lock < refreshed_identity < email_lock < session_lock < challenge_update < session_update
+    assert "email = refreshed.email.strip().lower()" in logout_source[refreshed_identity:email_lock]
 
 
 def test_customer_login_email_lock_uses_persistent_mysql_throttle_row():
