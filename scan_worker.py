@@ -9,7 +9,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, inspect, or_, select, update
+from sqlalchemy import and_, delete, func, inspect, or_, select, update
+from sqlalchemy.orm import aliased
 
 from database import AsyncSessionLocal, engine as licensing_engine
 from models import (
@@ -593,8 +594,38 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
     return counts
 
 
+def _customer_email_identity_outbox_claim_statement(now: datetime):
+    """Claim only the oldest pending identity change for each customer license."""
+    older = aliased(CustomerEmailIdentitySyncOutbox)
+    earlier_pending = select(older.id).where(
+        older.license_key == CustomerEmailIdentitySyncOutbox.license_key,
+        older.status == "pending",
+        or_(
+            older.created_at < CustomerEmailIdentitySyncOutbox.created_at,
+            and_(
+                older.created_at == CustomerEmailIdentitySyncOutbox.created_at,
+                older.id < CustomerEmailIdentitySyncOutbox.id,
+            ),
+        ),
+    ).exists()
+    return (
+        select(CustomerEmailIdentitySyncOutbox)
+        .where(
+            CustomerEmailIdentitySyncOutbox.status == "pending",
+            CustomerEmailIdentitySyncOutbox.next_attempt_at <= now,
+            ~earlier_pending,
+        )
+        .order_by(
+            CustomerEmailIdentitySyncOutbox.created_at.asc(),
+            CustomerEmailIdentitySyncOutbox.id.asc(),
+        )
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+
+
 async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> dict:
-    """Retry verified email changes into PostgreSQL billing records idempotently."""
+    """Retry verified email changes into PostgreSQL billing records in per-license order."""
     if batch_size < 1 or batch_size > 200:
         raise ValueError("batch_size must be between 1 and 200.")
     now = datetime.now(timezone.utc)
@@ -602,14 +633,7 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
     async with HostingerAsyncSessionLocal() as operational_db:
         for _ in range(batch_size):
             event = (await operational_db.execute(
-                select(CustomerEmailIdentitySyncOutbox)
-                .where(
-                    CustomerEmailIdentitySyncOutbox.status == "pending",
-                    CustomerEmailIdentitySyncOutbox.next_attempt_at <= now,
-                )
-                .order_by(CustomerEmailIdentitySyncOutbox.created_at.asc())
-                .limit(1)
-                .with_for_update(skip_locked=True)
+                _customer_email_identity_outbox_claim_statement(now)
             )).scalar_one_or_none()
             if event is None:
                 break
