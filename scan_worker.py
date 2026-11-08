@@ -297,7 +297,8 @@ async def _execute_audit(target_url: str) -> dict:
         result.limitations.append(
             f"Rendered-browser diagnostics were not assessed ({str(exc)}); static HTML signals do not establish rendered mobile behavior."
         )
-    except Exception as exc:        modules["browser_rendered"] = "error"
+    except Exception as exc:
+        modules["browser_rendered"] = "error"
         result.limitations.append(
             f"Rendered-browser diagnostics failed safely ({type(exc).__name__}); no browser pass is inferred."
         )
@@ -596,7 +597,8 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                             CustomerSession.license_key == license_key,
                             CustomerSession.created_at <= event.created_at,
                             CustomerSession.revoked_at.is_(None),
-                        ).values(revoked_at=datetime.now(timezone.utc)))                    await operational_db.commit()
+                        ).values(revoked_at=datetime.now(timezone.utc)))
+                    await operational_db.commit()
                 event.status = "completed"
                 event.processed_at = datetime.now(timezone.utc)
                 event.last_error = None
@@ -766,8 +768,6 @@ def _billing_mirror_outbox_claim_statement(now: datetime):
             BillingMirrorSyncOutbox.event_id.asc(),
         )
         .limit(1)
-        # Lock only the outbox row; the outer-joined source event is locked
-        # separately by _billing_mirror_source_event_query after the claim.
         .with_for_update(skip_locked=True, of=BillingMirrorSyncOutbox)
     )
 
@@ -937,7 +937,8 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
         return_exceptions=True,
     )
     outcomes = []
-    slot_errors = 0    for slot, result in enumerate(slot_results):
+    slot_errors = 0
+    for slot, result in enumerate(slot_results):
         if isinstance(result, asyncio.CancelledError):
             raise result
         if isinstance(result, Exception):
