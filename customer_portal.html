@@ -626,7 +626,7 @@
     const data = await response.json();
     container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
-    if (!append && !items.length) {
+    if (!items.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
       container.append(empty);
@@ -777,6 +777,7 @@
     const data = await response.json();
     if (requestVersion !== agencyClientRequestVersion || sessionVersion !== accountSessionVersion) return;
     await loadAgencyUsage();
+    if (requestVersion !== agencyClientRequestVersion || sessionVersion !== accountSessionVersion) return;
     const workspaceSelect = $("agencyAuditWorkspace");
     const selectedWorkspace = workspaceSelect.value;
     if (!append) {
