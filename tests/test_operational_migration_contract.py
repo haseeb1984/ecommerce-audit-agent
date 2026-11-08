@@ -516,3 +516,29 @@ def test_account_candidate_deduplication_is_database_side_and_streamed():
     assert "account_candidates" not in migrate_segment
     assert "account_batch.append(row)" in migrate_segment
     assert "await candidate_result.close()" in migrate_segment
+
+
+def test_operational_license_identity_map_is_limited_to_referenced_legacy_rows():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    license_map = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_license_map"
+    )
+    segment = ast.get_source_segment(source, license_map)
+
+    assert "referenced_ids = union(" in segment
+    for model in (
+        "AccountLoginChallenge", "AccountSession", "AccountEmailChangeChallenge",
+        "WordPressSite", "WhiteLabelBranding", "PaymentWebhookEvent",
+        "SaaSOperationEvent",
+    ):
+        assert f"select({model}.license_id)" in segment
+    assert ".join(referenced_ids, referenced_ids.c.license_id == SoftwareLicense.id)" in segment
+    assert "source.stream(statement)" in segment
+    assert ".scalars().all()" not in segment
+    assert "await result.close()" in segment
