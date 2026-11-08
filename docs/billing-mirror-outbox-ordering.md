@@ -11,6 +11,12 @@ for retry, even when its next retry time is in the future. This prevents a
 later event from overwriting a newer Hostinger projection before the earlier
 canonical event has been mirrored.
 
+The claim's correlated pending-event lookup is supported by the
+`ix_billing_mirror_sync_pending_order` index on `(status, created_at, event_id)`.
+The index is declared in ORM metadata and in the idempotent
+`migrations/20261106_billing_mirror_sync_outbox.sql` migration; the production
+readiness CLI will report it as missing until that migration is applied.
+
 Different licenses remain independently claimable. Claims use
 `FOR UPDATE OF billing_mirror_sync_outbox SKIP LOCKED`; the source
 `PaymentWebhookEvent` is then locked separately before its canonical state is
