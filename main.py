@@ -8579,7 +8579,7 @@ async def admin_customer_account_detail(
         select(sql_func.count()).select_from(session_base.subquery())
     )).scalar_one() or 0)
     sessions = (await operational_db.execute(
-        session_base.order_by(CustomerSession.created_at.desc(), CustomerSession.id.desc())
+        session_base.order_by(CustomerSession.created_at.desc(), CustomerSession.token_hash.desc())
         .offset(session_offset).limit(session_limit)
     )).scalars().all()
     payments = (await operational_db.execute(
