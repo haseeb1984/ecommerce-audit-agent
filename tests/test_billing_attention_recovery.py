@@ -106,3 +106,11 @@ def test_unknown_paddle_subscription_status_cannot_mutate_entitlements():
     assert "elif status_supported:" in source
     assert 'event_status = "subscription_update_unrecognized_status"' in source
     assert '"unrecognized_subscription_status_ignored"' in source
+
+
+def test_admin_operations_surfaces_unknown_paddle_subscription_states():
+    import inspect
+
+    source = inspect.getsource(main.admin_operations)
+    assert '"subscription_update_unrecognized_status"' in source
+    assert '"subscription_unrecognized_status_events": billing_attention_counts["subscription_update_unrecognized_status"]' in source
