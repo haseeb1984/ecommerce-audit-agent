@@ -7592,37 +7592,37 @@ async def admin_payment_events(
                     CustomerBillingEvent.created_at.desc(), CustomerBillingEvent.event_id.desc()
                 ).limit(candidate_limit)
             )).scalars().all()
-    pg_rows = (await db.execute(
-        pg_statement.order_by(
-            PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()
-        ).limit(candidate_limit)
-    )).scalars().all()
-
-    # PostgreSQL is the canonical webhook/entitlement record; Hostinger is its
-    # operational mirror. Prefer canonical values for duplicate event IDs.
-    merged = {}
-    for item in host_rows:
-        merged[item.event_id] = item
-    for item in pg_rows:
-        merged[item.event_id] = item
-    events = sorted(
-        merged.values(),
-        key=lambda item: (
-            item.created_at.replace(tzinfo=timezone.utc) if item.created_at and item.created_at.tzinfo is None
-            else item.created_at or datetime.min.replace(tzinfo=timezone.utc),
-            item.event_id,
-        ),
-        reverse=True,
-    )[offset:offset + limit]
-    license_keys = {event.license_key for event in events if hasattr(event, "license_key")}
-    event_license_ids = {event.event_id: event.license_id for event in pg_rows}
-    license_ids = {}
-    if license_keys:
-        rows = (await db.execute(
-            select(SoftwareLicense.id, SoftwareLicense.license_key)
-            .where(SoftwareLicense.license_key.in_(license_keys))
-        )).all()
-        license_ids = {key: license_id for license_id, key in rows}
+        pg_rows = (await db.execute(
+            pg_statement.order_by(
+                PaymentWebhookEvent.created_at.desc(), PaymentWebhookEvent.event_id.desc()
+            ).limit(candidate_limit)
+        )).scalars().all()
+    
+        # PostgreSQL is the canonical webhook/entitlement record; Hostinger is its
+        # operational mirror. Prefer canonical values for duplicate event IDs.
+        merged = {}
+        for item in host_rows:
+            merged[item.event_id] = item
+        for item in pg_rows:
+            merged[item.event_id] = item
+        events = sorted(
+            merged.values(),
+            key=lambda item: (
+                item.created_at.replace(tzinfo=timezone.utc) if item.created_at and item.created_at.tzinfo is None
+                else item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                item.event_id,
+            ),
+            reverse=True,
+        )[offset:offset + limit]
+        license_keys = {event.license_key for event in events if hasattr(event, "license_key")}
+        event_license_ids = {event.event_id: event.license_id for event in pg_rows}
+        license_ids = {}
+        if license_keys:
+            rows = (await db.execute(
+                select(SoftwareLicense.id, SoftwareLicense.license_key)
+                .where(SoftwareLicense.license_key.in_(license_keys))
+            )).all()
+            license_ids = {key: license_id for license_id, key in rows}
     finally:
         if not pg_stream_closed:
             await pg_id_stream.close()
