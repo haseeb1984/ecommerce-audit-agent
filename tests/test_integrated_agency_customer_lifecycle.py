@@ -376,3 +376,4 @@ def test_agency_suspension_revokes_client_wordpress_credentials_and_pending_toke
     assert "AgencyWebsiteConnectChallenge.agency_id == agency.id" in source[challenge_revoke:commit]
     assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[challenge_revoke:commit]
     assert "wordpress_connections_revoked" in source
+    assert '"wordpress_connections_revoked": payload.status == "suspended"' in source
