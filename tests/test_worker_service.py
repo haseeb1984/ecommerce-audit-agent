@@ -310,12 +310,19 @@ async def test_audit_failure_cleans_up_lease_monitor_task(monkeypatch):
 
     started = asyncio.Event()
     lease_unconfirmed = asyncio.Event()
-    monitor_tasks = []
+    created_tasks = []
+    real_create_task = asyncio.create_task
+
+    def capture_task(coro):
+        task = real_create_task(coro)
+        created_tasks.append(task)
+        return task
 
     async def failing_audit(_target):
         started.set()
         raise ValueError("audit failed")
 
+    monkeypatch.setattr(asyncio, "create_task", capture_task)
     monkeypatch.setattr(scan_worker, "_execute_audit", failing_audit)
     with pytest.raises(ValueError, match="audit failed"):
         await scan_worker._run_audit_with_lease_guard(
@@ -323,12 +330,9 @@ async def test_audit_failure_cleans_up_lease_monitor_task(monkeypatch):
         )
 
     assert started.is_set()
-    assert not [
-        task for task in asyncio.all_tasks()
-        if task is not asyncio.current_task()
-        and task.get_coro().__qualname__ == "Event.wait"
-        and not task.done()
-    ]
+    assert len(created_tasks) == 2
+    assert all(task.done() for task in created_tasks)
+    assert created_tasks[1].cancelled()
 
 
 @pytest.mark.asyncio
