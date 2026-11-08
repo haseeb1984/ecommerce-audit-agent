@@ -12,7 +12,7 @@ import logging
 from itertools import islice
 from datetime import datetime, timezone
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
@@ -127,6 +127,38 @@ def _resolve_billing_license_candidates(candidates):
         email for email, license_keys in candidates.items()
         if len(license_keys) > 1
     }
+    return resolved, ambiguous
+
+
+
+async def _stream_billing_license_ownership(source):
+    """Resolve unique email/license ownership in PostgreSQL, not Python sets."""
+    normalized_email = func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email")
+    statement = (
+        select(
+            normalized_email,
+            func.count(func.distinct(SoftwareLicense.license_key)).label("license_count"),
+            func.min(SoftwareLicense.license_key).label("license_key"),
+        )
+        .join(SoftwareLicense, SoftwareLicense.id == PaymentWebhookEvent.license_id)
+        .where(
+            PaymentWebhookEvent.recipient_email.is_not(None),
+            func.trim(PaymentWebhookEvent.recipient_email) != "",
+        )
+        .group_by(normalized_email)
+        .execution_options(yield_per=MIGRATION_BATCH_SIZE)
+    )
+    result = await source.stream(statement)
+    resolved = {}
+    ambiguous = set()
+    try:
+        async for row in result:
+            if row.license_count == 1:
+                resolved[row.email] = row.license_key
+            elif row.license_count > 1:
+                ambiguous.add(row.email)
+    finally:
+        await result.close()
     return resolved, ambiguous
 
 
@@ -436,9 +468,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
 
         # Legacy support notes were keyed only by email. Associate each note with
         # the most recently linked license when that mapping is unambiguous.
-        billing_by_email, ambiguous_billing_emails = _resolve_billing_license_candidates(
-            billing_license_candidates
-        )
+        billing_by_email, ambiguous_billing_emails = await _stream_billing_license_ownership(source)
         note_copied = 0
         note_already_present = 0
         note_ambiguous = 0
