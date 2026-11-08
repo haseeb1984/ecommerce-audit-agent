@@ -3,6 +3,7 @@ import hmac
 import os
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from sqlalchemy.exc import SQLAlchemyError
 
 from scan_worker import process_scan_queue
 
@@ -28,7 +29,9 @@ async def run_legacy_scan_worker(
         raise HTTPException(status_code=401, detail="Unauthorized.")
     try:
         return await process_scan_queue(max_jobs=1)
-    except RuntimeError:
+    except (RuntimeError, SQLAlchemyError):
+        # Keep database connection/pool/driver failures retryable to the external
+        # scheduler without exposing provider or connection details.
         raise HTTPException(status_code=503, detail="Scan worker database is unavailable.") from None
 
 
@@ -52,5 +55,7 @@ async def run_scan_worker(
         raise HTTPException(status_code=401, detail="Unauthorized.")
     try:
         return await process_scan_queue(max_jobs=max_jobs)
-    except RuntimeError:
+    except (RuntimeError, SQLAlchemyError):
+        # Keep database connection/pool/driver failures retryable to the external
+        # scheduler without exposing provider or connection details.
         raise HTTPException(status_code=503, detail="Scan worker database is unavailable.") from None
