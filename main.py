@@ -3965,6 +3965,21 @@ async def account_audit_activity(
     }
 
 
+def _billing_history_event_count_query(license_id: int, license_key: str):
+    """Count the distinct union of canonical and operational billing event IDs in SQL."""
+    from sqlalchemy import func, select, union
+
+    event_ids = union(
+        select(PaymentWebhookEvent.event_id.label("event_id")).where(
+            PaymentWebhookEvent.license_id == license_id
+        ),
+        select(CustomerBillingEvent.event_id.label("event_id")).where(
+            CustomerBillingEvent.license_key == license_key
+        ),
+    ).subquery("billing_history_event_ids")
+    return select(func.count()).select_from(event_ids)
+
+
 @app.get("/api/v1/account/billing-history")
 async def account_billing_history(
     response: Response,
@@ -3979,13 +3994,11 @@ async def account_billing_history(
 
     pg_filter = PaymentWebhookEvent.license_id == license_obj.id
     host_filter = CustomerBillingEvent.license_key == license_obj.license_key
-    pg_ids = set((await db.execute(
-        select(PaymentWebhookEvent.event_id).where(pg_filter)
-    )).scalars().all())
-    host_ids = set((await operational_db.execute(
-        select(CustomerBillingEvent.event_id).where(host_filter)
-    )).scalars().all())
-    total = len(pg_ids | host_ids)
+    # Count the distinct cross-database union in SQL rather than loading every
+    # historical event ID into application memory on each paginated request.
+    total = int((await db.execute(
+        _billing_history_event_count_query(license_obj.id, license_obj.license_key)
+    )).scalar_one() or 0)
 
     candidate_limit = offset + limit
     pg_rows = (await db.execute(
