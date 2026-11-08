@@ -521,27 +521,34 @@ def test_account_candidate_deduplication_is_database_side_and_streamed():
     assert "await candidate_result.close()" in migrate_segment
 
 
-def test_operational_license_identity_map_is_limited_to_referenced_legacy_rows():
+def test_license_keys_are_resolved_per_bounded_migration_batch():
     import ast
 
     source = (
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
     tree = ast.parse(source)
-    license_map = next(
-        node for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_license_map"
+    assert not any(
+        isinstance(node, ast.AsyncFunctionDef) and node.name == "_license_map"
+        for node in tree.body
     )
-    segment = ast.get_source_segment(source, license_map)
+    copy_rows = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_copy_rows"
+    )
+    segment = ast.get_source_segment(source, copy_rows)
 
-    assert "referenced_ids = union(" in segment
-    for model in (
-        "AccountLoginChallenge", "AccountSession", "AccountEmailChangeChallenge",
-        "WordPressSite", "WhiteLabelBranding", "PaymentWebhookEvent",
-        "SaaSOperationEvent",
-    ):
-        assert f"select({model}.license_id)" in segment
-    assert ".join(referenced_ids, referenced_ids.c.license_id == SoftwareLicense.id)" in segment
-    assert "source.stream(statement)" in segment
-    assert ".scalars().all()" not in segment
-    assert "await result.close()" in segment
+    assert "resolve_license_keys: bool = False" in segment
+    assert "license_ids = {" in segment
+    assert "row.license_id for row in rows" in segment
+    assert "SoftwareLicense.id.in_(license_ids)" in segment
+    assert "transform(row, license_key_by_id) if resolve_license_keys else transform(row)" in segment
+    assert "MIGRATION_BATCH_SIZE" in segment
+
+    migrate = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
+    )
+    migrate_segment = ast.get_source_segment(source, migrate)
+    assert "licenses = await _license_map(source)" not in migrate_segment
+    assert migrate_segment.count("resolve_license_keys=True") == 7
