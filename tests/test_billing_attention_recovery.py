@@ -162,3 +162,16 @@ async def test_unrecognized_subscription_status_attention_remains_without_later_
     )
 
     assert visible == [unknown]
+
+
+
+def test_admin_operations_exposes_bounded_billing_mirror_retry_queue():
+    import inspect
+
+    source = inspect.getsource(main.admin_operations)
+
+    assert '"billing_mirror_pending_events": billing_mirror_pending_count' in source
+    assert '"billing_mirror_due_events": billing_mirror_due_count' in source
+    assert '"billing_mirror_sync_events"' in source
+    assert ".limit(50)" in source
+    assert 'BillingMirrorSyncOutbox.status == "pending"' in source

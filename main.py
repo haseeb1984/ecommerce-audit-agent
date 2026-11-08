@@ -7363,6 +7363,25 @@ async def admin_operations(
     billing_attention_events = await _filter_recovered_billing_attention_events(
         billing_attention_events, db, operational_db
     )
+    # The billing mirror outbox lives in canonical PostgreSQL, not Hostinger.
+    # Expose its delivery backlog separately from customer-visible billing events.
+    billing_mirror_pending_count = int((await db.execute(
+        select(sql_func.count(BillingMirrorSyncOutbox.event_id)).where(
+            BillingMirrorSyncOutbox.status == "pending"
+        )
+    )).scalar_one() or 0)
+    billing_mirror_due_count = int((await db.execute(
+        select(sql_func.count(BillingMirrorSyncOutbox.event_id)).where(
+            BillingMirrorSyncOutbox.status == "pending",
+            BillingMirrorSyncOutbox.next_attempt_at <= now,
+        )
+    )).scalar_one() or 0)
+    billing_mirror_rows = (await db.execute(
+        select(BillingMirrorSyncOutbox)
+        .where(BillingMirrorSyncOutbox.status == "pending")
+        .order_by(BillingMirrorSyncOutbox.next_attempt_at.asc(), BillingMirrorSyncOutbox.created_at.asc())
+        .limit(50)
+    )).scalars().all()
     stale_email_sending_count = int((await operational_db.execute(
         select(sql_func.count(CustomerBillingEvent.event_id)).where(
             CustomerBillingEvent.status == "email_sending",
@@ -7431,6 +7450,9 @@ async def admin_operations(
             "subscription_updated_past_due_events": billing_attention_counts["subscription_updated_past_due"],
             "subscription_canceled_events": billing_attention_counts["subscription_canceled"],
             "subscription_unrecognized_status_events": billing_attention_counts["subscription_update_unrecognized_status"],
+            "billing_mirror_pending_events": billing_mirror_pending_count,
+            "billing_mirror_due_events": billing_mirror_due_count,
+            "billing_mirror_waiting_retry_events": max(0, billing_mirror_pending_count - billing_mirror_due_count),
             "expired_quota_reservations": int(expired_reservation_count or 0),
             "active_quota_reservations": int(active_reservations or 0),
             "audit_and_operation_failures_24h": int(failures_24h or 0),
@@ -7462,6 +7484,13 @@ async def admin_operations(
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         } for item in billing_attention_events],
+        "billing_mirror_sync_events": [{
+            "event_id": item.event_id,
+            "attempts": item.attempts,
+            "next_attempt_at": item.next_attempt_at.isoformat() if item.next_attempt_at else None,
+            "last_error": item.last_error,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        } for item in billing_mirror_rows],
         "expired_reservations": [{
             "id": item.id,
             "license_id": item.license_id,
