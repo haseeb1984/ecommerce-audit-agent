@@ -287,6 +287,8 @@ async def test_admin_sync_outbox_retry_requeues_bounded_pending_rows(
         SimpleNamespace(status="pending", next_attempt_at=now_old, created_at=now_old),
     ]
     db = _RetryDB(items)
+    operational_db = _RetryDB(items)
+    queue_db = db if queue == "customer_lifecycle" else operational_db
     logs = []
 
     async def write_log(*args, **kwargs):
@@ -294,7 +296,7 @@ async def test_admin_sync_outbox_retry_requeues_bounded_pending_rows(
 
     monkeypatch.setattr(main, "_write_admin_log", write_log)
     result = await main.admin_retry_sync_outbox(
-        request=_admin_request(), queue=queue, limit=2, db=db
+        request=_admin_request(), queue=queue, limit=2, db=db, operational_db=operational_db
     )
 
     assert result["queue"] == queue
@@ -303,10 +305,10 @@ async def test_admin_sync_outbox_retry_requeues_bounded_pending_rows(
     assert result["next_worker_cycle"] is True
     checked_at = datetime.fromisoformat(result["checked_at"])
     assert all(item.next_attempt_at == checked_at for item in items)
-    assert db.committed is True
-    assert db.statement._for_update_arg.skip_locked is True
-    assert f"FROM {model.__tablename__}" in str(db.statement)
-    assert "status" in str(db.statement)
+    assert queue_db.committed is True
+    assert queue_db.statement._for_update_arg.skip_locked is True
+    assert f"FROM {model.__tablename__}" in str(queue_db.statement)
+    assert "status" in str(queue_db.statement)
     assert len(logs) == 1
     assert logs[0][0][1] == "sync_outbox.retry_queued"
     assert logs[0][0][2] == queue
