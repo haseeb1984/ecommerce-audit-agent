@@ -502,5 +502,13 @@ def test_customer_scan_pagination_offsets_are_bounded():
         get_customer_website,
     ):
         offset = inspect.signature(handler).parameters["offset"].default
-        assert offset.ge == 0
-        assert offset.le == 1_000_000
+        constraints = {
+            attribute: next(
+                getattr(item, attribute)
+                for item in offset.metadata
+                if hasattr(item, attribute)
+            )
+            for attribute in ("ge", "le")
+        }
+        assert constraints["ge"] == 0
+        assert constraints["le"] == 1_000_000
