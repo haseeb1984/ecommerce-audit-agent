@@ -1496,8 +1496,8 @@ async def request_customer_email_change(
     ))
     if current_license_id is None:
         raise HTTPException(status_code=401, detail="Customer account is unavailable.")
-    new_license_ids = await _billing_license_ids_for_email(db, operational_db, new_email)
-    if new_license_ids - {current_license_id}:
+    email_has_other_license = await _billing_email_has_other_license(db, operational_db, new_email, current_license_id)
+    if email_has_other_license:
         raise HTTPException(status_code=409, detail="That email is already linked to a different customer account.")
     recent_count = int((await operational_db.execute(select(func.count(CustomerEmailChangeChallenge.id)).where(
         CustomerEmailChangeChallenge.license_key == current.license_key,
@@ -1626,8 +1626,8 @@ async def verify_customer_email_change(
     ))
     if current_license_id is None:
         raise HTTPException(status_code=401, detail="Customer account is unavailable.")
-    new_license_ids = await _billing_license_ids_for_email(db, operational_db, challenge.new_email)
-    if new_license_ids - {current_license_id}:
+    email_has_other_license = await _billing_email_has_other_license(db, operational_db, challenge.new_email, current_license_id)
+    if email_has_other_license:
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=409, detail="That email is now linked to a different customer account.")
@@ -6169,28 +6169,67 @@ def _sanitize_admin_log_value(value, *, depth: int = 0):
     return str(value)[:500]
 
 
-async def _billing_license_ids_for_email(
-    db: AsyncSession, operational_db: AsyncSession, email: str
-) -> set[int]:
-    """Resolve account links from Hostinger billing history with legacy PG fallback."""
-    from sqlalchemy import select, func
+async def _billing_email_has_other_license(
+    db: AsyncSession, operational_db: AsyncSession, email: str, current_license_id: int
+) -> bool:
+    """Check cross-store email ownership without materializing every linked license."""
+    from sqlalchemy import select, func, text, table, column, String
+
     normalized = email.strip().lower()
-    license_keys = set((await operational_db.execute(
-        select(CustomerBillingEvent.license_key).where(
-            func.lower(CustomerBillingEvent.recipient_email) == normalized
+    identity_table = table(
+        "customer_email_change_license_keys",
+        column("license_key", String(100)),
+    )
+    await db.execute(text(
+        "CREATE TEMP TABLE customer_email_change_license_keys "
+        "(license_key VARCHAR(100) PRIMARY KEY)"
+    ))
+    identity_stream = None
+    try:
+        operational_identity_query = select(
+            CustomerBillingEvent.license_key
+        ).where(
+            func.lower(CustomerBillingEvent.recipient_email) == normalized,
+            CustomerBillingEvent.license_key.is_not(None),
+        ).distinct().order_by(CustomerBillingEvent.license_key.asc())
+        identity_stream = await operational_db.stream(operational_identity_query)
+        identity_values = identity_stream.scalars()
+        while True:
+            batch = await identity_values.fetchmany(500)
+            if not batch:
+                break
+            await db.execute(
+                text(
+                    "INSERT INTO customer_email_change_license_keys (license_key) "
+                    "VALUES (:license_key) ON CONFLICT (license_key) DO NOTHING"
+                ),
+                [{"license_key": key} for key in batch],
+            )
+        operational_conflict = await db.scalar(
+            select(SoftwareLicense.id)
+            .join(identity_table, identity_table.c.license_key == SoftwareLicense.license_key)
+            .where(SoftwareLicense.id != current_license_id)
+            .limit(1)
         )
-    )).scalars().all())
-    ids = set((await db.execute(
-        select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(license_keys))
-    )).scalars().all()) if license_keys else set()
-    # Retain compatibility until the one-time operational data copy is applied.
-    legacy_ids = set((await db.execute(
-        select(PaymentWebhookEvent.license_id).where(
-            func.lower(PaymentWebhookEvent.recipient_email) == normalized,
-            PaymentWebhookEvent.license_id.is_not(None),
+        legacy_conflict = await db.scalar(
+            select(PaymentWebhookEvent.license_id).where(
+                func.lower(PaymentWebhookEvent.recipient_email) == normalized,
+                PaymentWebhookEvent.license_id.is_not(None),
+                PaymentWebhookEvent.license_id != current_license_id,
+            ).limit(1)
         )
-    )).scalars().all())
-    return ids | legacy_ids
+        return operational_conflict is not None or legacy_conflict is not None
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        if identity_stream is not None:
+            await identity_stream.close()
+        # Drop explicitly so this helper is safe if a caller reuses the same
+        # PostgreSQL session/transaction for another account-identity check.
+        await db.execute(text("DROP TABLE IF EXISTS customer_email_change_license_keys"))
+
+
 
 
 async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> bool:
