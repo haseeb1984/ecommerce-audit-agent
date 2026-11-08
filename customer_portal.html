@@ -2066,8 +2066,11 @@
     catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
   });
   $("refreshScanBatches").addEventListener("click", async () => {
+    const operationSessionVersion = accountSessionVersion;
     try { await loadScanBatches(); }
-    catch (error) { setStatus("bulkScanStatus", error.message, "error"); }
+    catch (error) {
+      if (operationSessionVersion === accountSessionVersion) setStatus("bulkScanStatus", error.message, "error");
+    }
   });
 
   function clearAccountView() {
