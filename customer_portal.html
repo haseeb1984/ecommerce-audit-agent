@@ -1146,8 +1146,16 @@
           saveAccess.disabled = true;
           try {
             const selected = new Set(Array.from(accessSelect.selectedOptions).map(option => option.value));
+            const visibleWorkspaceIds = new Set(
+              Array.from($("agencyTeamWorkspaces").options)
+                .map(option => option.value)
+                .filter(Boolean)
+            );
             for (const workspace of (item.workspaces || [])) {
-              if (!selected.has(workspace.workspace_id)) {
+              // Only reconcile grants represented in the currently loaded
+              // workspace pages. Never revoke an off-page grant just because
+              // its workspace has not been loaded into this browser yet.
+              if (visibleWorkspaceIds.has(workspace.workspace_id) && !selected.has(workspace.workspace_id)) {
                 await api("/api/v1/account/agency/team/" + encodeURIComponent(item.id) +
                   "/workspaces/" + encodeURIComponent(workspace.workspace_id), {method:"DELETE"});
               }
