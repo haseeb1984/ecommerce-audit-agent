@@ -1970,16 +1970,20 @@ async def disconnect_wordpress_site(
     site = (await operational_db.execute(select(WordPressInstallation).where(
         WordPressInstallation.id == payload.site_id,
         WordPressInstallation.license_key == license_obj.license_key,
-        WordPressInstallation.status == "active",
     ).with_for_update())).scalar_one_or_none()
     if site is None:
         raise HTTPException(status_code=404, detail="WordPress site connection not found.")
-    site.status = "disconnected"
-    site.disconnected_at = datetime.now(timezone.utc)
-    await operational_db.commit()
+    if site.status == "active":
+        site.status = "disconnected"
+        site.disconnected_at = datetime.now(timezone.utc)
+        await operational_db.commit()
+        result_status = "disconnected"
+    else:
+        # Retried disconnects are successful no-ops after ambiguous network failures.
+        result_status = "already_disconnected"
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"status": "disconnected", "site_id": site.id}
+    return {"status": result_status, "site_id": site.id}
 
 
 @app.get("/wordpress-plugin-guide", response_class=HTMLResponse)
@@ -2080,16 +2084,20 @@ async def customer_disconnect_wordpress_site(
     site = (await operational_db.execute(select(WordPressInstallation).where(
         WordPressInstallation.id == site_id,
         WordPressInstallation.license_key == license_obj.license_key,
-        WordPressInstallation.status == "active",
     ).with_for_update())).scalar_one_or_none()
     if site is None:
         raise HTTPException(status_code=404, detail="Connected WordPress site not found.")
-    site.status = "disconnected"
-    site.disconnected_at = datetime.now(timezone.utc)
-    await operational_db.commit()
+    if site.status == "active":
+        site.status = "disconnected"
+        site.disconnected_at = datetime.now(timezone.utc)
+        await operational_db.commit()
+        result_status = "disconnected"
+    else:
+        # Make portal retries safe after an ambiguous network failure.
+        result_status = "already_disconnected"
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"status": "disconnected", "site_id": site.id}
+    return {"status": result_status, "site_id": site.id}
 
 
 @app.get("/api/v1/account/profile")
