@@ -3354,7 +3354,7 @@ async def list_business_agency_team(
     response: Response,
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
-    workspace_ids: list[str] = Query(default=[]),
+    workspace_ids: list[str] = Query(default=[], max_length=100),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
