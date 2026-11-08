@@ -751,6 +751,7 @@
     } finally {
       if (requestVersion === agencyUsageRequestVersion) {
         agencyUsageLoading = false;
+        moreButton.hidden = !agencyUsageHasMore;
         moreButton.disabled = false;
       }
     }
