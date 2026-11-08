@@ -8256,11 +8256,8 @@ async def admin_customer_account_action(
     )).scalars().all())
     if payload.action in {"suspend", "reactivate"}:
         active = payload.action == "reactivate"
-        # Keep the operational customer identity aligned with the canonical
-        # entitlement state; a suspension also terminates all browser sessions.
-        # Commit the canonical entitlement decision first. If the operational
-        # database is temporarily unavailable, API and portal authorization still
-        # fail closed against the canonical PostgreSQL license state.
+        # PostgreSQL is canonical for entitlement state. Persist the decision and
+        # its retryable Hostinger mirror event before touching the operational DB.
         result = await db.execute(update(SoftwareLicense).where(
             SoftwareLicense.id.in_(ids)
         ).values(is_active=active))
@@ -8276,16 +8273,6 @@ async def admin_customer_account_action(
             ))
         await db.commit()
         changed = int(result.rowcount or 0)
-        await operational_db.execute(update(CustomerAccount).where(
-            CustomerAccount.license_key.in_(license_keys)
-        ).values(status="active" if active else "suspended", updated_at=now))
-        if not active:
-            session_result = await operational_db.execute(update(CustomerSession).where(
-                CustomerSession.license_key.in_(license_keys),
-                CustomerSession.revoked_at.is_(None),
-            ).values(revoked_at=now))
-            changed += int(session_result.rowcount or 0)
-        await operational_db.commit()
     else:
         for license_key in license_keys:
             db.add(CustomerLifecycleSyncOutbox(
@@ -8298,17 +8285,36 @@ async def admin_customer_account_action(
                 created_at=now,
             ))
         await db.commit()
+        changed = 0
+
+    # Record the operator's action immediately after the canonical commit. This
+    # makes the audit attempt independent of a later Hostinger mutation failure.
+    await _write_admin_log(db, "customer.account_" + payload.action, "customer", normalized, {
+        "license_ids": ids,
+        "license_count": len(ids),
+        "reason": payload.reason.strip(),
+        "operational_sync": "queued",
+    })
+
+    if payload.action in {"suspend", "reactivate"}:
+        active = payload.action == "reactivate"
+        await operational_db.execute(update(CustomerAccount).where(
+            CustomerAccount.license_key.in_(license_keys)
+        ).values(status="active" if active else "suspended", updated_at=now))
+        if not active:
+            session_result = await operational_db.execute(update(CustomerSession).where(
+                CustomerSession.license_key.in_(license_keys),
+                CustomerSession.revoked_at.is_(None),
+            ).values(revoked_at=now))
+            changed += int(session_result.rowcount or 0)
+    else:
         result = await operational_db.execute(update(CustomerSession).where(
             CustomerSession.license_key.in_(license_keys),
             CustomerSession.created_at <= now,
             CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now))
-        await operational_db.commit()
         changed = int(result.rowcount or 0)
-    await _write_admin_log(db, "customer.account_" + payload.action, "customer", normalized, {
-        "license_ids": ids, "changed_count": changed, "reason": payload.reason.strip(),
-    })
-    await db.commit()
+    await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     action_status = {"suspend": "suspended", "reactivate": "reactivated", "revoke_sessions": "sessions_revoked"}[payload.action]
