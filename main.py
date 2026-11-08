@@ -9392,9 +9392,11 @@ async def admin_unlink_client_wordpress_site(
     """Disconnect one customer WordPress installation with an auditable operator reason."""
     _require_admin_key(request)
     from sqlalchemy import select
-    client = (await db.execute(
-        select(SoftwareLicense).where(SoftwareLicense.id == license_id)
-    )).scalar_one_or_none()
+    # Serialize with plugin registration, identity claims and customer
+    # disconnect by taking the canonical PostgreSQL license lock first.
+    client = await db.scalar(
+        select(SoftwareLicense).where(SoftwareLicense.id == license_id).with_for_update()
+    )
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
     reason = payload.reason.strip()
@@ -9415,6 +9417,14 @@ async def admin_unlink_client_wordpress_site(
     now = datetime.now(timezone.utc)
     site.status = "disconnected"
     site.disconnected_at = now
+    await operational_db.execute(
+        update(WordPressSiteLinkChallenge)
+        .where(
+            WordPressSiteLinkChallenge.license_key == client.license_key,
+            WordPressSiteLinkChallenge.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
     await operational_db.commit()
     await _write_admin_log(db, "client.wordpress_site_disconnected", "client", license_id, {
         "site_id": site.id,
