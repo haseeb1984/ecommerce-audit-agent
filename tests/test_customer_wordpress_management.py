@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import Response
@@ -88,6 +89,11 @@ class _DisconnectSession:
         self.commits += 1
 
 
+class _CanonicalLicenseSession:
+    async def scalar(self, statement):
+        return SimpleNamespace(id=1, license_key="license-test")
+
+
 @pytest.mark.asyncio
 async def test_customer_wordpress_disconnect_is_idempotent_after_successful_disconnect():
     from types import SimpleNamespace
@@ -106,7 +112,8 @@ async def test_customer_wordpress_disconnect_is_idempotent_after_successful_disc
     result = await customer_disconnect_wordpress_site(
         site_id=site.id,
         response=response,
-        license_obj=SimpleNamespace(license_key="license-test"),
+        license_obj=SimpleNamespace(id=1, license_key="license-test"),
+        db=_CanonicalLicenseSession(),
         operational_db=operational_db,
     )
 
@@ -134,8 +141,8 @@ async def test_legacy_wordpress_disconnect_is_idempotent_after_successful_discon
     result = await disconnect_wordpress_site(
         payload=WordPressInstallationAction(site_id=site.id),
         response=response,
-        license_obj=SimpleNamespace(license_key="license-test"),
-        db=None,
+        license_obj=SimpleNamespace(id=1, license_key="license-test"),
+        db=_CanonicalLicenseSession(),
         operational_db=operational_db,
     )
 
@@ -143,3 +150,19 @@ async def test_legacy_wordpress_disconnect_is_idempotent_after_successful_discon
     assert operational_db.commits == 0
     assert site.disconnected_at == disconnected_at
     assert response.headers["Pragma"] == "no-cache"
+
+
+
+def test_wordpress_disconnect_serializes_with_identity_claim_and_revokes_pending_codes():
+    import inspect
+    from main import customer_disconnect_wordpress_site, disconnect_wordpress_site
+
+    for endpoint in (customer_disconnect_wordpress_site, disconnect_wordpress_site):
+        source = inspect.getsource(endpoint)
+        canonical_lock = source.index("db.scalar(")
+        operational_site_lock = source.index("operational_db.execute(select(WordPressInstallation)")
+        challenge_revocation = source.index("update(WordPressSiteLinkChallenge)")
+        assert canonical_lock < operational_site_lock < challenge_revocation
+        assert "WordPressSiteLinkChallenge.consumed_at.is_(None)" in source
+        assert ".values(consumed_at=disconnected_at)" in source
+        assert 'if site.status == "active":' in source
