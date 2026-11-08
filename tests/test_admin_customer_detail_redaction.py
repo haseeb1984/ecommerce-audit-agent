@@ -116,3 +116,16 @@ def test_admin_customer_detail_billing_load_more_control_is_scoped_to_selected_c
     assert '"Load more billing events"' in portal
     assert 'billing_offset="+(p.offset+p.limit)' in portal
     assert "if(selectedCustomerEmail!==d.email)return;appendBilling(next.billing_events)" in portal
+
+
+def test_admin_customer_history_exposes_only_retryable_license_email_states():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text()
+    assert "function licenseEmailRetryEligible(item)" in portal
+    assert 'if(item.status==="email_pending")return true;' in portal
+    assert 'if(item.status!=="email_sending"||!item.updated_at)return false;' in portal
+    assert "Date.now()-updatedAt>=10*60*1000" in portal
+    assert "if(licenseEmailRetryEligible(x))" in portal
+    assert "if(licenseEmailRetryEligible(p))" in portal
+    assert "if(licenseEmailRetryEligible(item))" in portal
