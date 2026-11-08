@@ -3429,7 +3429,7 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
         )
 
     update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
-        "data": {"id": "sub_update123", "customer_id": "ctm_update123",
+        "data": {"id": "sub_update123", "customer_id": "ctm_update123", "status": "active",
         "items": [{"price": {"id": "pri_updatepro123"}, "quantity": 1}]}}
     changed = await send(update)
     assert changed.status_code == 200, changed.text
