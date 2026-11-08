@@ -3746,7 +3746,7 @@ async def list_business_agency_clients(
     """List only the client workspaces owned by the caller's Business agency."""
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency management is available on the Business plan.")
-    from sqlalchemy import select
+    from sqlalchemy import select, func as sql_func
     # Keep the agency -> workspace lock order consistent with suspension,
     # workspace creation and website-connection lifecycle operations.
     agency = await operational_db.scalar(
