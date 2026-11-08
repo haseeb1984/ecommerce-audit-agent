@@ -84,7 +84,7 @@ def _billing_license_map(billing_rows, license_key_by_id):
     return resolved, ambiguous
 
 
-async def _copy_rows(source, target, source_model, target_model, transform, key_name):
+async def _copy_rows(source, target, source_model, target_model, transform, key_name, stage_missing: bool):
     rows = (await source.execute(select(source_model))).scalars().all()
     copied = 0
     skipped = 0
@@ -98,7 +98,8 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
             select(target_model).where(getattr(target_model, key_name) == key_value).limit(1)
         )
         if existing is None:
-            target.add(target_model(**values))
+            if stage_missing:
+                target.add(target_model(**values))
             copied += 1
         else:
             skipped += 1
@@ -152,15 +153,16 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 CustomerAccount.email == normalized_email,
             ).limit(1))
             if existing is None:
-                target.add(CustomerAccount(
-                    id=_legacy_account_id(license_key, normalized_email),
-                    license_key=license_key,
-                    email=normalized_email,
-                    display_name=display_name,
-                    status="active",
-                    created_at=created_at,
-                    updated_at=created_at,
-                ))
+                if apply_changes:
+                    target.add(CustomerAccount(
+                        id=_legacy_account_id(license_key, normalized_email),
+                        license_key=license_key,
+                        email=normalized_email,
+                        display_name=display_name,
+                        status="active",
+                        created_at=created_at,
+                        updated_at=created_at,
+                    ))
                 account_copied += 1
             else:
                 account_skipped += 1
@@ -183,6 +185,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "created_at": row.created_at,
             } if license_key_by_id.get(row.license_id) else None),
             "id",
+            stage_missing=apply_changes,
         )
         reports["customer_sessions"] = await _copy_rows(
             source, target, AccountSession, CustomerSession,
@@ -198,6 +201,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "user_agent": row.user_agent,
             } if license_key_by_id.get(row.license_id) else None),
             "token_hash",
+            stage_missing=apply_changes,
         )
         reports["customer_email_change_challenges"] = await _copy_rows(
             source, target, AccountEmailChangeChallenge, CustomerEmailChangeChallenge,
@@ -213,6 +217,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "created_at": row.created_at,
             } if license_key_by_id.get(row.license_id) else None),
             "id",
+            stage_missing=apply_changes,
         )
         reports["wordpress_installations"] = await _copy_rows(
             source, target, WordPressSite, WordPressInstallation,
@@ -232,6 +237,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "disconnected_at": row.disconnected_at,
             } if license_key_by_id.get(row.license_id) else None),
             "id",
+            stage_missing=apply_changes,
         )
         reports["customer_branding"] = await _copy_rows(
             source, target, WhiteLabelBranding, CustomerBranding,
@@ -243,6 +249,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "updated_at": row.updated_at,
             } if license_key_by_id.get(row.license_id) else None),
             "license_key",
+            stage_missing=apply_changes,
         )
 
         reports["customer_billing_events"] = await _copy_rows(
@@ -259,6 +266,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "updated_at": row.updated_at,
             } if license_key_by_id.get(row.license_id) else None),
             "event_id",
+            stage_missing=apply_changes,
         )
         reports["admin_action_logs"] = await _copy_rows(
             source, target, SaaSAdminActionLog, AdminActionLog,
@@ -271,6 +279,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "created_at": row.created_at,
             }),
             "id",
+            stage_missing=apply_changes,
         )
         reports["operational_diagnostic_events"] = await _copy_rows(
             source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
@@ -283,6 +292,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 "created_at": row.created_at,
             }),
             "legacy_source_id",
+            stage_missing=apply_changes,
         )
 
         # Legacy support notes were keyed only by email. Associate each note with
@@ -307,14 +317,15 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 continue
             existing = await target.get(AdminCustomerNote, row.id)
             if existing is None:
-                target.add(AdminCustomerNote(
-                    id=row.id,
-                    license_key=license_key,
-                    customer_email=email,
-                    note=row.note,
-                    created_by=row.created_by,
-                    created_at=row.created_at,
-                ))
+                if apply_changes:
+                    target.add(AdminCustomerNote(
+                        id=row.id,
+                        license_key=license_key,
+                        customer_email=email,
+                        note=row.note,
+                        created_by=row.created_by,
+                        created_at=row.created_at,
+                    ))
                 note_copied += 1
             else:
                 note_already_present += 1
