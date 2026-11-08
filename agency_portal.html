@@ -119,13 +119,19 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
             const detail=document.createElement("p");detail.className="muted";detail.textContent=batch.total_urls+" URLs · "+batch.completed+" completed · "+batch.failed+" failed · "+(batch.created_at||"");
             const view=document.createElement("button");view.type="button";view.className="secondary";view.textContent="View saved findings";
             const evidence=document.createElement("div");
-            view.addEventListener("click",async()=>{
+            let evidenceOffset=0;
+            let evidenceLoaded=false;
+            let evidenceLoadMore=null;
+            const evidencePageSize=25;
+            async function loadEvidencePage(offset, append) {
               const evidenceVersion=sessionVersion;
-              view.disabled=true;evidence.replaceChildren();
+              view.disabled=true;
+              if(evidenceLoadMore)evidenceLoadMore.disabled=true;
+              if(!append){evidence.replaceChildren();evidenceOffset=0;evidenceLoaded=false;}
               try {
-                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},evidenceVersion);
+                const saved=await api("/api/v1/agency/team/workspaces/"+encodeURIComponent(item.id)+"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit="+evidencePageSize+"&offset="+offset,{},evidenceVersion);
                 assertCurrentSession(evidenceVersion);
-                if(!saved.items.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="No saved audit results are available yet.";evidence.append(empty);}
+                if(!append && !saved.items.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="No saved audit results are available yet.";evidence.append(empty);}
                 for(const audit of saved.items){
                   const resultCard=document.createElement("div");resultCard.className="batch";
                   const resultTitle=document.createElement("strong");resultTitle.textContent=audit.url+" · "+audit.status;resultCard.append(resultTitle);
@@ -140,9 +146,20 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
                   }else{const pending=document.createElement("p");pending.className="muted";pending.textContent="No saved result for this URL yet.";resultCard.append(pending);}
                   evidence.append(resultCard);
                 }
+                evidenceOffset=offset+saved.items.length;
+                evidenceLoaded=true;
+                if(evidenceLoadMore)evidenceLoadMore.remove();
+                evidenceLoadMore=null;
+                if(saved.items.length===evidencePageSize){
+                  evidenceLoadMore=document.createElement("button");
+                  evidenceLoadMore.type="button";evidenceLoadMore.className="secondary";evidenceLoadMore.textContent="Load more saved findings";
+                  evidenceLoadMore.addEventListener("click",()=>loadEvidencePage(evidenceOffset,true));
+                  evidence.append(evidenceLoadMore);
+                }
               }catch(error){if(evidenceVersion===sessionVersion){const message=document.createElement("p");message.className="status";message.textContent=error.message;evidence.append(message);}}
-              finally{if(evidenceVersion===sessionVersion)view.disabled=false;}
-            });
+              finally{if(evidenceVersion===sessionVersion){view.disabled=false;if(evidenceLoadMore)evidenceLoadMore.disabled=false;}}
+            }
+            view.addEventListener("click",()=>loadEvidencePage(0,false));
             row.append(title,detail,view,evidence);history.append(row);
           }
           historyOffset=offset+result.items.length;
