@@ -115,3 +115,30 @@ def test_agency_team_scan_submission_reuses_idempotency_key_for_same_payload_ret
     assert "request_id:pendingRequestId" in source
     assert 'pendingRequestFingerprint="";' in source
     assert 'pendingRequestId="";' in source
+
+
+def test_agency_team_workspace_endpoint_paginates_with_stable_lock_order():
+    import inspect
+    import main
+
+    route = main.list_agency_team_workspaces
+    source = inspect.getsource(route)
+
+    assert route.__defaults__ is not None or "limit" in inspect.signature(route).parameters
+    assert "limit: int = Query(default=100, ge=1, le=100)" in source
+    assert "offset: int = Query(default=0, ge=0, le=1000000)" in source
+    assert ".order_by(AgencyClientWorkspace.id.asc()).offset(offset).limit(limit).with_for_update()" in source
+    assert '"has_more": offset + len(rows) < total' in source
+
+
+def test_agency_team_portal_loads_assigned_workspaces_in_session_guarded_pages():
+    portal = Path("agency_portal.html").read_text(encoding="utf-8")
+    start = portal.index("(() => {")
+    script = portal[start:portal.index("</script>", start)]
+
+    assert "let workspaceOffset = 0;" in script
+    assert "let workspaceLoadMore = null;" in script
+    assert '"/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset' in script
+    assert 'workspaceLoadMore.textContent = "Load more client workspaces";' in script
+    assert "loadWorkspaces(expectedVersion, workspaceOffset, true)" in script
+    assert "assertCurrentSession(expectedVersion);" in script

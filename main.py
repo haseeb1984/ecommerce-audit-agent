@@ -3110,9 +3110,14 @@ async def list_agency_team_workspace_audit_results(
 
 
 @app.get("/api/v1/agency/team/workspaces")
-async def list_agency_team_workspaces(response: Response, identity=Depends(require_agency_team_session),
-                                      operational_db: AsyncSession = Depends(get_hostinger_db)):
-    from sqlalchemy import select
+async def list_agency_team_workspaces(
+    response: Response,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
+    identity=Depends(require_agency_team_session),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    from sqlalchemy import select, func
     rows = (await operational_db.execute(
         select(AgencyClientWorkspace, AgencyWorkspaceAccess.role)
         .join(AgencyWorkspaceAccess, AgencyWorkspaceAccess.workspace_id == AgencyClientWorkspace.id)
@@ -3121,15 +3126,28 @@ async def list_agency_team_workspaces(response: Response, identity=Depends(requi
             AgencyWorkspaceAccess.team_member_id == identity["member"].id,
             AgencyClientWorkspace.agency_id == identity["agency"].id,
             AgencyClientWorkspace.status == "active",
-        ).order_by(AgencyClientWorkspace.id.asc()).limit(500).with_for_update()
+        ).order_by(AgencyClientWorkspace.id.asc()).offset(offset).limit(limit).with_for_update()
     )).all()
     # Lock rows in stable workspace-ID order to match grant mutation ordering;
-    # restore the customer-facing name sort after the locks are acquired.
+    # restore the customer-facing name sort within this bounded page.
     rows.sort(key=lambda row: ((row[0].display_name or "").casefold(), row[0].id))
+    total = int((await operational_db.execute(
+        select(func.count(AgencyClientWorkspace.id))
+        .join(AgencyWorkspaceAccess, AgencyWorkspaceAccess.workspace_id == AgencyClientWorkspace.id)
+        .where(
+            AgencyWorkspaceAccess.agency_id == identity["agency"].id,
+            AgencyWorkspaceAccess.team_member_id == identity["member"].id,
+            AgencyClientWorkspace.agency_id == identity["agency"].id,
+            AgencyClientWorkspace.status == "active",
+        )
+    )).scalar_one() or 0)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {"items": [{"id": workspace.id, "display_name": workspace.display_name, "role": role}
-                      for workspace, role in rows]}
+    return {
+        "items": [{"id": workspace.id, "display_name": workspace.display_name, "role": role}
+                  for workspace, role in rows],
+        "page": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(rows) < total},
+    }
 
 
 @app.get("/api/v1/agency/team/workspaces/{workspace_id}/audits")
