@@ -31,3 +31,20 @@ def test_standard_wordpress_uninstall_disconnect_is_preserved():
     assert "/api/v1/integrations/wordpress/sites/disconnect" in UNINSTALL
     assert "'X-License-Key' => $license" in UNINSTALL
     assert "'X-WordPress-Site-ID' => sanitize_text_field($settings['site_id'])" in UNINSTALL
+
+
+def test_uninstall_retains_local_credentials_when_remote_disconnect_fails():
+    assert "$disconnect_failed = false;" in UNINSTALL
+    assert "is_wp_error($response) ? 0" in UNINSTALL
+    assert "$response_code < 200 || $response_code >= 300" in UNINSTALL
+    assert "if (!$disconnect_failed)" in UNINSTALL
+    assert UNINSTALL.index("if (!$disconnect_failed)") < UNINSTALL.index("delete_option('eaa_wp_settings')")
+
+
+def test_encrypted_standard_license_fails_closed_without_openssl():
+    encrypted_branch = UNINSTALL[
+        UNINSTALL.index("if (0 === strpos($stored, 'eaa2:'))", UNINSTALL.index("$stored = (string) $settings['license_key']")):
+        UNINSTALL.index("$api_base =", UNINSTALL.index("$stored = (string) $settings['license_key']"))
+    ]
+    assert "$license = false;" in encrypted_branch
+    assert "if (function_exists('openssl_decrypt'))" in encrypted_branch
