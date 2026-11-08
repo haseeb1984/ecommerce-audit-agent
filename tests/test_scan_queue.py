@@ -257,3 +257,83 @@ async def test_non_retryable_scan_failure_is_terminal_and_closes_batch():
     assert batch.status == "failed"
     assert batch.completed_at is not None
     assert db.committed and not db.rolled_back
+
+
+class EnqueueResult:
+    def __init__(self, *, value=None, rows=None):
+        self.value = value
+        self.rows = list(rows or [])
+
+    def scalar_one(self):
+        return self.value
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class EnqueueSession:
+    def __init__(self, website):
+        self.website = website
+        self.execute_results = [
+            EnqueueResult(),                 # sequence row insert
+            EnqueueResult(value=1),          # locked next sequence
+            EnqueueResult(rows=[]),          # idempotency lookup
+            EnqueueResult(rows=[]),          # historical customer website hosts
+            EnqueueResult(rows=[]),          # active WordPress site hosts
+            EnqueueResult(),                 # advance sequence
+        ]
+        self.scalar_statements = []
+        self.execute_statements = []
+        self.added = []
+        self.committed = False
+
+    async def execute(self, statement, *_args, **_kwargs):
+        self.execute_statements.append(statement)
+        return self.execute_results.pop(0)
+
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
+        return self.website
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def flush(self):
+        return None
+
+    async def commit(self):
+        self.committed = True
+
+    async def rollback(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_resubmitting_archived_website_locks_row_before_reactivation():
+    from scan_queue import enqueue_scan_request
+    from hostinger_models import CustomerWebsite
+
+    archived = SimpleNamespace(
+        id="website-archived", license_key="license-1",
+        normalized_url="https://shop.example/", url="https://shop.example/",
+        host="shop.example", status="archived", updated_at=None,
+    )
+    db = EnqueueSession(archived)
+
+    result = await enqueue_scan_request(
+        db,
+        license_key="license-1",
+        package_tier="starter",
+        urls=["https://shop.example/"],
+        request_id="archive-resubmit-lock-123",
+    )
+
+    assert result["new_jobs"] == 1
+    assert archived.status == "active"
+    assert archived.updated_at is not None
+    assert db.scalar_statements[0]._for_update_arg is not None
+    assert any(isinstance(item, CustomerWebsite) is False for item in db.added)
+    assert db.committed
