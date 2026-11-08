@@ -457,33 +457,36 @@ def test_generic_operational_copy_commits_each_apply_batch_but_not_dry_run():
     assert commits[0] in ast.walk(apply_guard)
 
 
-def test_billing_email_license_ownership_is_grouped_and_streamed_by_postgres():
+def test_support_note_ownership_is_joined_and_aggregated_in_postgres():
     import ast
 
     source = (
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
     tree = ast.parse(source)
-    resolver = next(
+    statement_builder = next(
         node for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef)
-        and node.name == "_stream_billing_license_ownership"
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_support_note_migration_statement"
     )
-    segment = ast.get_source_segment(source, resolver)
+    segment = ast.get_source_segment(source, statement_builder)
 
     assert "func.count(func.distinct(SoftwareLicense.license_key))" in segment
-    assert ".group_by(normalized_email)" in segment
-    assert "source.stream(statement)" in segment
-    assert "await result.close()" in segment
-    assert "candidates.setdefault(email, set())" not in segment
+    assert ".group_by(normalized_billing_email)" in segment
+    assert ".outerjoin(billing_ownership" in segment
+    assert "billing_ownership.c.license_count" in segment
+    assert "billing_ownership.c.license_key" in segment
+    assert "source.stream" not in segment
 
     migrate = next(
         node for node in tree.body
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
     )
     migrate_segment = ast.get_source_segment(source, migrate)
-    assert "await _stream_billing_license_ownership(source)" in migrate_segment
-    assert "billing_license_candidates" not in migrate_segment
+    assert "source.stream(_support_note_migration_statement())" in migrate_segment
+    assert "billing_by_email" not in migrate_segment
+    assert "ambiguous_billing_emails" not in migrate_segment
+    assert "await note_result.close()" in migrate_segment
 
 
 def test_account_candidate_deduplication_is_database_side_and_streamed():

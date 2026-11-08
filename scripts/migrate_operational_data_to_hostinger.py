@@ -115,12 +115,12 @@ def _verification_gaps(reports):
     return gaps
 
 
-async def _stream_billing_license_ownership(source):
-    """Resolve unique email/license ownership in PostgreSQL, not Python sets."""
-    normalized_email = func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email")
-    statement = (
+def _support_note_migration_statement():
+    """Join notes to database-aggregated, unambiguous billing ownership."""
+    normalized_billing_email = func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email")
+    billing_ownership = (
         select(
-            normalized_email,
+            normalized_billing_email,
             func.count(func.distinct(SoftwareLicense.license_key)).label("license_count"),
             func.min(SoftwareLicense.license_key).label("license_key"),
         )
@@ -129,22 +129,19 @@ async def _stream_billing_license_ownership(source):
             PaymentWebhookEvent.recipient_email.is_not(None),
             func.trim(PaymentWebhookEvent.recipient_email) != "",
         )
-        .group_by(normalized_email)
+        .group_by(normalized_billing_email)
+    ).subquery("billing_email_license_ownership")
+    normalized_note_email = func.lower(func.trim(SaaSAdminCustomerNote.customer_email))
+    return (
+        select(
+            SaaSAdminCustomerNote,
+            billing_ownership.c.license_count,
+            billing_ownership.c.license_key,
+        )
+        .outerjoin(billing_ownership, billing_ownership.c.email == normalized_note_email)
+        .order_by(SaaSAdminCustomerNote.id.asc())
         .execution_options(yield_per=MIGRATION_BATCH_SIZE)
     )
-    result = await source.stream(statement)
-    resolved = {}
-    ambiguous = set()
-    try:
-        async for row in result:
-            if row.license_count == 1:
-                resolved[row.email] = row.license_key
-            elif row.license_count > 1:
-                ambiguous.add(row.email)
-    finally:
-        await result.close()
-    return resolved, ambiguous
-
 
 def _account_candidate_statement():
     """Deduplicate legacy account identities in PostgreSQL before streaming."""
@@ -474,9 +471,8 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             stage_missing=apply_changes,
         )
 
-        # Legacy support notes were keyed only by email. Associate each note with
-        # the most recently linked license when that mapping is unambiguous.
-        billing_by_email, ambiguous_billing_emails = await _stream_billing_license_ownership(source)
+        # Resolve each note's email ownership in SQL; no email->license map is
+        # materialized in Python, even when the legacy billing table is large.
         note_copied = 0
         note_already_present = 0
         note_ambiguous = 0
@@ -490,12 +486,17 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             nonlocal note_copied, note_already_present, note_ambiguous, note_unmapped
             nonlocal note_mismatch_count
             expected_by_id = {}
-            for row in rows:
-                email = row.customer_email.strip().lower()
-                if email in ambiguous_billing_emails:
+            for joined_row in rows:
+                row = joined_row[0]
+                license_count = joined_row[1]
+                license_key = joined_row[2]
+                if license_count is None or license_count == 0:
+                    note_unmapped += 1
+                    continue
+                if license_count > 1:
                     note_ambiguous += 1
                     continue
-                license_key = billing_by_email.get(email)
+                email = row.customer_email.strip().lower()
                 if not license_key:
                     note_unmapped += 1
                     continue
@@ -529,19 +530,20 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                         note_mismatch_fields.update(fields)
             if apply_changes:
                 await target.commit()
-                logger.info(
-                    "Committed support-note migration batch: rows=%s",
-                    len(expected_by_id),
-                )
+                logger.info("Committed support-note migration batch: rows=%s", len(expected_by_id))
 
-        async for row in _stream_rows(source, SaaSAdminCustomerNote):
-            note_source_count += 1
-            note_batch.append(row)
-            if len(note_batch) >= MIGRATION_BATCH_SIZE:
+        note_result = await source.stream(_support_note_migration_statement())
+        try:
+            async for row in note_result:
+                note_source_count += 1
+                note_batch.append(row)
+                if len(note_batch) >= MIGRATION_BATCH_SIZE:
+                    await reconcile_note_batch(note_batch)
+                    note_batch.clear()
+            if note_batch:
                 await reconcile_note_batch(note_batch)
-                note_batch.clear()
-        if note_batch:
-            await reconcile_note_batch(note_batch)
+        finally:
+            await note_result.close()
         reports["admin_customer_notes"] = {
             "source": note_source_count,
             "to_copy": note_copied,
