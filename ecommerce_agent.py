@@ -454,7 +454,7 @@ class UniversalEcommerceAgent:
         Write a concise, three-sentence outreach email to {contact.first_name} about the supplied PageSpeed observations.
         You may state only the supplied mobile Lighthouse performance score ({audit.mobile_score}/100) and Speed Index ({audit.speed_index_sec:.2f} seconds).
         These are lab measurements for a tested page. They do not establish ad-spend waste, revenue loss, sales impact, or conversion impact.
-        Do not mention revenue, sales, conversions, ad budgets, ROI, or financial outcomes. Do not invent percentages, currency amounts, uplift estimates, causes, or guarantees.
+        In the email subject and body, do not mention revenue, sales, conversions, ad budgets, ROI, or financial outcomes. Do not invent percentages, currency amounts, uplift estimates, causes, or guarantees.
         The separate revenue_leak_hypothesis field must explicitly say business impact was not measured and must not claim a revenue leak.
         End the email with a soft question offering a 90-second Loom video.
         Respond STRICTLY in valid JSON with keys: "revenue_leak_hypothesis", "email_subject", "email_body".
