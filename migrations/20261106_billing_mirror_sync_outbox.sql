@@ -11,3 +11,7 @@ CREATE TABLE IF NOT EXISTS billing_mirror_sync_outbox (
 );
 CREATE INDEX IF NOT EXISTS ix_billing_mirror_sync_due
     ON billing_mirror_sync_outbox (status, next_attempt_at, created_at);
+
+-- Supports the correlated per-license ordering check for pending retries.
+CREATE INDEX IF NOT EXISTS ix_billing_mirror_sync_pending_order
+    ON billing_mirror_sync_outbox (status, created_at, event_id);
