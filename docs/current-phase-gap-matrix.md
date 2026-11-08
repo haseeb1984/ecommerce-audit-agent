@@ -827,3 +827,11 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Temp-table transaction commit/rollback and Hostinger stream closure are implemented. Production PostgreSQL/MySQL runtime acceptance is still pending; the temporary-table path is not claimed as production verified.
 - PR #260 and #261 remain merged: customer license pagination and database-side support-note identity selection.
 - Regression tests were added/updated but not executed. Vercel deployment attempts remain blocked by the daily deployment-rate limit; this is not a test result.
+
+
+## 2026-11-08 — admin license-email recovery visibility
+
+- The admin retry endpoint already permits recovery of a stale `email_sending` claim after 10 minutes, with a database row lock preventing concurrent retry claims.
+- The global payment-event queue exposed retry for both `email_pending` and `email_sending` without distinguishing a fresh in-progress delivery from a stale claim. Customer-detail billing history did not expose the retry action.
+- The admin console now shows retry only for linked-license `email_pending` events or `email_sending` events whose `updated_at` is at least 10 minutes old. The same eligibility helper is used in the global queue, payment-history cards, and selected customer billing history.
+- Added a frontend contract regression test. CI and browser behavior have not been verified; no SMTP message was sent and no payment event was changed.
