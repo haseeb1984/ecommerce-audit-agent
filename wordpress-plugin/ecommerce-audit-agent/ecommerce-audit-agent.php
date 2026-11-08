@@ -95,11 +95,12 @@ function eaa_wp_is_valid_api_base($value) {
 
 function eaa_wp_api_base() {
     $settings = eaa_wp_settings();
-    $base = isset($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : EAA_WP_DEFAULT_API;
+    $base = isset($settings['api_base']) ? trim((string) $settings['api_base']) : EAA_WP_DEFAULT_API;
     if (!eaa_wp_is_valid_api_base($base)) {
         return EAA_WP_DEFAULT_API;
     }
-    return $base;
+    $base = untrailingslashit(esc_url_raw($base));
+    return eaa_wp_is_valid_api_base($base) ? $base : EAA_WP_DEFAULT_API;
 }
 
 function eaa_wp_api_request($path, $method = 'GET', $body = null, $timeout = 25) {
@@ -581,9 +582,16 @@ function eaa_wp_handle_save_settings() {
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'connection_failed'), admin_url('admin.php')));
         exit;
     }
-    $api_base = isset($_POST['api_base']) ? esc_url_raw(trim(wp_unslash($_POST['api_base']))) : EAA_WP_DEFAULT_API;
+    $api_base = isset($_POST['api_base']) ? trim(wp_unslash($_POST['api_base'])) : EAA_WP_DEFAULT_API;
     if (!eaa_wp_is_valid_api_base($api_base)) {
         $settings['connection_error'] = __('The API URL must be HTTPS and cannot contain credentials, a query, a fragment, or backslashes.', 'ecommerce-audit-agent');
+        update_option(EAA_WP_OPTION, $settings, false);
+        wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'invalid_url'), admin_url('admin.php')));
+        exit;
+    }
+    $api_base = untrailingslashit(esc_url_raw($api_base));
+    if (!eaa_wp_is_valid_api_base($api_base)) {
+        $settings['connection_error'] = __('The API URL could not be normalized safely.', 'ecommerce-audit-agent');
         update_option(EAA_WP_OPTION, $settings, false);
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'invalid_url'), admin_url('admin.php')));
         exit;
