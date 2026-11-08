@@ -79,7 +79,7 @@ function eaa_wp_decrypt_license($stored) {
 }
 
 function eaa_wp_is_valid_api_base($value) {
-    if (!is_string($value) || '' === trim($value) || false !== strpos($value, '\\\\')) {
+    if (!is_string($value) || '' === trim($value) || false !== strpos($value, '\\')) {
         return false;
     }
     $value = trim($value);
