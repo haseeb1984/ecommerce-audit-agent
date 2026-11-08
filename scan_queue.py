@@ -188,11 +188,15 @@ async def enqueue_scan_request(
 
             for target_url in chunk:
                 host = target_url.split("/", 3)[2].split("@")[-1].split(":")[0].lower()
+                # Serialize archived-site reactivation with concurrent inventory
+                # archive operations. The per-license batch-sequence lock already
+                # protects duplicate submissions; this row lock protects the
+                # website status transition itself.
                 website = await db.scalar(
                     select(CustomerWebsite).where(
                         CustomerWebsite.license_key == license_key,
                         CustomerWebsite.normalized_url == target_url,
-                    )
+                    ).with_for_update()
                 )
                 if website is not None and website.status != "active":
                     website.status = "active"
