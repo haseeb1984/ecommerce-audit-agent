@@ -9,10 +9,9 @@ import argparse
 import asyncio
 import hashlib
 import logging
-from itertools import islice
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, literal, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
@@ -106,31 +105,6 @@ def _verification_gaps(reports):
     return gaps
 
 
-def _billing_license_map(billing_rows, license_key_by_id):
-    """Resolve email ownership only when every billing event agrees on one license."""
-    candidates = {}
-    for row in billing_rows:
-        email = (row.recipient_email or "").strip().lower()
-        license_key = license_key_by_id.get(row.license_id)
-        if email and license_key:
-            candidates.setdefault(email, set()).add(license_key)
-    return _resolve_billing_license_candidates(candidates)
-
-
-def _resolve_billing_license_candidates(candidates):
-    resolved = {
-        email: next(iter(license_keys))
-        for email, license_keys in candidates.items()
-        if len(license_keys) == 1
-    }
-    ambiguous = {
-        email for email, license_keys in candidates.items()
-        if len(license_keys) > 1
-    }
-    return resolved, ambiguous
-
-
-
 async def _stream_billing_license_ownership(source):
     """Resolve unique email/license ownership in PostgreSQL, not Python sets."""
     normalized_email = func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email")
@@ -161,6 +135,55 @@ async def _stream_billing_license_ownership(source):
         await result.close()
     return resolved, ambiguous
 
+
+def _account_candidate_statement():
+    """Deduplicate legacy account identities in PostgreSQL before streaming."""
+    sessions = (
+        select(SoftwareLicense.license_key.label("license_key"),
+            func.lower(func.trim(AccountSession.email)).label("email"),
+            SoftwareLicense.client_name.label("display_name"),
+            AccountSession.created_at.label("candidate_created_at"),
+            AccountSession.created_at.label("candidate_updated_at"),
+            literal(0).label("source_priority"),
+        ).join(SoftwareLicense, SoftwareLicense.id == AccountSession.license_id)
+        .where(AccountSession.email.is_not(None), func.trim(AccountSession.email) != "")
+    )
+    site_email = func.coalesce(func.nullif(func.trim(WordPressSite.customer_email), ""),
+        func.nullif(func.trim(WordPressSite.admin_email), ""))
+    sites = (
+        select(SoftwareLicense.license_key.label("license_key"),
+            func.lower(site_email).label("email"),
+            SoftwareLicense.client_name.label("display_name"),
+            WordPressSite.created_at.label("candidate_created_at"),
+            WordPressSite.created_at.label("candidate_updated_at"),
+            literal(1).label("source_priority"),
+        ).join(SoftwareLicense, SoftwareLicense.id == WordPressSite.license_id)
+        .where(site_email.is_not(None))
+    )
+    billing = (
+        select(SoftwareLicense.license_key.label("license_key"),
+            func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email"),
+            SoftwareLicense.client_name.label("display_name"),
+            PaymentWebhookEvent.created_at.label("candidate_created_at"),
+            func.coalesce(PaymentWebhookEvent.updated_at, PaymentWebhookEvent.created_at).label("candidate_updated_at"),
+            literal(2).label("source_priority"),
+        ).join(SoftwareLicense, SoftwareLicense.id == PaymentWebhookEvent.license_id)
+        .where(PaymentWebhookEvent.recipient_email.is_not(None), func.trim(PaymentWebhookEvent.recipient_email) != "")
+    )
+    candidates = union_all(sessions, sites, billing).subquery("legacy_account_candidates")
+    ranked = select(candidates.c.license_key, candidates.c.email, candidates.c.display_name,
+        candidates.c.candidate_created_at,
+        func.row_number().over(partition_by=(candidates.c.license_key, candidates.c.email),
+            order_by=(candidates.c.source_priority.asc(), candidates.c.candidate_updated_at.desc(),
+                candidates.c.candidate_created_at.desc())).label("candidate_rank"),
+    ).subquery("ranked_legacy_account_candidates")
+    return (
+        select(ranked.c.license_key, ranked.c.email, ranked.c.display_name,
+            ranked.c.candidate_created_at)
+        .where(ranked.c.candidate_rank == 1)
+        .order_by(ranked.c.license_key.asc(), ranked.c.email.asc())
+        .execution_options(yield_per=MIGRATION_BATCH_SIZE)
+    )
 
 MIGRATION_BATCH_SIZE = 500
 
@@ -249,64 +272,31 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         license_key_by_id = {key: value.license_key for key, value in licenses.items()}
         reports = {}
 
-        # Restore customer account identities first, deriving them from legacy
-        # sessions, linked WordPress installations and verified billing emails.
-        account_candidates = {}
-        async for row in _stream_rows(source, AccountSession):
-            license_key = license_key_by_id.get(row.license_id)
-            if license_key:
-                account_candidates[(license_key, row.email.lower())] = (
-                    row.email.lower(), licenses[row.license_id].client_name, row.created_at
-                )
-        async for row in _stream_rows(source, WordPressSite):
-            license_key = license_key_by_id.get(row.license_id)
-            email = (row.customer_email or row.admin_email or "").strip().lower()
-            if license_key and email:
-                account_candidates.setdefault(
-                    (license_key, email), (email, licenses[row.license_id].client_name, row.created_at)
-                )
-
-
-        billing_statement = (
-            select(PaymentWebhookEvent)
-            .where(PaymentWebhookEvent.license_id.is_not(None))
-            .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.created_at.desc())
-            .execution_options(yield_per=MIGRATION_BATCH_SIZE)
-        )
-        billing_result = await source.stream_scalars(billing_statement)
-        try:
-            async for row in billing_result:
-                license_key = license_key_by_id.get(row.license_id)
-                email = (row.recipient_email or "").strip().lower()
-                if license_key and email:
-                    account_candidates.setdefault(
-                        (license_key, email),
-                        (email, licenses[row.license_id].client_name, row.created_at)
-                    )
-
-        finally:
-            await billing_result.close()
-
+        # Restore identities from a database-side deduplicated union, avoiding
+        # an unbounded Python dictionary of every distinct customer account.
         account_copied = 0
         account_skipped = 0
         account_mismatch_count = 0
         account_mismatch_fields = set()
-        account_candidate_iterator = iter(account_candidates.items())
-        while True:
-            candidate_batch = list(islice(account_candidate_iterator, MIGRATION_BATCH_SIZE))
-            if not candidate_batch:
-                break
+        account_candidate_count = 0
+        candidate_result = await source.stream(_account_candidate_statement())
+        account_batch = []
+
+        async def reconcile_account_batch(rows):
+            nonlocal account_copied, account_skipped, account_mismatch_count
             expected_by_identity = {}
-            for (license_key, email), (normalized_email, display_name, created_at) in candidate_batch:
-                expected_by_identity[(license_key, email)] = {
-                    "id": _legacy_account_id(license_key, normalized_email),
-                    "license_key": license_key,
-                    "email": normalized_email,
-                    "display_name": display_name,
+            for row in rows:
+                expected_by_identity[(row.license_key, row.email)] = {
+                    "id": _legacy_account_id(row.license_key, row.email),
+                    "license_key": row.license_key,
+                    "email": row.email,
+                    "display_name": row.display_name,
                     "status": "active",
-                    "created_at": created_at,
-                    "updated_at": created_at,
+                    "created_at": row.candidate_created_at,
+                    "updated_at": row.candidate_created_at,
                 }
+            if not expected_by_identity:
+                return
             identity_keys = list(expected_by_identity)
             existing_result = await target.execute(
                 select(CustomerAccount).where(
@@ -314,8 +304,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                 )
             )
             existing_by_identity = {
-                (row.license_key, row.email): row
-                for row in existing_result.scalars()
+                (row.license_key, row.email): row for row in existing_result.scalars()
             }
             for identity, expected_account in expected_by_identity.items():
                 existing = existing_by_identity.get(identity)
@@ -331,12 +320,21 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                         account_mismatch_fields.update(fields)
             if apply_changes:
                 await target.commit()
-                logger.info(
-                    "Committed customer-account migration batch: rows=%s",
-                    len(expected_by_identity),
-                )
+                logger.info("Committed customer-account migration batch: rows=%s", len(expected_by_identity))
+
+        try:
+            async for row in candidate_result:
+                account_candidate_count += 1
+                account_batch.append(row)
+                if len(account_batch) >= MIGRATION_BATCH_SIZE:
+                    await reconcile_account_batch(account_batch)
+                    account_batch.clear()
+            if account_batch:
+                await reconcile_account_batch(account_batch)
+        finally:
+            await candidate_result.close()
         reports["customer_accounts"] = {
-            "source_candidates": len(account_candidates),
+            "source_candidates": account_candidate_count,
             "to_copy": account_copied,
             "already_present": account_skipped,
             "field_mismatches": account_mismatch_count,
