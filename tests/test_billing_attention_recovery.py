@@ -80,3 +80,29 @@ def test_admin_operations_includes_subscription_updated_past_due_in_attention_co
 
     assert '"subscription_updated_past_due"' in source
     assert '"subscription_updated_past_due_events": billing_attention_counts["subscription_updated_past_due"]' in source
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["active", "trialing", "paused", "past_due", "canceled", "cancelled"],
+)
+def test_paddle_subscription_status_recognizes_supported_provider_states(status):
+    assert main._is_supported_paddle_subscription_status(status)
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["", "unknown", "incomplete_expired", None, 123, True],
+)
+def test_paddle_subscription_status_rejects_unknown_or_malformed_states(status):
+    assert not main._is_supported_paddle_subscription_status(status)
+
+
+def test_unknown_paddle_subscription_status_cannot_mutate_entitlements():
+    import inspect
+
+    source = inspect.getsource(main.paddle_webhook)
+    assert "status_supported = _is_supported_paddle_subscription_status(provider_status)" in source
+    assert "elif status_supported:" in source
+    assert 'event_status = "subscription_update_unrecognized_status"' in source
+    assert '"unrecognized_subscription_status_ignored"' in source
