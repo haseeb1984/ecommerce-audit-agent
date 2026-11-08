@@ -7,6 +7,7 @@ import json
 import os
 import time
 import uuid
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -15,13 +16,43 @@ class BrowserAuditUnavailable(RuntimeError):
     pass
 
 
-async def run_browser_audit(target_url: str, *, timeout_seconds: float = 70.0) -> dict:
-    service_url = os.getenv("BROWSER_AUDIT_SERVICE_URL", "").strip().rstrip("/")
-    secret = os.getenv("BROWSER_AUDIT_SHARED_SECRET", "")
-    if not service_url or len(secret) < 32:
+def _browser_service_base_url(value: str) -> str:
+    """Accept only an HTTPS origin; endpoint paths and URL modifiers are not configuration."""
+    candidate = value.strip()
+    if not candidate:
         raise BrowserAuditUnavailable("Isolated browser service is not configured")
-    if not service_url.startswith("https://"):
-        raise BrowserAuditUnavailable("Browser service URL must use HTTPS")
+    try:
+        parsed = urlsplit(candidate)
+        valid = (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path in ("", "/")
+            and not parsed.query
+            and not parsed.fragment
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
+            and not parsed.netloc.endswith(":")
+            and not any(character.isspace() for character in candidate)
+            and "?" not in candidate
+            and "#" not in candidate
+            and "\\" not in candidate
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise BrowserAuditUnavailable(
+            "Browser service URL must be an HTTPS origin without credentials, path, query, or fragment"
+        )
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+async def run_browser_audit(target_url: str, *, timeout_seconds: float = 70.0) -> dict:
+    configured_url = os.getenv("BROWSER_AUDIT_SERVICE_URL", "")
+    secret = os.getenv("BROWSER_AUDIT_SHARED_SECRET", "")
+    if len(secret) < 32:
+        raise BrowserAuditUnavailable("Isolated browser service is not configured")
+    service_url = _browser_service_base_url(configured_url)
     payload = {"target_url": target_url, "request_id": uuid.uuid4().hex}
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     timestamp = str(int(time.time()))
@@ -40,9 +71,13 @@ async def run_browser_audit(target_url: str, *, timeout_seconds: float = 70.0) -
             raise BrowserAuditUnavailable(f"Browser service rejected the audit request (HTTP {response.status_code})")
         response.raise_for_status()
         data = response.json()
+        if not isinstance(data, dict):
+            raise BrowserAuditUnavailable("Browser service returned an invalid audit result")
         if data.get("request_id") != payload["request_id"]:
             raise BrowserAuditUnavailable("Browser service response did not match the request")
         if not isinstance(data.get("findings"), list) or not isinstance(data.get("check_outcomes"), list):
+            raise BrowserAuditUnavailable("Browser service returned an invalid audit result")
+        if "summary" in data and not isinstance(data["summary"], dict):
             raise BrowserAuditUnavailable("Browser service returned an invalid audit result")
         return data
     except BrowserAuditUnavailable:
