@@ -3766,6 +3766,61 @@ async def list_business_agency_clients(
             AgencyClientWorkspace.id.desc(),
         ).offset(offset).limit(limit)
     )).scalars().all()
+    workspace_ids = [item.id for item in clients]
+    website_by_workspace = {}
+    checked_at = datetime.now(timezone.utc)
+    if workspace_ids:
+        ranked_websites = select(
+            AgencyClientWebsite.workspace_id.label("workspace_id"),
+            AgencyClientWebsite.id.label("site_id"),
+            AgencyClientWebsite.site_url.label("site_url"),
+            AgencyClientWebsite.site_host.label("site_host"),
+            AgencyClientWebsite.admin_email.label("admin_email"),
+            AgencyClientWebsite.plugin_version.label("plugin_version"),
+            AgencyClientWebsite.connected_at.label("connected_at"),
+            AgencyClientWebsite.last_seen_at.label("last_seen_at"),
+            sql_func.row_number().over(
+                partition_by=AgencyClientWebsite.workspace_id,
+                order_by=(
+                    AgencyClientWebsite.connected_at.desc(),
+                    AgencyClientWebsite.id.desc(),
+                ),
+            ).label("site_rank"),
+        ).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.workspace_id.in_(workspace_ids),
+            AgencyClientWebsite.status == "active",
+        ).subquery("ranked_agency_client_websites")
+        website_rows = (await operational_db.execute(
+            select(
+                ranked_websites.c.workspace_id,
+                ranked_websites.c.site_id,
+                ranked_websites.c.site_url,
+                ranked_websites.c.site_host,
+                ranked_websites.c.admin_email,
+                ranked_websites.c.plugin_version,
+                ranked_websites.c.connected_at,
+                ranked_websites.c.last_seen_at,
+            ).where(ranked_websites.c.site_rank == 1)
+        )).all()
+        stale_before = checked_at - timedelta(days=7)
+        for site in website_rows:
+            last_seen = site.last_seen_at
+            if last_seen is not None and last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            website_by_workspace[site.workspace_id] = {
+                "connected": True,
+                "workspace_id": site.workspace_id,
+                "site_id": site.site_id,
+                "site_url": site.site_url,
+                "site_host": site.site_host,
+                "admin_email": site.admin_email,
+                "plugin_version": site.plugin_version,
+                "connected_at": site.connected_at.isoformat() if site.connected_at else None,
+                "last_seen_at": site.last_seen_at.isoformat() if site.last_seen_at else None,
+                "connection_health": "healthy" if last_seen is not None and last_seen >= stale_before else "stale",
+                "health_checked_at": checked_at.isoformat(),
+            }
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return {"items": [{
@@ -3775,6 +3830,12 @@ async def list_business_agency_clients(
         "status": item.status,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "website": website_by_workspace.get(item.id, {
+            "connected": False,
+            "workspace_id": item.id,
+            "connection_health": "not_connected",
+            "health_checked_at": checked_at.isoformat(),
+        }),
     } for item in clients],
         "page": {
             "limit": limit,
