@@ -41,8 +41,9 @@ if (is_array($settings) && !empty($settings['agency_site_token'])) {
             $agency_token = false;
         }
     }
-    $api_base = !empty($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : 'https://ecommerce-audit-agent.vercel.app';
-    if (!is_string($agency_token) || '' === $agency_token || !$eaa_is_valid_api_base($api_base)) {
+    $api_base_raw = !empty($settings['api_base']) ? trim((string) $settings['api_base']) : 'https://ecommerce-audit-agent.vercel.app';
+    $api_base = untrailingslashit(esc_url_raw($api_base_raw));
+    if (!is_string($agency_token) || '' === $agency_token || !$eaa_is_valid_api_base($api_base_raw) || !$eaa_is_valid_api_base($api_base)) {
         $disconnect_failed = true;
     } else {
         $response = wp_safe_remote_post($api_base . '/api/v1/integrations/wordpress/agency/sites/disconnect', array(
@@ -87,8 +88,9 @@ if (is_array($settings) && !empty($settings['site_id']) && !empty($settings['lic
             $license = false;
         }
     }
-    $api_base = !empty($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : 'https://ecommerce-audit-agent.vercel.app';
-    if (!is_string($license) || '' === $license || !$eaa_is_valid_api_base($api_base)) {
+    $api_base_raw = !empty($settings['api_base']) ? trim((string) $settings['api_base']) : 'https://ecommerce-audit-agent.vercel.app';
+    $api_base = untrailingslashit(esc_url_raw($api_base_raw));
+    if (!is_string($license) || '' === $license || !$eaa_is_valid_api_base($api_base_raw) || !$eaa_is_valid_api_base($api_base)) {
         $disconnect_failed = true;
     } else {
         $response = wp_safe_remote_post($api_base . '/api/v1/integrations/wordpress/sites/disconnect', array(
