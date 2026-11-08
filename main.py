@@ -7745,36 +7745,67 @@ async def admin_overview(
 ):
     """Return global platform metrics plus a bounded, searchable and filterable client page."""
     _require_admin_key(request)
-    from sqlalchemy import select, func as sql_func, or_, cast, String
+    from sqlalchemy import select, func as sql_func, or_, cast, String, text, table, column, union
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     normalized_search = search.strip()
     client_filter = None
+    search_identity_table_created = False
     if normalized_search:
         literal_search = normalized_search.replace("%", "").replace("_", "")
         pattern = f"%{literal_search}%"
-        matching_license_keys = set((await operational_db.execute(
-            select(CustomerBillingEvent.license_key).where(
-                sql_func.lower(CustomerBillingEvent.recipient_email).ilike(pattern.lower())
-            ).distinct()
-        )).scalars().all())
-        matching_license_ids = set((await db.execute(
-            select(SoftwareLicense.id).where(SoftwareLicense.license_key.in_(matching_license_keys))
-        )).scalars().all()) if matching_license_keys else set()
-        legacy_matching_ids = (await db.execute(
-            select(PaymentWebhookEvent.license_id).where(
-                sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
-                PaymentWebhookEvent.license_id.is_not(None),
-            ).distinct()
-        )).scalars().all()
-        matching_license_ids.update(legacy_matching_ids)
-        client_filter = or_(
-            SoftwareLicense.client_name.ilike(pattern),
-            SoftwareLicense.tier.ilike(pattern),
-            cast(SoftwareLicense.id, String).ilike(pattern),
-            SoftwareLicense.id.in_(matching_license_ids),
+        identity_table = table(
+            "admin_overview_search_license_keys",
+            column("license_key", String(100)),
         )
+        await db.execute(text(
+            "CREATE TEMP TABLE admin_overview_search_license_keys "
+            "(license_key VARCHAR(100) PRIMARY KEY) ON COMMIT DROP"
+        ))
+        search_identity_table_created = True
+        identity_stream = None
+        try:
+            operational_identity_query = select(
+                CustomerBillingEvent.license_key
+            ).where(
+                sql_func.lower(CustomerBillingEvent.recipient_email).ilike(pattern.lower()),
+                CustomerBillingEvent.license_key.is_not(None),
+            ).distinct().order_by(CustomerBillingEvent.license_key.asc())
+            identity_stream = await operational_db.stream(operational_identity_query)
+            identity_values = identity_stream.scalars()
+            while True:
+                identity_batch = await identity_values.fetchmany(500)
+                if not identity_batch:
+                    break
+                await db.execute(
+                    text(
+                        "INSERT INTO admin_overview_search_license_keys (license_key) "
+                        "VALUES (:license_key) ON CONFLICT (license_key) DO NOTHING"
+                    ),
+                    [{"license_key": key} for key in identity_batch],
+                )
+            matching_license_ids = union(
+                select(SoftwareLicense.id.label("license_id")).join(
+                    identity_table, identity_table.c.license_key == SoftwareLicense.license_key
+                ),
+                select(PaymentWebhookEvent.license_id.label("license_id")).where(
+                    sql_func.lower(PaymentWebhookEvent.recipient_email).ilike(pattern.lower()),
+                    PaymentWebhookEvent.license_id.is_not(None),
+                ),
+            ).subquery("admin_overview_matching_license_ids")
+            client_filter = or_(
+                SoftwareLicense.client_name.ilike(pattern),
+                SoftwareLicense.tier.ilike(pattern),
+                cast(SoftwareLicense.id, String).ilike(pattern),
+                SoftwareLicense.id.in_(select(matching_license_ids.c.license_id)),
+            )
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            if identity_stream is not None:
+                await identity_stream.close()
     count_query = select(sql_func.count(SoftwareLicense.id))
     filtered_query = select(SoftwareLicense)
     filters = []
@@ -7810,6 +7841,10 @@ async def admin_overview(
         filtered_query.order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
+    if search_identity_table_created:
+        # The temporary search identity table is no longer needed after the
+        # filtered count and visible license page have been materialized.
+        await db.commit()
     total_clients = int((await db.execute(select(sql_func.count(SoftwareLicense.id)))).scalar_one() or 0)
     active_clients = int((await db.execute(
         select(sql_func.count(SoftwareLicense.id)).where(
