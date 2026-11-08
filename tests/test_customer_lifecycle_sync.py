@@ -61,10 +61,11 @@ def test_admin_customer_lifecycle_audit_is_attempted_before_operational_mutation
 
     source = inspect.getsource(main.admin_customer_account_action)
     canonical_commit = source.index("await db.commit()")
+    read_rollback = source.index("await operational_db.rollback()")
     audit_write = source.index('await _write_admin_log(db, "customer.account_"')
     operational_mutation = source.index("await operational_db.execute(update(CustomerAccount)")
     session_mutation = source.index("await operational_db.execute(update(CustomerSession)")
-    assert canonical_commit < audit_write < operational_mutation
+    assert canonical_commit < read_rollback < audit_write < operational_mutation
     assert audit_write < session_mutation
     assert '"operational_sync": "queued"' in source
     assert '"changed_count": changed' not in source
