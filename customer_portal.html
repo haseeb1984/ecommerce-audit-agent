@@ -889,11 +889,14 @@
       const refreshWebsite = document.createElement("button");
       refreshWebsite.type = "button"; refreshWebsite.className = "secondary";
       refreshWebsite.textContent = "Refresh connection status";
-      async function refreshWebsiteStatus() {
+      async function refreshWebsiteStatus(initialData = null) {
         refreshWebsite.disabled = true;
         try {
-          const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
-          const website = await websiteResponse.json();
+          let website = initialData;
+          if (!website) {
+            const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
+            website = await websiteResponse.json();
+          }
           if (website.connected) {
             const health = website.connection_health === "healthy" ? "Healthy heartbeat"
               : website.connection_health === "stale" ? "Heartbeat stale — check the WordPress plugin"
@@ -951,7 +954,7 @@
       });
       websitePanel.append(websiteStatus, connectWebsite, disconnectWebsite, refreshWebsite, tokenPanel);
       if (item.status !== "active") connectWebsite.disabled = true;
-      if (item.status === "active") refreshWebsiteStatus();
+      if (item.status === "active") refreshWebsiteStatus(item.website || {connected: false});
       card.append(info, actions, websitePanel, auditHistoryPanel);
       container.append(card);
     }
