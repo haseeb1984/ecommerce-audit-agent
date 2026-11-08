@@ -1234,7 +1234,6 @@ async def customer_portal():
     return FileResponse(Path(__file__).resolve().parent / "customer_portal.html")
 
 
-@app.post("/api/v1/account/login", status_code=202)
 async def _lock_customer_login_email(operational_db: AsyncSession, email: str) -> None:
     """Serialize login-code issuance, verification, and global session revocation by email."""
     from sqlalchemy import select
@@ -1250,6 +1249,7 @@ async def _lock_customer_login_email(operational_db: AsyncSession, email: str) -
     ).with_for_update())
 
 
+@app.post("/api/v1/account/login", status_code=202)
 @app.post("/api/v1/account/auth/request-code", status_code=202)
 async def request_account_login_code(payload: AccountLoginRequest, response: Response, db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Send a short-lived sign-in code without disclosing whether an email owns an account."""
