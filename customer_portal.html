@@ -93,6 +93,7 @@
 <p class="muted">Connect one WordPress or WooCommerce website to this customer license. Business agency owners should instead create a client workspace above and generate its separate one-time agency connection token; this keeps each client website isolated from the owner license and other clients.</p>
 <p><a href="/wordpress-plugin-guide" target="_blank" rel="noopener">Installation guide</a> · <a href="/wordpress-plugin.zip">Download plugin ZIP</a></p>
 <div id="wordpressSites" class="reports" aria-live="polite"><p class="muted">Connect your account to view WordPress installations.</p></div>
+<button id="loadMoreWordPressSites" class="secondary" type="button" hidden disabled>Load more WordPress sites</button>
 <div id="wordpressSitesStatus" class="status" role="status" aria-live="polite">Account connection required.</div>
 <div class="report-actions"><button id="generateWordPressLinkCode" type="button" disabled>Generate one-time WordPress identity code</button></div>
 <div id="wordpressLinkCodePanel" class="status" hidden aria-live="polite"><strong>One-time WordPress identity code</strong><p id="wordpressLinkCode" style="overflow-wrap:anywhere"></p><p id="wordpressLinkCodeExpiry" class="muted"></p><button id="copyWordPressLinkCode" class="secondary" type="button">Copy code</button><button id="hideWordPressLinkCode" class="secondary" type="button">Hide code</button></div>
@@ -217,6 +218,9 @@
   let websiteLoadingSessionVersion = -1;
   let websiteRequestVersion = 0;
   let wordpressSitesRequestVersion = 0;
+  let wordpressSitesOffset = 0;
+  let wordpressSitesLoading = false;
+  let wordpressSitesHasMore = false;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -630,18 +634,25 @@
     if (!items.length) { const note=document.createElement("p"); note.className="muted"; note.textContent="No active devices found."; container.append(note); }
   }
 
-  async function loadWordPressSites() {
+  async function loadWordPressSites(offset = 0, append = false) {
+    if (wordpressSitesLoading) return;
+    wordpressSitesLoading = true;
     const requestSessionVersion = accountSessionVersion;
     const requestVersion = ++wordpressSitesRequestVersion;
+    const container = $("wordpressSites");
+    const loadMoreButton = $("loadMoreWordPressSites");
+    loadMoreButton.disabled = true;
     try {
-      const container = $("wordpressSites");
-      const response = await api("/api/v1/account/wordpress-sites");
+      const response = await api("/api/v1/account/wordpress-sites?limit=100&offset=" + offset);
       const data = await response.json();
       // A newer refresh or account switch owns the WordPress installation panel.
       if (requestVersion !== wordpressSitesRequestVersion || requestSessionVersion !== accountSessionVersion) return;
-      container.replaceChildren();
       const items = Array.isArray(data.items) ? data.items : [];
-      if (!items.length) {
+      if (!append) {
+        container.replaceChildren();
+        wordpressSitesOffset = 0;
+      }
+      if (!append && !items.length) {
         const empty = document.createElement("p"); empty.className = "muted";
         empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
         container.append(empty);
@@ -683,14 +694,35 @@
         }
         container.append(card);
       }
-      setStatus("wordpressSitesStatus", items.length + " WordPress installation(s) found for this license.", "success");
+      wordpressSitesOffset = offset + items.length;
+      wordpressSitesHasMore = Boolean(data.page && data.page.has_more);
+      loadMoreButton.hidden = !wordpressSitesHasMore;
+      loadMoreButton.disabled = !wordpressSitesHasMore;
+      setStatus(
+        "wordpressSitesStatus",
+        "Showing " + wordpressSitesOffset + " of " + (data.page && Number.isFinite(data.page.total) ? data.page.total : wordpressSitesOffset) + " WordPress installation(s) for this license.",
+        "success"
+      );
     } catch (error) {
       if (requestVersion === wordpressSitesRequestVersion && requestSessionVersion === accountSessionVersion) {
         setStatus("wordpressSitesStatus", "Unable to load WordPress installations. " + error.message, "error");
+        loadMoreButton.hidden = !wordpressSitesHasMore;
+        loadMoreButton.disabled = !wordpressSitesHasMore;
       }
       throw error;
+    } finally {
+      if (requestVersion === wordpressSitesRequestVersion && requestSessionVersion === accountSessionVersion) {
+        wordpressSitesLoading = false;
+        loadMoreButton.disabled = !wordpressSitesHasMore;
+      }
     }
   }
+  $("loadMoreWordPressSites").addEventListener("click", () => {
+    if (wordpressSitesLoading || !wordpressSitesHasMore) return;
+    $("loadMoreWordPressSites").disabled = true;
+    loadWordPressSites(wordpressSitesOffset, true);
+  });
+
 
   async function loadProfile() {
     const response = await api("/api/v1/account/profile");
@@ -2104,6 +2136,12 @@
     agencyTeamRequestVersion += 1;
     websiteRequestVersion += 1;
     wordpressSitesRequestVersion += 1;
+    wordpressSitesLoading = false;
+    wordpressSitesOffset = 0;
+    wordpressSitesHasMore = false;
+    $("loadMoreWordPressSites").hidden = true;
+    $("loadMoreWordPressSites").disabled = true;
+    $("wordpressSites").replaceChildren();
     activityRequestVersion += 1;
     activityLoading = false;
     activityLoadingSessionVersion = -1;
