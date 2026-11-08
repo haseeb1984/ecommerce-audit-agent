@@ -90,3 +90,14 @@ def test_live_billing_mirror_failure_uses_persisted_exponential_retry_state():
     assert "next_outbox_attempt_count(" in source
     assert "outbox_retry_delay_seconds(retry_attempts)" in source
     assert "pending.attempts = retry_attempts" in source
+
+
+
+def test_missing_operational_license_mapping_releases_billing_mirror_row_locks():
+    import inspect
+    import main
+
+    source = inspect.getsource(main._sync_billing_event_to_hostinger)
+    missing_mapping = source[source.index("if not license_key:"):source.index("mirror_error = None")]
+    assert "await db.rollback()" in missing_mapping
+    assert missing_mapping.index("await db.rollback()") < missing_mapping.index("return False")

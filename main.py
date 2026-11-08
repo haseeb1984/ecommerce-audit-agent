@@ -6216,6 +6216,11 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
             select(SoftwareLicense.license_key).where(SoftwareLicense.id == event.license_id)
         )
         if not license_key:
+            # The outbox and canonical event rows are already locked above.
+            # Release both locks immediately when the operational license mapping
+            # is missing; otherwise the caller's session can retain them until
+            # request teardown and block the worker/reconciliation queue.
+            await db.rollback()
             return False
 
         mirror_error = None
