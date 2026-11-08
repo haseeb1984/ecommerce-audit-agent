@@ -107,3 +107,18 @@ def test_email_change_revokes_only_sessions_existing_at_verification_time():
     compiled = session_update.compile()
     assert "customer_sessions.created_at" in str(session_update).lower()
     assert cutoff in compiled.params.values()
+
+
+def test_email_change_verification_serializes_with_old_email_login_otp():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.verify_customer_email_change)
+    account_lock = source.index("_lock_customer_email_change_license")
+    login_email_lock = source.index("_lock_customer_login_email")
+    session_lock = source.index(".with_for_update()", login_email_lock)
+    challenge_lock = source.index("CustomerEmailChangeChallenge.id == payload.challenge_id")
+
+    assert account_lock < login_email_lock < session_lock < challenge_lock
+    assert "candidate.email.strip().lower()" in source[login_email_lock:session_lock]
+    assert "_customer_email_change_operational_updates" in source
