@@ -43,7 +43,7 @@ def _normalize_site_hostname(value: str) -> str:
         raise ValueError("Every audit URL must include a valid website hostname.")
     # Hostname columns contain hostnames, not URL authorities. Reject port,
     # credentials, path and bracket syntax rather than comparing ambiguously.
-    if any(character in host for character in "/\\\\@?#[]"):
+    if any(character in host for character in "/\\\\@:#[]"):
         raise ValueError("Every audit URL must include a valid website hostname.")
     return host.encode("idna").decode("ascii").lower().rstrip(".")
 
@@ -94,7 +94,7 @@ async def enqueue_scan_request(
         raise ValueError("Maximum scan attempts must be between 1 and 10.")
     if not isinstance(license_key, str) or not license_key.strip() or len(license_key) > 100:
         raise ValueError("License key is required and must not exceed 100 characters.")
-    if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
+    if not isinstance(request_id, str) or not request_id.strip() or request_id != request_id.strip() or len(request_id) > 128:
         raise ValueError("Request ID is required and must not exceed 128 characters.")
     if not isinstance(package_tier, str) or not package_tier.strip() or len(package_tier) > 50:
         raise ValueError("Package tier is required and must not exceed 50 characters.")
