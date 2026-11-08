@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `111459cdd98e2a82151dd84344f2ec8f64a9d033`  
+**Merged baseline:** `main` at `9a4ca72492c27e82d18d5de5b941d5efce730a7e`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -102,7 +102,7 @@
 
 ## Latest customer and agency scalability baseline — 2026-11-08
 
-- Current `main`: `111459cdd98e2a82151dd84344f2ec8f64a9d033`.
+- Current `main`: `9a4ca72492c27e82d18d5de5b941d5efce730a7e`.
 - PR #255: admin customer-directory license counts now use one batched lookup for the current page.
 - PR #256: cross-database distinct customer-email totals are counted from sorted streams without materializing all identities in Python.
 - PR #257: agency detail limits website connections to the latest 100 per workspace and exposes full counts plus truncation status in the operator console.
@@ -113,9 +113,20 @@
 
 ## Latest customer-account detail batch — 2026-11-08
 
-- Current `main`: `111459cdd98e2a82151dd84344f2ec8f64a9d033`.
+- Current `main`: `9a4ca72492c27e82d18d5de5b941d5efce730a7e`.
 - PR #260: linked-license inventory in admin customer detail is paginated at 100 per request with SQL-side deduplicated totals and a Load more control. The cross-database operational identity transfer has a 1,000-key ceiling; the API explicitly reports truncation and the displayed total is incomplete if that ceiling is reached.
 - PR #261: support-note identity selection uses SQL `MIN` aggregates across Hostinger and PostgreSQL instead of loading all keys into Python.
 - Session/payment/WordPress/support-note sublists still have fixed caps (200/200/100/100) without independent pagination metadata; this is a known follow-up.
 - Regression tests were added but not executed. No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
+
+
+## Latest customer-account detail implementation — 2026-11-08
+
+- Current `main`: `9a4ca72492c27e82d18d5de5b941d5efce730a7e`.
+- PR #260: linked-license inventory paginated at 100 per request, with SQL-side deduplicated counts and Load more UI.
+- PR #261: support-note identity selection uses database-side minimum-key aggregates rather than loading every key into Python.
+- PR #263: all Hostinger customer identity keys are streamed in batches of 500 into a transaction-scoped PostgreSQL temporary table; PostgreSQL combines them with legacy billing identities for exact deduplicated license totals and stable pagination. The earlier 1,000-key cap has been removed.
+- The temporary-table/cross-database path has regression contract coverage but tests have not been executed and live MySQL/PostgreSQL runtime acceptance is pending.
+- Customer detail sublists remain bounded: sessions 200, billing events 200, WordPress sites 100, support notes 100. Independent pagination/count metadata for these sublists remains follow-up work.
+- No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed. PDF/private-storage and final audit-result presentation remain reserved for the final phase.
