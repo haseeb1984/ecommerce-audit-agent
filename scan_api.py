@@ -554,24 +554,32 @@ async def archive_customer_website(
 async def get_customer_website(
     website_id: str,
     response: Response,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Return one customer's website record and its scan-job history."""
+    """Return a customer's website and a bounded page of its scan-job history."""
+    from sqlalchemy import func
     website = await db.scalar(select(CustomerWebsite).where(
         CustomerWebsite.id == website_id,
         CustomerWebsite.license_key == license_obj.license_key,
     ))
     if website is None:
         raise HTTPException(status_code=404, detail="Website not found.")
+    history_scope = (
+        WebsiteScanJob.website_id == website.id,
+        WebsiteScanJob.license_key == license_obj.license_key,
+    )
+    total_history = int((await db.execute(
+        select(func.count(WebsiteScanJob.id)).where(*history_scope)
+    )).scalar_one() or 0)
     jobs = (await db.execute(
         select(WebsiteScanJob)
-        .where(
-            WebsiteScanJob.website_id == website.id,
-            WebsiteScanJob.license_key == license_obj.license_key,
-        )
-        .order_by(WebsiteScanJob.created_at.desc())
-        .limit(100)
+        .where(*history_scope)
+        .order_by(WebsiteScanJob.created_at.desc(), WebsiteScanJob.id.desc())
+        .offset(offset)
+        .limit(limit)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -593,4 +601,10 @@ async def get_customer_website(
             "completed_at": job.completed_at,
             "result_reference": job.result_reference,
         } for job in jobs],
+        "history_page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total_history,
+            "has_more": offset + len(jobs) < total_history,
+        },
     }
