@@ -16,7 +16,7 @@ def test_billing_mirror_claim_serializes_pending_events_per_license():
 
     assert "left outer join payment_webhook_events as payment_webhook_events_1" in sql
     assert "payment_webhook_events_2.license_id = payment_webhook_events_1.license_id" in sql
-    assert "billing_mirror_sync_outbox_1.status = %(status_1)s" in sql
+    assert "billing_mirror_sync_outbox_1.status = %(status_2)s" in sql
     assert "billing_mirror_sync_outbox_1.created_at < billing_mirror_sync_outbox.created_at" in sql
     assert "billing_mirror_sync_outbox_1.event_id < billing_mirror_sync_outbox.event_id" in sql
     assert "billing_mirror_sync_outbox.next_attempt_at <=" in sql
