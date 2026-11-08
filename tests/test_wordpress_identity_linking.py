@@ -119,3 +119,26 @@ def test_wordpress_identity_claim_rechecks_token_expiry_after_both_database_lock
     refreshed_clock = source.rindex("now = datetime.now(timezone.utc)", 0, expiry_check)
 
     assert license_lock < challenge_lock < refreshed_clock < expiry_check
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://192.0.2.10/store/", ("https://192.0.2.10/store/", "192.0.2.10")),
+        ("https://[2001:0db8::1]/", ("https://[2001:db8::1]/", "2001:db8::1")),
+        ("https://[2001:db8::1]:443/shop", ("https://[2001:db8::1]/shop/", "2001:db8::1")),
+    ],
+)
+def test_wordpress_site_url_normalizes_ipv4_and_ipv6_literals(url, expected):
+    assert _normalize_site_url(url) == expected
+
+
+@pytest.mark.parametrize("url", [
+    "https://999.999.999.999/",
+    "https://192.0.2.999/",
+    "https://[2001:db8::gg]/",
+    "https://[fe80::1%25eth0]/",
+])
+def test_wordpress_site_url_rejects_malformed_ip_literals(url):
+    with pytest.raises(HTTPException):
+        _normalize_site_url(url)
