@@ -373,3 +373,46 @@ def test_operational_row_migration_streams_and_reconciles_in_bounded_batches():
     assert "key_column.in_(list(expected_by_key))" in source_segment
     assert "target.scalar(" not in source_segment
     assert "await result.close()" in source_segment
+
+
+def test_account_and_support_note_migration_streams_source_and_batches_target_lookups():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    migrate_function = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
+    )
+    migrate_segment = ast.get_source_segment(source, migrate_function)
+
+    assert "_stream_rows(source, AccountSession)" in migrate_segment
+    assert "_stream_rows(source, WordPressSite)" in migrate_segment
+    assert "source.stream_scalars(billing_statement)" in migrate_segment
+    assert "_stream_rows(source, SaaSAdminCustomerNote)" in migrate_segment
+    assert "tuple_(CustomerAccount.license_key, CustomerAccount.email).in_(identity_keys)" in migrate_segment
+    assert "AdminCustomerNote.id.in_(list(expected_by_id))" in migrate_segment
+    assert "account_candidate_iterator = iter(account_candidates.items())" in migrate_segment
+    assert "list(account_candidates.items())" not in migrate_segment
+    assert '"source": note_source_count' in migrate_segment
+
+
+def test_operational_license_identity_map_uses_streaming_projection():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    license_map = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_license_map"
+    )
+    segment = ast.get_source_segment(source, license_map)
+
+    assert "source.stream(" in segment
+    assert "SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name" in segment
+    assert ".scalars().all()" not in segment
+    assert "await result.close()" in segment
