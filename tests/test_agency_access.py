@@ -724,8 +724,9 @@ class AgencyArchiveSession:
     async def scalar(self, _statement):
         return self.rows.pop(0)
 
-    async def execute(self, _statement):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.challenges))
+    async def execute(self, statement):
+        self.statement = statement
+        return SimpleNamespace(rowcount=len(self.challenges))
 
     async def commit(self):
         self.committed = True
@@ -764,7 +765,8 @@ async def test_archiving_agency_workspace_revokes_plugin_credential_and_pending_
     assert site.status == "disconnected"
     assert site.site_token_hash is None
     assert site.disconnected_at is not None
-    assert all(challenge.consumed_at is not None for challenge in challenges)
+    assert "UPDATE AGENCY_WEBSITE_CONNECT_CHALLENGES" in str(db.statement).upper()
+    assert "consumed_at" in str(db.statement).lower()
     assert db.committed
 
 
@@ -895,3 +897,18 @@ def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_trunca
     assert "workspace.website_connection_count" in source
     assert "workspace.website_connections_truncated" in source
     assert "Showing latest 100" in source
+
+
+
+def test_agency_workspace_archive_and_disconnect_bulk_revoke_pending_connection_challenges():
+    import inspect
+    import main
+
+    archive_source = inspect.getsource(main.update_business_agency_client)
+    disconnect_source = inspect.getsource(main.disconnect_agency_client_website)
+
+    for source in (archive_source, disconnect_source):
+        assert "update(AgencyWebsiteConnectChallenge)" in source
+        assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source
+        assert ".values(consumed_at=now)" in source
+        assert ".scalars().all()" not in source

@@ -2493,7 +2493,7 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
                                             operational_db: AsyncSession = Depends(get_hostinger_db)):
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website management is available on the Business plan.")
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     # Serialize with workspace archival, agency suspension and token issuance.
     # The shared lifecycle lock order is agency -> workspace -> website -> challenge.
     agency = await operational_db.scalar(select(AgencyAccount).where(
@@ -2528,13 +2528,11 @@ async def disconnect_agency_client_website(workspace_id: str, response: Response
     site.status = "disconnected"
     site.disconnected_at = now
     site.site_token_hash = None
-    challenges = (await operational_db.execute(select(AgencyWebsiteConnectChallenge).where(
+    await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
         AgencyWebsiteConnectChallenge.agency_id == agency.id,
         AgencyWebsiteConnectChallenge.workspace_id == workspace.id,
         AgencyWebsiteConnectChallenge.consumed_at.is_(None),
-    ).with_for_update())).scalars().all()
-    for challenge in challenges:
-        challenge.consumed_at = now
+    ).values(consumed_at=now))
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -3802,7 +3800,7 @@ async def update_business_agency_client(
     """Update or archive a client workspace without crossing agency boundaries."""
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency client management is available on the Business plan.")
-    from sqlalchemy import select
+    from sqlalchemy import select, update
     # Keep the agency -> workspace lock order consistent with suspension,
     # workspace creation and website-connection lifecycle operations.
     agency = await operational_db.scalar(
@@ -3841,16 +3839,12 @@ async def update_business_agency_client(
             site.disconnected_at = now
             site.site_token_hash = None
             connection_revoked = True
-        pending_challenges = (await operational_db.execute(
-            select(AgencyWebsiteConnectChallenge).where(
-                AgencyWebsiteConnectChallenge.agency_id == agency.id,
-                AgencyWebsiteConnectChallenge.workspace_id == item.id,
-                AgencyWebsiteConnectChallenge.consumed_at.is_(None),
-            ).with_for_update()
-        )).scalars().all()
-        for challenge in pending_challenges:
-            challenge.consumed_at = now
-        if pending_challenges:
+        challenge_result = await operational_db.execute(update(AgencyWebsiteConnectChallenge).where(
+            AgencyWebsiteConnectChallenge.agency_id == agency.id,
+            AgencyWebsiteConnectChallenge.workspace_id == item.id,
+            AgencyWebsiteConnectChallenge.consumed_at.is_(None),
+        ).values(consumed_at=now))
+        if int(challenge_result.rowcount or 0) > 0:
             connection_revoked = True
     if "status" in changes:
         item.status = changes["status"]
