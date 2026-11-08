@@ -32,8 +32,11 @@ def _browser_service_base_url(value: str) -> str:
             and not parsed.query
             and not parsed.fragment
             and (parsed.port is None or 1 <= parsed.port <= 65535)
-            and not any(character.isspace() for character in parsed.netloc)
-            and "\\" not in parsed.netloc
+            and not parsed.netloc.endswith(":")
+            and not any(character.isspace() for character in candidate)
+            and "?" not in candidate
+            and "#" not in candidate
+            and "\\" not in candidate
         )
     except ValueError:
         valid = False
