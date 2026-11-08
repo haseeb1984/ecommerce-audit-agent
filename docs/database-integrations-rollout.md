@@ -21,7 +21,7 @@ Take backups of both databases before applying any migration. All migration exec
 4. Reconcile operational data counts and customer ownership before switching off legacy PostgreSQL operational tables. Do not remove legacy source tables as part of the copy.
 5. Keep report binary migration as a final, separate phase: move report bytes to Hostinger private storage, retain metadata and ownership in Hostinger MySQL, and only then retire any legacy PostgreSQL PDF bytes.
 
-The current migration utility covers legacy customer accounts, billing-event history, login/session/email-change records, WordPress installations, branding, support notes, and admin action history. It is deliberately non-destructive. Live migration has not been executed by this code change.
+The current migration utility covers legacy customer accounts, billing-event history, login/session/email-change records, WordPress installations, branding, support notes, and admin action history. Generic entity copying streams source rows in batches of 500 and reconciles each batch with one bounded target-key query rather than issuing one target lookup per source row. This bounds the generic transfer working set and avoids loading each generic source table fully into application memory; account-candidate and support-note reconciliation still have separate in-memory collection paths. The migration is deliberately non-destructive. Live migration has not been executed by this code change.
 
 ## Runtime database contract
 
