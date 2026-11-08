@@ -104,37 +104,73 @@ def _billing_license_map(billing_rows, license_key_by_id):
     return resolved, ambiguous
 
 
+MIGRATION_BATCH_SIZE = 500
+
+
 async def _copy_rows(source, target, source_model, target_model, transform, key_name, stage_missing: bool):
-    rows = (await source.execute(select(source_model))).scalars().all()
+    """Stream source rows and reconcile target keys in bounded batches."""
+    source_count = 0
     copied = 0
     skipped = 0
     mismatch_count = 0
     mismatch_fields = set()
-    for row in rows:
-        values = transform(row)
-        if values is None:
-            skipped += 1
-            continue
-        key_value = values[key_name]
-        existing = await target.scalar(
-            select(target_model).where(getattr(target_model, key_name) == key_value).limit(1)
+    batch = []
+
+    async def reconcile_batch(rows):
+        nonlocal copied, skipped, mismatch_count
+        expected_by_key = {}
+        for row in rows:
+            values = transform(row)
+            if values is None:
+                skipped += 1
+                continue
+            expected_by_key[values[key_name]] = values
+
+        if not expected_by_key:
+            return
+
+        key_column = getattr(target_model, key_name)
+        result = await target.execute(
+            select(target_model).where(key_column.in_(list(expected_by_key)))
         )
-        if existing is None:
-            if stage_missing:
-                target.add(target_model(**values))
-            copied += 1
-        else:
+        existing_by_key = {
+            getattr(existing, key_name): existing
+            for existing in result.scalars()
+        }
+        for key_value, values in expected_by_key.items():
+            existing = existing_by_key.get(key_value)
+            if existing is None:
+                if stage_missing:
+                    target.add(target_model(**values))
+                copied += 1
+                continue
             skipped += 1
             fields = _mismatched_fields(existing, values)
             if fields:
                 mismatch_count += 1
                 mismatch_fields.update(fields)
+
+    statement = select(source_model).execution_options(yield_per=MIGRATION_BATCH_SIZE)
+    result = await source.stream_scalars(statement)
+    try:
+        async for row in result:
+            source_count += 1
+            batch.append(row)
+            if len(batch) >= MIGRATION_BATCH_SIZE:
+                await reconcile_batch(batch)
+                batch.clear()
+        if batch:
+            await reconcile_batch(batch)
+    finally:
+        await result.close()
+
     return {
-        "source": len(rows),
+        "source": source_count,
         "to_copy": copied,
         "already_present_or_unmapped": skipped,
         "field_mismatches": mismatch_count,
         "mismatched_fields": sorted(mismatch_fields),
+        "batch_size": MIGRATION_BATCH_SIZE,
     }
 
 
