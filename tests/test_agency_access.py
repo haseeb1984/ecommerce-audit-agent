@@ -765,7 +765,7 @@ async def test_archiving_agency_workspace_revokes_plugin_credential_and_pending_
     assert site.status == "disconnected"
     assert site.site_token_hash is None
     assert site.disconnected_at is not None
-    assert "UPDATE agency_website_connect_challenges" in str(db.statement).upper()
+    assert "UPDATE AGENCY_WEBSITE_CONNECT_CHALLENGES" in str(db.statement).upper()
     assert "consumed_at" in str(db.statement).lower()
     assert db.committed
 
