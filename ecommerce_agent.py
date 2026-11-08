@@ -126,6 +126,50 @@ class LeadDossier(BaseModel):
     pitch: PersonalizedPitch
 
 
+_UNSUPPORTED_PITCH_BUSINESS_TERMS = re.compile(
+    r"\b(?:revenue|sales|conversion(?:s|\s+rate)?|ad\s+spend|ad\s+budget|profit|roi)\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_PITCH_QUANTIFICATION = re.compile(
+    r"(?:[$£€]\s*\d|\b\d+(?:\.\d+)?\s*(?:%|percent|x|times)\b)",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_PITCH_CAUSALITY = re.compile(
+    r"\b(?:burn(?:ing|s)?|wast(?:e|es|ing)|cost(?:s|ing)?|los(?:e|es|ing|t)|reduc(?:e|es|ing)|"
+    r"lower(?:s|ing)?|hurt(?:s|ing)?|damage(?:s|d)?|increase(?:s|d|ing)?|boost(?:s|ed|ing)?|"
+    r"improv(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|drive(?:s|n|ing)?)\b"
+    r"(?:\s+\w+){0,4}\s+\b(?:revenue|sales|conversion(?:s|\s+rate)?|ad\s+spend|ad\s+budget|profit)\b",
+    re.IGNORECASE,
+)
+
+
+def _evidence_based_business_impact_hypothesis(audit: StoreAuditMetrics) -> str:
+    return (
+        f"PageSpeed recorded a mobile Lighthouse performance score of {audit.mobile_score}/100 "
+        f"and a Speed Index of {audit.speed_index_sec:.2f} seconds. These are lab measurements only; "
+        "ad spend, conversion rate, and revenue were not measured, so business impact is unknown."
+    )
+
+
+def _safe_pitch_fallback(audit: StoreAuditMetrics) -> tuple[str, str]:
+    subject = f"Performance observations for {audit.domain}"
+    body = (
+        f"I reviewed the mobile PageSpeed run for {audit.domain}, which recorded a lab performance "
+        f"score of {audit.mobile_score}/100 and a Speed Index of {audit.speed_index_sec:.2f} seconds. "
+        "These measurements describe the tested page load and do not establish a business outcome. "
+        "Would you be open to a 90-second Loom walking through the observed performance signals?"
+    )
+    return subject, body
+
+
+def _pitch_copy_needs_grounded_fallback(value: str) -> bool:
+    return bool(
+        _UNSUPPORTED_PITCH_BUSINESS_TERMS.search(value)
+        or _UNSUPPORTED_PITCH_QUANTIFICATION.search(value)
+        or _UNSUPPORTED_PITCH_CAUSALITY.search(value)
+    )
+
+
 class UniversalEcommerceAgent:
     @staticmethod
     def _normalize_audit_target(value: object) -> str:
@@ -406,9 +450,13 @@ class UniversalEcommerceAgent:
         contact: ContactInfo,
     ) -> PersonalizedPitch:
         system_prompt = f"""
-        You are an elite E-commerce Agency Strategist.
-        1. Write a 3-sentence cold email to {contact.first_name} pointing out their mobile score ({audit.mobile_score}/100) is burning ad budget.
-        2. End with a soft question offering a 90-second loom video.
+        You are an evidence-first ecommerce performance communications assistant.
+        Write a concise, three-sentence outreach email to {contact.first_name} about the supplied PageSpeed observations.
+        You may state only the supplied mobile Lighthouse performance score ({audit.mobile_score}/100) and Speed Index ({audit.speed_index_sec:.2f} seconds).
+        These are lab measurements for a tested page. They do not establish ad-spend waste, revenue loss, sales impact, or conversion impact.
+        In the email subject and body, do not mention revenue, sales, conversions, ad budgets, ROI, or financial outcomes. Do not invent percentages, currency amounts, uplift estimates, causes, or guarantees.
+        The separate revenue_leak_hypothesis field must explicitly say business impact was not measured and must not claim a revenue leak.
+        End the email with a soft question offering a 90-second Loom video.
         Respond STRICTLY in valid JSON with keys: "revenue_leak_hypothesis", "email_subject", "email_body".
         """
         response = await self.groq_client.chat.completions.create(
@@ -424,7 +472,16 @@ class UniversalEcommerceAgent:
         )
         content = response.choices[0].message.content
         parsed = json.loads(content)
-        return PersonalizedPitch(**parsed)
+        pitch = PersonalizedPitch(**parsed)
+        # This statement is deterministic: PageSpeed does not measure financial
+        # outcomes, so model output cannot turn lab metrics into a revenue claim.
+        pitch.revenue_leak_hypothesis = _evidence_based_business_impact_hypothesis(audit)
+        if (
+            _pitch_copy_needs_grounded_fallback(pitch.email_subject)
+            or _pitch_copy_needs_grounded_fallback(pitch.email_body)
+        ):
+            pitch.email_subject, pitch.email_body = _safe_pitch_fallback(audit)
+        return pitch
 
     async def generate_pitch(self, audit: StoreAuditMetrics, contact: ContactInfo) -> PersonalizedPitch:
         current_model = getattr(self, "model", os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"))
