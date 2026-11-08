@@ -6560,16 +6560,42 @@ async def admin_get_business_agency_detail(
     )).scalars().all()
     workspace_ids = [item.id for item in workspaces]
     websites_by_workspace = {}
+    website_counts = {}
     access_counts = {}
     if workspace_ids:
+        ranked_website_ids = select(
+            AgencyClientWebsite.id.label("site_id"),
+            AgencyClientWebsite.workspace_id.label("workspace_id"),
+            func.row_number().over(
+                partition_by=AgencyClientWebsite.workspace_id,
+                order_by=(
+                    AgencyClientWebsite.connected_at.desc(),
+                    AgencyClientWebsite.id.desc(),
+                ),
+            ).label("site_rank"),
+        ).where(
+            AgencyClientWebsite.agency_id == agency.id,
+            AgencyClientWebsite.workspace_id.in_(workspace_ids),
+        ).subquery("ranked_agency_workspace_websites")
         website_rows = (await operational_db.execute(
             select(AgencyClientWebsite)
+            .join(ranked_website_ids, AgencyClientWebsite.id == ranked_website_ids.c.site_id)
+            .where(ranked_website_ids.c.site_rank <= 100)
+            .order_by(
+                AgencyClientWebsite.workspace_id.asc(),
+                AgencyClientWebsite.connected_at.desc(),
+                AgencyClientWebsite.id.desc(),
+            )
+        )).scalars().all()
+        website_count_rows = (await operational_db.execute(
+            select(AgencyClientWebsite.workspace_id, func.count(AgencyClientWebsite.id))
             .where(
                 AgencyClientWebsite.agency_id == agency.id,
                 AgencyClientWebsite.workspace_id.in_(workspace_ids),
             )
-            .order_by(AgencyClientWebsite.connected_at.desc())
-        )).scalars().all()
+            .group_by(AgencyClientWebsite.workspace_id)
+        )).all()
+        website_counts = {workspace_id: int(count) for workspace_id, count in website_count_rows}
         for site in website_rows:
             websites_by_workspace.setdefault(site.workspace_id, []).append({
                 "host": site.site_host,
@@ -6617,6 +6643,8 @@ async def admin_get_business_agency_detail(
             "status": item.status,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "website_connections": websites_by_workspace.get(item.id, []),
+            "website_connection_count": website_counts.get(item.id, 0),
+            "website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, [])),
             "team_access_count": access_counts.get(item.id, 0),
         } for item in workspaces],
         "team_members": [{
@@ -6633,7 +6661,18 @@ async def admin_get_business_agency_detail(
             "workspaces_total": workspace_total,
             "team_members_returned": len(members),
             "team_members_total": member_total,
-            "truncated": len(workspaces) < workspace_total or len(members) < member_total,
+            "website_connections_truncated": any(
+                website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))
+                for item in workspaces
+            ),
+            "truncated": (
+                len(workspaces) < workspace_total
+                or len(members) < member_total
+                or any(
+                    website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))
+                    for item in workspaces
+                )
+            ),
         },
     }
 

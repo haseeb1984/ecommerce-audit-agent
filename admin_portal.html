@@ -393,7 +393,7 @@ async function showAgencyDetail(agencyId){
   const workspaceTitle=el("h4","Client workspaces ("+d.page.workspaces_total+")");box.append(workspaceTitle);
   if(!d.workspaces.length)box.append(el("p","No client workspaces.","muted"));
   for(const workspace of d.workspaces){
-   const item=el("div",null,"historyrow"),name=el("strong",workspace.display_name),details=el("p",workspace.status+" · Team access: "+workspace.team_access_count+" · Ref: "+(workspace.external_reference||"—"),"muted");
+   const item=el("div",null,"historyrow"),name=el("strong",workspace.display_name),websiteNote=workspace.website_connections_truncated?" · Showing latest 100":"",details=el("p",workspace.status+" · Team access: "+workspace.team_access_count+" · Websites: "+(workspace.website_connection_count||0)+websiteNote+" · Ref: "+(workspace.external_reference||"—"),"muted");
    item.append(name,details);
    if(workspace.website_connections.length){
     for(const site of workspace.website_connections){
@@ -408,7 +408,7 @@ async function showAgencyDetail(agencyId){
   for(const member of d.team_members){
    box.append(el("p",member.email+" · "+member.role+" · "+member.status+" · Invited by "+member.invited_by,"muted"));
   }
-  if(d.page.truncated)box.append(el("p","Showing the latest 100 workspaces and 100 team members. Full totals are shown above.","muted"));
+  if(d.page.truncated)box.append(el("p","Some agency detail lists are capped at 100 items. Full workspace, team-member, and per-workspace website counts are shown above.","muted"));
   const close=el("button","Close details","secondary");close.addEventListener("click",()=>{agencyDetailRequestVersion+=1;box.hidden=true;box.replaceChildren()});box.append(close);
  }catch(error){
   if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){box.replaceChildren(el("p","Unable to load agency details. "+error.message,"error"))}

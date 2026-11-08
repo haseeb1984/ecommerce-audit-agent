@@ -864,3 +864,26 @@ def test_agency_website_disconnect_is_idempotent_and_uses_latest_tenant_site():
     assert "await operational_db.commit()" not in already_branch
     assert "site.disconnected_at = now" in source
     assert 'response.headers["Pragma"] = "no-cache"' in source
+
+
+def test_admin_agency_detail_caps_website_connections_per_workspace_and_reports_full_counts():
+    import inspect
+
+    from main import admin_get_business_agency_detail
+
+    source = inspect.getsource(admin_get_business_agency_detail)
+    assert "func.row_number().over(" in source
+    assert "partition_by=AgencyClientWebsite.workspace_id" in source
+    assert "ranked_website_ids.c.site_rank <= 100" in source
+    assert "website_count_rows" in source
+    assert '"website_connection_count": website_counts.get(item.id, 0)' in source
+    assert '"website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))' in source
+
+
+def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_truncation():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
+    assert "workspace.website_connection_count" in source
+    assert "workspace.website_connections_truncated" in source
+    assert "Showing latest 100" in source
