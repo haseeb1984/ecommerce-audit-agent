@@ -8358,14 +8358,28 @@ async def admin_customer_directory(
             if identity.license_key:
                 license_keys_by_email.setdefault(identity.email, set()).add(identity.license_key)
 
+    # Resolve all licenses for the current page in one PostgreSQL query rather
+    # than issuing one query per customer email (up to 100 extra round trips).
+    page_license_keys = sorted({
+        license_key
+        for keys in license_keys_by_email.values()
+        for license_key in keys
+    })
+    license_by_key = {}
+    if page_license_keys:
+        page_license_rows = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.license_key.in_(page_license_keys))
+        )).scalars().all()
+        license_by_key = {item.license_key: item for item in page_license_rows}
+
     items = []
     now = datetime.now(timezone.utc)
     for row in rows:
-        license_keys = license_keys_by_email.get(row["email"], set())
-        license_rows = (await db.execute(
-            select(SoftwareLicense).where(SoftwareLicense.license_key.in_(license_keys))
-        )).scalars().all() if license_keys else []
-
+        license_rows = [
+            license_by_key[license_key]
+            for license_key in license_keys_by_email.get(row["email"], set())
+            if license_key in license_by_key
+        ]
         active = sum(
             1 for lic in license_rows
             if lic.is_active and (
