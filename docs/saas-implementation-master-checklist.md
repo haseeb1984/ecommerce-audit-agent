@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `528f54fd9d819a7459b380aad84f0241ed8d4895`  
+**Merged baseline:** `main` at `071cfa4d73f3e393ea3d258bed26bc7015ae19a3`  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -21,7 +21,7 @@
 | Customer usage and audit activity | Implemented / verification pending | Usage/activity endpoints and portal meters exist; latest CI and browser QA required. |
 | Customer report history and evidence coverage | Implemented / verification pending | Scoped/paginated history and evidence endpoints exist; generated report quality is a separate final gate. |
 | Customer API-key create/list/revoke | Implemented / verification pending | Customer/admin caps, license-first revocation locks, one-time secret handling and stale-selection/session guards are integrated; verify latest CI and PostgreSQL race behavior. |
-| Agency admin inventory and tenant detail inspection | Implemented / verification pending | Searchable/paginated inventory, bounded detail inspection and sanitized lifecycle audit logging are integrated; latest CI and admin browser acceptance pending. |
+| Agency admin inventory and tenant detail inspection | Implemented / verification pending | Searchable/paginated inventory, latest-100 website connections per workspace with full counts, bulk suspension cleanup, and sanitized lifecycle audit logging are integrated; latest CI and admin browser acceptance pending. |
 | Agency team/workspace lifecycle | Implemented / verification pending | Role changes, invitation/revocation, workspace grants, archive revocation and consistent row-lock ordering are integrated; PostgreSQL concurrency acceptance pending. |
 | WordPress connection lifecycle | Implemented / verification pending | Connection health, stale heartbeat visibility, token replacement and archive credential/challenge revocation are integrated; browser/plugin acceptance pending. |
 | Admin activity and sync operations | Implemented / verification pending | Activity filters, cross-database outbox retries, billing-mirror queue, retry-pressure diagnostics and session-safe controls are integrated; runtime acceptance pending. |
@@ -31,9 +31,9 @@
 | Checkout and subscription provisioning | Implemented / verification pending | Paddle checkout/webhook handlers exist; sandbox provider acceptance still required. |
 | Billing history and billing portal | Implemented / verification pending | Billing-only account ownership allows expired customers to manage billing; Paddle sandbox acceptance pending. |
 | Payment webhook idempotency/reconciliation | Implemented / verification pending | Event persistence, cancellation/payment-failure handling and reconciliation exist; run current CI and sandbox lifecycle acceptance. |
-| Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; browser and staging authorization checks pending. |
+| Admin customer and API-key operations | Implemented / verification pending | Client management, key management and action logs exist; customer-directory license counts are page-batched and cross-database customer totals use constant-memory sorted streams. Browser and staging authorization checks pending. |
 | Admin operations/health visibility | Implemented / verification pending | Operational event and overview endpoints exist; production schema/configuration acceptance pending. |
-| Admin billing and overview scalability | Implemented / verification pending | Payment-event union totals use constant-memory sorted streams; overview aggregates are page-scoped and contact selection uses deterministic per-license ranking. Regression tests are committed but not executed; verify on CI and staging data. |
+| Admin billing and overview scalability | Implemented / verification pending | Payment-event and customer-email union totals use constant-memory sorted streams; overview aggregates are page-scoped, contact selection uses deterministic per-license ranking, and customer license counts are page-batched. Regression tests are committed but not executed; verify on CI and staging data. |
 | Email delivery | Implemented / verification pending | Explicit-recipient report delivery and configured sender checks exist; real SMTP inbox delivery requires approved staging credentials. |
 | Production schema/configuration readiness | Implemented / verification pending | Read-only readiness script checks PostgreSQL and Hostinger tables/columns/indexes plus application configuration; run against staging with approved environment. |
 | Legacy operational-data migration | Implemented / verification pending | `scripts/migrate_operational_data_to_hostinger.py` is dry-run by default and preserves PostgreSQL sources. Ambiguous email-to-license support-note ownership is now skipped and reported separately; run dry-run and reconcile counts in staging before any `--apply`. |
@@ -98,3 +98,14 @@
 - PR #253: per-license dashboard aggregates are scoped to the visible customer page; latest Hostinger and legacy PostgreSQL billing contacts are selected with deterministic row ranking.
 - Regression coverage is committed but not executed. Vercel deployment-rate limiting is not a Python test result; no CI pass is claimed.
 - No production customer data, migrations, external billing/email action, or production deployment was touched. PDF/private-storage and final report presentation remain reserved for the final phase.
+
+
+## Latest customer and agency scalability baseline — 2026-11-08
+
+- Current `main`: `071cfa4d73f3e393ea3d258bed26bc7015ae19a3`.
+- PR #255: admin customer-directory license counts now use one batched lookup for the current page.
+- PR #256: cross-database distinct customer-email totals are counted from sorted streams without materializing all identities in Python.
+- PR #257: agency detail limits website connections to the latest 100 per workspace and exposes full counts plus truncation status in the operator console.
+- PR #258: agency suspension invalidates sessions, pending login challenges, and invitations using targeted SQL updates rather than unbounded ORM row loading.
+- Tests were added/updated but not executed. No CI pass, production data verification, live migration, external provider acceptance, or production deployment is claimed.
+- PDF/private-storage and final audit-result presentation remain reserved for the final phase.
