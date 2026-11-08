@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import hashlib
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,13 +55,32 @@ async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
     return {row.id: row for row in rows}
 
 
+def _normalized_value(value):
+    """Normalize database-returned datetimes before cross-engine comparisons."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    return value
+
+
+def _mismatched_fields(existing, expected_values):
+    """Return field names whose persisted target values differ from the source mapping."""
+    return sorted(
+        name for name, expected in expected_values.items()
+        if _normalized_value(getattr(existing, name, None)) != _normalized_value(expected)
+    )
+
+
 def _verification_gaps(reports):
-    """Return per-entity counts of mapped source rows still missing in Hostinger."""
-    return {
-        name: int(report.get("to_copy", 0))
-        for name, report in reports.items()
-        if int(report.get("to_copy", 0)) > 0
-    }
+    """Return mapped rows missing from Hostinger or present with divergent fields."""
+    gaps = {}
+    for name, report in reports.items():
+        missing = int(report.get("to_copy", 0))
+        mismatched = int(report.get("field_mismatches", 0))
+        if missing or mismatched:
+            gaps[name] = {"missing": missing, "field_mismatches": mismatched}
+    return gaps
 
 
 def _billing_license_map(billing_rows, license_key_by_id):
@@ -88,6 +108,8 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
     rows = (await source.execute(select(source_model))).scalars().all()
     copied = 0
     skipped = 0
+    mismatch_count = 0
+    mismatch_fields = set()
     for row in rows:
         values = transform(row)
         if values is None:
@@ -103,7 +125,17 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
             copied += 1
         else:
             skipped += 1
-    return {"source": len(rows), "to_copy": copied, "already_present_or_unmapped": skipped}
+            fields = _mismatched_fields(existing, values)
+            if fields:
+                mismatch_count += 1
+                mismatch_fields.update(fields)
+    return {
+        "source": len(rows),
+        "to_copy": copied,
+        "already_present_or_unmapped": skipped,
+        "field_mismatches": mismatch_count,
+        "mismatched_fields": sorted(mismatch_fields),
+    }
 
 
 async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
@@ -147,29 +179,38 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
 
         account_copied = 0
         account_skipped = 0
+        account_mismatch_count = 0
+        account_mismatch_fields = set()
         for (license_key, email), (normalized_email, display_name, created_at) in account_candidates.items():
+            expected_account = {
+                "id": _legacy_account_id(license_key, normalized_email),
+                "license_key": license_key,
+                "email": normalized_email,
+                "display_name": display_name,
+                "status": "active",
+                "created_at": created_at,
+                "updated_at": created_at,
+            }
             existing = await target.scalar(select(CustomerAccount).where(
                 CustomerAccount.license_key == license_key,
                 CustomerAccount.email == normalized_email,
             ).limit(1))
             if existing is None:
                 if apply_changes:
-                    target.add(CustomerAccount(
-                        id=_legacy_account_id(license_key, normalized_email),
-                        license_key=license_key,
-                        email=normalized_email,
-                        display_name=display_name,
-                        status="active",
-                        created_at=created_at,
-                        updated_at=created_at,
-                    ))
+                    target.add(CustomerAccount(**expected_account))
                 account_copied += 1
             else:
                 account_skipped += 1
+                fields = _mismatched_fields(existing, expected_account)
+                if fields:
+                    account_mismatch_count += 1
+                    account_mismatch_fields.update(fields)
         reports["customer_accounts"] = {
             "source_candidates": len(account_candidates),
             "to_copy": account_copied,
             "already_present": account_skipped,
+            "field_mismatches": account_mismatch_count,
+            "mismatched_fields": sorted(account_mismatch_fields),
         }
 
         reports["customer_login_challenges"] = await _copy_rows(
@@ -305,6 +346,8 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         note_already_present = 0
         note_ambiguous = 0
         note_unmapped = 0
+        note_mismatch_count = 0
+        note_mismatch_fields = set()
         for row in note_rows:
             email = row.customer_email.strip().lower()
             if email in ambiguous_billing_emails:
@@ -315,26 +358,33 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             if not license_key:
                 note_unmapped += 1
                 continue
+            expected_note = {
+                "id": row.id,
+                "license_key": license_key,
+                "customer_email": email,
+                "note": row.note,
+                "created_by": row.created_by,
+                "created_at": row.created_at,
+            }
             existing = await target.get(AdminCustomerNote, row.id)
             if existing is None:
                 if apply_changes:
-                    target.add(AdminCustomerNote(
-                        id=row.id,
-                        license_key=license_key,
-                        customer_email=email,
-                        note=row.note,
-                        created_by=row.created_by,
-                        created_at=row.created_at,
-                    ))
+                    target.add(AdminCustomerNote(**expected_note))
                 note_copied += 1
             else:
                 note_already_present += 1
+                fields = _mismatched_fields(existing, expected_note)
+                if fields:
+                    note_mismatch_count += 1
+                    note_mismatch_fields.update(fields)
         reports["admin_customer_notes"] = {
             "source": len(note_rows),
             "to_copy": note_copied,
             "already_present": note_already_present,
             "ambiguous_license_mapping": note_ambiguous,
             "unmapped_email": note_unmapped,
+            "field_mismatches": note_mismatch_count,
+            "mismatched_fields": sorted(note_mismatch_fields),
         }
 
         for name, report in reports.items():
@@ -350,12 +400,21 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         await target.rollback()
         if verify_only:
             gaps = _verification_gaps(reports)
-            for name, count in gaps.items():
-                logger.error("%s: %s mapped source rows are still missing in Hostinger", name, count)
+            for name, counts in gaps.items():
+                if counts["missing"]:
+                    logger.error(
+                        "%s: %s mapped source rows are still missing in Hostinger",
+                        name, counts["missing"],
+                    )
+                if counts["field_mismatches"]:
+                    logger.error(
+                        "%s: %s existing target rows have divergent mapped fields",
+                        name, counts["field_mismatches"],
+                    )
             if gaps:
-                logger.error("Operational migration verification FAILED. No records were written.")
+                logger.error("Operational migration verification FAILED. No records were written or overwritten.")
                 return False
-            logger.info("Operational migration verification PASSED. All mapped source rows are present in Hostinger.")
+            logger.info("Operational migration verification PASSED. All mapped source rows are present and field-matched in Hostinger.")
             return True
 
         logger.info("Dry run only. No Hostinger records were written.")
