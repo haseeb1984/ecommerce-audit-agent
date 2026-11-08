@@ -266,7 +266,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                     (license_key, email), (email, licenses[row.license_id].client_name, row.created_at)
                 )
 
-        billing_license_candidates = {}
+
         billing_statement = (
             select(PaymentWebhookEvent)
             .where(PaymentWebhookEvent.license_id.is_not(None))
@@ -283,7 +283,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                         (license_key, email),
                         (email, licenses[row.license_id].client_name, row.created_at)
                     )
-                    billing_license_candidates.setdefault(email, set()).add(license_key)
+
         finally:
             await billing_result.close()
 
