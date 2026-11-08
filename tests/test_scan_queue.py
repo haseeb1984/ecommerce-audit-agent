@@ -410,3 +410,99 @@ def test_scan_lease_cutoff_accepts_valid_integer_duration():
 
     now = datetime.now(timezone.utc)
     assert _scan_lease_cutoff(now, 900) == now - timedelta(seconds=900)
+
+
+@pytest.mark.parametrize("max_attempts", [0, -1, 11, True, 3.0, "3"])
+def test_enqueue_rejects_invalid_attempt_limits(max_attempts):
+    from scan_queue import enqueue_scan_request
+
+    class NeverUsedSession:
+        async def execute(self, *_args, **_kwargs):
+            raise AssertionError("invalid input must be rejected before database access")
+
+    async def run():
+        await enqueue_scan_request(
+            NeverUsedSession(),
+            license_key="license-1",
+            package_tier="starter",
+            urls=["https://shop.example/"],
+            request_id="invalid-attempt-limit",
+            max_attempts=max_attempts,
+        )
+
+    with pytest.raises(ValueError, match="Maximum scan attempts"):
+        import asyncio
+        asyncio.run(run())
+
+
+@pytest.mark.parametrize("request_id", ["", "x" * 129])
+def test_enqueue_rejects_invalid_request_id_before_database_access(request_id):
+    from scan_queue import enqueue_scan_request
+    import asyncio
+
+    class NeverUsedSession:
+        async def execute(self, *_args, **_kwargs):
+            raise AssertionError("invalid input must be rejected before database access")
+
+    with pytest.raises(ValueError, match="Request ID"):
+        asyncio.run(enqueue_scan_request(
+            NeverUsedSession(),
+            license_key="license-1",
+            package_tier="starter",
+            urls=["https://shop.example/"],
+            request_id=request_id,
+        ))
+
+
+def test_site_binding_normalizes_existing_unicode_and_trailing_dot_hosts():
+    _validate_standard_license_site_binding(
+        registered_hosts=["BÜCHER.example."],
+        submitted_urls=["https://xn--bcher-kva.example/products/1"],
+    )
+
+
+@pytest.mark.parametrize("host", ["shop.example:443", "user@shop.example", "shop.example/path"])
+def test_site_binding_rejects_non_hostname_values_in_legacy_inventory(host):
+    with pytest.raises(ValueError, match="valid website hostname"):
+        _validate_standard_license_site_binding(
+            registered_hosts=[host],
+            submitted_urls=["https://shop.example/"],
+        )
+
+
+@pytest.mark.parametrize("batch_size", [True, False, 10.0, "10", 9, 12])
+def test_enqueue_rejects_invalid_batch_sizes_before_database_access(batch_size):
+    from scan_queue import enqueue_scan_request
+    import asyncio
+
+    class NeverUsedSession:
+        async def execute(self, *_args, **_kwargs):
+            raise AssertionError("invalid input must be rejected before database access")
+
+    with pytest.raises(ValueError, match="Scan batch size"):
+        asyncio.run(enqueue_scan_request(
+            NeverUsedSession(),
+            license_key="license-1",
+            package_tier="starter",
+            urls=["https://shop.example/"],
+            request_id="invalid-batch-size",
+            batch_size=batch_size,
+        ))
+
+
+def test_enqueue_rejects_whitespace_padded_request_id():
+    from scan_queue import enqueue_scan_request
+    import asyncio
+
+    class NeverUsedSession:
+        async def execute(self, *_args, **_kwargs):
+            raise AssertionError("invalid input must be rejected before database access")
+
+    with pytest.raises(ValueError, match="Request ID"):
+        asyncio.run(enqueue_scan_request(
+            NeverUsedSession(),
+            license_key="license-1",
+            package_tier="starter",
+            urls=["https://shop.example/"],
+            request_id=" request-1 ",
+        ))
