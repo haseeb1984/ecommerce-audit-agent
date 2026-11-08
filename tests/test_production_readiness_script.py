@@ -157,3 +157,18 @@ def test_hostinger_schema_readiness_reports_missing_foreign_key_signatures():
     assert namespace["_missing_foreign_keys"](required, observed) == {
         ("agency_workspace_access", ("workspace_id",), "agency_client_workspaces", ("id",))
     }
+
+
+
+def test_billing_mirror_pending_order_index_is_declared_and_migrated() -> None:
+    import models  # noqa: F401
+    from database import Base
+
+    contract = runpy.run_path(str(SCRIPT))["_postgres_schema_contract"]
+    _, _, required_indexes = contract(Base)
+    migration = ROOT / "migrations" / "20261106_billing_mirror_sync_outbox.sql"
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "ix_billing_mirror_sync_pending_order" in required_indexes
+    assert "CREATE INDEX IF NOT EXISTS ix_billing_mirror_sync_pending_order" in sql
+    assert "ON billing_mirror_sync_outbox (status, created_at, event_id)" in sql
