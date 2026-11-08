@@ -161,7 +161,8 @@ def test_account_wide_customer_lifecycle_mirror_uses_operational_subquery_not_py
     assert "CustomerAccount.email" in mirror_block
     assert "CustomerSession.license_key.in_(operational_license_keys)" in mirror_block
     assert "in_(license_keys)" not in mirror_block
-    assert "license_keys =" not in mirror_block
+    assert "license_keys = set(" not in mirror_block
+    assert "batch_license_keys = [item.license_key for item in batch]" in mirror_block
 
 
 
