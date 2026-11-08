@@ -185,6 +185,9 @@ async def claim_wordpress_site_identity(
     )
     if challenge is None:
         raise HTTPException(status_code=400, detail="WordPress link code is invalid or has already been used.")
+    # Database lock acquisition may take time. Evaluate expiry only after both
+    # the canonical license and one-time challenge locks have been obtained.
+    now = datetime.now(timezone.utc)
     expires_at = challenge.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
