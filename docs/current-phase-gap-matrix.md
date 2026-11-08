@@ -886,3 +886,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Missing canonical licenses continue to defer for retry; the update remains license-scoped and does not use email address as a tenant identifier.
 - Added PostgreSQL SQL-compilation and worker-order regression coverage. Tests are committed but have not been executed in this batch; no live database or customer records were changed.
 - PDF/report and final audit-result work remain reserved for the final phase.
+
+
+## 2026-11-08 — operational migration transform and timestamp integrity
+
+- Found and corrected an admin action-log migration call that incorrectly enabled per-row license-ID resolution even though its transform accepts only the source row. This mismatch would raise a runtime argument-count error when the migration reached admin action logs.
+- Corrected legacy customer-account projection to carry the selected candidate's source update timestamp through the database-side ranking query and persist it as `updated_at`; `created_at` remains sourced independently.
+- Added regression contracts for both the transform arity and timestamp preservation. Existing bounded batching, resumable commits, read-only verification and source-retention behavior are unchanged.
+- This is a source-level correction only. Backend CI has not executed these tests, and no live Hostinger/Supabase migration or data mutation was performed. Migration remains **implemented / verification pending**.
+- PDF/private-storage and final audit-result refinement remain reserved for the final phase.
