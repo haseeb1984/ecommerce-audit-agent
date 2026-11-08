@@ -119,6 +119,9 @@ def test_email_change_verification_serializes_with_old_email_login_otp():
     session_lock = source.index(".with_for_update()", login_email_lock)
     challenge_lock = source.index("CustomerEmailChangeChallenge.id == payload.challenge_id")
 
-    assert account_lock < login_email_lock < session_lock < challenge_lock
-    assert "candidate.email.strip().lower()" in source[login_email_lock:session_lock]
+    refreshed_identity = source.index("email_lock_candidate = await operational_db.scalar")
+    assert account_lock < refreshed_identity < login_email_lock < session_lock < challenge_lock
+    assert "locked_email = email_lock_candidate.email.strip().lower()" in source[refreshed_identity:login_email_lock]
+    assert "_lock_customer_login_email(operational_db, locked_email)" in source[login_email_lock:session_lock]
+    assert "if old_email != locked_email:" in source[session_lock:challenge_lock]
     assert "_customer_email_change_operational_updates" in source
