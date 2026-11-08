@@ -1821,12 +1821,24 @@ async def logout_all_account_sessions(
     ))
     if candidate is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
-    email = candidate.email.strip().lower()
+    # Email changes take the same license-then-email lock order. Acquire the
+    # license lock and refresh the identity before locking OTP activity, so a
+    # concurrent verified email change cannot make logout-all target a stale address.
+    await _lock_customer_email_change_license(operational_db, candidate.license_key)
+    refreshed = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == digest,
+        CustomerSession.license_key == candidate.license_key,
+        CustomerSession.revoked_at.is_(None),
+    ))
+    if refreshed is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    email = refreshed.email.strip().lower()
     # Serialize with OTP verification: no pending code may mint a new session
     # after this logout-all transaction has consumed challenges and revoked devices.
     await _lock_customer_login_email(operational_db, email)
     current = await operational_db.scalar(select(CustomerSession).where(
         CustomerSession.token_hash == digest,
+        CustomerSession.license_key == candidate.license_key,
         CustomerSession.email == email,
         CustomerSession.revoked_at.is_(None),
     ).with_for_update())
