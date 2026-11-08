@@ -718,7 +718,37 @@ async function loadClientPage(offset=0){
      requestedSearch===$("search").value.trim()&&requestedStatus===$("clientStatusFilter").value&&
      requestedTier===$("clientTierFilter").value.trim())throw error;
  }
-}async function refresh(){await loadClientPage(0);await loadCustomerDirectory();$("refresh").disabled=false;$("opsRefresh").disabled=false;$("retryLifecycleOutbox").disabled=false;$("retryEmailIdentityOutbox").disabled=false;$("retryBillingMirrorOutbox").disabled=false;$("actionsRefresh").disabled=false;$("actionsFilterApply").disabled=false;$("disconnect").disabled=false;await refreshOps();await refreshAgencies();await refreshPackages();await refreshActions();await refreshPaymentEvents(0);try{await refreshScanJobs(0);$("scanJobsRefresh").disabled=false}catch(scanError){$("scanJobsStatus").textContent="Scan job queue unavailable: "+scanError.message}$("paymentEventsRefresh").disabled=false;$("billingMirrorReconcile").disabled=false;$("billingMirrorRetry").disabled=false;status("Connected. Loaded "+clients.length+" client records.","success")}
+}async function refresh(){
+ const requestSessionVersion=adminSessionVersion;
+ await loadClientPage(0);
+ if(requestSessionVersion!==adminSessionVersion)return;
+ await loadCustomerDirectory();
+ if(requestSessionVersion!==adminSessionVersion)return;
+ $("refresh").disabled=false;$("opsRefresh").disabled=false;$("retryLifecycleOutbox").disabled=false;
+ $("retryEmailIdentityOutbox").disabled=false;$("retryBillingMirrorOutbox").disabled=false;
+ $("actionsRefresh").disabled=false;$("actionsFilterApply").disabled=false;$("disconnect").disabled=false;
+ await refreshOps();
+ if(requestSessionVersion!==adminSessionVersion)return;
+ await refreshAgencies();
+ if(requestSessionVersion!==adminSessionVersion)return;
+ await refreshPackages();
+ if(requestSessionVersion!==adminSessionVersion)return;
+ await refreshActions();
+ if(requestSessionVersion!==adminSessionVersion)return;
+ await refreshPaymentEvents(0);
+ if(requestSessionVersion!==adminSessionVersion)return;
+ try{
+  await refreshScanJobs(0);
+  if(requestSessionVersion!==adminSessionVersion)return;
+  $("scanJobsRefresh").disabled=false;
+ }catch(scanError){
+  if(requestSessionVersion!==adminSessionVersion)return;
+  $("scanJobsStatus").textContent="Scan job queue unavailable: "+scanError.message;
+ }
+ if(requestSessionVersion!==adminSessionVersion)return;
+ $("paymentEventsRefresh").disabled=false;$("billingMirrorReconcile").disabled=false;$("billingMirrorRetry").disabled=false;
+ status("Connected. Loaded "+clients.length+" client records.","success");
+}
 $("scanJobsRefresh").addEventListener("click",()=>{const version=adminSessionVersion;refreshScanJobs(scanJobOffset).catch(e=>{if(version===adminSessionVersion)status(e.message,"error")})});
 $("scanJobStatus").addEventListener("change",()=>{const version=adminSessionVersion;refreshScanJobs(0).catch(e=>{if(version===adminSessionVersion)status(e.message,"error")})});
 $("scanJobsPrev").addEventListener("click",()=>{const version=adminSessionVersion;refreshScanJobs(Math.max(0,scanJobOffset-scanJobLimit)).catch(e=>{if(version===adminSessionVersion)status(e.message,"error")})});
@@ -732,6 +762,6 @@ function clearAdminData(showMessage=true){adminSessionVersion+=1;paymentEventReq
 $("createClientApiKey").addEventListener("click",createClientApiKey);
 $("copyClientApiKey").addEventListener("click",async()=>{if(!currentClientApiKey)return;const operationSessionVersion=adminSessionVersion,operationClientId=currentHistoryId,keyToCopy=currentClientApiKey;try{await navigator.clipboard.writeText(keyToCopy);if(operationSessionVersion===adminSessionVersion&&operationClientId===currentHistoryId)status("API key copied. Store it securely.","success")}catch{if(operationSessionVersion===adminSessionVersion&&operationClientId===currentHistoryId)status("Clipboard access blocked; select and copy the key manually.","error")}});
 $("hideClientApiKey").addEventListener("click",()=>{currentClientApiKey="";$("clientApiKeyValue").textContent="";$("clientApiKeySecret").hidden=true});$("refreshClientSessions").addEventListener("click",()=>{if(currentHistoryId!==null)loadClientSessions(currentHistoryId).catch(e=>status(e.message,"error"))});$("revokeClientSessions").addEventListener("click",revokeClientSessions);$("refreshClientWordPressLinks").addEventListener("click",()=>{if(currentHistoryId!==null)loadClientWordPressLinks(currentHistoryId).catch(e=>status(e.message,"error"))});
-$("disconnect").addEventListener("click",()=>clearAdminData());$("refresh").addEventListener("click",async()=>{try{await refresh()}catch(e){status(e.message,"error")}});$("opsRefresh").addEventListener("click",async()=>{const version=adminSessionVersion;try{await refreshOps();if(version!==adminSessionVersion)return;status("Operational diagnostics refreshed.","success")}catch(e){if(version===adminSessionVersion)status(e.message,"error")}});$("search").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadClientPage(0).catch(e=>status(e.message,"error"))}});$("clientTierFilter").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadClientPage(0).catch(e=>status(e.message,"error"))}});$("applyClientFilters").addEventListener("click",()=>loadClientPage(0).catch(e=>status(e.message,"error")));$("clientPrev").addEventListener("click",()=>loadClientPage(Math.max(0,clientOffset-clientLimit)).catch(e=>status(e.message,"error")));$("clientNext").addEventListener("click",()=>loadClientPage(clientOffset+clientLimit).catch(e=>status(e.message,"error")));$("closeHistory").addEventListener("click",()=>$("historyPanel").hidden=true);
+$("disconnect").addEventListener("click",()=>clearAdminData());$("refresh").addEventListener("click",async()=>{const version=adminSessionVersion;try{await refresh()}catch(e){if(version===adminSessionVersion)status(e.message,"error")}});$("opsRefresh").addEventListener("click",async()=>{const version=adminSessionVersion;try{await refreshOps();if(version!==adminSessionVersion)return;status("Operational diagnostics refreshed.","success")}catch(e){if(version===adminSessionVersion)status(e.message,"error")}});$("search").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadClientPage(0).catch(e=>status(e.message,"error"))}});$("clientTierFilter").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadClientPage(0).catch(e=>status(e.message,"error"))}});$("applyClientFilters").addEventListener("click",()=>loadClientPage(0).catch(e=>status(e.message,"error")));$("clientPrev").addEventListener("click",()=>loadClientPage(Math.max(0,clientOffset-clientLimit)).catch(e=>status(e.message,"error")));$("clientNext").addEventListener("click",()=>loadClientPage(clientOffset+clientLimit).catch(e=>status(e.message,"error")));$("closeHistory").addEventListener("click",()=>$("historyPanel").hidden=true);
 })();
 </script></body></html>
