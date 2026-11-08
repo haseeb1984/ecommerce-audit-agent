@@ -241,7 +241,7 @@ async def queue_agency_wordpress_site_audit(
 async def list_scan_batches(
     response: Response,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -392,7 +392,7 @@ async def get_scan_batch(
 async def list_scan_history(
     response: Response,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -466,7 +466,7 @@ async def get_scan_job_result(
 async def list_customer_websites(
     response: Response,
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -564,7 +564,7 @@ async def get_customer_website(
     website_id: str,
     response: Response,
     limit: int = Query(100, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
