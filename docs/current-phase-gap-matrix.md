@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `111459cdd98e2a82151dd84344f2ec8f64a9d033` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `9a4ca72492c27e82d18d5de5b941d5efce730a7e` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -818,3 +818,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Related sessions and billing events remain bounded to 200 each, WordPress sites to 100, and support notes to 100. Full independent pagination/count metadata for those sublists remains a follow-up.
 - PR #261 is merged: support-note identity selection now uses database-side minimum-key aggregates rather than materializing all operational and legacy license keys.
 - Regression tests were added but not executed. CI, live data, production migration, provider acceptance, and deployment remain unverified.
+
+
+## 2026-11-08 — unbounded customer identity streaming
+
+- PR #263 is merged: admin customer detail now streams the full distinct Hostinger identity-key union in batches of 500 into a transaction-scoped PostgreSQL temporary table. The canonical PostgreSQL query unions those identities with legacy billing identities, calculates the deduplicated total, and paginates 100 licenses per request.
+- This removes the prior 1,000-key ceiling; application memory for the cross-database identity transfer is bounded by the 500-key batch.
+- Temp-table transaction commit/rollback and Hostinger stream closure are implemented. Production PostgreSQL/MySQL runtime acceptance is still pending; the temporary-table path is not claimed as production verified.
+- PR #260 and #261 remain merged: customer license pagination and database-side support-note identity selection.
+- Regression tests were added/updated but not executed. Vercel deployment attempts remain blocked by the daily deployment-rate limit; this is not a test result.
