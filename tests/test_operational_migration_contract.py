@@ -348,7 +348,28 @@ def test_dry_run_and_verify_never_stage_target_inserts():
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
 
-    assert "if stage_missing:\n                target.add(target_model(**values))" in source
-    assert "if apply_changes:\n                    target.add(CustomerAccount(" in source
-    assert "if apply_changes:\n                    target.add(AdminCustomerNote(" in source
+    assert "if stage_missing:\n                    target.add(target_model(**values))" in source
+    assert "if apply_changes:\n                    target.add(CustomerAccount(**expected_account))" in source
+    assert "if apply_changes:\n                    target.add(AdminCustomerNote(**expected_note))" in source
     assert source.count("stage_missing=apply_changes") == 8
+
+
+def test_operational_row_migration_streams_and_reconciles_in_bounded_batches():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    copy_rows = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_copy_rows"
+    )
+    source_segment = ast.get_source_segment(source, copy_rows)
+
+    assert "MIGRATION_BATCH_SIZE = 500" in source
+    assert "source.stream_scalars(statement)" in source_segment
+    assert "async for row in result" in source_segment
+    assert "key_column.in_(list(expected_by_key))" in source_segment
+    assert "target.scalar(" not in source_segment
+    assert "await result.close()" in source_segment
