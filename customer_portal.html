@@ -1374,6 +1374,7 @@
     }
   }
   let activityRows = [], activityTotal = 0, activityLoading = false;
+  let activityLoadingSessionVersion = -1, activityRequestVersion = 0;
   function renderActivity() {
     const container = $("auditActivity"); container.replaceChildren();
     if (!activityRows.length) {
@@ -1397,8 +1398,11 @@
     $("loadMoreActivity").hidden = activityRows.length >= activityTotal;
   }
   async function loadActivity({reset = true} = {}) {
-    if (activityLoading) return;
+    const requestSessionVersion = accountSessionVersion;
+    if (activityLoading && activityLoadingSessionVersion === requestSessionVersion) return;
+    const requestVersion = ++activityRequestVersion;
     activityLoading = true;
+    activityLoadingSessionVersion = requestSessionVersion;
     const more = $("loadMoreActivity"), refresh = $("refreshActivity");
     more.disabled = true; refresh.disabled = true;
     try {
@@ -1406,16 +1410,25 @@
       const query = new URLSearchParams({limit:"20", offset:String(offset), domain:$("activityDomainFilter").value.trim()});
       const response = await api("/api/v1/account/activity?" + query.toString());
       const data = await response.json();
+      if (requestVersion !== activityRequestVersion || requestSessionVersion !== accountSessionVersion) return;
       const page = Array.isArray(data.items) ? data.items : [];
       activityRows = reset ? page : [...activityRows, ...page];
       activityTotal = Math.max(0, Number(data.page && data.page.total) || 0);
       renderActivity();
     } catch (error) {
-      $("activityPageStatus").textContent = "Unable to load audit activity. " + error.message;
+      if (requestVersion === activityRequestVersion && requestSessionVersion === accountSessionVersion) {
+        $("activityPageStatus").textContent = "Unable to load audit activity. " + error.message;
+      }
     } finally {
-      activityLoading = false; more.disabled = false; refresh.disabled = false;
+      if (requestVersion === activityRequestVersion) {
+        activityLoading = false;
+        activityLoadingSessionVersion = -1;
+        more.disabled = activityRows.length >= activityTotal;
+        refresh.disabled = false;
+      }
     }
   }
+
   async function loadReports({reset = true} = {}) {
     if (reportsLoading) return;
     reportsLoading = true;
@@ -1809,9 +1822,14 @@
   const scanBatchPageSize = 100;
   let scanBatchOffset = 0;
   let scanBatchesLoading = false;
+  let scanBatchesLoadingSessionVersion = -1;
+  let scanBatchesRequestVersion = 0;
   async function loadScanBatches({append = false} = {}) {
-    if (scanBatchesLoading) return;
+    const requestSessionVersion = accountSessionVersion;
+    if (scanBatchesLoading && scanBatchesLoadingSessionVersion === requestSessionVersion) return;
+    const requestVersion = ++scanBatchesRequestVersion;
     scanBatchesLoading = true;
+    scanBatchesLoadingSessionVersion = requestSessionVersion;
     const container = $("scanBatches");
     const previousLoadMore = container.querySelector("[data-load-more-scan-batches]");
     if (append && previousLoadMore) previousLoadMore.disabled = true;
@@ -1819,6 +1837,7 @@
       const offset = append ? scanBatchOffset : 0;
       const response = await api("/api/v1/scan-batches?limit=" + scanBatchPageSize + "&offset=" + offset);
       const data = await response.json();
+      if (requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion) return;
       const items = Array.isArray(data.items) ? data.items : [];
       if (!append) {
         scanBatchOffset = 0;
@@ -1873,14 +1892,18 @@
             cancel.disabled = true;
             cancel.textContent = "Requesting cancellation…";
             try {
+              const operationSessionVersion = accountSessionVersion;
               await api("/api/v1/scan-batches/" + encodeURIComponent(batch.id) + "/cancel", {method: "POST"});
+              if (operationSessionVersion !== accountSessionVersion) return;
               setStatus("bulkScanStatus", "Cancellation request recorded. In-progress jobs may finish before the batch settles.", "success");
               await loadScanBatches();
               if ($("scanBatchDetail").childElementCount) await loadScanBatchDetail(batch.id);
             } catch (error) {
-              setStatus("bulkScanStatus", error.message || "Batch cancellation could not be recorded.", "error");
-              cancel.disabled = false;
-              cancel.textContent = "Cancel batch";
+              if (operationSessionVersion === accountSessionVersion) {
+                setStatus("bulkScanStatus", error.message || "Batch cancellation could not be recorded.", "error");
+                cancel.disabled = false;
+                cancel.textContent = "Cancel batch";
+              }
             }
           });
           card.append(cancel);
@@ -1906,12 +1929,17 @@
         container.append(loadMore);
       }
       if (!append) await loadWebsites();
+      if (requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion) return;
       setStatus("bulkScanStatus", "Loaded " + scanBatchOffset + " scan batch(es).", "success");
     } catch (error) {
-      if (append && previousLoadMore && previousLoadMore.isConnected) previousLoadMore.disabled = false;
+      if (requestVersion === scanBatchesRequestVersion && requestSessionVersion === accountSessionVersion &&
+          append && previousLoadMore && previousLoadMore.isConnected) previousLoadMore.disabled = false;
       throw error;
     } finally {
-      scanBatchesLoading = false;
+      if (requestVersion === scanBatchesRequestVersion) {
+        scanBatchesLoading = false;
+        scanBatchesLoadingSessionVersion = -1;
+      }
     }
   }
   async function loadScanBatchDetail(batchId) {
@@ -2050,6 +2078,17 @@
     agencyTeamRequestVersion += 1;
     websiteRequestVersion += 1;
     wordpressSitesRequestVersion += 1;
+    activityRequestVersion += 1;
+    activityLoading = false;
+    activityLoadingSessionVersion = -1;
+    scanBatchesRequestVersion += 1;
+    scanBatchesLoading = false;
+    scanBatchesLoadingSessionVersion = -1;
+    scanBatchOffset = 0;
+    $("loadMoreActivity").disabled = false;
+    $("refreshActivity").disabled = false;
+    $("activityPageStatus").textContent = "Connect to load audit activity for this account.";
+    wordpressSitesRequestVersion += 0;
     websitesLoading = false;
     websiteLoadingSessionVersion = -1;
     websiteOffset = 0;
@@ -2096,6 +2135,7 @@
     $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     renderUsageHistory([]);
+    scanBatchOffset = 0;
     $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
     const scanEmpty = document.createElement("p"); scanEmpty.className = "muted"; scanEmpty.textContent = "Connect your account to view scan batches."; $("scanBatches").append(scanEmpty);
     $("bulkUrls").value = ""; setStatus("bulkScanStatus", "Connect your account to submit website batches.");
