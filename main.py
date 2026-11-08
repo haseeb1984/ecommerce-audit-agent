@@ -8287,6 +8287,10 @@ async def admin_customer_account_action(
         await db.commit()
         changed = 0
 
+    # Release the read-only Hostinger transaction before opening the independent
+    # audit-log session; this also avoids exhausting a single-connection pool.
+    await operational_db.rollback()
+
     # Record the operator's action immediately after the canonical commit. This
     # makes the audit attempt independent of a later Hostinger mutation failure.
     await _write_admin_log(db, "customer.account_" + payload.action, "customer", normalized, {
