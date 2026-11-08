@@ -162,30 +162,39 @@ async function loadClientWordPressLinks(id,expectedDetailVersion=clientDetailVer
  if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
  const button=$("refreshClientWordPressLinks"),container=$("clientWordPressLinks");
  button.disabled=true;container.replaceChildren(el("p","Loading connected WordPress sites…","muted"));
+ const appendItems=(items)=>{for(const item of items){
+  const row=el("div",undefined,"historyitem");
+  row.append(el("strong",item.site_url||"WordPress site"));
+  const heartbeatAt=item.last_seen_at?Date.parse(item.last_seen_at):NaN;
+  const staleHeartbeat=item.status==="active"&&(!Number.isFinite(heartbeatAt)||Date.now()-heartbeatAt>7*24*60*60*1000);
+  const health=item.connection_health||(staleHeartbeat?"stale":item.status==="active"?"healthy":"not_connected");
+  row.append(el("span","Connection health "+String(health)+" · Installation "+String(item.status||"unknown")+" · Admin "+(item.admin_email||"—")+" · WordPress "+(item.wordpress_version||"—")+" · WooCommerce "+(item.woocommerce_version||"—")+" · Plugin "+(item.plugin_version||"—"),"small"));
+  row.append(el("span","Last heartbeat "+date(item.last_seen_at)+" · Connected "+date(item.created_at)+(item.disconnected_at?" · Disconnected "+date(item.disconnected_at):""),"small"));
+  if(health==="stale")row.append(el("span","No recent plugin heartbeat. Ask the customer to confirm the plugin is active and reconnect it from their customer dashboard.","small muted"));
+  if(item.status==="active"){
+   const disconnect=el("button","Disconnect site","secondary");disconnect.style.marginTop="6px";
+   disconnect.addEventListener("click",()=>adminDisconnectWordPressSite(id,item.site_url,disconnect));row.append(disconnect);
+  }
+  container.append(row);
+ }};
  try{
-  const data=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/wordpress-links");
+  const data=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/wordpress-links?limit=50&offset=0");
   if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
   container.replaceChildren();
-  if(!Array.isArray(data.items)||!data.items.length){container.append(el("p","No WordPress installations are recorded for this client.","muted"));return}
-  for(const item of data.items){
-   const row=el("div",undefined,"historyitem");
-   row.append(el("strong",item.site_url||"WordPress site"));
-   const heartbeatAt=item.last_seen_at?Date.parse(item.last_seen_at):NaN;
-   const staleHeartbeat=item.status==="active"&&(!Number.isFinite(heartbeatAt)||Date.now()-heartbeatAt>7*24*60*60*1000);
-   const health=item.connection_health||(staleHeartbeat?"stale":item.status==="active"?"healthy":"not_connected");
-   row.append(el("span","Connection health "+String(health)+" · Installation "+String(item.status||"unknown")+" · Admin "+(item.admin_email||"—")+" · WordPress "+(item.wordpress_version||"—")+" · WooCommerce "+(item.woocommerce_version||"—")+" · Plugin "+(item.plugin_version||"—"),"small"));
-   row.append(el("span","Last heartbeat "+date(item.last_seen_at)+" · Connected "+date(item.created_at)+(item.disconnected_at?" · Disconnected "+date(item.disconnected_at):""),"small"));
-   if(health==="stale"){
-    row.append(el("span","No recent plugin heartbeat. Ask the customer to confirm the plugin is active and reconnect it from their customer dashboard.","small muted"));
-   }
-   if(item.status==="active"){
-    const disconnect=el("button","Disconnect site","secondary");disconnect.style.marginTop="6px";
-    disconnect.addEventListener("click",()=>adminDisconnectWordPressSite(id,item.site_url,disconnect));
-    row.append(disconnect);
-   }
-   container.append(row);
+  if(!Array.isArray(data.items)||!data.items.length)container.append(el("p","No WordPress installations are recorded for this client.","muted"));
+  else appendItems(data.items);
+  if(data.has_more){
+   const more=el("button","Load more WordPress sites","secondary");
+   more.addEventListener("click",async()=>{more.disabled=true;try{
+    const next=await api("/api/v1/admin/clients/"+encodeURIComponent(id)+"/wordpress-links?limit="+data.limit+"&offset="+(data.offset+data.limit));
+    if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;
+    appendItems(next.items);data.offset=next.offset;data.has_more=next.has_more;
+    if(!next.has_more)more.remove();else more.disabled=false;
+   }catch(error){more.disabled=false;status(error.message,"error")}});
+   container.append(more);
   }
- }finally{if(expectedDetailVersion===clientDetailVersion&&currentHistoryId===id)button.disabled=false}
+ }catch(error){container.replaceChildren(el("p",error.message,"error"))}
+ finally{if(expectedDetailVersion===clientDetailVersion&&currentHistoryId===id)button.disabled=false}
 }
 async function adminDisconnectWordPressSite(id,siteUrl,button){
  const reason=window.prompt("Reason for disconnecting this WordPress site:","customer support request");
