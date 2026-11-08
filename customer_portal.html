@@ -810,7 +810,7 @@
     const container = $("agencyClients");
     if (!append) container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) {
+    if (!append && !items.length) {
       const empty = document.createElement("p");
       empty.className = "muted";
       empty.textContent = "No client workspaces yet. Add your first client above.";
