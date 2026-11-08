@@ -3611,7 +3611,7 @@ async def test_paddle_subscription_update_refreshes_billing_period_end(client, m
         await db.commit()
 
     event = {"event_id": "evt_period_update", "event_type": "subscription.updated",
-        "data": {"id": "sub_period_update123",
+        "data": {"id": "sub_period_update123", "status": "active",
             "items": [{"price": {"id": "pri_periodupdatepro123"}, "quantity": 1}],
             "current_billing_period": {"starts_at": "2026-10-01T00:00:00Z",
                 "ends_at": "2026-11-15T00:00:00Z"}}}
