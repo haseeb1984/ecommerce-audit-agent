@@ -57,3 +57,7 @@ Account-wide suspend/reactivate/session-revocation actions now lock all matched 
 ## Admin agency detail pagination
 
 Agency detail inspection independently paginates client workspaces and team members (default 50, maximum 100 per request). Each list returns its own offset, total, and `has_more` flag and has a separate Load more control. Website connections remain scoped to the currently loaded workspace page and are capped at 100 per workspace, with full per-workspace counts and truncation indicators retained.
+
+
+
+Agency detail website connections also support independent per-workspace pagination. The ranked website query selects the requested slice (default 100, maximum 100) for each workspace on the current workspace page; each workspace returns its own total and `has_more` metadata and the UI exposes a workspace-scoped Load more websites control. This replaces the previous fixed latest-100-only display while preserving deterministic connection ordering.

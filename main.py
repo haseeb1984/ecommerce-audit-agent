@@ -6540,6 +6540,8 @@ async def admin_get_business_agency_detail(
     workspace_offset: int = Query(default=0, ge=0, le=1000000),
     member_limit: int = Query(default=50, ge=1, le=100),
     member_offset: int = Query(default=0, ge=0, le=1000000),
+    website_limit: int = Query(default=100, ge=1, le=100),
+    website_offset: int = Query(default=0, ge=0, le=1000000),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return bounded, secret-free operational details for one agency tenant."""
@@ -6584,7 +6586,10 @@ async def admin_get_business_agency_detail(
         website_rows = (await operational_db.execute(
             select(AgencyClientWebsite)
             .join(ranked_website_ids, AgencyClientWebsite.id == ranked_website_ids.c.site_id)
-            .where(ranked_website_ids.c.site_rank <= 100)
+            .where(
+                ranked_website_ids.c.site_rank > website_offset,
+                ranked_website_ids.c.site_rank <= website_offset + website_limit,
+            )
             .order_by(
                 AgencyClientWebsite.workspace_id.asc(),
                 AgencyClientWebsite.connected_at.desc(),
@@ -6648,7 +6653,13 @@ async def admin_get_business_agency_detail(
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "website_connections": websites_by_workspace.get(item.id, []),
             "website_connection_count": website_counts.get(item.id, 0),
-            "website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, [])),
+            "website_connections_truncated": website_offset + len(websites_by_workspace.get(item.id, [])) < website_counts.get(item.id, 0),
+            "website_connections_page": {
+                "limit": website_limit,
+                "offset": website_offset,
+                "total": website_counts.get(item.id, 0),
+                "has_more": website_offset + len(websites_by_workspace.get(item.id, [])) < website_counts.get(item.id, 0),
+            },
             "team_access_count": access_counts.get(item.id, 0),
         } for item in workspaces],
         "team_members": [{
@@ -6672,9 +6683,11 @@ async def admin_get_business_agency_detail(
             "member_offset": member_offset,
             "members_has_more": member_offset + len(members) < member_total,
             "website_connections_truncated": any(
-                website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))
+                website_offset + len(websites_by_workspace.get(item.id, [])) < website_counts.get(item.id, 0)
                 for item in workspaces
             ),
+            "website_limit": website_limit,
+            "website_offset": website_offset,
             "truncated": (
                 len(workspaces) < workspace_total
                 or len(members) < member_total

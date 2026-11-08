@@ -434,20 +434,35 @@ async function showAgencyDetail(agencyId){
   heading.append(title,meta);box.replaceChildren(heading);
   const workspaceTitle=el("h4","Client workspaces ("+d.page.workspaces_total+")"),workspaceList=el("div");
   box.append(workspaceTitle,workspaceList);
-  const appendWorkspaces=(items)=>{for(const workspace of items){
-   const item=el("div",null,"historyrow"),name=el("strong",workspace.display_name),websiteNote=workspace.website_connections_truncated?" · Showing latest 100":"",details=el("p",workspace.status+" · Team access: "+workspace.team_access_count+" · Websites: "+(workspace.website_connection_count||0)+websiteNote+" · Ref: "+(workspace.external_reference||"—"),"muted");
+  const appendWorkspaces=(items,workspaceStartOffset)=>{for(let workspaceIndex=0;workspaceIndex<items.length;workspaceIndex++){
+   const workspace=items[workspaceIndex],item=el("div",null,"historyrow"),name=el("strong",workspace.display_name),details=el("p",workspace.status+" · Team access: "+workspace.team_access_count+" · Websites: "+(workspace.website_connection_count||0)+" · Ref: "+(workspace.external_reference||"—"),"muted");
    item.append(name,details);
-   if(workspace.website_connections.length){for(const site of workspace.website_connections)item.append(el("p",site.host+" · "+site.status+" · "+site.connection_type+" · Last seen: "+date(site.last_seen_at),"muted"))}
-   else item.append(el("p","No website connection registered.","muted"));
+   const websiteRows=el("div");
+   const appendWebsiteRows=(sites)=>{for(const site of sites)websiteRows.append(el("p",site.host+" · "+site.status+" · "+site.connection_type+" · Last seen: "+date(site.last_seen_at),"muted"))};
+   appendWebsiteRows(workspace.website_connections);
+   if(!workspace.website_connections.length&&!(workspace.website_connections_page&&workspace.website_connections_page.total))websiteRows.append(el("p","No website connection registered.","muted"));
+   item.append(websiteRows);
+   if(workspace.website_connections_page&&workspace.website_connections_page.has_more){
+    const moreSites=el("button","Load more websites","secondary");
+    moreSites.addEventListener("click",async()=>{moreSites.disabled=true;try{
+     const p=workspace.website_connections_page,workspaceOffset=workspaceStartOffset+workspaceIndex;
+     const next=await api("/api/v1/admin/agencies/"+encodeURIComponent(agencyId)+"?workspace_limit=1&workspace_offset="+workspaceOffset+"&member_limit=1&member_offset=0&website_limit="+p.limit+"&website_offset="+(p.offset+p.limit));
+     if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
+     const nextWorkspace=next.workspaces[0];if(!nextWorkspace)return;
+     appendWebsiteRows(nextWorkspace.website_connections);p.offset=nextWorkspace.website_connections_page.offset;p.has_more=nextWorkspace.website_connections_page.has_more;
+     if(!p.has_more)moreSites.remove();else moreSites.disabled=false;
+    }catch(error){moreSites.disabled=false;status(error.message,"error")}});
+    item.append(moreSites);
+   }
    workspaceList.append(item);
-  }};
-  appendWorkspaces(d.workspaces);
+  }}
+  appendWorkspaces(d.workspaces,d.page.workspace_offset);
   if(d.page.workspaces_has_more){
    const more=el("button","Load more workspaces","secondary");
    more.addEventListener("click",async()=>{more.disabled=true;try{
     const p=d.page,next=await api("/api/v1/admin/agencies/"+encodeURIComponent(agencyId)+"?workspace_limit="+p.workspace_limit+"&workspace_offset="+(p.workspace_offset+p.workspace_limit)+"&member_limit=1&member_offset=0");
     if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
-    appendWorkspaces(next.workspaces);p.workspace_offset=next.page.workspace_offset;p.workspaces_has_more=next.page.workspaces_has_more;
+    appendWorkspaces(next.workspaces,p.workspace_offset+p.workspace_limit);p.workspace_offset=next.page.workspace_offset;p.workspaces_has_more=next.page.workspaces_has_more;
     if(!p.workspaces_has_more)more.remove();else more.disabled=false;
    }catch(error){more.disabled=false;status(error.message,"error")}});
    workspaceList.append(more);
