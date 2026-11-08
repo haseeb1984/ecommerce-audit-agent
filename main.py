@@ -7335,7 +7335,7 @@ async def admin_operations(
         .where(CustomerBillingEvent.status.in_(email_recovery_statuses))
         .order_by(CustomerBillingEvent.updated_at.asc()).limit(50)
     )).scalars().all()
-    billing_attention_statuses = ("payment_failed", "subscription_past_due", "subscription_updated_past_due", "subscription_canceled")
+    billing_attention_statuses = ("payment_failed", "subscription_past_due", "subscription_updated_past_due", "subscription_canceled", "subscription_update_unrecognized_status")
     billing_attention_counts = {}
     for lifecycle_status in billing_attention_statuses:
         billing_attention_counts[lifecycle_status] = int((await operational_db.execute(
@@ -7419,6 +7419,7 @@ async def admin_operations(
             "subscription_past_due_events": billing_attention_counts["subscription_past_due"],
             "subscription_updated_past_due_events": billing_attention_counts["subscription_updated_past_due"],
             "subscription_canceled_events": billing_attention_counts["subscription_canceled"],
+            "subscription_unrecognized_status_events": billing_attention_counts["subscription_update_unrecognized_status"],
             "expired_quota_reservations": int(expired_reservation_count or 0),
             "active_quota_reservations": int(active_reservations or 0),
             "audit_and_operation_failures_24h": int(failures_24h or 0),
