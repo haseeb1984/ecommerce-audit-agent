@@ -55,3 +55,33 @@ def test_admin_customer_directory_resolves_page_licenses_in_one_batched_query():
     assert "license_by_key = {item.license_key: item for item in page_license_rows}" in source
     assert "license_by_key[license_key]" in source
     assert "await db.execute(" not in source[source.index("items = []"):source.index('return {"items": items')]
+
+
+def test_admin_customer_directory_counts_cross_database_email_union_with_sorted_streams():
+    import asyncio
+
+    from main import _count_sorted_admin_customer_email_union
+
+    async def values(items):
+        for item in items:
+            yield item
+
+    assert asyncio.run(_count_sorted_admin_customer_email_union(
+        values(["a@example.com", "b@example.com", "d@example.com"]),
+        values(["b@example.com", "c@example.com", "d@example.com", "e@example.com"]),
+    )) == 5
+
+
+def test_admin_customer_directory_streams_distinct_email_counts_and_closes_both_streams():
+    import inspect
+
+    from main import admin_customer_directory
+
+    source = inspect.getsource(admin_customer_directory)
+    assert "operational_email_stream = await operational_db.stream(" in source
+    assert "legacy_email_stream = await db.stream(" in source
+    assert "_count_sorted_admin_customer_email_union(" in source
+    assert "await operational_email_stream.close()" in source
+    assert "await legacy_email_stream.close()" in source
+    assert "operational_emails = set(" not in source
+    assert "legacy_emails = set(" not in source
