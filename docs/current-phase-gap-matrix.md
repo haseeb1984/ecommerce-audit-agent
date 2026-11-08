@@ -877,3 +877,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Added a PostgreSQL SQL-compilation regression asserting the canonical row lock and a source-order contract asserting the lock read precedes the Hostinger mutation.
 - Tests are committed but have not been executed in this batch. CI runner availability remains unverified; no live database, migration, deployment, or customer account mutation was performed.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
+
+
+## 2026-11-08 — serialize customer email identity projection updates
+
+- Email-identity outbox reconciliation now locks the canonical PostgreSQL `SoftwareLicense` row before rewriting that tenant's billing-recipient identity projection.
+- The row lock is retained through the scoped `PaymentWebhookEvent` update and canonical transaction commit. The Hostinger outbox event is marked completed only after the canonical projection commit succeeds.
+- Missing canonical licenses continue to defer for retry; the update remains license-scoped and does not use email address as a tenant identifier.
+- Added PostgreSQL SQL-compilation and worker-order regression coverage. Tests are committed but have not been executed in this batch; no live database or customer records were changed.
+- PDF/report and final audit-result work remain reserved for the final phase.
