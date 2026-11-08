@@ -238,3 +238,53 @@ async def test_wordpress_identity_claim_enforces_one_active_site_per_license(cli
         # disconnect the existing site and retry before this token expires.
         assert second_challenge is not None
         assert second_challenge.consumed_at is None
+
+
+@pytest.mark.asyncio
+async def test_wordpress_challenge_issuance_prunes_only_long_expired_records(client):
+    license_key = "wordpress-challenge-retention"
+    await seed_customer(license_key)
+    now = datetime.now(timezone.utc)
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add_all([
+            WordPressSiteLinkChallenge(
+                id="old-expired-wordpress-challenge",
+                license_key=license_key,
+                token_hash=hashlib.sha256(b"old-expired-token").hexdigest(),
+                expires_at=now - timedelta(days=8),
+                consumed_at=now - timedelta(days=8),
+                created_at=now - timedelta(days=8, minutes=10),
+            ),
+            WordPressSiteLinkChallenge(
+                id="recent-expired-wordpress-challenge",
+                license_key=license_key,
+                token_hash=hashlib.sha256(b"recent-expired-token").hexdigest(),
+                expires_at=now - timedelta(days=2),
+                consumed_at=now - timedelta(days=2),
+                created_at=now - timedelta(days=2, minutes=10),
+            ),
+            WordPressSiteLinkChallenge(
+                id="still-valid-wordpress-challenge",
+                license_key=license_key,
+                token_hash=hashlib.sha256(b"still-valid-token").hexdigest(),
+                expires_at=now + timedelta(minutes=5),
+                consumed_at=None,
+                created_at=now - timedelta(minutes=5),
+            ),
+        ])
+        await operational_db.commit()
+
+    issued = await issue_link_code(client, license_key)
+    assert len(issued) >= 32
+
+    async with main.HostingerAsyncSessionLocal() as operational_db:
+        rows = (await operational_db.execute(
+            select(WordPressSiteLinkChallenge).where(
+                WordPressSiteLinkChallenge.license_key == license_key
+            )
+        )).scalars().all()
+        ids = {row.id for row in rows}
+        assert "old-expired-wordpress-challenge" not in ids
+        assert "recent-expired-wordpress-challenge" in ids
+        assert "still-valid-wordpress-challenge" in ids
+        assert len(rows) == 3  # recent + still-valid + newly issued
