@@ -6536,6 +6536,10 @@ async def admin_get_business_agency_detail(
     agency_id: str,
     request: Request,
     response: Response,
+    workspace_limit: int = Query(default=50, ge=1, le=100),
+    workspace_offset: int = Query(default=0, ge=0, le=1000000),
+    member_limit: int = Query(default=50, ge=1, le=100),
+    member_offset: int = Query(default=0, ge=0, le=1000000),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return bounded, secret-free operational details for one agency tenant."""
@@ -6550,13 +6554,13 @@ async def admin_get_business_agency_detail(
         select(AgencyClientWorkspace)
         .where(AgencyClientWorkspace.agency_id == agency.id)
         .order_by(AgencyClientWorkspace.created_at.desc(), AgencyClientWorkspace.id.asc())
-        .limit(100)
+        .offset(workspace_offset).limit(workspace_limit)
     )).scalars().all()
     members = (await operational_db.execute(
         select(AgencyTeamMember)
         .where(AgencyTeamMember.agency_id == agency.id)
         .order_by(AgencyTeamMember.created_at.desc(), AgencyTeamMember.id.asc())
-        .limit(100)
+        .offset(member_offset).limit(member_limit)
     )).scalars().all()
     workspace_ids = [item.id for item in workspaces]
     websites_by_workspace = {}
@@ -6659,8 +6663,14 @@ async def admin_get_business_agency_detail(
         "page": {
             "workspaces_returned": len(workspaces),
             "workspaces_total": workspace_total,
+            "workspace_limit": workspace_limit,
+            "workspace_offset": workspace_offset,
+            "workspaces_has_more": workspace_offset + len(workspaces) < workspace_total,
             "team_members_returned": len(members),
             "team_members_total": member_total,
+            "member_limit": member_limit,
+            "member_offset": member_offset,
+            "members_has_more": member_offset + len(members) < member_total,
             "website_connections_truncated": any(
                 website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))
                 for item in workspaces

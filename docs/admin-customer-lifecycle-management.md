@@ -51,3 +51,9 @@ The individual customer history panel now pages linked WordPress installations i
 ## Account-wide lifecycle concurrency
 
 Account-wide suspend/reactivate/session-revocation actions now lock all matched PostgreSQL license rows in ascending license-ID order before applying canonical state changes and queuing operational synchronization. This shares the license-row serialization boundary used by individual customer entitlement updates and avoids overlapping multi-license admin actions taking locks in inconsistent order.
+
+
+
+## Admin agency detail pagination
+
+Agency detail inspection independently paginates client workspaces and team members (default 50, maximum 100 per request). Each list returns its own offset, total, and `has_more` flag and has a separate Load more control. Website connections remain scoped to the currently loaded workspace page and are capped at 100 per workspace, with full per-workspace counts and truncation indicators retained.

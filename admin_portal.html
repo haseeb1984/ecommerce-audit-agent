@@ -428,32 +428,47 @@ async function showAgencyDetail(agencyId){
  const requestVersion=++agencyDetailRequestVersion,sessionVersion=adminSessionVersion,box=$("agencyDetail");
  box.hidden=false;box.replaceChildren(el("p","Loading agency details…","muted"));
  try{
-  const d=await api("/api/v1/admin/agencies/"+encodeURIComponent(agencyId));
+  const d=await api("/api/v1/admin/agencies/"+encodeURIComponent(agencyId)+"?workspace_limit=50&workspace_offset=0&member_limit=50&member_offset=0");
   if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
   const heading=el("div"),title=el("h3",d.agency.owner_email),meta=el("p",d.agency.status+" · Created "+date(d.agency.created_at),"muted");
   heading.append(title,meta);box.replaceChildren(heading);
-  const workspaceTitle=el("h4","Client workspaces ("+d.page.workspaces_total+")");box.append(workspaceTitle);
-  if(!d.workspaces.length)box.append(el("p","No client workspaces.","muted"));
-  for(const workspace of d.workspaces){
+  const workspaceTitle=el("h4","Client workspaces ("+d.page.workspaces_total+")"),workspaceList=el("div");
+  box.append(workspaceTitle,workspaceList);
+  const appendWorkspaces=(items)=>{for(const workspace of items){
    const item=el("div",null,"historyrow"),name=el("strong",workspace.display_name),websiteNote=workspace.website_connections_truncated?" · Showing latest 100":"",details=el("p",workspace.status+" · Team access: "+workspace.team_access_count+" · Websites: "+(workspace.website_connection_count||0)+websiteNote+" · Ref: "+(workspace.external_reference||"—"),"muted");
    item.append(name,details);
-   if(workspace.website_connections.length){
-    for(const site of workspace.website_connections){
-     const line=el("p",site.host+" · "+site.status+" · "+site.connection_type+" · Last seen: "+date(site.last_seen_at),"muted");
-     item.append(line);
-    }
-   }else item.append(el("p","No website connection registered.","muted"));
-   box.append(item);
+   if(workspace.website_connections.length){for(const site of workspace.website_connections)item.append(el("p",site.host+" · "+site.status+" · "+site.connection_type+" · Last seen: "+date(site.last_seen_at),"muted"))}
+   else item.append(el("p","No website connection registered.","muted"));
+   workspaceList.append(item);
+  }};
+  appendWorkspaces(d.workspaces);
+  if(d.page.workspaces_has_more){
+   const more=el("button","Load more workspaces","secondary");
+   more.addEventListener("click",async()=>{more.disabled=true;try{
+    const p=d.page,next=await api("/api/v1/admin/agencies/"+encodeURIComponent(agencyId)+"?workspace_limit="+p.workspace_limit+"&workspace_offset="+(p.workspace_offset+p.workspace_limit)+"&member_limit=1&member_offset=0");
+    if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
+    appendWorkspaces(next.workspaces);p.workspace_offset=next.page.workspace_offset;p.workspaces_has_more=next.page.workspaces_has_more;
+    if(!p.workspaces_has_more)more.remove();else more.disabled=false;
+   }catch(error){more.disabled=false;status(error.message,"error")}});
+   workspaceList.append(more);
   }
-  const teamTitle=el("h4","Team members ("+d.page.team_members_total+")");box.append(teamTitle);
-  if(!d.team_members.length)box.append(el("p","No team members.","muted"));
-  for(const member of d.team_members){
-   box.append(el("p",member.email+" · "+member.role+" · "+member.status+" · Invited by "+member.invited_by,"muted"));
+  const teamTitle=el("h4","Team members ("+d.page.team_members_total+")"),memberList=el("div");
+  box.append(teamTitle,memberList);
+  const appendMembers=(items)=>{for(const member of items)memberList.append(el("p",member.email+" · "+member.role+" · "+member.status+" · Invited by "+member.invited_by,"muted"))};
+  appendMembers(d.team_members);
+  if(d.page.members_has_more){
+   const more=el("button","Load more team members","secondary");
+   more.addEventListener("click",async()=>{more.disabled=true;try{
+    const p=d.page,next=await api("/api/v1/admin/agencies/"+encodeURIComponent(agencyId)+"?workspace_limit=1&workspace_offset=0&member_limit="+p.member_limit+"&member_offset="+(p.member_offset+p.member_limit));
+    if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
+    appendMembers(next.team_members);p.member_offset=next.page.member_offset;p.members_has_more=next.page.members_has_more;
+    if(!p.members_has_more)more.remove();else more.disabled=false;
+   }catch(error){more.disabled=false;status(error.message,"error")}});
+   memberList.append(more);
   }
-  if(d.page.truncated)box.append(el("p","Some agency detail lists are capped at 100 items. Full workspace, team-member, and per-workspace website counts are shown above.","muted"));
   const close=el("button","Close details","secondary");close.addEventListener("click",()=>{agencyDetailRequestVersion+=1;box.hidden=true;box.replaceChildren()});box.append(close);
  }catch(error){
-  if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){box.replaceChildren(el("p","Unable to load agency details. "+error.message,"error"))}
+  if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion)box.replaceChildren(el("p","Unable to load agency details. "+error.message,"error"));
  }
 }
 async function refreshAgencies(){
