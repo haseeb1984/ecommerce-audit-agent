@@ -59,6 +59,7 @@ def _validate_single_site_submission(urls: list[str]) -> None:
 @router.post("/api/v1/scan-batches", status_code=202)
 async def submit_scan_batches(
     payload: BulkScanSubmission,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -133,6 +134,8 @@ async def submit_scan_batches(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail="Hostinger operational database is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "status": "accepted",
         "message": "Website URLs have been added to the persistent scan queue.",
@@ -281,6 +284,7 @@ async def list_scan_batches(
 @router.post("/api/v1/scan-batches/{batch_id}/cancel")
 async def cancel_customer_scan_batch(
     batch_id: str,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -290,6 +294,8 @@ async def cancel_customer_scan_batch(
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Scan batch not found.")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "message": (
             "Queued URLs were cancelled. Already-running scans will finish safely."
@@ -303,6 +309,7 @@ async def cancel_customer_scan_batch(
 @router.post("/api/v1/scan-jobs/{job_id}/retry")
 async def retry_customer_scan_job(
     job_id: str,
+    response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -317,6 +324,8 @@ async def retry_customer_scan_job(
             status_code=409,
             detail="Only failed jobs in a failed, non-cancelled batch can be retried.",
         )
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     return {
         "message": "The failed website scan has been returned to the queue.",
         **result,

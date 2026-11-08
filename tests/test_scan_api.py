@@ -407,17 +407,21 @@ async def test_customer_workspace_scan_serializes_agency_workspace_and_site_life
     monkeypatch.setattr(scan_api, "plan_features", lambda _tier: {
         "agency_management": True, "standard_audits": True,
     })
+    response = Response()
     result = await submit_scan_batches(
         BulkScanSubmission(
             urls=["https://shop.example/products/one"],
             request_id="customer-workspace-lock-123",
             workspace_id="workspace-1",
         ),
+        response,
         license_obj=license_obj,
         db=db,
     )
 
     assert result["status"] == "accepted"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
     assert queued["workspace_id"] == "workspace-1"
     assert queued["license_key"] == "business-license"
     assert all(statement._for_update_arg is not None for statement in db.scalar_statements)
@@ -466,3 +470,17 @@ async def test_customer_website_detail_paginates_only_owning_license_scan_histor
     assert "limit" in str(db.execute_statements[1]).lower()
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
+
+
+def test_customer_scan_mutation_endpoints_disable_shared_caching():
+    import inspect
+    import scan_api
+
+    for handler in (
+        scan_api.submit_scan_batches,
+        scan_api.cancel_customer_scan_batch,
+        scan_api.retry_customer_scan_job,
+    ):
+        source = inspect.getsource(handler)
+        assert 'response.headers["Cache-Control"] = "no-store, private"' in source
+        assert 'response.headers["Pragma"] = "no-cache"' in source
