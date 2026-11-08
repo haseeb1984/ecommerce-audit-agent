@@ -3082,6 +3082,29 @@ async def get_agency_team_identity(response: Response, identity=Depends(require_
             "agency_id": identity["agency"].id, "session_expires_at": identity["session"].expires_at.isoformat()}
 
 
+@app.get("/api/v1/agency/team/branding")
+async def get_agency_team_branding(
+    response: Response,
+    identity=Depends(require_agency_team_session),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return the owning agency's public white-label identity to its authenticated team portal."""
+    from sqlalchemy import select
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == identity["agency"].owner_license_key
+    ))
+    owner_license = identity.get("owner_license")
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "brand_name": item.brand_name if item else (owner_license.client_name if owner_license else "Agency team portal"),
+        "logo_url": item.logo_url if item else None,
+        "primary_color": item.primary_color if item else "#155a8a",
+        "configured": item is not None,
+        "updated_at": item.updated_at.isoformat() if item and item.updated_at else None,
+    }
+
+
 @app.post("/api/v1/agency/team/auth/logout")
 async def logout_agency_team_session(response: Response, identity=Depends(require_agency_team_session),
                                      operational_db: AsyncSession = Depends(get_hostinger_db)):
