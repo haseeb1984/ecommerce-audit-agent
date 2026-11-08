@@ -1978,14 +1978,16 @@
         })
       });
       const result = await response.json();
-      pendingBulkScanFingerprint="";
-      pendingBulkScanRequestId="";
       setStatus("bulkScanStatus",
         result.new_jobs + " new website scan job(s) queued in " + result.batch_count +
         " batch(es). Request ID: " + result.request_id +
         (result.idempotent_replay ? " · Existing request returned without creating duplicate jobs." : ""),
         "success");
+      // Keep the key until the post-submit refresh completes. If refresh fails,
+      // retrying the form must replay this accepted request rather than enqueue it again.
       await loadScanBatches();
+      pendingBulkScanFingerprint="";
+      pendingBulkScanRequestId="";
     } catch (error) {
       setStatus("bulkScanStatus", error.message, "error");
     } finally {
