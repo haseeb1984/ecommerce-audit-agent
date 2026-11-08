@@ -4436,31 +4436,50 @@ async def create_account_billing_portal(
     db: AsyncSession = Depends(get_async_db),
 ):
     """Create a short-lived Paddle customer portal session for the authenticated license."""
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     if not os.getenv("PADDLE_API_KEY", "").strip():
         raise HTTPException(status_code=503, detail="Self-service billing is not configured.")
-    # Stream only the identifier columns so long billing histories do not
-    # materialize every webhook ORM object in application memory.
-    customer_links = await db.stream(
-        select(PaymentWebhookEvent.paddle_customer_id, PaymentWebhookEvent.subscription_id)
+    # Bound the customer/subscription identifiers passed to Paddle. Billing
+    # histories may contain many webhook rows for the same subscription.
+    customer_rows = await db.execute(
+        select(PaymentWebhookEvent.paddle_customer_id)
         .where(
             PaymentWebhookEvent.license_id == license_obj.id,
-            PaymentWebhookEvent.paddle_customer_id.is_not(None),
+            PaymentWebhookEvent.paddle_customer_id.like("ctm_%"),
         )
-        .order_by(PaymentWebhookEvent.updated_at.desc(), PaymentWebhookEvent.event_id.desc())
+        .group_by(PaymentWebhookEvent.paddle_customer_id)
+        .order_by(
+            func.max(PaymentWebhookEvent.updated_at).desc(),
+            PaymentWebhookEvent.paddle_customer_id.desc(),
+        )
+        .limit(100)
     )
-    # Preserve the valid subscription links used to preselect subscriptions in
-    # the Paddle portal while skipping malformed customer IDs.
-    customer_id = None
-    subscription_ids = []
-    async for row in customer_links:
-        candidate, subscription_id = row
-        if customer_id is None and candidate and re.fullmatch(r"ctm_[A-Za-z0-9]+", candidate):
-            customer_id = candidate
-        if subscription_id and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id):
-            if subscription_id not in subscription_ids:
-                subscription_ids.append(subscription_id)
+    customer_id = next(
+        (
+            candidate for candidate in customer_rows.scalars().all()
+            if isinstance(candidate, str) and re.fullmatch(r"ctm_[A-Za-z0-9]+", candidate)
+        ),
+        None,
+    )
+    subscription_rows = await db.execute(
+        select(PaymentWebhookEvent.subscription_id)
+        .where(
+            PaymentWebhookEvent.license_id == license_obj.id,
+            PaymentWebhookEvent.subscription_id.like("sub_%"),
+        )
+        .group_by(PaymentWebhookEvent.subscription_id)
+        .order_by(
+            func.max(PaymentWebhookEvent.updated_at).desc(),
+            PaymentWebhookEvent.subscription_id.desc(),
+        )
+        .limit(100)
+    )
+    subscription_ids = [
+        subscription_id
+        for subscription_id in subscription_rows.scalars().all()
+        if isinstance(subscription_id, str) and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id)
+    ]
     if not customer_id:
         raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     payload = {"subscription_ids": subscription_ids} if subscription_ids else {}
