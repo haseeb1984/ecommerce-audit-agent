@@ -936,3 +936,10 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Overlength or empty account-candidate emails are excluded from account creation and counted explicitly; related login/session/email-change/billing rows with unrepresentable email values are reported as unmapped rather than silently altered.
 - Billing-event status is copied as-is rather than sliced. The source and target status columns are both 40 characters, so a mismatch remains visible instead of being concealed.
 - Added regression contracts for exact email preservation and explicit overlength accounting. This does not run or authorize a live migration.
+
+
+## Operational migration reconciliation visibility
+
+- Streamed row-copy reports now distinguish records already present in Hostinger from source records that could not be mapped (for example, missing license identity or destination-incompatible values).
+- The existing combined `already_present_or_unmapped` counter remains for compatibility; new `already_present` and `unmapped` counters make unresolved migration rows actionable without changing apply/verify write semantics.
+- Added regression contracts for both counters. No source or target database was modified.
