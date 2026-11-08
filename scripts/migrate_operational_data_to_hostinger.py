@@ -54,6 +54,15 @@ async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
     return {row.id: row for row in rows}
 
 
+def _verification_gaps(reports):
+    """Return per-entity counts of mapped source rows still missing in Hostinger."""
+    return {
+        name: int(report.get("to_copy", 0))
+        for name, report in reports.items()
+        if int(report.get("to_copy", 0)) > 0
+    }
+
+
 def _billing_license_map(billing_rows, license_key_by_id):
     """Resolve email ownership only when every billing event agrees on one license."""
     candidates = {}
@@ -75,7 +84,7 @@ def _billing_license_map(billing_rows, license_key_by_id):
     return resolved, ambiguous
 
 
-async def _copy_rows(source, target, source_model, target_model, transform, key_name):
+async def _copy_rows(source, target, source_model, target_model, transform, key_name, stage_missing: bool):
     rows = (await source.execute(select(source_model))).scalars().all()
     copied = 0
     skipped = 0
@@ -89,14 +98,15 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
             select(target_model).where(getattr(target_model, key_name) == key_value).limit(1)
         )
         if existing is None:
-            target.add(target_model(**values))
+            if stage_missing:
+                target.add(target_model(**values))
             copied += 1
         else:
             skipped += 1
     return {"source": len(rows), "to_copy": copied, "already_present_or_unmapped": skipped}
 
 
-async def migrate(apply_changes: bool) -> None:
+async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
     if AsyncSessionLocal is None or HostingerAsyncSessionLocal is None:
         raise RuntimeError("DATABASE_URL and HOSTINGER_DATABASE_URL must both be configured.")
     async with AsyncSessionLocal() as source, HostingerAsyncSessionLocal() as target:
@@ -143,15 +153,16 @@ async def migrate(apply_changes: bool) -> None:
                 CustomerAccount.email == normalized_email,
             ).limit(1))
             if existing is None:
-                target.add(CustomerAccount(
-                    id=_legacy_account_id(license_key, normalized_email),
-                    license_key=license_key,
-                    email=normalized_email,
-                    display_name=display_name,
-                    status="active",
-                    created_at=created_at,
-                    updated_at=created_at,
-                ))
+                if apply_changes:
+                    target.add(CustomerAccount(
+                        id=_legacy_account_id(license_key, normalized_email),
+                        license_key=license_key,
+                        email=normalized_email,
+                        display_name=display_name,
+                        status="active",
+                        created_at=created_at,
+                        updated_at=created_at,
+                    ))
                 account_copied += 1
             else:
                 account_skipped += 1
@@ -174,6 +185,7 @@ async def migrate(apply_changes: bool) -> None:
                 "created_at": row.created_at,
             } if license_key_by_id.get(row.license_id) else None),
             "id",
+            stage_missing=apply_changes,
         )
         reports["customer_sessions"] = await _copy_rows(
             source, target, AccountSession, CustomerSession,
@@ -189,6 +201,7 @@ async def migrate(apply_changes: bool) -> None:
                 "user_agent": row.user_agent,
             } if license_key_by_id.get(row.license_id) else None),
             "token_hash",
+            stage_missing=apply_changes,
         )
         reports["customer_email_change_challenges"] = await _copy_rows(
             source, target, AccountEmailChangeChallenge, CustomerEmailChangeChallenge,
@@ -204,6 +217,7 @@ async def migrate(apply_changes: bool) -> None:
                 "created_at": row.created_at,
             } if license_key_by_id.get(row.license_id) else None),
             "id",
+            stage_missing=apply_changes,
         )
         reports["wordpress_installations"] = await _copy_rows(
             source, target, WordPressSite, WordPressInstallation,
@@ -223,6 +237,7 @@ async def migrate(apply_changes: bool) -> None:
                 "disconnected_at": row.disconnected_at,
             } if license_key_by_id.get(row.license_id) else None),
             "id",
+            stage_missing=apply_changes,
         )
         reports["customer_branding"] = await _copy_rows(
             source, target, WhiteLabelBranding, CustomerBranding,
@@ -234,6 +249,7 @@ async def migrate(apply_changes: bool) -> None:
                 "updated_at": row.updated_at,
             } if license_key_by_id.get(row.license_id) else None),
             "license_key",
+            stage_missing=apply_changes,
         )
 
         reports["customer_billing_events"] = await _copy_rows(
@@ -250,6 +266,7 @@ async def migrate(apply_changes: bool) -> None:
                 "updated_at": row.updated_at,
             } if license_key_by_id.get(row.license_id) else None),
             "event_id",
+            stage_missing=apply_changes,
         )
         reports["admin_action_logs"] = await _copy_rows(
             source, target, SaaSAdminActionLog, AdminActionLog,
@@ -262,6 +279,7 @@ async def migrate(apply_changes: bool) -> None:
                 "created_at": row.created_at,
             }),
             "id",
+            stage_missing=apply_changes,
         )
         reports["operational_diagnostic_events"] = await _copy_rows(
             source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
@@ -274,6 +292,7 @@ async def migrate(apply_changes: bool) -> None:
                 "created_at": row.created_at,
             }),
             "legacy_source_id",
+            stage_missing=apply_changes,
         )
 
         # Legacy support notes were keyed only by email. Associate each note with
@@ -298,14 +317,15 @@ async def migrate(apply_changes: bool) -> None:
                 continue
             existing = await target.get(AdminCustomerNote, row.id)
             if existing is None:
-                target.add(AdminCustomerNote(
-                    id=row.id,
-                    license_key=license_key,
-                    customer_email=email,
-                    note=row.note,
-                    created_by=row.created_by,
-                    created_at=row.created_at,
-                ))
+                if apply_changes:
+                    target.add(AdminCustomerNote(
+                        id=row.id,
+                        license_key=license_key,
+                        customer_email=email,
+                        note=row.note,
+                        created_by=row.created_by,
+                        created_at=row.created_at,
+                    ))
                 note_copied += 1
             else:
                 note_already_present += 1
@@ -322,20 +342,43 @@ async def migrate(apply_changes: bool) -> None:
         if apply_changes:
             await target.commit()
             logger.info("Hostinger operational records copied. PostgreSQL source records were retained.")
-        else:
-            await target.rollback()
-            logger.info("Dry run only. No Hostinger records were written.")
+            return True
+
+        # Verification uses the same complete source-to-target mapping as the
+        # dry run, but turns any still-missing mapped row into a failing result.
+        # The transaction is always rolled back; this mode never writes.
+        await target.rollback()
+        if verify_only:
+            gaps = _verification_gaps(reports)
+            for name, count in gaps.items():
+                logger.error("%s: %s mapped source rows are still missing in Hostinger", name, count)
+            if gaps:
+                logger.error("Operational migration verification FAILED. No records were written.")
+                return False
+            logger.info("Operational migration verification PASSED. All mapped source rows are present in Hostinger.")
+            return True
+
+        logger.info("Dry run only. No Hostinger records were written.")
+        return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--apply",
         action="store_true",
         help="Write missing records to Hostinger. Default behavior is dry-run only.",
     )
+    modes.add_argument(
+        "--verify",
+        action="store_true",
+        help="Read-only check that every mappable PostgreSQL source record already exists in Hostinger.",
+    )
     args = parser.parse_args()
-    asyncio.run(migrate(apply_changes=args.apply))
+    verified = asyncio.run(migrate(apply_changes=args.apply, verify_only=args.verify))
+    if args.verify and not verified:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

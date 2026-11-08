@@ -255,3 +255,54 @@ def test_operational_migration_defaults_to_rollback_and_only_commits_on_apply():
     )
     assert commit_calls[0] in ast.walk(commit_if)
     assert rollback_calls[0] not in ast.walk(commit_if)
+
+
+
+def test_operational_migration_verification_counts_only_missing_mapped_rows():
+    from scripts.migrate_operational_data_to_hostinger import _verification_gaps
+
+    reports = {
+        "customer_accounts": {"source_candidates": 4, "to_copy": 2, "already_present": 2},
+        "customer_sessions": {"source": 5, "to_copy": 0, "already_present_or_unmapped": 5},
+        "admin_customer_notes": {
+            "source": 3,
+            "to_copy": 0,
+            "already_present": 1,
+            "ambiguous_license_mapping": 1,
+            "unmapped_email": 1,
+        },
+    }
+
+    assert _verification_gaps(reports) == {"customer_accounts": 2}
+
+
+def test_operational_migration_cli_offers_mutually_exclusive_apply_and_verify_modes():
+    import ast
+
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    main_function = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    source_segment = ast.get_source_segment(source, main_function)
+
+    assert "add_mutually_exclusive_group()" in source_segment
+    assert '"--apply"' in source_segment
+    assert '"--verify"' in source_segment
+    assert "verify_only=args.verify" in source_segment
+    assert "raise SystemExit(1)" in source_segment
+
+
+
+def test_dry_run_and_verify_never_stage_target_inserts():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+
+    assert "if stage_missing:\n                target.add(target_model(**values))" in source
+    assert "if apply_changes:\n                    target.add(CustomerAccount(" in source
+    assert "if apply_changes:\n                    target.add(AdminCustomerNote(" in source
+    assert source.count("stage_missing=apply_changes") == 8
