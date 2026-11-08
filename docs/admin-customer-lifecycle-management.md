@@ -39,3 +39,9 @@ The customer detail billing history now has independent offset/limit pagination 
 ## Per-license browser session history
 
 The individual customer history panel now pages browser sessions independently (default 50, maximum 100), returns the total and `has_more` state, and provides a Load more control. Session rows are ordered by creation time and the non-secret session token hash as a deterministic tie-breaker; token hashes are never serialized to the browser.
+
+
+
+## Per-license WordPress installation history
+
+The individual customer history panel now pages linked WordPress installations independently (default 50, maximum 100), returns total/has-more metadata, and exposes a Load more control. Ordering is deterministic by installation creation time and installation ID. Disconnect actions remain available on active installations in every loaded page.
