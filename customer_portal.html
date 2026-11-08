@@ -1546,31 +1546,58 @@
       view.className = "secondary"; view.textContent = "Site scan history";
       view.addEventListener("click", async () => {
         view.disabled = true;
-        try {
-          const response = await api("/api/v1/websites/" + encodeURIComponent(site.id));
-          if (!response.ok) throw new Error("Website scan history could not be loaded.");
-          const detailData = await response.json();
-          const panel = $("scanBatchDetail"); panel.replaceChildren();
-          const heading = document.createElement("h3"); heading.textContent = "Website history · " + detailData.host;
-          panel.append(heading);
-          const jobs = Array.isArray(detailData.scan_history) ? detailData.scan_history : [];
-          if (!jobs.length) {
-            const empty = document.createElement("p"); empty.className = "muted";
-            empty.textContent = "No scan history is available for this website yet.";
-            panel.append(empty);
+        const panel = $("scanBatchDetail");
+        panel.replaceChildren();
+        const heading = document.createElement("h3");
+        heading.textContent = "Website history · " + site.host;
+        panel.append(heading);
+        const historyRows = document.createElement("div");
+        panel.append(historyRows);
+        const pageSize = 100;
+        let historyOffset = 0;
+        let historyHasMore = true;
+        let historyLoading = false;
+        const loadHistoryPage = async () => {
+          if (historyLoading || !historyHasMore) return;
+          historyLoading = true;
+          moreHistory.disabled = true;
+          try {
+            const response = await api("/api/v1/websites/" + encodeURIComponent(site.id) +
+              "?limit=" + pageSize + "&offset=" + historyOffset);
+            if (!response.ok) throw new Error("Website scan history could not be loaded.");
+            const detailData = await response.json();
+            const jobs = Array.isArray(detailData.scan_history) ? detailData.scan_history : [];
+            if (!historyOffset && !jobs.length) {
+              const empty = document.createElement("p"); empty.className = "muted";
+              empty.textContent = "No scan history is available for this website yet.";
+              historyRows.append(empty);
+            }
+            for (const job of jobs) {
+              const row = document.createElement("p"); row.className = "muted";
+              row.textContent = job.status + " · " + new Date(job.created_at).toLocaleString() +
+                (job.last_error_code ? " · " + job.last_error_code : "");
+              historyRows.append(row);
+            }
+            historyOffset += jobs.length;
+            historyHasMore = Boolean(detailData.history_page && detailData.history_page.has_more);
+            moreHistory.hidden = !historyHasMore;
+          } catch (error) {
+            setStatus("connectStatus", error.message || "Website scan history could not be loaded.", "error");
+          } finally {
+            historyLoading = false;
+            moreHistory.disabled = false;
+            view.disabled = false;
           }
-          for (const job of jobs) {
-            const row = document.createElement("p"); row.className = "muted";
-            row.textContent = job.status + " · " + new Date(job.created_at).toLocaleString() +
-              (job.last_error_code ? " · " + job.last_error_code : "");
-            panel.append(row);
-          }
-          panel.scrollIntoView({behavior:"smooth", block:"nearest"});
-        } catch (error) {
-          setStatus("connectStatus", error.message || "Website scan history could not be loaded.", "error");
-        } finally {
-          view.disabled = false;
-        }
+        };
+        const moreHistory = document.createElement("button");
+        moreHistory.type = "button";
+        moreHistory.className = "secondary";
+        moreHistory.textContent = "Load older website history";
+        moreHistory.hidden = true;
+        moreHistory.addEventListener("click", loadHistoryPage);
+        panel.append(moreHistory);
+        await loadHistoryPage();
+        panel.scrollIntoView({behavior:"smooth", block:"nearest"});
       });
       const label = document.createElement("input");
       label.type = "text";
