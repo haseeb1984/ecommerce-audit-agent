@@ -17,6 +17,32 @@ from scan_queue import retry_failed_scan_job
 router = APIRouter()
 
 
+async def pending_outbox_details(
+    session: AsyncSession, model, identity_field: str, event_kind_field: str | None = None,
+) -> list[dict]:
+    """Return a small, sanitized pending-event sample without tenant identifiers."""
+    statement = (
+        select(model)
+        .where(model.status == "pending")
+        .order_by(model.created_at.asc(), getattr(model, identity_field).asc())
+        .limit(20)
+    )
+    rows = (await session.execute(statement)).scalars().all()
+    items = []
+    for item in rows:
+        entry = {
+            "event_id": str(getattr(item, identity_field)),
+            "attempts": int(item.attempts or 0),
+            "next_attempt_at": item.next_attempt_at.isoformat() if item.next_attempt_at else None,
+            "last_error": item.last_error,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+        if event_kind_field:
+            entry["event_type"] = str(getattr(item, event_kind_field))
+        items.append(entry)
+    return items
+
+
 def _require_scan_admin(request: Request) -> None:
     expected = os.getenv("ADMIN_API_KEY", "").strip()
     supplied = request.headers.get("x-admin-key", "")
@@ -91,31 +117,6 @@ async def admin_scan_operations(
         "billing_mirror": await outbox_summary(db, BillingMirrorSyncOutbox),
         "customer_email_identity": await outbox_summary(operational_db, CustomerEmailIdentitySyncOutbox),
     }
-
-    async def pending_outbox_details(
-        session: AsyncSession, model, identity_field: str, event_kind_field: str | None = None,
-    ) -> list[dict]:
-        """Return a small, sanitized pending-event sample without tenant identifiers."""
-        statement = (
-            select(model)
-            .where(model.status == "pending")
-            .order_by(model.created_at.asc(), getattr(model, identity_field).asc())
-            .limit(20)
-        )
-        rows = (await session.execute(statement)).scalars().all()
-        items = []
-        for item in rows:
-            entry = {
-                "event_id": str(getattr(item, identity_field)),
-                "attempts": int(item.attempts or 0),
-                "next_attempt_at": item.next_attempt_at.isoformat() if item.next_attempt_at else None,
-                "last_error": item.last_error,
-                "created_at": item.created_at.isoformat() if item.created_at else None,
-            }
-            if event_kind_field:
-                entry["event_type"] = str(getattr(item, event_kind_field))
-            items.append(entry)
-        return items
 
     pending_sync_events = {
         "customer_lifecycle": await pending_outbox_details(
