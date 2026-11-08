@@ -230,3 +230,65 @@ async def test_pagespeed_accepts_documented_field_data_categories(monkeypatch):
     result = await agent.run_audit("shop.example")
     assert result.field_data_context["url_overall_category"] == "FAST"
     assert result.field_metrics["url:INTERACTION_TO_NEXT_PAINT"]["category"] == "NEEDS_IMPROVEMENT"
+
+
+
+@pytest.mark.asyncio
+async def test_generated_outreach_rejects_unsupported_revenue_and_quantified_claims():
+    import json
+    from types import SimpleNamespace
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            self.kwargs = kwargs
+            content = json.dumps({
+                "revenue_leak_hypothesis": "The store is losing thousands in revenue.",
+                "email_subject": "Stop burning ad budget",
+                "email_body": "Your score is costing you sales and could lift conversions by 20%. Would you like a 90-second Loom?",
+            })
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    completions = FakeCompletions()
+    agent = UniversalEcommerceAgent.__new__(UniversalEcommerceAgent)
+    agent.groq_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    audit = ecommerce_agent.StoreAuditMetrics(
+        domain="shop.example", mobile_score=62, speed_index_sec=3.4, is_slow=True
+    )
+    contact = ecommerce_agent.ContactInfo(email="owner@example.com")
+
+    pitch = await agent._request_pitch("test-model", audit, contact)
+
+    assert "62/100" in pitch.revenue_leak_hypothesis
+    assert "3.40 seconds" in pitch.revenue_leak_hypothesis
+    assert "business impact is unknown" in pitch.revenue_leak_hypothesis
+    assert "burning ad budget" not in pitch.email_subject.lower()
+    assert "20%" not in pitch.email_body
+    assert "do not establish a business outcome" in pitch.email_body
+    system_prompt = completions.kwargs["messages"][0]["content"]
+    assert "Do not mention revenue, sales, conversions, ad budgets, ROI" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_grounded_generated_outreach_preserves_safe_copy():
+    import json
+    from types import SimpleNamespace
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            content = json.dumps({
+                "revenue_leak_hypothesis": "A revenue opportunity may exist.",
+                "email_subject": "A performance observation for your store",
+                "email_body": "I reviewed your mobile PageSpeed score of 62/100 and Speed Index of 3.40 seconds. These are lab observations from the tested page. Would you be open to a 90-second Loom walking through them?",
+            })
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    agent = UniversalEcommerceAgent.__new__(UniversalEcommerceAgent)
+    agent.groq_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+    audit = ecommerce_agent.StoreAuditMetrics(
+        domain="shop.example", mobile_score=62, speed_index_sec=3.4, is_slow=True
+    )
+    pitch = await agent._request_pitch("test-model", audit, ecommerce_agent.ContactInfo(email="owner@example.com"))
+
+    assert "business impact is unknown" in pitch.revenue_leak_hypothesis
+    assert pitch.email_subject == "A performance observation for your store"
+    assert "score of 62/100" in pitch.email_body
