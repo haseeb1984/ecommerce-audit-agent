@@ -724,7 +724,7 @@
   $("loadMoreWordPressSites").addEventListener("click", () => {
     if (wordpressSitesLoading || !wordpressSitesHasMore) return;
     $("loadMoreWordPressSites").disabled = true;
-    loadWordPressSites(wordpressSitesOffset, true);
+    loadWordPressSites(wordpressSitesOffset, true).catch(() => {});
   });
 
 
