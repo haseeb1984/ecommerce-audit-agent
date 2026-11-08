@@ -1887,7 +1887,6 @@ async def logout_all_account_sessions(
     result = await operational_db.execute(
         update(CustomerSession).where(
             CustomerSession.email == current.email,
-            CustomerSession.created_at <= now,
             CustomerSession.revoked_at.is_(None),
         ).values(revoked_at=now).execution_options(synchronize_session=False)
     )
