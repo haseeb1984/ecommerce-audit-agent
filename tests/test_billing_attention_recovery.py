@@ -175,3 +175,30 @@ def test_admin_operations_exposes_bounded_billing_mirror_retry_queue():
     assert '"billing_mirror_sync_events"' in source
     assert ".limit(50)" in source
     assert 'BillingMirrorSyncOutbox.status == "pending"' in source
+
+
+
+@pytest.mark.asyncio
+async def test_unknown_subscription_status_is_included_in_stale_event_ordering_query():
+    from sqlalchemy.dialects import postgresql
+
+    class _ScalarResult:
+        def scalar_one_or_none(self):
+            return None
+
+    class _CaptureDB:
+        statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return _ScalarResult()
+
+    db = _CaptureDB()
+    await main._latest_paddle_subscription_lifecycle_event(db, "sub-unknown-state")
+    compiled = db.statement.compile(
+        dialect=postgresql.dialect(),
+        compile_kwargs={"render_postcompile": True},
+    )
+
+    assert "payment_webhook_events.status IN" in str(compiled)
+    assert "subscription_update_unrecognized_status" in compiled.params.values()

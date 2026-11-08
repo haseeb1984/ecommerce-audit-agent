@@ -5172,6 +5172,7 @@ async def _latest_paddle_subscription_lifecycle_event(
         "subscription_canceled", "subscription_updated_active",
         "subscription_updated_past_due", "subscription_updated",
         "subscription_update_unmapped_price", "subscription_past_due",
+        "subscription_update_unrecognized_status",
     }
     return (await db.execute(
         select(PaymentWebhookEvent)
