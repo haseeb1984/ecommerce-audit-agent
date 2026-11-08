@@ -2126,11 +2126,17 @@ async def download_wordpress_plugin():
 @app.get("/api/v1/account/wordpress-sites")
 async def list_account_wordpress_sites(
     response: Response,
+    limit: int = Query(100, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """List WordPress installations linked to the currently selected customer license."""
-    from sqlalchemy import case, select
+    """List a bounded page of WordPress installations linked to the customer license."""
+    from sqlalchemy import case, func, select
+    site_filter = WordPressInstallation.license_key == license_obj.license_key
+    total = await operational_db.scalar(
+        select(func.count()).select_from(WordPressInstallation).where(site_filter)
+    )
     # Keep the currently connected installation visible even when it is an
     # older record that has been reactivated after many historical connections.
     site_order = (
@@ -2140,8 +2146,8 @@ async def list_account_wordpress_sites(
         WordPressInstallation.id.desc(),
     )
     rows = (await operational_db.execute(
-        select(WordPressInstallation).where(WordPressInstallation.license_key == license_obj.license_key)
-        .order_by(*site_order).limit(100)
+        select(WordPressInstallation).where(site_filter)
+        .order_by(*site_order).offset(offset).limit(limit)
     )).scalars().all()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -2166,7 +2172,15 @@ async def list_account_wordpress_sites(
             "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
             "disconnected_at": row.disconnected_at.isoformat() if row.disconnected_at else None,
         })
-    return {"items": items}
+    return {
+        "items": items,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total or 0,
+            "has_more": offset + len(items) < (total or 0),
+        },
+    }
 
 
 @app.post("/api/v1/account/wordpress-sites/{site_id}/disconnect")
