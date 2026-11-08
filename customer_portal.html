@@ -214,6 +214,8 @@
   let websiteOffset = 0;
   let websiteHasMore = false;
   let websitesLoading = false;
+  let websiteLoadingSessionVersion = -1;
+  let websiteRequestVersion = 0;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -1616,8 +1618,14 @@
   });
 
   async function loadWebsites(reset = true) {
-    if (websitesLoading) return;
+    const requestSessionVersion = accountSessionVersion;
+    // A previous account's pending request must not block the current account.
+    if (websitesLoading && websiteLoadingSessionVersion === requestSessionVersion) return;
+    const requestVersion = ++websiteRequestVersion;
     websitesLoading = true;
+    websiteLoadingSessionVersion = requestSessionVersion;
+    const loadMoreButton = $("loadMoreWebsites");
+    loadMoreButton.disabled = true;
     try {
     const container = $("websiteInventory");
     const requestedOffset = reset ? 0 : websiteOffset;
@@ -1631,14 +1639,15 @@
       throw new Error(message);
     }
     const data = await response.json();
+    if (requestVersion !== websiteRequestVersion || requestSessionVersion !== accountSessionVersion) return;
     const items = Array.isArray(data.items) ? data.items : [];
     if (reset) {
       websiteOffset = 0;
       container.replaceChildren();
     }
-    websiteOffset += items.length;
+    websiteOffset = requestedOffset + items.length;
     websiteHasMore = Boolean(data.page && data.page.has_more);
-    $("loadMoreWebsites").hidden = !websiteHasMore;
+    loadMoreButton.hidden = !websiteHasMore;
     if (!items.length && reset) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No websites have been saved for this account yet.";
@@ -1766,8 +1775,16 @@
       card.append(label, view, save, archive);
       container.append(card);
     }
+    } catch (error) {
+      if (requestVersion === websiteRequestVersion && requestSessionVersion === accountSessionVersion) {
+        setStatus("connectStatus", error.message || "Website inventory could not be loaded.", "error");
+      }
     } finally {
-      websitesLoading = false;
+      if (requestVersion === websiteRequestVersion) {
+        websitesLoading = false;
+        websiteLoadingSessionVersion = -1;
+        loadMoreButton.disabled = !websiteHasMore;
+      }
     }
   }
 
@@ -2013,6 +2030,13 @@
     agencyUsageRequestVersion += 1;
     agencyClientRequestVersion += 1;
     agencyTeamRequestVersion += 1;
+    websiteRequestVersion += 1;
+    websitesLoading = false;
+    websiteLoadingSessionVersion = -1;
+    websiteOffset = 0;
+    websiteHasMore = false;
+    $("loadMoreWebsites").hidden = true;
+    $("loadMoreWebsites").disabled = true;
     agencyTeamOffset = 0;
     agencyTeamHasMore = false;
     agencyTeamLoading = false;
