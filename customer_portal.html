@@ -216,6 +216,7 @@
   let websitesLoading = false;
   let websiteLoadingSessionVersion = -1;
   let websiteRequestVersion = 0;
+  let wordpressSitesRequestVersion = 0;
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
@@ -630,50 +631,67 @@
   }
 
   async function loadWordPressSites() {
-    const container = $("wordpressSites");
-    const response = await api("/api/v1/account/wordpress-sites");
-    const data = await response.json();
-    container.replaceChildren();
-    const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) {
-      const empty = document.createElement("p"); empty.className = "muted";
-      empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
-      container.append(empty);
-    }
-    for (const site of items) {
-      const card = document.createElement("div"); card.className = "report";
-      const info = document.createElement("div");
-      const title = document.createElement("strong"); title.textContent = site.site_url || site.site_host || "WordPress site";
-      const meta = document.createElement("small");
-      const health = site.connection_health || site.status || "unknown";
-      meta.textContent = "Status: " + health + " · WP user " + (site.wordpress_user_login || "not linked") + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
-      info.append(title, meta);
-      if (health === "stale") {
-        const recovery = document.createElement("small");
-        recovery.className = "muted";
-        recovery.textContent = "No plugin heartbeat received for over " + (site.stale_after_days || 7) + " days. Open WordPress Admin → Plugins, confirm the Ecommerce Audit Agent plugin is active, then use its connection settings to reconnect with this license.";
-        info.append(recovery);
+    const requestSessionVersion = accountSessionVersion;
+    const requestVersion = ++wordpressSitesRequestVersion;
+    try {
+      const container = $("wordpressSites");
+      const response = await api("/api/v1/account/wordpress-sites");
+      const data = await response.json();
+      // A newer refresh or account switch owns the WordPress installation panel.
+      if (requestVersion !== wordpressSitesRequestVersion || requestSessionVersion !== accountSessionVersion) return;
+      container.replaceChildren();
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
+        container.append(empty);
       }
-      card.append(info);
-      if (site.status === "active") {
-        const button = document.createElement("button"); button.className = "secondary"; button.type = "button"; button.textContent = "Disconnect site";
-        button.addEventListener("click", async () => {
-          if (!window.confirm("Disconnect " + (site.site_host || "this WordPress site") + " from the currently selected license? Existing reports and billing history will remain available.")) return;
-          button.disabled = true;
-          try {
-            await api("/api/v1/account/wordpress-sites/" + encodeURIComponent(site.site_id) + "/disconnect", {method:"POST"});
-            setStatus("wordpressSitesStatus", "WordPress site disconnected. License and audit reports were not deleted.", "success");
-            await loadWordPressSites();
-          } catch (error) {
-            setStatus("wordpressSitesStatus", error.message, "error"); button.disabled = false;
-          }
-        });
-        card.append(button);
+      for (const site of items) {
+        const card = document.createElement("div"); card.className = "report";
+        const info = document.createElement("div");
+        const title = document.createElement("strong"); title.textContent = site.site_url || site.site_host || "WordPress site";
+        const meta = document.createElement("small");
+        const health = site.connection_health || site.status || "unknown";
+        meta.textContent = "Status: " + health + " · WP user " + (site.wordpress_user_login || "not linked") + " · WordPress " + (site.wordpress_version || "—") + " · WooCommerce " + (site.woocommerce_version || "not detected") + " · Plugin " + (site.plugin_version || "—") + " · Last seen " + (site.last_seen_at ? new Date(site.last_seen_at).toLocaleString() : "not yet");
+        info.append(title, meta);
+        if (health === "stale") {
+          const recovery = document.createElement("small");
+          recovery.className = "muted";
+          recovery.textContent = "No plugin heartbeat received for over " + (site.stale_after_days || 7) + " days. Open WordPress Admin → Plugins, confirm the Ecommerce Audit Agent plugin is active, then use its connection settings to reconnect with this license.";
+          info.append(recovery);
+        }
+        card.append(info);
+        if (site.status === "active") {
+          const button = document.createElement("button"); button.className = "secondary"; button.type = "button"; button.textContent = "Disconnect site";
+          button.addEventListener("click", async () => {
+            if (!window.confirm("Disconnect " + (site.site_host || "this WordPress site") + " from the currently selected license? Existing reports and billing history will remain available.")) return;
+            const operationSessionVersion = accountSessionVersion;
+            button.disabled = true;
+            try {
+              await api("/api/v1/account/wordpress-sites/" + encodeURIComponent(site.site_id) + "/disconnect", {method:"POST"});
+              if (operationSessionVersion !== accountSessionVersion) return;
+              setStatus("wordpressSitesStatus", "WordPress site disconnected. License and audit reports were not deleted.", "success");
+              await loadWordPressSites();
+            } catch (error) {
+              if (operationSessionVersion === accountSessionVersion) {
+                setStatus("wordpressSitesStatus", error.message, "error");
+                button.disabled = false;
+              }
+            }
+          });
+          card.append(button);
+        }
+        container.append(card);
       }
-      container.append(card);
+      setStatus("wordpressSitesStatus", items.length + " WordPress installation(s) found for this license.", "success");
+    } catch (error) {
+      if (requestVersion === wordpressSitesRequestVersion && requestSessionVersion === accountSessionVersion) {
+        setStatus("wordpressSitesStatus", "Unable to load WordPress installations. " + error.message, "error");
+      }
+      throw error;
     }
-    setStatus("wordpressSitesStatus", items.length + " WordPress installation(s) found for this license.", "success");
   }
+
   async function loadProfile() {
     const response = await api("/api/v1/account/profile");
     const profile = await response.json();
@@ -2031,6 +2049,7 @@
     agencyClientRequestVersion += 1;
     agencyTeamRequestVersion += 1;
     websiteRequestVersion += 1;
+    wordpressSitesRequestVersion += 1;
     websitesLoading = false;
     websiteLoadingSessionVersion = -1;
     websiteOffset = 0;

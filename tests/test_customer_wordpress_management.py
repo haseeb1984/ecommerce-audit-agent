@@ -166,3 +166,27 @@ def test_wordpress_disconnect_serializes_with_identity_claim_and_revokes_pending
         assert "WordPressSiteLinkChallenge.consumed_at.is_(None)" in source
         assert ".values(consumed_at=disconnected_at)" in source
         assert 'if site.status == "active":' in source
+
+
+
+def test_customer_wordpress_inventory_refresh_ignores_older_responses():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text(encoding="utf-8")
+    start = portal.index("async function loadWordPressSites")
+    end = portal.index("async function loadProfile", start)
+    source = portal[start:end]
+
+    assert "const requestSessionVersion = accountSessionVersion;" in source
+    assert "const requestVersion = ++wordpressSitesRequestVersion;" in source
+    stale_guard = source.index("requestVersion !== wordpressSitesRequestVersion || requestSessionVersion !== accountSessionVersion")
+    render = source.index("container.replaceChildren();")
+    assert stale_guard < render
+    assert "requestVersion === wordpressSitesRequestVersion && requestSessionVersion === accountSessionVersion" in source
+
+
+def test_customer_wordpress_inventory_clear_invalidates_pending_refreshes():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text(encoding="utf-8")
+    start = portal.index("function clearAccountView")
+    end = portal.index('$("requestLoginCode").addEventListener', start)
+    source = portal[start:end]
+
+    assert "wordpressSitesRequestVersion += 1;" in source
