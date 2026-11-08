@@ -8966,24 +8966,30 @@ async def admin_list_client_wordpress_links(
     license_id: int,
     request: Request,
     response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List connected WordPress installation metadata for an operator-selected license."""
     _require_admin_key(request)
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     client = (await db.execute(
         select(SoftwareLicense).where(SoftwareLicense.id == license_id)
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
+    wordpress_base = select(WordPressInstallation).where(
+        WordPressInstallation.license_key == client.license_key
+    )
+    total = int((await operational_db.execute(
+        select(func.count()).select_from(wordpress_base.subquery())
+    )).scalar_one() or 0)
     rows = (await operational_db.execute(
-        select(WordPressInstallation).where(
-            WordPressInstallation.license_key == client.license_key
-        ).order_by(
+        wordpress_base.order_by(
             WordPressInstallation.created_at.desc(),
             WordPressInstallation.id.desc(),
-        ).limit(100)
+        ).offset(offset).limit(limit)
     )).scalars().all()
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
@@ -9011,7 +9017,10 @@ async def admin_list_client_wordpress_links(
             "last_seen_at": item.last_seen_at.isoformat() if item.last_seen_at else None,
             "disconnected_at": item.disconnected_at.isoformat() if item.disconnected_at else None,
         } for item in rows],
-        "limit": 100,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "has_more": offset + len(rows) < total,
     }
 
 
