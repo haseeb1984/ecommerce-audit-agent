@@ -100,6 +100,30 @@ def _verification_gaps(reports):
     return gaps
 
 
+def _apply_blockers(reports):
+    """Identify source rows that apply could not safely migrate or reconcile."""
+    blockers = {}
+    unresolved_fields = (
+        "unmapped",
+        "overlength_or_empty_email",
+        "ambiguous_license_mapping",
+        "unmapped_email",
+    )
+    for name, report in reports.items():
+        unresolved = {
+            field: int(report.get(field, 0))
+            for field in unresolved_fields
+            if int(report.get(field, 0)) > 0
+        }
+        mismatched = int(report.get("field_mismatches", 0))
+        if unresolved or mismatched:
+            blockers[name] = {
+                "unresolved": unresolved,
+                "field_mismatches": mismatched,
+            }
+    return blockers
+
+
 def _support_note_migration_statement():
     """Join notes to database-aggregated, unambiguous billing ownership."""
     normalized_billing_email = func.lower(func.trim(PaymentWebhookEvent.recipient_email)).label("email")
@@ -576,6 +600,15 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             logger.info("%s: %s", name, report)
         if apply_changes:
             await target.commit()
+            blockers = _apply_blockers(reports)
+            if blockers:
+                for name, details in blockers.items():
+                    logger.error("%s: migration requires manual reconciliation: %s", name, details)
+                logger.error(
+                    "Operational migration applied partially. All committed batches are retained; "
+                    "unresolved rows and existing field mismatches must be reconciled before cutover."
+                )
+                return False
             logger.info("Hostinger operational records copied. PostgreSQL source records were retained.")
             return True
 
@@ -621,7 +654,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     verified = asyncio.run(migrate(apply_changes=args.apply, verify_only=args.verify))
-    if args.verify and not verified:
+    if (args.apply or args.verify) and not verified:
         raise SystemExit(1)
 
 

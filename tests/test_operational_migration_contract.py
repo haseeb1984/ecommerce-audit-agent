@@ -647,3 +647,54 @@ def test_streamed_operational_copy_counters_are_mutated_in_batch_scope():
     segment = source[start:end]
 
     assert "nonlocal copied, skipped, already_present, unmapped, mismatch_count" in segment
+
+
+def test_operational_apply_blocks_cutover_on_unmapped_or_divergent_rows():
+    from scripts.migrate_operational_data_to_hostinger import _apply_blockers
+
+    reports = {
+        "customer_accounts": {
+            "to_copy": 3,
+            "overlength_or_empty_email": 1,
+            "field_mismatches": 0,
+        },
+        "customer_billing_events": {
+            "to_copy": 0,
+            "unmapped": 2,
+            "field_mismatches": 1,
+        },
+        "admin_customer_notes": {
+            "ambiguous_license_mapping": 1,
+            "unmapped_email": 2,
+            "field_mismatches": 0,
+        },
+        "customer_sessions": {
+            "to_copy": 5,
+            "unmapped": 0,
+            "field_mismatches": 0,
+        },
+    }
+
+    assert _apply_blockers(reports) == {
+        "customer_accounts": {
+            "unresolved": {"overlength_or_empty_email": 1},
+            "field_mismatches": 0,
+        },
+        "customer_billing_events": {
+            "unresolved": {"unmapped": 2},
+            "field_mismatches": 1,
+        },
+        "admin_customer_notes": {
+            "unresolved": {"ambiguous_license_mapping": 1, "unmapped_email": 2},
+            "field_mismatches": 0,
+        },
+    }
+
+
+def test_operational_apply_returns_nonzero_when_reconciliation_blockers_remain():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    assert "blockers = _apply_blockers(reports)" in source
+    assert "if (args.apply or args.verify) and not verified:" in source
+    assert "Operational migration applied partially." in source

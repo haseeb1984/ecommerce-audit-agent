@@ -943,3 +943,10 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Streamed row-copy reports now distinguish records already present in Hostinger from source records that could not be mapped (for example, missing license identity or destination-incompatible values).
 - The existing combined `already_present_or_unmapped` counter remains for compatibility; new `already_present` and `unmapped` counters make unresolved migration rows actionable without changing apply/verify write semantics.
 - Added regression contracts for both counters. No source or target database was modified.
+
+
+## Operational migration apply/cutover safety gate
+
+- The migration apply command now returns an unsuccessful process status when any source rows remain unmapped, account emails cannot fit the destination schema, support-note ownership is ambiguous/unmapped, or existing target rows have field mismatches.
+- Already committed 500-row batches remain safely persisted and source records remain untouched; the nonzero result explicitly means the migration is partial and requires reconciliation before cutover, not that the operation rolled back.
+- Added blocker aggregation and CLI exit-code regression contracts. No live migration is run by this change.
