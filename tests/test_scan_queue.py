@@ -335,5 +335,5 @@ async def test_resubmitting_archived_website_locks_row_before_reactivation():
     assert archived.status == "active"
     assert archived.updated_at is not None
     assert db.scalar_statements[0]._for_update_arg is not None
-    assert any(isinstance(item, CustomerWebsite) is False for item in db.added)
+    assert not any(isinstance(item, CustomerWebsite) for item in db.added)
     assert db.committed
