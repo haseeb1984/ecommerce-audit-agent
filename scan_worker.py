@@ -205,6 +205,12 @@ def _outbox_retry_delay_seconds(attempts: int | None) -> int:
     return min(3600, 30 * (2 ** retry_exponent))
 
 
+def _next_outbox_attempt_count(attempts: int | None) -> int:
+    """Increment a persisted retry counter without coercing malformed values."""
+    _outbox_retry_delay_seconds(attempts)  # Validate the persisted representation first.
+    return (0 if attempts is None else attempts) + 1
+
+
 def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
     """Retain successful deliveries for bounded cleanup and operational visibility."""
     item.status = "completed"
@@ -584,7 +590,7 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                 await licensing_db.rollback()
                 retry_event = await licensing_db.get(CustomerLifecycleSyncOutbox, event_id)
                 if retry_event is not None:
-                    retry_event.attempts = int(retry_event.attempts or 0) + 1
+                    retry_event.attempts = _next_outbox_attempt_count(retry_event.attempts)
                     retry_event.last_error = type(exc).__name__[:120]
                     delay = _outbox_retry_delay_seconds(retry_event.attempts)
                     retry_event.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
@@ -658,7 +664,7 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                 # scheduled with capped exponential backoff.
                 retry_event = await operational_db.get(CustomerEmailIdentitySyncOutbox, event_id)
                 if retry_event is not None:
-                    retry_event.attempts = int(retry_event.attempts or 0) + 1
+                    retry_event.attempts = _next_outbox_attempt_count(retry_event.attempts)
                     retry_event.last_error = type(exc).__name__[:120]
                     delay = _outbox_retry_delay_seconds(retry_event.attempts)
                     retry_event.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
@@ -749,7 +755,7 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                 await licensing_db.rollback()
                 retry = await licensing_db.get(BillingMirrorSyncOutbox, event_id)
                 if retry is not None:
-                    retry.attempts = int(retry.attempts or 0) + 1
+                    retry.attempts = _next_outbox_attempt_count(retry.attempts)
                     retry.last_error = type(exc).__name__[:120]
                     delay = _outbox_retry_delay_seconds(retry.attempts)
                     retry.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=delay)

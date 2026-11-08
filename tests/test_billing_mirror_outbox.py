@@ -59,3 +59,22 @@ def test_cross_database_outboxes_treat_missing_attempt_count_as_first_retry():
     from scan_worker import _outbox_retry_delay_seconds
 
     assert _outbox_retry_delay_seconds(None) == 30
+
+
+
+def test_outbox_attempt_counter_increments_valid_values_without_coercion():
+    from scan_worker import _next_outbox_attempt_count
+
+    assert _next_outbox_attempt_count(None) == 1
+    assert _next_outbox_attempt_count(0) == 1
+    assert _next_outbox_attempt_count(1) == 2
+
+
+def test_outbox_attempt_counter_rejects_malformed_persisted_values():
+    import pytest
+
+    from scan_worker import _next_outbox_attempt_count
+
+    for malformed in (True, 1.5, "2", "invalid"):
+        with pytest.raises(ValueError):
+            _next_outbox_attempt_count(malformed)
