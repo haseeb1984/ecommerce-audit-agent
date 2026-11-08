@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `80d4242d7b9ac4c006d83703292df02d6baf903a` after the 2026-11-08 worker-scheduler and migration-safety consolidation. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `088da70f973255cd79eabe01c1e11330484a330b` after the 2026-11-08 agency OTP and durable scan-worker lease-ownership hardening. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -775,3 +775,15 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Evidence boundaries remain: no Google Search Console index status without owner-authorized data; no backlink/competitor dataset without a provider/export; no manual WCAG conformance, authenticated checkout completion, consent-dependent event-delivery verification, active penetration testing, field Core Web Vitals or INP. These remain not assessed rather than inferred passes.
 - Verification is blocked by CI infrastructure: latest backend run [42227554897](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/42227554897) failed before runner startup (runner_id=0, blank runner name, zero steps). No test results were produced. Vercel reports its build-rate-limit failure; it is not being bypassed.
 - No production migration, deployment, real payment, or live customer-site audit was performed. PDF/report layout and final audit-result refinement remain deferred to the final phase.
+
+
+
+## 2026-11-08 — agency OTP and durable scan-worker ownership hardening
+
+- PR #247 is merged: agency team OTP requests and verification now share the stable per-email login throttle lock used by customer login, serializing cross-agency OTP activity for the same address. Membership/challenge selection happens after the email lock, with agency/member/challenge row-lock ordering preserved.
+- PR #248 is merged: scan-worker lease renewal now rejects an owner whose persisted `locked_at` is already outside the configured lease window; an expired worker cannot revive its lease simply because another worker has not reclaimed the job yet.
+- PR #249 is merged: stale lease recovery is bounded to 100 jobs per claim transaction, ordered by lease timestamp and job ID, and uses `FOR UPDATE SKIP LOCKED` to avoid multiple claimers waiting on the same stale rows.
+- PR #250 is merged: the same active-lease cutoff is enforced for completion, retry/failure, defer and renewal mutations. Lease durations are validated as bounded integers.
+- Regression tests were added to `tests/test_agency_team_revocation.py` and `tests/test_scan_queue.py`. They have **not been executed** in this batch; relevant workflow runs were unavailable and Vercel reported its daily deployment-rate limit. These statuses are not evidence of Python test failures or passes.
+- No live Hostinger/Supabase database, migration, SMTP, Paddle action, WordPress installation, live customer-site audit, or production deployment was performed. The durable worker remains **implemented / verification pending** until controlled staging and CI acceptance are available.
+- PDF/private-storage and final audit-result presentation work remain reserved for the final phase.
