@@ -33,14 +33,15 @@ class AdminAgencySession:
     def __init__(self, agency, sessions=(), challenges=(), invitations=()):
         self.agency = agency
         self.rows = [list(sessions), list(challenges), list(invitations)]
+        self.statements = []
         self.committed = False
 
     async def scalar(self, _statement):
         return self.agency
 
-    async def execute(self, _statement):
-        values = self.rows.pop(0)
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return SimpleNamespace(rowcount=1)
 
     async def commit(self):
         self.committed = True
@@ -88,11 +89,18 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
 
     assert result["status"] == "suspended"
     assert result["team_sessions_revoked"] is True
-    assert all(item.revoked_at is not None for item in sessions)
-    assert all(item.consumed_at is not None for item in challenges)
-    assert all(item.status == "revoked" for item in invitations)
-    assert all(item.invitation_token_hash is None for item in invitations)
-    assert all(item.invitation_expires_at is None for item in invitations)
+    from sqlalchemy.sql.dml import Update
+
+    assert len(db.statements) == 3
+    assert all(isinstance(statement, Update) for statement in db.statements)
+    statement_sql = [str(statement) for statement in db.statements]
+    assert any("agency_team_sessions" in sql and "revoked_at" in sql for sql in statement_sql)
+    assert any("agency_team_login_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
+    assert any("agency_team_members" in sql and "invitation_token_hash" in sql for sql in statement_sql)
+    invitation_update = next(statement for statement in db.statements if "agency_team_members" in str(statement))
+    invitation_values = invitation_update.compile().params
+    assert "revoked" in invitation_values.values()
+    assert None in invitation_values.values()
     assert agency.updated_at is not None and db.committed
 
 
