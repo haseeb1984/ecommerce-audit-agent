@@ -367,7 +367,10 @@ def inspect_standard_security_headers(headers: dict[str, str], source_url: str) 
     referrer_policy = normalized.get("referrer-policy", "").lower()
     if not referrer_policy:
         missing.append("Referrer-Policy")
-    elif referrer_policy not in valid_referrer_policies:
+    elif not any(
+        token.strip() in valid_referrer_policies
+        for token in referrer_policy.split(",")
+    ):
         missing.append("Referrer-Policy is present but has an unrecognized value")
 
     if not normalized.get("permissions-policy"):
@@ -382,7 +385,7 @@ def inspect_standard_security_headers(headers: dict[str, str], source_url: str) 
         if tokens:
             csp_directives.setdefault(tokens[0].lower(), tokens[1:])
     frame_ancestors = csp_directives.get("frame-ancestors", [])
-    csp_frame_protected = bool(frame_ancestors)
+    csp_frame_protected = bool(frame_ancestors) and "*" not in frame_ancestors
 
     x_frame_options = normalized.get("x-frame-options", "").strip().upper()
     valid_x_frame_options = x_frame_options in {"DENY", "SAMEORIGIN"}
