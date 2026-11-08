@@ -2879,4 +2879,27 @@ async def test_bounded_crawl_does_not_flag_tracking_only_query_links(monkeypatch
 
     assert not any(item.title == "Parameterized internal catalog URLs detected" for item in findings)
     outcome = next(item for item in outcomes if item.check_id == "ecommerce_catalog.parameterized_internal_urls")
+    assert outcome.outcome == "not_assessed"
+    assert "No product, category, collection, catalog or search page" in outcome.evidence
+
+
+@pytest.mark.asyncio
+async def test_bounded_crawl_passes_query_inventory_only_after_sampling_catalog_page(monkeypatch):
+    monkeypatch.setattr(crawl_checks.aiohttp, "ClientSession", FakeClientSession)
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        if url == "https://shop.example/":
+            return 200, '<html><head><title>Store</title></head><body><a href="/collections/shoes">Shoes</a></body></html>', {"content-type": "text/html"}, url
+        if url == "https://shop.example/collections/shoes":
+            return 200, '<html><head><title>Shoes</title></head><body><h1>Shoes</h1></body></html>', {"content-type": "text/html"}, url
+        return 404, "", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(crawl_checks, "_safe_get", fake_safe_get)
+    outcomes = []
+    await crawl_checks.run_bounded_site_crawl(
+        "https://shop.example/", outcome_records=outcomes
+    )
+
+    outcome = next(item for item in outcomes if item.check_id == "ecommerce_catalog.parameterized_internal_urls")
     assert outcome.outcome == "pass"
+    assert "No recognized variant, filter, pagination, sorting or search query patterns" in outcome.evidence
