@@ -154,14 +154,14 @@ def _account_candidate_statement():
     )
     candidates = union_all(sessions, sites, billing).subquery("legacy_account_candidates")
     ranked = select(candidates.c.license_key, candidates.c.email, candidates.c.display_name,
-        candidates.c.candidate_created_at,
+        candidates.c.candidate_created_at, candidates.c.candidate_updated_at,
         func.row_number().over(partition_by=(candidates.c.license_key, candidates.c.email),
             order_by=(candidates.c.source_priority.asc(), candidates.c.candidate_updated_at.desc(),
                 candidates.c.candidate_created_at.desc())).label("candidate_rank"),
     ).subquery("ranked_legacy_account_candidates")
     return (
         select(ranked.c.license_key, ranked.c.email, ranked.c.display_name,
-            ranked.c.candidate_created_at)
+            ranked.c.candidate_created_at, ranked.c.candidate_updated_at)
         .where(ranked.c.candidate_rank == 1)
         .order_by(ranked.c.license_key.asc(), ranked.c.email.asc())
         .execution_options(yield_per=MIGRATION_BATCH_SIZE)
@@ -288,7 +288,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
                     "display_name": row.display_name,
                     "status": "active",
                     "created_at": row.candidate_created_at,
-                    "updated_at": row.candidate_created_at,
+                    "updated_at": row.candidate_updated_at,
                 }
             if not expected_by_identity:
                 return
@@ -450,7 +450,6 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             }),
             "id",
             stage_missing=apply_changes,
-            resolve_license_keys=True,
         )
         reports["operational_diagnostic_events"] = await _copy_rows(
             source, target, SaaSOperationEvent, OperationalDiagnosticEvent,
