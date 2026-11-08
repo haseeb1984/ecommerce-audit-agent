@@ -912,3 +912,32 @@ def test_agency_workspace_archive_and_disconnect_bulk_revoke_pending_connection_
         assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source
         assert ".values(consumed_at=now)" in source
         assert ".scalars().all()" not in source
+
+
+
+def test_agency_client_inventory_includes_latest_website_status_in_one_page_scoped_query():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.list_business_agency_clients)
+    assert "AgencyClientWebsite.workspace_id.in_(workspace_ids)" in source
+    assert "AgencyClientWebsite.agency_id == agency.id" in source
+    assert "AgencyClientWebsite.status == \"active\"" in source
+    assert "sql_func.row_number().over(" in source
+    assert "partition_by=AgencyClientWebsite.workspace_id" in source
+    assert "ranked_websites.c.site_rank == 1" in source
+    assert '"website": website_by_workspace.get(item.id' in source
+    assert ".scalars().all()" not in source[source.index("ranked_websites ="):source.index("response.headers")]
+
+
+def test_agency_client_portal_uses_batched_website_status_and_keeps_manual_refresh():
+    from pathlib import Path
+
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("async function loadAgencyDashboard(")
+    end = portal.index("async function loadAgencyClientAuditResults(", start)
+    source = portal[start:end]
+    assert "refreshWebsiteStatus(item.website || {connected: false})" in source
+    assert "async function refreshWebsiteStatus(initialData = null)" in source
+    assert "if (!website) {" in source
+    assert '"/website"' in source
