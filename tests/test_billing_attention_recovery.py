@@ -219,3 +219,46 @@ def test_admin_payment_event_total_uses_streamed_sorted_union():
     assert "await pg_id_stream.close()" in source
     assert "set((await db.execute(pg_ids_statement)).scalars().all())" not in source
     assert "set((await operational_db.execute(host_ids_statement)).scalars().all())" not in source
+
+
+@pytest.mark.asyncio
+async def test_paddle_subscription_license_conflict_lookup_is_limited_to_two_rows():
+    from fastapi import HTTPException
+    from sqlalchemy.dialects import postgresql
+
+    class _Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return ["license-a", "license-b"]
+
+    class _CaptureDB:
+        statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return _Result()
+
+    db = _CaptureDB()
+    with pytest.raises(HTTPException) as error:
+        await main._get_paddle_subscription_license_event(db, "sub-many-licenses")
+
+    assert error.value.status_code == 409
+    compiled = db.statement.compile(
+        dialect=postgresql.dialect(),
+        compile_kwargs={"render_postcompile": True},
+    )
+    assert "LIMIT" in str(compiled).upper()
+    assert 2 in compiled.params.values()
+
+
+def test_paddle_checkout_legacy_duplicate_detection_fetches_at_most_two_license_ids():
+    import inspect
+
+    source = inspect.getsource(main.create_paddle_checkout)
+    start = source.index("legacy_ids =")
+    end = source.index("if len(legacy_ids) > 1:", start)
+    lookup = source[start:end]
+    assert ".distinct().limit(2)" in lookup
+    assert "legacy_ids = (await db.execute(" in lookup
