@@ -91,3 +91,17 @@ def test_wordpress_disconnect_clears_license_scoped_identity_metadata():
     assert lifecycle.count("eaa_wp_clear_identity_link_settings($settings);") == 3
     assert lifecycle.index("agency/sites/disconnect") < lifecycle.index("eaa_wp_clear_identity_link_settings($settings);")
     assert lifecycle.index("sites/disconnect") < lifecycle.rindex("eaa_wp_clear_identity_link_settings($settings);")
+
+
+def test_wordpress_identity_claim_locks_canonical_license_before_operational_challenge():
+    import inspect
+    from wordpress_identity_api import claim_wordpress_site_identity
+
+    source = inspect.getsource(claim_wordpress_site_identity)
+    reference_read = source.index("challenge_reference = await operational_db.scalar")
+    canonical_lock = source.index(".with_for_update()", reference_read)
+    locked_challenge_read = source.index("challenge = await operational_db.scalar", canonical_lock)
+    operational_lock = source.index(".with_for_update()", locked_challenge_read)
+
+    assert reference_read < canonical_lock < locked_challenge_read < operational_lock
+    assert "All identity mutations acquire the canonical PostgreSQL license lock" in source
