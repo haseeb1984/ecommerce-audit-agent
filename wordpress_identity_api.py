@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_customer_account
@@ -98,6 +98,15 @@ async def create_wordpress_link_challenge(
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
+    # Link challenges contain only token hashes and are useful for replay protection
+    # only while recent. Prune expired records after a seven-day safety window so
+    # the operational table does not grow forever on active customer accounts.
+    await operational_db.execute(
+        delete(WordPressSiteLinkChallenge).where(
+            WordPressSiteLinkChallenge.license_key == license_obj.license_key,
+            WordPressSiteLinkChallenge.expires_at <= now - timedelta(days=7),
+        )
+    )
     recent = int((await operational_db.execute(
         select(func.count(WordPressSiteLinkChallenge.id)).where(
             WordPressSiteLinkChallenge.license_key == license_obj.license_key,
