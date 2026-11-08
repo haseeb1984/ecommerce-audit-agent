@@ -92,6 +92,40 @@ async def admin_scan_operations(
         "customer_email_identity": await outbox_summary(operational_db, CustomerEmailIdentitySyncOutbox),
     }
 
+    async def pending_outbox_details(
+        session: AsyncSession, model, identity_field: str, event_kind_field: str | None = None,
+    ) -> list[dict]:
+        """Return a small, sanitized pending-event sample without tenant identifiers."""
+        statement = (
+            select(model)
+            .where(model.status == "pending")
+            .order_by(model.created_at.asc(), getattr(model, identity_field).asc())
+            .limit(20)
+        )
+        rows = (await session.execute(statement)).scalars().all()
+        items = []
+        for item in rows:
+            entry = {
+                "event_id": str(getattr(item, identity_field)),
+                "attempts": int(item.attempts or 0),
+                "next_attempt_at": item.next_attempt_at.isoformat() if item.next_attempt_at else None,
+                "last_error": item.last_error,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
+            }
+            if event_kind_field:
+                entry["event_type"] = str(getattr(item, event_kind_field))
+            items.append(entry)
+        return items
+
+    pending_sync_events = {
+        "customer_lifecycle": await pending_outbox_details(
+            db, CustomerLifecycleSyncOutbox, "id", "action",
+        ),
+        "customer_email_identity": await pending_outbox_details(
+            operational_db, CustomerEmailIdentitySyncOutbox, "id",
+        ),
+    }
+
     failed_query = select(WebsiteScanJob).where(WebsiteScanJob.status == "failed")
     failed_total = int((await operational_db.execute(
         select(func.count(WebsiteScanJob.id)).where(WebsiteScanJob.status == "failed")
@@ -114,6 +148,7 @@ async def admin_scan_operations(
 
     return {
         "reconciliation_outboxes": reconciliation_outboxes,
+        "pending_sync_events": pending_sync_events,
         "counts": {
             "batches_total": batch_total,
             "jobs_queued": counts.get("queued", 0),
