@@ -8499,9 +8499,18 @@ async def admin_customer_account_detail(
     normalized = email.strip().lower()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    # Bound cross-database identity transfer and paginate the license inventory.
-    # The Hostinger identity union is streamed and capped at 1,001 keys so one
-    # unusually large account cannot allocate an unbounded Python set.
+    # Stream every distinct Hostinger identity key into a transaction-scoped
+    # PostgreSQL temp table in bounded batches. This keeps cross-database transfer
+    # memory bounded without imposing an arbitrary per-customer key ceiling.
+    from sqlalchemy import text, union, table, column, String
+    identity_table = table(
+        "admin_customer_identity_keys",
+        column("license_key", String(100)),
+    )
+    await db.execute(text(
+        "CREATE TEMP TABLE admin_customer_identity_keys "
+        "(license_key VARCHAR(100) PRIMARY KEY) ON COMMIT DROP"
+    ))
     identity_keys_query = select(CustomerBillingEvent.license_key.label("license_key")).where(
         sql_func.lower(CustomerBillingEvent.recipient_email) == normalized,
         CustomerBillingEvent.license_key.is_not(None),
@@ -8510,35 +8519,51 @@ async def admin_customer_account_detail(
             sql_func.lower(CustomerAccount.email) == normalized,
             CustomerAccount.license_key.is_not(None),
         )
-    ).order_by("license_key").limit(1001)
-    identity_key_result = await operational_db.execute(identity_keys_query)
-    customer_license_keys = list(identity_key_result.scalars().all())
-    identity_keys_truncated = len(customer_license_keys) > 1000
-    customer_license_keys = customer_license_keys[:1000]
-
-    from sqlalchemy import union
-    license_id_sources = []
-    if customer_license_keys:
-        license_id_sources.append(
-            select(SoftwareLicense.id.label("license_id")).where(
-                SoftwareLicense.license_key.in_(customer_license_keys)
+    ).order_by("license_key")
+    identity_key_stream = None
+    try:
+        identity_key_stream = await operational_db.stream(identity_keys_query)
+        identity_values = identity_key_stream.scalars()
+        while True:
+            identity_batch = await identity_values.fetchmany(500)
+            if not identity_batch:
+                break
+            await db.execute(
+                text(
+                    "INSERT INTO admin_customer_identity_keys (license_key) "
+                    "VALUES (:license_key) ON CONFLICT (license_key) DO NOTHING"
+                ),
+                [{"license_key": key} for key in identity_batch],
             )
-        )
-    license_id_sources.append(
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        if identity_key_stream is not None:
+            await identity_key_stream.close()
+
+    matched_license_ids = union(
+        select(SoftwareLicense.id.label("license_id")).join(
+            identity_table, identity_table.c.license_key == SoftwareLicense.license_key
+        ),
         select(SoftwareLicense.id.label("license_id")).join(
             PaymentWebhookEvent, PaymentWebhookEvent.license_id == SoftwareLicense.id
-        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized)
-    )
-    matched_license_ids = union(*license_id_sources).subquery("admin_customer_matched_license_ids")
-    license_total = int((await db.execute(
-        select(sql_func.count()).select_from(matched_license_ids)
-    )).scalar_one() or 0)
-    rows = (await db.execute(
-        select(SoftwareLicense)
-        .join(matched_license_ids, matched_license_ids.c.license_id == SoftwareLicense.id)
-        .order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
-        .offset(license_offset).limit(license_limit)
-    )).scalars().all()
+        ).where(sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized),
+    ).subquery("admin_customer_matched_license_ids")
+    try:
+        license_total = int((await db.execute(
+            select(sql_func.count()).select_from(matched_license_ids)
+        )).scalar_one() or 0)
+        rows = (await db.execute(
+            select(SoftwareLicense)
+            .join(matched_license_ids, matched_license_ids.c.license_id == SoftwareLicense.id)
+            .order_by(SoftwareLicense.created_at.desc(), SoftwareLicense.id.desc())
+            .offset(license_offset).limit(license_limit)
+        )).scalars().all()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     if not rows and license_offset == 0:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     ids = [item.id for item in rows]
