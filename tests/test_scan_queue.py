@@ -361,3 +361,18 @@ def test_scan_worker_heartbeat_runs_well_inside_lease_window():
     assert heartbeat_interval < 900
     assert "if not owned:" in source
     assert "lease_unconfirmed.set()" in source
+
+
+
+def test_stale_scan_lease_recovery_is_bounded_ordered_and_nonblocking():
+    import inspect
+    import scan_queue
+
+    source = inspect.getsource(scan_queue.claim_next_scan_job)
+    start = source.index("expired_jobs =")
+    end = source.index(").scalars().all()", start)
+    recovery_query = source[start:end]
+
+    assert ".order_by(WebsiteScanJob.locked_at.asc(), WebsiteScanJob.id.asc())" in recovery_query
+    assert ".limit(100)" in recovery_query
+    assert ".with_for_update(skip_locked=True)" in recovery_query
