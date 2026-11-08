@@ -141,8 +141,8 @@ async def test_legacy_wordpress_disconnect_is_idempotent_after_successful_discon
     result = await disconnect_wordpress_site(
         payload=WordPressInstallationAction(site_id=site.id),
         response=response,
-        license_obj=SimpleNamespace(license_key="license-test"),
-        db=None,
+        license_obj=SimpleNamespace(id=1, license_key="license-test"),
+        db=_CanonicalLicenseSession(),
         operational_db=operational_db,
     )
 
