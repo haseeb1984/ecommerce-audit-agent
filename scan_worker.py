@@ -854,10 +854,38 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     async def _run_slot(slot: int):
         return await process_one_scan(f"{worker_id}-{slot}")
 
-    outcomes = await asyncio.gather(*(_run_slot(slot) for slot in range(max_jobs)))
-    active = [item for item in outcomes if item["status"] != "idle"]
+    slot_results = await asyncio.gather(
+        *(_run_slot(slot) for slot in range(max_jobs)),
+        return_exceptions=True,
+    )
+    outcomes = []
+    slot_errors = 0
+    for slot, result in enumerate(slot_results):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, Exception):
+            slot_errors += 1
+            logger.error(
+                "Scan worker slot failed (slot=%s, error_type=%s)",
+                slot,
+                type(result).__name__,
+            )
+            outcomes.append({
+                "status": "worker_error",
+                "error_code": type(result).__name__.upper(),
+            })
+        else:
+            outcomes.append(result)
+
+    # If every slot failed before it could report idle/work, surface a failed
+    # cycle so the HTTP scheduler can retry instead of acknowledging a dead poll.
+    if slot_errors == max_jobs:
+        raise RuntimeError("All scan worker slots failed before producing outcomes.")
+
+    active = [item for item in outcomes if item["status"] not in ("idle", "worker_error")]
     return {
         "worker_id": worker_id,
+        "slot_errors": slot_errors,
         "authentication_cleanup": cleanup,
         "customer_email_identity_sync": identity_sync,
         "customer_lifecycle_sync": lifecycle_sync,
