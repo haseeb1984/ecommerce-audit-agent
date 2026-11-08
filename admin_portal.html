@@ -247,7 +247,11 @@ async function loadCustomerAccount(email){
  box.append(licenseBox);
  const sessionBox=el("div",undefined,"historybox");sessionBox.append(el("h4","Browser sessions"));
  if(!d.sessions.length)sessionBox.append(el("p","No sessions recorded.","muted"));
- for(const x of d.sessions)sessionBox.append(el("div",x.email+" · License #"+x.license_id+" · "+x.status+" · Last seen "+date(x.last_seen_at)+" · Expires "+date(x.expires_at),"historyitem"));
+ const appendSessions=(items)=>{for(const x of items)sessionBox.append(el("div",x.email+" · License #"+x.license_id+" · "+x.status+" · Last seen "+date(x.last_seen_at)+" · Expires "+date(x.expires_at),"historyitem"))};
+ appendSessions(d.sessions);
+ if(d.session_page&&d.session_page.has_more){
+  const more=el("button","Load more sessions","secondary");more.addEventListener("click",async()=>{more.disabled=true;try{const p=d.session_page;const next=await api("/api/v1/admin/customers/detail?email="+encodeURIComponent(d.email)+"&session_offset="+(p.offset+p.limit)+"&session_limit="+p.limit);if(selectedCustomerEmail!==d.email)return;appendSessions(next.sessions);d.session_page=next.session_page;if(!next.session_page.has_more)more.remove();else more.disabled=false}catch(e){more.disabled=false;status(e.message,"error")}});sessionBox.append(more);
+ }
  box.append(sessionBox);
  const billingBox=el("div",undefined,"historybox");billingBox.append(el("h4","Billing lifecycle"));
  if(!d.billing_events.length)billingBox.append(el("p","No billing events recorded.","muted"));
@@ -255,11 +259,19 @@ async function loadCustomerAccount(email){
  box.append(billingBox);
  const wpBox=el("div",undefined,"historybox");wpBox.append(el("h4","Connected WordPress sites"));
  if(!d.wordpress_sites||!d.wordpress_sites.length)wpBox.append(el("p","No WordPress sites linked to this customer.","muted"));
- for(const site of (d.wordpress_sites||[])){wpBox.append(el("div",site.site_url+" · "+site.status+" · WP "+(site.wordpress_version||"—")+" · WooCommerce "+(site.woocommerce_version||"—")+" · Plugin "+site.plugin_version+" · Last seen "+date(site.last_seen_at),"historyitem"))}
+ const appendWordPress=(items)=>{for(const site of (items||[]))wpBox.append(el("div",site.site_url+" · "+site.status+" · WP "+(site.wordpress_version||"—")+" · WooCommerce "+(site.woocommerce_version||"—")+" · Plugin "+site.plugin_version+" · Last seen "+date(site.last_seen_at),"historyitem"))};
+ appendWordPress(d.wordpress_sites);
+ if(d.wordpress_page&&d.wordpress_page.has_more){
+  const more=el("button","Load more WordPress sites","secondary");more.addEventListener("click",async()=>{more.disabled=true;try{const p=d.wordpress_page;const next=await api("/api/v1/admin/customers/detail?email="+encodeURIComponent(d.email)+"&wordpress_offset="+(p.offset+p.limit)+"&wordpress_limit="+p.limit);if(selectedCustomerEmail!==d.email)return;appendWordPress(next.wordpress_sites);d.wordpress_page=next.wordpress_page;if(!next.wordpress_page.has_more)more.remove();else more.disabled=false}catch(e){more.disabled=false;status(e.message,"error")}});wpBox.append(more);
+ }
  box.append(wpBox);
  const notes=el("div",undefined,"historybox");notes.append(el("h4","Internal support notes"));
  if(!d.support_notes.length)notes.append(el("p","No support notes yet.","muted"));
- for(const n of d.support_notes)notes.append(el("div",n.note+" · "+n.created_by+" · "+date(n.created_at),"historyitem"));
+ const appendNotes=(items)=>{for(const n of items)notes.append(el("div",n.note+" · "+n.created_by+" · "+date(n.created_at),"historyitem"))};
+ appendNotes(d.support_notes);
+ if(d.note_page&&d.note_page.has_more){
+  const more=el("button","Load more support notes","secondary");more.addEventListener("click",async()=>{more.disabled=true;try{const p=d.note_page;const next=await api("/api/v1/admin/customers/detail?email="+encodeURIComponent(d.email)+"&note_offset="+(p.offset+p.limit)+"&note_limit="+p.limit);if(selectedCustomerEmail!==d.email)return;appendNotes(next.support_notes);d.note_page=next.note_page;if(!next.note_page.has_more)more.remove();else more.disabled=false}catch(e){more.disabled=false;status(e.message,"error")}});notes.append(more);
+ }
  const input=el("textarea");input.id="customerSupportNote";input.maxLength=4000;input.rows=3;input.placeholder="Add internal support note (not visible to customer)";input.style.width="100%";
  const add=el("button","Add support note","secondary");add.style.marginTop="8px";add.addEventListener("click",async()=>{const note=input.value.trim();if(note.length<3){status("Support note must contain at least 3 characters.","error");return}add.disabled=true;try{await guardedFetch("/api/v1/admin/customers/notes?email="+encodeURIComponent(selectedCustomerEmail),{method:"POST",headers:{"X-Admin-Key":key,"Content-Type":"application/json"},body:JSON.stringify({note})});await loadCustomerAccount(selectedCustomerEmail);status("Internal support note saved.","success")}catch(e){status(e.message,"error")}finally{add.disabled=false}});
  notes.append(input,add);box.append(notes);box.scrollIntoView({behavior:"smooth",block:"start"});
