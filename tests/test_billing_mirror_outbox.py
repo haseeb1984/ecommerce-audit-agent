@@ -48,3 +48,13 @@ def test_cross_database_outbox_retry_backoff_rejects_non_integer_attempts():
 
     with pytest.raises(ValueError):
         _outbox_retry_delay_seconds("not-an-attempt-count")
+    with pytest.raises(ValueError):
+        _outbox_retry_delay_seconds(1.5)
+    with pytest.raises(ValueError):
+        _outbox_retry_delay_seconds(True)
+
+
+def test_cross_database_outboxes_treat_missing_attempt_count_as_first_retry():
+    from scan_worker import _outbox_retry_delay_seconds
+
+    assert _outbox_retry_delay_seconds(None) == 30
