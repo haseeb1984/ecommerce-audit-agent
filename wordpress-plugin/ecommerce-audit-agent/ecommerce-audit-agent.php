@@ -78,10 +78,25 @@ function eaa_wp_decrypt_license($stored) {
     return $plain;
 }
 
+function eaa_wp_is_valid_api_base($value) {
+    if (!is_string($value) || '' === trim($value) || false !== strpos($value, '\\\\')) {
+        return false;
+    }
+    $value = trim($value);
+    $parts = wp_parse_url($value);
+    if (!is_array($parts) || empty($parts['host']) ||
+        array_key_exists('user', $parts) || array_key_exists('pass', $parts) ||
+        array_key_exists('query', $parts) || array_key_exists('fragment', $parts)) {
+        return false;
+    }
+    return wp_http_validate_url($value) &&
+        'https' === strtolower((string) ($parts['scheme'] ?? ''));
+}
+
 function eaa_wp_api_base() {
     $settings = eaa_wp_settings();
     $base = isset($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : EAA_WP_DEFAULT_API;
-    if (!$base || !wp_http_validate_url($base) || 'https' !== strtolower((string) wp_parse_url($base, PHP_URL_SCHEME))) {
+    if (!eaa_wp_is_valid_api_base($base)) {
         return EAA_WP_DEFAULT_API;
     }
     return $base;
@@ -567,9 +582,8 @@ function eaa_wp_handle_save_settings() {
         exit;
     }
     $api_base = isset($_POST['api_base']) ? esc_url_raw(trim(wp_unslash($_POST['api_base']))) : EAA_WP_DEFAULT_API;
-    $scheme = strtolower((string) wp_parse_url($api_base, PHP_URL_SCHEME));
-    if (!$api_base || !wp_http_validate_url($api_base) || 'https' !== $scheme) {
-        $settings['connection_error'] = __('The API URL must be a valid HTTPS URL.', 'ecommerce-audit-agent');
+    if (!eaa_wp_is_valid_api_base($api_base)) {
+        $settings['connection_error'] = __('The API URL must be HTTPS and cannot contain credentials, a query, a fragment, or backslashes.', 'ecommerce-audit-agent');
         update_option(EAA_WP_OPTION, $settings, false);
         wp_safe_redirect(add_query_arg(array('page' => 'ecommerce-audit-agent', 'eaa_notice' => 'invalid_url'), admin_url('admin.php')));
         exit;
