@@ -5,6 +5,17 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 
 $settings = get_option('eaa_wp_settings', array());
 $disconnect_failed = false;
+$eaa_is_valid_api_base = static function ($value) {
+    if (!is_string($value) || '' === trim($value) || false !== strpos($value, '\\')) {
+        return false;
+    }
+    $parts = wp_parse_url(trim($value));
+    return is_array($parts) && !empty($parts['host']) &&
+        !array_key_exists('user', $parts) && !array_key_exists('pass', $parts) &&
+        !array_key_exists('query', $parts) && !array_key_exists('fragment', $parts) &&
+        wp_http_validate_url(trim($value)) &&
+        'https' === strtolower((string) ($parts['scheme'] ?? ''));
+};
 
 if (is_array($settings) && !empty($settings['agency_site_token'])) {
     // Agency client sites use a separate revocable credential, not the owner's license key.
@@ -31,8 +42,7 @@ if (is_array($settings) && !empty($settings['agency_site_token'])) {
         }
     }
     $api_base = !empty($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : 'https://ecommerce-audit-agent.vercel.app';
-    if (!is_string($agency_token) || '' === $agency_token || !wp_http_validate_url($api_base) ||
-        'https' !== strtolower((string) wp_parse_url($api_base, PHP_URL_SCHEME))) {
+    if (!is_string($agency_token) || '' === $agency_token || !$eaa_is_valid_api_base($api_base)) {
         $disconnect_failed = true;
     } else {
         $response = wp_safe_remote_post($api_base . '/api/v1/integrations/wordpress/agency/sites/disconnect', array(
@@ -78,8 +88,7 @@ if (is_array($settings) && !empty($settings['site_id']) && !empty($settings['lic
         }
     }
     $api_base = !empty($settings['api_base']) ? untrailingslashit(esc_url_raw($settings['api_base'])) : 'https://ecommerce-audit-agent.vercel.app';
-    if (!is_string($license) || '' === $license || !wp_http_validate_url($api_base) ||
-        'https' !== strtolower((string) wp_parse_url($api_base, PHP_URL_SCHEME))) {
+    if (!is_string($license) || '' === $license || !$eaa_is_valid_api_base($api_base)) {
         $disconnect_failed = true;
     } else {
         $response = wp_safe_remote_post($api_base . '/api/v1/integrations/wordpress/sites/disconnect', array(
