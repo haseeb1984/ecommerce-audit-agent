@@ -46,3 +46,24 @@ def test_failed_scan_job_retry_cannot_update_or_alert_in_a_new_admin_session():
     assert "await adminPost(" in loader
     assert "if(actionSessionVersion!==adminSessionVersion)return;" in loader
     assert "if(actionSessionVersion===adminSessionVersion){alert(" in loader
+
+
+
+def test_admin_operations_diagnostics_refresh_ignores_older_requests_and_sessions():
+    source = PORTAL.read_text(encoding="utf-8")
+    loader = _section(source, "async function refreshOps", "async function refreshScanOperations")
+
+    assert "opsRequestVersion=0" in source
+    assert "const requestSessionVersion=adminSessionVersion,requestVersion=++opsRequestVersion;" in loader
+    assert "requestSessionVersion!==adminSessionVersion||requestVersion!==opsRequestVersion" in loader
+    assert loader.index("requestVersion!==opsRequestVersion") < loader.index('const h=d.health')
+
+
+def test_admin_logout_invalidates_operations_diagnostics_and_refresh_feedback_is_session_guarded():
+    source = PORTAL.read_text(encoding="utf-8")
+    clear = _section(source, "function clearAdminData", '$("createClientApiKey")')
+    handler = _section(source, '$("opsRefresh").addEventListener', '$("search").addEventListener')
+
+    assert "opsRequestVersion++" in clear
+    assert "const version=adminSessionVersion" in handler
+    assert "if(version===adminSessionVersion)" in handler
