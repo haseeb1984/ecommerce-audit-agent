@@ -297,8 +297,7 @@ async def _execute_audit(target_url: str) -> dict:
         result.limitations.append(
             f"Rendered-browser diagnostics were not assessed ({str(exc)}); static HTML signals do not establish rendered mobile behavior."
         )
-    except Exception as exc:
-        modules["browser_rendered"] = "error"
+    except Exception as exc:        modules["browser_rendered"] = "error"
         result.limitations.append(
             f"Rendered-browser diagnostics failed safely ({type(exc).__name__}); no browser pass is inferred."
         )
@@ -597,8 +596,7 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                             CustomerSession.license_key == license_key,
                             CustomerSession.created_at <= event.created_at,
                             CustomerSession.revoked_at.is_(None),
-                        ).values(revoked_at=datetime.now(timezone.utc)))
-                    await operational_db.commit()
+                        ).values(revoked_at=datetime.now(timezone.utc)))                    await operational_db.commit()
                 event.status = "completed"
                 event.processed_at = datetime.now(timezone.utc)
                 event.last_error = None
@@ -725,8 +723,57 @@ def _billing_mirror_source_event_query(event_id: str):
     )
 
 
+def _billing_mirror_outbox_claim_statement(now: datetime):
+    """Claim only the oldest pending billing event for each canonical license.
+
+    A deferred earlier event remains an ordering barrier until it is delivered
+    or discarded. Events for other licenses remain independently claimable.
+    """
+    current_event = aliased(PaymentWebhookEvent)
+    earlier_outbox = aliased(BillingMirrorSyncOutbox)
+    earlier_event = aliased(PaymentWebhookEvent)
+    earlier_pending = (
+        select(earlier_outbox.event_id)
+        .select_from(earlier_outbox)
+        .join(earlier_event, earlier_event.event_id == earlier_outbox.event_id)
+        .where(
+            earlier_event.license_id == current_event.license_id,
+            earlier_outbox.status == "pending",
+            or_(
+                earlier_outbox.created_at < BillingMirrorSyncOutbox.created_at,
+                and_(
+                    earlier_outbox.created_at == BillingMirrorSyncOutbox.created_at,
+                    earlier_outbox.event_id < BillingMirrorSyncOutbox.event_id,
+                ),
+            ),
+        )
+        .correlate(current_event, BillingMirrorSyncOutbox)
+        .exists()
+    )
+    return (
+        select(BillingMirrorSyncOutbox)
+        .outerjoin(
+            current_event,
+            current_event.event_id == BillingMirrorSyncOutbox.event_id,
+        )
+        .where(
+            BillingMirrorSyncOutbox.status == "pending",
+            BillingMirrorSyncOutbox.next_attempt_at <= now,
+            or_(current_event.license_id.is_(None), ~earlier_pending),
+        )
+        .order_by(
+            BillingMirrorSyncOutbox.created_at.asc(),
+            BillingMirrorSyncOutbox.event_id.asc(),
+        )
+        .limit(1)
+        # Lock only the outbox row; the outer-joined source event is locked
+        # separately by _billing_mirror_source_event_query after the claim.
+        .with_for_update(skip_locked=True, of=BillingMirrorSyncOutbox)
+    )
+
+
 async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
-    """Retry canonical PostgreSQL billing events into Hostinger with bounded backoff."""
+    """Retry canonical PostgreSQL billing events into Hostinger in per-license order."""
     if batch_size < 1 or batch_size > 200:
         raise ValueError("batch_size must be between 1 and 200.")
     now = datetime.now(timezone.utc)
@@ -734,14 +781,7 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
     async with AsyncSessionLocal() as licensing_db:
         for _ in range(batch_size):
             item = (await licensing_db.execute(
-                select(BillingMirrorSyncOutbox)
-                .where(
-                    BillingMirrorSyncOutbox.status == "pending",
-                    BillingMirrorSyncOutbox.next_attempt_at <= now,
-                )
-                .order_by(BillingMirrorSyncOutbox.created_at.asc())
-                .limit(1)
-                .with_for_update(skip_locked=True)
+                _billing_mirror_outbox_claim_statement(now)
             )).scalar_one_or_none()
             if item is None:
                 break
@@ -897,8 +937,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
         return_exceptions=True,
     )
     outcomes = []
-    slot_errors = 0
-    for slot, result in enumerate(slot_results):
+    slot_errors = 0    for slot, result in enumerate(slot_results):
         if isinstance(result, asyncio.CancelledError):
             raise result
         if isinstance(result, Exception):
