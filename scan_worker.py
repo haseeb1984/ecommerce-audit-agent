@@ -863,7 +863,7 @@ async def process_scan_queue(*, max_jobs: int = 1, worker_id: str | None = None)
     for slot, result in enumerate(slot_results):
         if isinstance(result, asyncio.CancelledError):
             raise result
-        if isinstance(result, BaseException):
+        if isinstance(result, Exception):
             slot_errors += 1
             logger.error(
                 "Scan worker slot failed (slot=%s, error_type=%s)",
