@@ -4,19 +4,19 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agency Team Portal | Ecommerce Audit Agent</title>
 <style>
-:root{font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#172b42;background:#f3f6fa}
+:root{--agency-brand-primary:#155a8a;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#172b42;background:#f3f6fa}
 *{box-sizing:border-box}body{margin:0}.wrap{max-width:960px;margin:48px auto;padding:0 20px}
-header{margin-bottom:24px}h1{margin:0 0 8px;font-size:30px}p{color:#607187;line-height:1.55}
+header{margin-bottom:24px;background:var(--agency-brand-primary);color:#fff;border-radius:14px;padding:22px;display:flex;align-items:center;gap:16px}header .brand-logo{display:none;max-width:160px;max-height:52px;object-fit:contain}header .brand-copy{min-width:0}h1{margin:0 0 8px;font-size:30px}p{color:#607187;line-height:1.55}header p{color:#e2edf6}
 .panel{background:#fff;border:1px solid #dce5ef;border-radius:14px;padding:24px;margin:16px 0;box-shadow:0 6px 22px #17324d0a}
 label{display:block;font-weight:650;margin:12px 0 6px}input,textarea{width:100%;max-width:620px;padding:12px;border:1px solid #b9c9da;border-radius:8px;font:inherit}textarea{min-height:110px;resize:vertical}
-button{border:0;border-radius:8px;padding:11px 16px;background:#155a8a;color:#fff;font-weight:650;cursor:pointer;margin:12px 8px 0 0}
+button{border:0;border-radius:8px;padding:11px 16px;background:var(--agency-brand-primary);color:#fff;font-weight:650;cursor:pointer;margin:12px 8px 0 0}
 button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cursor:not-allowed}
 .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.workspace{border:1px solid #e0e8f0;border-radius:10px;padding:16px;margin:12px 0}.workspace h3{margin:0 0 4px}
-.batch{padding:10px 0;border-top:1px solid #e8edf3}.muted{font-size:13px;color:#6b7c90}.status{margin-top:12px;min-height:22px;color:#155a8a}.hidden{display:none}
+.batch{padding:10px 0;border-top:1px solid #e8edf3}.muted{font-size:13px;color:#6b7c90}.status{margin-top:12px;min-height:22px;color:var(--agency-brand-primary)}.hidden{display:none}
 </style>
 </head>
 <body><main class="wrap">
-<header><h1>Agency team portal</h1><p>Sign in with the email address your agency owner invited. You will only see client workspaces assigned to your account.</p></header>
+<header><img id="agencyBrandLogo" class="brand-logo" alt=""><div class="brand-copy"><h1 id="agencyBrandName">Agency team portal</h1><p>Sign in with the email address your agency owner invited. You will only see client workspaces assigned to your account.</p></div></header>
 <section class="panel" id="loginPanel">
 <h2>Team member sign-in</h2>
 <form id="requestForm"><label for="email">Invited email</label><input id="email" type="email" autocomplete="email" maxlength="254" required><button type="submit">Email me a sign-in code</button></form>
@@ -53,12 +53,25 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
     if (!response.ok) throw new Error(data.detail || "The request could not be completed.");
     return data;
   }
+  function applyAgencyBranding(branding) {
+    const color = /^#[0-9a-fA-F]{6}$/.test(branding?.primary_color || "") ? branding.primary_color : "#155a8a";
+    const name = typeof branding?.brand_name === "string" && branding.brand_name.trim() ? branding.brand_name.trim() : "Agency team portal";
+    document.documentElement.style.setProperty("--agency-brand-primary", color);
+    $("agencyBrandName").textContent = name;
+    const logo = $("agencyBrandLogo");
+    const logoUrl = typeof branding?.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(branding.logo_url) ? branding.logo_url : "";
+    logo.alt = name + " logo";
+    logo.onerror = () => { logo.removeAttribute("src"); logo.style.display = "none"; };
+    if (logoUrl) { logo.src = logoUrl; logo.style.display = "block"; }
+    else { logo.removeAttribute("src"); logo.style.display = "none"; }
+  }
   function showSignedOut() {
     sessionVersion += 1;
     authAttemptVersion += 1;
     token = ""; sessionStorage.removeItem(tokenKey);
     $("loginPanel").classList.remove("hidden"); $("workspacePanel").classList.add("hidden");
     $("verifyForm").classList.add("hidden");
+    applyAgencyBranding(null);
     $("identity").textContent = "";
     $("workspaces").replaceChildren();
     $("workspaceStatus").textContent = "";
@@ -230,6 +243,8 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       const me=await api("/api/v1/agency/team/auth/me",{},expectedVersion);
       assertCurrentSession(expectedVersion);
       $("identity").textContent=me.email+" · "+me.role;
+      try { const branding=await api("/api/v1/agency/team/branding",{},expectedVersion); assertCurrentSession(expectedVersion); applyAgencyBranding(branding); }
+      catch (_) { assertCurrentSession(expectedVersion); applyAgencyBranding(null); }
       await loadWorkspaces(expectedVersion);
     } catch(error){if(expectedVersion===sessionVersion){$("workspaceStatus").textContent=error.message;showSignedOut();}}
   }
