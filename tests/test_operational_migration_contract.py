@@ -619,3 +619,31 @@ def test_customer_account_migration_reports_unrepresentable_email_candidates():
     assert '"overlength_or_empty_email": account_overlength_email_count' in source
     assert 'normalized_email = _migration_email(row.email)' in source
     assert 'if normalized_email is None:' in source
+
+
+def test_streamed_operational_copy_reports_existing_and_unmapped_rows_separately():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    start = source.index("async def _copy_rows(")
+    end = source.index("\n\nasync def migrate(", start)
+    segment = source[start:end]
+
+    assert "already_present = 0" in segment
+    assert "unmapped = 0" in segment
+    assert "unmapped += 1" in segment
+    assert "already_present += 1" in segment
+    assert '"already_present": already_present' in segment
+    assert '"unmapped": unmapped' in segment
+    assert '"already_present_or_unmapped": skipped' in segment
+
+
+def test_streamed_operational_copy_counters_are_mutated_in_batch_scope():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    start = source.index("async def reconcile_batch(rows):")
+    end = source.index("\n\n    statement = select(source_model)", start)
+    segment = source[start:end]
+
+    assert "nonlocal copied, skipped, already_present, unmapped, mismatch_count" in segment
