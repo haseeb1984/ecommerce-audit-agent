@@ -102,3 +102,15 @@ def test_customer_activity_and_scan_batch_requests_are_invalidated_on_account_cl
     assert "activityLoading = false;" in source
     assert "scanBatchesRequestVersion += 1;" in source
     assert "scanBatchesLoading = false;" in source
+
+
+
+def test_customer_scan_batch_actions_do_not_update_status_after_account_switch():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index('$("refreshScanBatches").addEventListener')
+    end = portal.index("function clearAccountView", start)
+    source = portal[start:end]
+
+    assert "const operationSessionVersion = accountSessionVersion;" in source
+    assert "if (operationSessionVersion === accountSessionVersion)" in source
+    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
