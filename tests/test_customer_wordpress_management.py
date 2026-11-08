@@ -65,3 +65,80 @@ def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replac
     assert 'window.confirm("Generate a replacement token?' in section
     assert 'Generating another token invalidates this one.' in section
     assert 'refreshWebsiteStatus();' in section
+
+
+class _ScalarSiteResult:
+    def __init__(self, site):
+        self.site = site
+
+    def scalar_one_or_none(self):
+        return self.site
+
+
+class _DisconnectSession:
+    def __init__(self, site):
+        self.site = site
+        self.commits = 0
+
+    async def execute(self, statement):
+        return _ScalarSiteResult(self.site)
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_customer_wordpress_disconnect_is_idempotent_after_successful_disconnect():
+    from types import SimpleNamespace
+    from main import customer_disconnect_wordpress_site
+
+    disconnected_at = datetime.now(timezone.utc)
+    site = SimpleNamespace(
+        id="wordpress-site-id-1234567890",
+        license_key="license-test",
+        status="disconnected",
+        disconnected_at=disconnected_at,
+    )
+    operational_db = _DisconnectSession(site)
+    response = Response()
+
+    result = await customer_disconnect_wordpress_site(
+        site_id=site.id,
+        response=response,
+        license_obj=SimpleNamespace(license_key="license-test"),
+        operational_db=operational_db,
+    )
+
+    assert result == {"status": "already_disconnected", "site_id": site.id}
+    assert operational_db.commits == 0
+    assert site.disconnected_at == disconnected_at
+    assert response.headers["Cache-Control"] == "no-store, private"
+
+
+@pytest.mark.asyncio
+async def test_legacy_wordpress_disconnect_is_idempotent_after_successful_disconnect():
+    from types import SimpleNamespace
+    from main import WordPressInstallationAction, disconnect_wordpress_site
+
+    disconnected_at = datetime.now(timezone.utc)
+    site = SimpleNamespace(
+        id="wordpress-site-id-1234567890",
+        license_key="license-test",
+        status="disconnected",
+        disconnected_at=disconnected_at,
+    )
+    operational_db = _DisconnectSession(site)
+    response = Response()
+
+    result = await disconnect_wordpress_site(
+        payload=WordPressInstallationAction(site_id=site.id),
+        response=response,
+        license_obj=SimpleNamespace(license_key="license-test"),
+        db=None,
+        operational_db=operational_db,
+    )
+
+    assert result == {"status": "already_disconnected", "site_id": site.id}
+    assert operational_db.commits == 0
+    assert site.disconnected_at == disconnected_at
+    assert response.headers["Pragma"] == "no-cache"
