@@ -45,3 +45,9 @@ The individual customer history panel now pages browser sessions independently (
 ## Per-license WordPress installation history
 
 The individual customer history panel now pages linked WordPress installations independently (default 50, maximum 100), returns total/has-more metadata, and exposes a Load more control. Ordering is deterministic by installation creation time and installation ID. Disconnect actions remain available on active installations in every loaded page.
+
+
+
+## Account-wide lifecycle concurrency
+
+Account-wide suspend/reactivate/session-revocation actions now lock all matched PostgreSQL license rows in ascending license-ID order before applying canonical state changes and queuing operational synchronization. This shares the license-row serialization boundary used by individual customer entitlement updates and avoids overlapping multi-license admin actions taking locks in inconsistent order.

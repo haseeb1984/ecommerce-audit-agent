@@ -126,3 +126,18 @@ def test_admin_customer_note_chooses_canonical_key_with_database_minima():
     assert 'candidate_note_keys = [key for key in (operational_note_key, legacy_note_key) if key]' in source
     assert 'note_license_keys = set(' not in source
     assert 'note_license_keys.update(' not in source
+
+
+
+def test_account_wide_customer_lifecycle_actions_lock_licenses_in_stable_order():
+    import inspect
+
+    from main import admin_customer_account_action
+
+    source = inspect.getsource(admin_customer_account_action)
+    lock_block = source[source.index("locked_licenses ="):source.index("now = datetime.now")]
+    assert "select(SoftwareLicense)" in lock_block
+    assert ".where(SoftwareLicense.id.in_(ids))" in lock_block
+    assert ".order_by(SoftwareLicense.id.asc()).with_for_update()" in lock_block
+    assert "ids = [item.id for item in locked_licenses]" in lock_block
+    assert "license_keys = [item.license_key for item in locked_licenses]" in lock_block

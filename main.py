@@ -8753,10 +8753,18 @@ async def admin_customer_account_action(
     ids = sorted(ids)
     if not ids:
         raise HTTPException(status_code=404, detail="Customer account not found.")
+    # Serialize account-wide lifecycle changes with per-license admin updates.
+    # Stable primary-key ordering prevents two multi-license actions from
+    # acquiring overlapping license locks in opposite orders.
+    locked_licenses = (await db.execute(
+        select(SoftwareLicense).where(SoftwareLicense.id.in_(ids))
+        .order_by(SoftwareLicense.id.asc()).with_for_update()
+    )).scalars().all()
+    ids = [item.id for item in locked_licenses]
+    if not locked_licenses:
+        raise HTTPException(status_code=404, detail="Customer account not found.")
     now = datetime.now(timezone.utc)
-    license_keys = list((await db.execute(
-        select(SoftwareLicense.license_key).where(SoftwareLicense.id.in_(ids))
-    )).scalars().all())
+    license_keys = [item.license_key for item in locked_licenses]
     if payload.action in {"suspend", "reactivate"}:
         active = payload.action == "reactivate"
         # PostgreSQL is canonical for entitlement state. Persist the decision and
