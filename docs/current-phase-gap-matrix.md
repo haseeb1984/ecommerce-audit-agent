@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `071cfa4d73f3e393ea3d258bed26bc7015ae19a3` after the 2026-11-08 admin billing and overview scalability work. Re-run CI and real-result acceptance before release claims.  
+**Baseline reviewed:** `main` at `071cfa4d73f3e393ea3d258bed26bc7015ae19a3` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
