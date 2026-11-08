@@ -1569,10 +1569,19 @@ async def verify_customer_email_change(
     if candidate is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     await _lock_customer_email_change_license(operational_db, candidate.license_key)
-    # Share the old-email lock with login OTP issuance, verification, and logout-all.
-    # This prevents an in-flight OTP from minting an old-identity session while
-    # the verified email change consumes pending challenges and revokes devices.
-    await _lock_customer_login_email(operational_db, candidate.email.strip().lower())
+    # The candidate was read before the per-license lock and may have been
+    # renamed while this request waited. Re-read the identity under the license
+    # lock, then serialize against OTP activity for that current email.
+    email_lock_candidate = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == token_hash,
+        CustomerSession.license_key == candidate.license_key,
+        CustomerSession.revoked_at.is_(None),
+    ))
+    if email_lock_candidate is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    locked_email = email_lock_candidate.email.strip().lower()
+    # Share the current-email lock with login OTP issuance, verification, and logout-all.
+    await _lock_customer_login_email(operational_db, locked_email)
     current = (await operational_db.execute(select(CustomerSession).where(
         CustomerSession.token_hash == token_hash,
         CustomerSession.license_key == candidate.license_key,
@@ -1581,6 +1590,8 @@ async def verify_customer_email_change(
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     old_email = current.email.strip().lower()
+    if old_email != locked_email:
+        raise HTTPException(status_code=409, detail="Customer email changed; restart verification.")
     challenge = (await operational_db.execute(select(CustomerEmailChangeChallenge).where(
         CustomerEmailChangeChallenge.id == payload.challenge_id,
         CustomerEmailChangeChallenge.license_key == current.license_key,
