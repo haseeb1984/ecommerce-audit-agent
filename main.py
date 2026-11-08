@@ -6951,7 +6951,7 @@ async def admin_update_business_agency(
     response: Response,
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Suspend or reactivate a Business agency; suspension revokes all team sessions."""
+    """Suspend or reactivate an agency; suspension revokes team and client-site access."""
     _require_admin_key(request)
     from sqlalchemy import select, update
     agency = await operational_db.scalar(
@@ -7017,6 +7017,7 @@ async def admin_update_business_agency(
         "id": agency.id,
         "status": agency.status,
         "team_sessions_revoked": payload.status == "suspended",
+        "wordpress_connections_revoked": payload.status == "suspended",
         "updated_at": now.isoformat(),
     }
 
