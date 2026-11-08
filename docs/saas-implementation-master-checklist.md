@@ -114,7 +114,7 @@
 ## Latest customer-account detail batch — 2026-11-08
 
 - Current `main`: `9a4ca72492c27e82d18d5de5b941d5efce730a7e`.
-- PR #260: linked-license inventory in admin customer detail is paginated at 100 per request with SQL-side deduplicated totals and a Load more control. The cross-database operational identity transfer has a 1,000-key ceiling; the API explicitly reports truncation and the displayed total is incomplete if that ceiling is reached.
+- PR #260 and #263: linked-license inventory in admin customer detail is paginated at 100 per request with SQL-side deduplicated totals and a Load more control. PR #263 removed the temporary 1,000-key ceiling by streaming all Hostinger identity keys in batches of 500 into a transaction-scoped PostgreSQL temporary table.
 - PR #261: support-note identity selection uses SQL `MIN` aggregates across Hostinger and PostgreSQL instead of loading all keys into Python.
 - Session/payment/WordPress/support-note sublists still have fixed caps (200/200/100/100) without independent pagination metadata; this is a known follow-up.
 - Regression tests were added but not executed. No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed.
