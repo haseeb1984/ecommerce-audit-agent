@@ -52,7 +52,7 @@ async def test_customer_wordpress_site_listing_returns_bounded_page_metadata():
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         disconnected_at=datetime(2026, 11, 2, tzinfo=timezone.utc),
     )
-    db = _WordPressSitesDB(total=150, rows=[site])
+    db = _WordPressSitesDB(total=101, rows=[site])
     response = Response()
 
     result = await main.list_account_wordpress_sites(
@@ -66,7 +66,7 @@ async def test_customer_wordpress_site_listing_returns_bounded_page_metadata():
     assert result["page"] == {
         "limit": 100,
         "offset": 100,
-        "total": 150,
+        "total": 101,
         "has_more": False,
     }
     assert result["items"][0]["site_id"] == "wp-site-101"
