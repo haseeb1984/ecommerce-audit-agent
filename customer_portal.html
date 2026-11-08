@@ -77,6 +77,7 @@
 <div id="agencyUsage" class="reports" aria-live="polite"><p class="muted">Usage will appear when the agency loads.</p></div>
 <div class="report-actions"><button id="loadMoreAgencyUsage" class="secondary" type="button" hidden disabled>Load more client usage</button></div>
 <div id="agencyClients" class="reports" aria-live="polite"><p class="muted">Connect a Business account to manage agency clients.</p></div>
+<div class="report-actions"><button id="loadMoreAgencyClients" class="secondary" type="button" hidden disabled>Load more clients</button></div>
 <h3>Agency team</h3>
 <p class="muted">Invite team members by email and assign an agency role. Invitations expire after 48 hours.</p>
 <div class="row"><div><label for="agencyTeamEmail">Team member email</label><input id="agencyTeamEmail" type="email" maxlength="254" placeholder="teammate@example.com"></div>
@@ -199,6 +200,10 @@
   let agencyUsageHasMore = false;
   let agencyUsageLoading = false;
   let agencyUsageRequestVersion = 0;
+  let agencyClientOffset = 0;
+  let agencyClientHasMore = false;
+  let agencyClientLoading = false;
+  let agencyClientRequestVersion = 0;
   let websiteOffset = 0;
   let websiteHasMore = false;
   let websitesLoading = false;
@@ -207,7 +212,7 @@
   };
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
@@ -621,7 +626,7 @@
     const data = await response.json();
     container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
-    if (!items.length) {
+    if (!append && !items.length) {
       const empty = document.createElement("p"); empty.className = "muted";
       empty.textContent = "No WordPress sites are connected to this license yet. Install the plugin and connect with this license key.";
       container.append(empty);
@@ -756,19 +761,31 @@
       }
     }
   }
-  async function loadAgencyDashboard() {
+  async function loadAgencyDashboard(append = false) {
+    if (append && agencyClientLoading) return;
+    const requestVersion = append ? agencyClientRequestVersion : ++agencyClientRequestVersion;
+    const sessionVersion = accountSessionVersion;
+    if (!append) { agencyClientOffset = 0; agencyClientHasMore = false; }
+    agencyClientLoading = true;
+    const moreClientsButton = $("loadMoreAgencyClients");
+    moreClientsButton.disabled = true;
+    moreClientsButton.hidden = true;
+    try {
     const provision = await api("/api/v1/account/agency", {method: "POST"});
     const agency = await provision.json();
-    const response = await api("/api/v1/account/agency/clients");
+    const response = await api("/api/v1/account/agency/clients?limit=100&offset=" + agencyClientOffset);
     const data = await response.json();
+    if (requestVersion !== agencyClientRequestVersion || sessionVersion !== accountSessionVersion) return;
     await loadAgencyUsage();
     const workspaceSelect = $("agencyAuditWorkspace");
     const selectedWorkspace = workspaceSelect.value;
-    workspaceSelect.replaceChildren();
-    const personalOption = document.createElement("option");
-    personalOption.value = "";
-    personalOption.textContent = "Personal account (not assigned to a client)";
-    workspaceSelect.append(personalOption);
+    if (!append) {
+      workspaceSelect.replaceChildren();
+      const personalOption = document.createElement("option");
+      personalOption.value = "";
+      personalOption.textContent = "Personal account (not assigned to a client)";
+      workspaceSelect.append(personalOption);
+    }
     for (const workspace of (Array.isArray(data.items) ? data.items : [])) {
       if (workspace.status !== "active") continue;
       const option = document.createElement("option");
@@ -779,7 +796,7 @@
     workspaceSelect.value = selectedWorkspace;
     const teamWorkspaceSelect = $("agencyTeamWorkspaces");
     const selectedTeamWorkspaces = new Set(Array.from(teamWorkspaceSelect.selectedOptions).map(option => option.value));
-    teamWorkspaceSelect.replaceChildren();
+    if (!append) teamWorkspaceSelect.replaceChildren();
     for (const workspace of (Array.isArray(data.items) ? data.items : [])) {
       if (workspace.status !== "active") continue;
       const option = document.createElement("option");
@@ -791,7 +808,7 @@
     $("agencyAuditWorkspaceField").hidden = false;
     await loadAgencyTeam();
     const container = $("agencyClients");
-    container.replaceChildren();
+    if (!append) container.replaceChildren();
     const items = Array.isArray(data.items) ? data.items : [];
     if (!items.length) {
       const empty = document.createElement("p");
@@ -937,8 +954,19 @@
       card.append(info, actions, websitePanel, auditHistoryPanel);
       container.append(card);
     }
-    setStatus("agencyStatus", "Agency workspace ready · " + items.length + " client workspace(s).", "success");
+    agencyClientOffset = Number(data.page?.offset ?? agencyClientOffset) + items.length;
+    agencyClientHasMore = Boolean(data.page?.has_more);
+    moreClientsButton.hidden = !agencyClientHasMore;
+    moreClientsButton.disabled = false;
+    setStatus("agencyStatus", "Agency workspace ready · " + Number(data.page?.total ?? items.length) + " client workspace(s).", "success");
     return agency;
+    } finally {
+      if (requestVersion === agencyClientRequestVersion) {
+        agencyClientLoading = false;
+        moreClientsButton.hidden = !agencyClientHasMore;
+        moreClientsButton.disabled = false;
+      }
+    }
   }
   async function loadAgencyClientAuditResults(workspaceId, batchId, target) {
     const pageSize = 25;
@@ -1923,6 +1951,13 @@
     apiKeyRequestVersion += 1;
     deviceSessionsRequestId += 1;
     agencyUsageRequestVersion += 1;
+    agencyClientRequestVersion += 1;
+    agencyClientOffset = 0;
+    agencyClientHasMore = false;
+    agencyClientLoading = false;
+    $("agencyClients").replaceChildren();
+    $("loadMoreAgencyClients").hidden = true;
+    $("loadMoreAgencyClients").disabled = true;
     agencyUsageOffset = 0;
     agencyUsageHasMore = false;
     agencyUsageLoading = false;
@@ -2236,6 +2271,10 @@
   $("inviteAgencyTeam").addEventListener("click", inviteAgencyTeam);
   $("refreshAgencyTeam").addEventListener("click", async () => {
     try { await loadAgencyTeam(); } catch (error) { setStatus("agencyStatus", error.message, "error"); }
+  });
+  $("loadMoreAgencyClients").addEventListener("click", async () => {
+    try { await loadAgencyDashboard(true); }
+    catch (error) { setStatus("agencyStatus", error.message, "error"); }
   });
   $("refreshAgencyClients").addEventListener("click", async () => {
     try { await loadAgencyDashboard(); }
