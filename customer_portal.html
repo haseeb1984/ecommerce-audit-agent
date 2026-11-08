@@ -6,12 +6,12 @@
 <meta name="color-scheme" content="light">
 <title>E-commerce Audit Dashboard</title>
 <style>
-:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172334;background:#f4f7fb}
-*{box-sizing:border-box}body{margin:0}header{background:#102b46;color:#fff;padding:28px max(20px,calc((100vw - 1040px)/2))}header h1{margin:0 0 8px;font-size:clamp(1.5rem,4vw,2.1rem)}header p{margin:0;color:#d7e4f1}.wrap{max-width:1040px;margin:24px auto;padding:0 18px 48px}.panel{background:white;border:1px solid #dce5ef;border-radius:14px;padding:22px;margin:0 0 18px;box-shadow:0 3px 14px #16324b0a}h2{font-size:1.2rem;margin:0 0 14px}label{display:block;font-weight:650;margin:12px 0 6px}input,select,button{font:inherit}input[type=text],input[type=password],input[type=url]{width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;background:#fff;color:#172334}button{border:0;border-radius:8px;background:#155a8a;color:white;font-weight:700;padding:12px 16px;cursor:pointer}button.secondary{background:#e8f0f7;color:#15344f}button:disabled{opacity:.55;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.muted{color:#5b6b7c;font-size:.92rem}.status{padding:12px;border-radius:8px;background:#eef4f8;margin-top:12px;white-space:pre-wrap}.error{background:#fff0ee;color:#812a22}.success{background:#eaf7ef;color:#1d6038}.reports{display:grid;gap:10px}.usagebar{height:12px;border-radius:999px;background:#e3ebf3;overflow:hidden;margin:10px 0}.usagebar>span{display:block;height:100%;width:0;background:#1976a8;transition:width .2s}.usage-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.report{border:1px solid #dce5ef;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;justify-content:space-between}.report strong{display:block}.report small{display:block;color:#5b6b7c;margin-top:4px}.report-actions{display:flex;gap:8px;flex-wrap:wrap}.emailbox{display:grid;gap:6px;min-width:220px}.emailbox input{font:inherit;padding:9px;border:1px solid #b8c7d8;border-radius:7px}.emailbox label{font-size:.82rem;font-weight:500;margin:0}a{color:#155a8a}@media(max-width:650px){.row{grid-template-columns:1fr}.report{align-items:flex-start;flex-direction:column}.report-actions{width:100%}button{width:100%}}
+:root{--brand-primary:#155a8a;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172334;background:#f4f7fb}
+*{box-sizing:border-box}body{margin:0}header{background:var(--brand-primary);color:#fff;padding:22px max(20px,calc((100vw - 1040px)/2));display:flex;align-items:center;gap:16px}header .brand-logo{display:none;max-width:180px;max-height:54px;object-fit:contain}header .brand-copy{min-width:0}header h1{margin:0 0 8px;font-size:clamp(1.5rem,4vw,2.1rem)}header p{margin:0;color:#d7e4f1}.wrap{max-width:1040px;margin:24px auto;padding:0 18px 48px}.panel{background:white;border:1px solid #dce5ef;border-radius:14px;padding:22px;margin:0 0 18px;box-shadow:0 3px 14px #16324b0a}h2{font-size:1.2rem;margin:0 0 14px}label{display:block;font-weight:650;margin:12px 0 6px}input,select,button{font:inherit}input[type=text],input[type=password],input[type=url]{width:100%;padding:12px;border:1px solid #b8c7d8;border-radius:8px;background:#fff;color:#172334}button{border:0;border-radius:8px;background:var(--brand-primary);color:white;font-weight:700;padding:12px 16px;cursor:pointer}button.secondary{background:#e8f0f7;color:#15344f}button:disabled{opacity:.55;cursor:wait}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}.muted{color:#5b6b7c;font-size:.92rem}.status{padding:12px;border-radius:8px;background:#eef4f8;margin-top:12px;white-space:pre-wrap}.error{background:#fff0ee;color:#812a22}.success{background:#eaf7ef;color:#1d6038}.reports{display:grid;gap:10px}.usagebar{height:12px;border-radius:999px;background:#e3ebf3;overflow:hidden;margin:10px 0}.usagebar>span{display:block;height:100%;width:0;background:var(--brand-primary);transition:width .2s}.usage-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.report{border:1px solid #dce5ef;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;justify-content:space-between}.report strong{display:block}.report small{display:block;color:#5b6b7c;margin-top:4px}.report-actions{display:flex;gap:8px;flex-wrap:wrap}.emailbox{display:grid;gap:6px;min-width:220px}.emailbox input{font:inherit;padding:9px;border:1px solid #b8c7d8;border-radius:7px}.emailbox label{font-size:.82rem;font-weight:500;margin:0}a{color:var(--brand-primary)}@media(max-width:650px){.row{grid-template-columns:1fr}.report{align-items:flex-start;flex-direction:column}.report-actions{width:100%}button{width:100%}}
 </style>
 </head>
 <body>
-<header><h1>E-commerce Audit Dashboard</h1><p>Run an evidence-based public-site audit, download your PDF, and revisit saved reports.</p></header>
+<header><img id="brandLogo" class="brand-logo" alt=""><div class="brand-copy"><h1 id="portalBrandName">E-commerce Audit Dashboard</h1><p>Run an evidence-based public-site audit, download your PDF, and revisit saved reports.</p></div></header>
 <main class="wrap">
 <section class="panel">
 <h2>Purchase access</h2>
@@ -224,6 +224,18 @@
   const setStatus = (id, message, kind = "") => {
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
+  function applyBranding(branding) {
+    const color = /^#[0-9a-fA-F]{6}$/.test(branding?.primary_color || "") ? branding.primary_color : "#155a8a";
+    const name = typeof branding?.brand_name === "string" && branding.brand_name.trim() ? branding.brand_name.trim() : "E-commerce Audit Dashboard";
+    document.documentElement.style.setProperty("--brand-primary", color);
+    $("portalBrandName").textContent = name;
+    const logo = $("brandLogo");
+    const logoUrl = typeof branding?.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(branding.logo_url) ? branding.logo_url : "";
+    logo.alt = name + " logo";
+    logo.onerror = () => { logo.removeAttribute("src"); logo.style.display = "none"; };
+    if (logoUrl) { logo.src = logoUrl; logo.style.display = "block"; }
+    else { logo.removeAttribute("src"); logo.style.display = "none"; }
+  }
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
     for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
@@ -746,11 +758,12 @@
     $("brandName").value = branding.brand_name || "";
     $("brandLogoUrl").value = branding.logo_url || "";
     $("brandColor").value = /^#[0-9a-fA-F]{6}$/.test(branding.primary_color || "") ? branding.primary_color : "#155a8a";
+    applyBranding(branding);
     setStatus("brandingStatus", branding.configured ? "Saved white-label settings loaded." : "No custom branding saved yet. Set your brand details and save.", "success");
     return branding;
   }
   async function saveBranding() {
-    if (!credential) { setStatus("brandingStatus", "Connect your account first.", "error"); return; }
+    if (!credential && !sessionToken) { setStatus("brandingStatus", "Connect your account first.", "error"); return; }
     const brandName = $("brandName").value.trim();
     const primaryColor = $("brandColor").value;
     const logoUrl = $("brandLogoUrl").value.trim();
@@ -768,7 +781,8 @@
       $("brandName").value = saved.brand_name || brandName;
       $("brandLogoUrl").value = saved.logo_url || "";
       $("brandColor").value = saved.primary_color || primaryColor;
-      setStatus("brandingStatus", "White-label branding saved.", "success");
+      applyBranding(saved);
+      setStatus("brandingStatus", "White-label branding saved and applied to this portal.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
     } finally { button.disabled = !credential && !sessionToken; }
@@ -2200,7 +2214,7 @@
     message.textContent = "Connect to load reports for this credential.";
     $("reports").append(message);
     $("loadMoreReports").hidden = true;
-    $("profileName").value = ""; $("profileTier").value = "—"; $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
+    $("profileName").value = ""; $("profileTier").value = "—"; applyBranding(null); $("brandingPanel").hidden = true; $("brandName").value = ""; $("brandLogoUrl").value = ""; $("brandColor").value = "#155a8a"; setStatus("brandingStatus", "Connect your account to load white-label settings."); $("newAccountEmail").value = ""; $("emailChangeCode").value = ""; emailChangeChallengeId = ""; $("verifyEmailChange").disabled = true; $("requestEmailChange").disabled = true; setStatus("emailChangeStatus", "Sign in with email to change your account address."); $("profileMeta").textContent = "Connect your account to view profile details."; setStatus("profileStatus", "Account connection required.");
     $("usageSummary").textContent = "Connect your license to load monthly usage.";
     renderUsageHistory([]);
     $("scanBatches").replaceChildren(); $("scanBatchDetail").replaceChildren(); $("websiteInventory").replaceChildren();
