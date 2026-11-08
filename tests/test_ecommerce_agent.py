@@ -265,7 +265,7 @@ async def test_generated_outreach_rejects_unsupported_revenue_and_quantified_cla
     assert "20%" not in pitch.email_body
     assert "do not establish a business outcome" in pitch.email_body
     system_prompt = completions.kwargs["messages"][0]["content"]
-    assert "Do not mention revenue, sales, conversions, ad budgets, ROI" in system_prompt
+    assert "In the email subject and body, do not mention revenue, sales, conversions, ad budgets, ROI" in system_prompt
 
 
 @pytest.mark.asyncio
