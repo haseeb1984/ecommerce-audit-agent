@@ -42,6 +42,13 @@ async def validate_worker_schema() -> None:
     await ensure_scan_worker_schema()
 
 
+def _worker_retry_delay(consecutive_failures: int, poll_seconds: int) -> int:
+    """Apply capped exponential backoff while a worker cycle keeps failing."""
+    failures = max(1, int(consecutive_failures))
+    base = max(1, int(poll_seconds))
+    return min(300, base * (2 ** min(failures, 8)))
+
+
 def _log_worker_cycle(result: dict, *, claimed: int, processed: int) -> None:
     """Log queue throughput and cross-database reconciliation health without payload data."""
     lifecycle = result.get("customer_lifecycle_sync") or {}
@@ -88,16 +95,23 @@ async def run_worker() -> None:
         max_jobs,
         poll_seconds,
     )
+    consecutive_failures = 0
     while not stop.is_set():
         try:
             result = await process_scan_queue(max_jobs=max_jobs)
+            consecutive_failures = 0
             claimed = int(result.get("claimed_slots", 0) or 0)
             processed = int(result.get("processed", 0) or 0)
             _log_worker_cycle(result, claimed=claimed, processed=processed)
             delay = 1 if claimed else poll_seconds
         except Exception as exc:
-            logger.error("Worker cycle failed (error_type=%s)", type(exc).__name__)
-            delay = min(300, poll_seconds * 2)
+            consecutive_failures += 1
+            logger.error(
+                "Worker cycle failed (error_type=%s, consecutive_failures=%s)",
+                type(exc).__name__,
+                consecutive_failures,
+            )
+            delay = _worker_retry_delay(consecutive_failures, poll_seconds)
 
         try:
             await asyncio.wait_for(stop.wait(), timeout=delay)
