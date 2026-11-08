@@ -162,3 +162,27 @@ def test_account_wide_customer_lifecycle_mirror_uses_operational_subquery_not_py
     assert "CustomerSession.license_key.in_(operational_license_keys)" in mirror_block
     assert "in_(license_keys)" not in mirror_block
     assert "license_keys =" not in mirror_block
+
+
+
+def test_admin_primary_client_directory_ignores_stale_search_and_filter_responses():
+    source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text(encoding="utf-8")
+    start = source.index("async function loadClientPage")
+    end = source.index("async function refresh()", start)
+    loader = source[start:end]
+
+    assert "clientPageRequestVersion=0" in source
+    assert "const requestSessionVersion=adminSessionVersion,requestVersion=++clientPageRequestVersion;" in loader
+    assert "requestedSearch!==$(\"search\").value.trim()" in loader
+    assert "requestedStatus!==$(\"clientStatusFilter\").value" in loader
+    assert "requestedTier!==$(\"clientTierFilter\").value.trim()" in loader
+    assert loader.index("requestVersion!==clientPageRequestVersion") < loader.index("render(data)")
+
+
+def test_admin_logout_invalidates_primary_client_directory_requests():
+    source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text(encoding="utf-8")
+    start = source.index("function clearAdminData")
+    end = source.index('$("createClientApiKey")', start)
+    clear = source[start:end]
+
+    assert "clientPageRequestVersion++" in clear
