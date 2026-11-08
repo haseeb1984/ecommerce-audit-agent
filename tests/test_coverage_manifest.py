@@ -160,6 +160,7 @@ def test_coverage_manifest_preserves_only_known_module_lifecycle_states():
             "module_statuses": {
                 "pagespeed": "unavailable",
                 "bounded_crawl": "error",
+                "browser_rendered": "partial",
                 "unsafe_state": "pretend_success",
                 "nested": {"state": "completed"},
             },
@@ -169,6 +170,7 @@ def test_coverage_manifest_preserves_only_known_module_lifecycle_states():
     assert manifest["audit_run_context"]["module_statuses"] == {
         "pagespeed": "unavailable",
         "bounded_crawl": "error",
+        "browser_rendered": "partial",
     }
 
     # Untrusted/malformed context values must be ignored, not crash audit persistence.
