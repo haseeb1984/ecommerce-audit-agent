@@ -195,3 +195,9 @@ Agency team invitation lifecycle:
 
 - A verified customer bearer session is accepted by customer-account operations, including WordPress identity-link challenge issuance through `verify_customer_account`.
 - The customer portal sends the bearer session in the `Authorization` header while a passwordless session is active; it must not disable account actions solely because the legacy license-key input is empty.
+
+
+
+### Billing mirror reconciliation: missing license mapping
+
+The live billing mirror helper locks the canonical webhook event and its outbox row before resolving the associated licensing record. If the referenced license row is missing, it now explicitly rolls back the PostgreSQL transaction before returning a failed delivery result. This releases both locks immediately so the reconciliation request does not retain queue locks until request teardown. The event remains available for later investigation/retry; no synthetic Hostinger license mapping is created.
