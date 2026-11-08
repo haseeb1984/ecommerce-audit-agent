@@ -351,29 +351,57 @@ def inspect_security_header_quality(headers: dict[str, str], source_url: str) ->
 
 
 def inspect_standard_security_headers(headers: dict[str, str], source_url: str) -> list[AuditFinding]:
-    """Report missing baseline browser-security headers as low-severity hardening advice."""
+    """Report missing or malformed baseline browser-security headers as low-severity advice."""
     normalized = {str(key).lower(): str(value).strip() for key, value in (headers or {}).items()}
     missing = []
     if not normalized.get("x-content-type-options"):
         missing.append("X-Content-Type-Options")
     elif normalized["x-content-type-options"].lower() != "nosniff":
         missing.append("X-Content-Type-Options is present but not set to nosniff")
-    if not normalized.get("referrer-policy"):
+
+    valid_referrer_policies = {
+        "no-referrer", "no-referrer-when-downgrade", "origin",
+        "origin-when-cross-origin", "same-origin", "strict-origin",
+        "strict-origin-when-cross-origin", "unsafe-url",
+    }
+    referrer_policy = normalized.get("referrer-policy", "").lower()
+    if not referrer_policy:
         missing.append("Referrer-Policy")
+    elif not any(
+        token.strip() in valid_referrer_policies
+        for token in referrer_policy.split(",")
+    ):
+        missing.append("Referrer-Policy is present but has an unrecognized value")
+
     if not normalized.get("permissions-policy"):
         missing.append("Permissions-Policy")
-    csp = normalized.get("content-security-policy", "")
-    frame_protected = "frame-ancestors" in csp.lower() or bool(normalized.get("x-frame-options"))
-    if not frame_protected:
+
+    # A directive name alone is not a framing restriction: an empty or malformed
+    # frame-ancestors directive is ignored by browsers. Preserve CSP's first
+    # duplicate-directive behavior when determining the effective directive.
+    csp_directives = {}
+    for part in normalized.get("content-security-policy", "").split(";"):
+        tokens = part.strip().split()
+        if tokens:
+            csp_directives.setdefault(tokens[0].lower(), tokens[1:])
+    frame_ancestors = csp_directives.get("frame-ancestors", [])
+    csp_frame_protected = bool(frame_ancestors) and "*" not in frame_ancestors
+
+    x_frame_options = normalized.get("x-frame-options", "").strip().upper()
+    valid_x_frame_options = x_frame_options in {"DENY", "SAMEORIGIN"}
+    if x_frame_options and not valid_x_frame_options:
+        missing.append("X-Frame-Options is present but has an unsupported value")
+    if not (csp_frame_protected or valid_x_frame_options):
         missing.append("a framing restriction (CSP frame-ancestors or X-Frame-Options)")
+
     if not missing:
         return []
     return [_finding(
         "security_headers", "Baseline browser security headers need review",
         "manual_review_required", "low",
         "Missing or non-standard header signals: " + "; ".join(missing) + ". This is a hardening checklist, not proof of an exploitable vulnerability.",
-        "Browser security headers can reduce selected risks involving MIME-type sniffing, referrer leakage, browser capabilities, and unwanted framing. Their absence alone does not establish that a site is vulnerable.",
-        "Review X-Content-Type-Options: nosniff, an intentional Referrer-Policy, a Permissions-Policy matched to features the storefront uses, and a framing policy that preserves legitimate checkout or partner embeds. Validate behavior before deployment.",
+        "Browser security headers can reduce selected risks involving MIME-type sniffing, referrer leakage, browser capabilities, and unwanted framing. Their absence or malformed values alone do not establish that a site is vulnerable.",
+        "Review X-Content-Type-Options: nosniff, a recognized Referrer-Policy, a non-empty CSP frame-ancestors source list or valid X-Frame-Options value, and a Permissions-Policy matched to features the storefront uses. Validate behavior before deployment.",
         ["Inspect response headers on representative public pages.", "Test checkout, payment embeds, analytics, and identity flows before changing policy."],
         source_url,
     )]

@@ -685,3 +685,87 @@ def test_security_findings_reference_owasp_top_10_2025_as_awareness_taxonomy():
         assert any("OWASP Top 10:2025" in item for item in finding.standard_references)
         assert "https://owasp.org/Top10/2025/" in finding.standard_references
         assert any("not a complete vulnerability test" in item for item in finding.standard_references)
+
+
+def test_standard_security_headers_reject_malformed_policy_values():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "send-everything",
+            "permissions-policy": "",
+            "content-security-policy": "default-src 'self'; frame-ancestors",
+            "x-frame-options": "ALLOWALL",
+        },
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    evidence = findings[0].evidence
+    assert "Referrer-Policy is present but has an unrecognized value" in evidence
+    assert "Permissions-Policy" in evidence
+    assert "X-Frame-Options is present but has an unsupported value" in evidence
+    assert "a framing restriction" in evidence
+
+
+def test_empty_csp_frame_ancestors_is_not_counted_as_framing_protection():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "strict-origin-when-cross-origin",
+            "permissions-policy": "camera=(), microphone=()",
+            "content-security-policy": "default-src 'self'; frame-ancestors",
+        },
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert "a framing restriction" in findings[0].evidence
+
+
+def test_valid_x_frame_options_remains_a_framing_fallback():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "permissions-policy": "geolocation=()",
+            "x-frame-options": "SAMEORIGIN",
+            "content-security-policy": "default-src 'self'; frame-ancestors",
+        },
+        "https://shop.example/",
+    )
+    assert findings == []
+
+
+def test_referrer_policy_accepts_comma_separated_fallback_values():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "unknown-policy, strict-origin-when-cross-origin",
+            "permissions-policy": "camera=()",
+            "content-security-policy": "frame-ancestors 'self'",
+        },
+        "https://shop.example/",
+    )
+    assert findings == []
+
+
+def test_wildcard_frame_ancestors_is_not_counted_as_a_framing_restriction():
+    from security_checks import inspect_standard_security_headers
+
+    findings = inspect_standard_security_headers(
+        {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "permissions-policy": "camera=()",
+            "content-security-policy": "frame-ancestors *",
+        },
+        "https://shop.example/",
+    )
+    assert len(findings) == 1
+    assert "a framing restriction" in findings[0].evidence

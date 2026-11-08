@@ -904,3 +904,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Added regression coverage for unnamed and named frames, broken frame label references, unnamed linked areas, and non-linked map areas.
 - These are conservative source-level review signals only. They do not assess embedded third-party document accessibility, image-map coordinate accuracy, or establish WCAG conformance. Tests are committed pending CI execution; no production audit or external payment/video content was accessed.
 - PDF/report and final audit-result refinement remain reserved for the final phase.
+
+
+## 2026-11-08 — validate standard browser security-header values
+
+- Strengthened baseline response-header review so a non-empty but unrecognized Referrer-Policy is not treated as configured.
+- Empty Permissions-Policy values are treated as missing.
+- Framing protection now requires a non-empty effective CSP `frame-ancestors` source list or a supported X-Frame-Options value (`DENY` / `SAMEORIGIN`); empty CSP directives and arbitrary X-Frame-Options strings no longer count as protection.
+- Added regression cases for malformed values, empty frame-ancestors, and valid X-Frame-Options fallback. Signals remain low-severity hardening advice, not vulnerability or compliance claims.
+- Tests are committed pending CI execution; no live site headers or production configuration were changed. PDF/report work remains reserved for the final phase.

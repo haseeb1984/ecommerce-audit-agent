@@ -38,7 +38,7 @@ This remains a bounded public, unauthenticated HTTP(S) audit. When the isolated 
 
 The browser worker does not claim full cross-browser/device coverage, field Core Web Vitals or INP, manual WCAG conformance, Google Search Console index status, backlink/competitor dataset analysis, authorized checkout completion, consent-dependent analytics event delivery, or active penetration testing. Those methods remain explicitly not assessed until the corresponding browser, owner-authorized provider, or manual-review capability is configured.
 
-Security findings reference OWASP Top 10:2025 as a risk-awareness taxonomy only. Passive response-header checks do not test the full OWASP categories, establish exploitability, or provide a compliance certification.
+Security findings reference OWASP Top 10:2025 as a risk-awareness taxonomy only. Passive response-header checks validate selected standard-header values and review signals; they do not test the full OWASP categories, establish exploitability, or provide a compliance certification.
 
 The crawler remains capped by its page, link, response-size, and timeout limits. Findings and outcomes are evidence summaries, not a guarantee of ranking, conversion, security, or legal compliance.
 
