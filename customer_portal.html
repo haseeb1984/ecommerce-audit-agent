@@ -889,6 +889,7 @@
       const refreshWebsite = document.createElement("button");
       refreshWebsite.type = "button"; refreshWebsite.className = "secondary";
       refreshWebsite.textContent = "Refresh connection status";
+      refreshWebsite.addEventListener("click", () => refreshWebsiteStatus());
       async function refreshWebsiteStatus(initialData = null) {
         refreshWebsite.disabled = true;
         try {
