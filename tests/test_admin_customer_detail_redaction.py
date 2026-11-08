@@ -94,3 +94,25 @@ def test_admin_customer_detail_does_not_reference_removed_identity_truncation_va
     # The full identity-key stream has no arbitrary truncation state anymore.
     assert '"identity_keys_truncated": False' in source
     assert '"identity_keys_truncated": identity_keys_truncated' not in source
+
+
+
+def test_admin_customer_detail_billing_history_has_independent_union_pagination():
+    source = inspect.getsource(main.admin_customer_account_detail)
+
+    assert "billing_limit: int = Query(default=50, ge=1, le=100)" in source
+    assert "billing_offset: int = Query(default=0, ge=0, le=1000000)" in source
+    assert "_count_sorted_billing_event_id_union(pg_event_ids, host_event_ids)" in source
+    assert "candidate_limit = billing_offset + billing_limit" in source
+    assert "billing_offset:billing_offset + billing_limit" in source
+    assert '"billing_page"' in source
+    assert "sql_func.lower(PaymentWebhookEvent.recipient_email) == normalized" in source
+
+
+def test_admin_customer_detail_billing_load_more_control_is_scoped_to_selected_customer():
+    from pathlib import Path
+
+    portal = Path("admin_portal.html").read_text()
+    assert '"Load more billing events"' in portal
+    assert 'billing_offset="+(p.offset+p.limit)' in portal
+    assert "if(selectedCustomerEmail!==d.email)return;appendBilling(next.billing_events)" in portal
