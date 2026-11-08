@@ -153,9 +153,33 @@ async def claim_wordpress_site_identity(
         raise HTTPException(status_code=422, detail="WordPress user login contains unsupported characters.")
     wp_email = _valid_email(payload.wp_user_email)
     token_hash = _token_digest(payload.token)
+    # Read the license key without taking an operational-row lock. All identity
+    # mutations acquire the canonical PostgreSQL license lock before locking
+    # Hostinger rows; taking these locks in the opposite order can deadlock across
+    # the two independent database transactions.
+    challenge_reference = await operational_db.scalar(
+        select(WordPressSiteLinkChallenge).where(
+            WordPressSiteLinkChallenge.token_hash == token_hash,
+            WordPressSiteLinkChallenge.consumed_at.is_(None),
+        )
+    )
+    if challenge_reference is None:
+        raise HTTPException(status_code=400, detail="WordPress link code is invalid or has already been used.")
+
+    license_obj = await db.scalar(
+        select(SoftwareLicense).where(
+            SoftwareLicense.license_key == challenge_reference.license_key
+        ).with_for_update()
+    )
+    if license_obj is None or not bool(license_obj.is_active):
+        raise HTTPException(status_code=403, detail="The linked SaaS license is not active.")
+
+    # Re-read and lock the challenge only after the canonical license lock. The
+    # token may have been consumed/replaced while the PostgreSQL lock was pending.
     challenge = await operational_db.scalar(
         select(WordPressSiteLinkChallenge).where(
             WordPressSiteLinkChallenge.token_hash == token_hash,
+            WordPressSiteLinkChallenge.license_key == license_obj.license_key,
             WordPressSiteLinkChallenge.consumed_at.is_(None),
         ).with_for_update()
     )
@@ -169,13 +193,6 @@ async def claim_wordpress_site_identity(
         await operational_db.commit()
         raise HTTPException(status_code=410, detail="WordPress link code has expired. Generate a new code.")
 
-    license_obj = await db.scalar(
-        select(SoftwareLicense).where(
-            SoftwareLicense.license_key == challenge.license_key
-        ).with_for_update()
-    )
-    if license_obj is None or not bool(license_obj.is_active):
-        raise HTTPException(status_code=403, detail="The linked SaaS license is not active.")
     license_expiry = license_obj.expires_at
     if license_expiry is not None:
         if license_expiry.tzinfo is None:
