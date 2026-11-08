@@ -1279,7 +1279,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
         select(CustomerBillingEvent.license_key).where(
             func.lower(CustomerBillingEvent.recipient_email) == email,
             CustomerBillingEvent.license_key.is_not(None),
-        ).distinct()
+        ).distinct().limit(2)
     )).scalars().all())
     legacy_license_keys = set((await db.execute(
         select(SoftwareLicense.license_key)
@@ -1287,7 +1287,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
         .where(
             func.lower(PaymentWebhookEvent.recipient_email) == email,
             SoftwareLicense.license_key.is_not(None),
-        ).distinct()
+        ).distinct().limit(2)
     )).scalars().all())
     linked_license_keys = operational_license_keys | legacy_license_keys
     if len(linked_license_keys) != 1:

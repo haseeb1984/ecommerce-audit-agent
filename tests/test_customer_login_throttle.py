@@ -79,3 +79,14 @@ def test_customer_login_email_lock_uses_persistent_mysql_throttle_row():
     assert "on_duplicate_key_update" in source
     assert "CustomerLoginThrottle.email == email" in source
     assert ".with_for_update()" in source
+
+
+
+def test_customer_login_license_identity_lookups_are_bounded_for_ambiguous_ownership():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.request_account_login_code)
+    assert source.count(".distinct().limit(2)") == 2
+    assert "operational_license_keys | legacy_license_keys" in source
+    assert "if len(linked_license_keys) != 1:" in source

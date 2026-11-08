@@ -15,7 +15,7 @@
 
 | Requirement area | Current status | Evidence / remaining gate |
 |---|---|---|
-| Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; re-run on latest branch head. |
+| Customer authentication and license/API-key scoping | Implemented / verification pending | Account dependencies and cross-license isolation tests exist; passwordless sign-in now bounds each operational/legacy license-identity lookup to two rows while preserving fail-closed ambiguity handling; re-run on latest branch head. |
 | Customer profile management | Implemented / verification pending | GET/PATCH profile endpoints exist; browser and latest CI acceptance required. |
 | Monthly quota and concurrent audit reservations | Implemented / verification pending | Reservation lifecycle exists in `quota.py`; run PostgreSQL-backed concurrency acceptance. |
 | Customer usage and audit activity | Implemented / verification pending | Usage/activity endpoints and portal meters exist; latest CI and browser QA required. |
