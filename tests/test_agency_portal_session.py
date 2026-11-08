@@ -142,3 +142,18 @@ def test_agency_team_portal_loads_assigned_workspaces_in_session_guarded_pages()
     assert 'workspaceLoadMore.textContent = "Load more client workspaces";' in script
     assert "loadWorkspaces(expectedVersion, workspaceOffset, true)" in script
     assert "assertCurrentSession(expectedVersion);" in script
+
+
+def test_agency_team_workspace_load_more_prevents_duplicate_inflight_pages():
+    portal = Path("agency_portal.html").read_text(encoding="utf-8")
+    start = portal.index("(() => {")
+    script = portal[start:portal.index("</script>", start)]
+    start = script.index('workspaceLoadMore.textContent = "Load more client workspaces";')
+    end = script.index('$("workspaces").append(workspaceLoadMore);', start)
+    handler = script[start:end]
+
+    assert "workspaceLoadMore.disabled = true;" in handler
+    assert "if (!workspaceLoadMore || workspaceLoadMore.disabled) return;" in handler
+    assert "const nextOffset = workspaceOffset;" in handler
+    assert "loadWorkspaces(expectedVersion, nextOffset, true).catch(error =>" in handler
+    assert "if (workspaceLoadMore) workspaceLoadMore.disabled = false;" in handler
