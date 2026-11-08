@@ -151,6 +151,12 @@ class BillingMirrorSyncOutbox(Base):
     __tablename__ = "billing_mirror_sync_outbox"
     __table_args__ = (
         Index("ix_billing_mirror_sync_due", "status", "next_attempt_at", "created_at"),
+        Index(
+            "ix_billing_mirror_sync_pending_order",
+            "status",
+            "created_at",
+            "event_id",
+        ),
     )
 
     event_id = Column(String(255), primary_key=True)
@@ -326,3 +332,4 @@ class SaaSAdminCustomerNote(Base):
             created_at.desc(),
         ),
     )
+
