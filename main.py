@@ -3334,7 +3334,10 @@ async def invite_business_agency_team_member(
         await operational_db.rollback()
         raise HTTPException(status_code=409, detail="An invitation for this email already exists. Refresh and retry.")
     try:
-        _send_agency_invitation_email(email, raw_token, agency.owner_email, payload.role)
+        # SMTP is blocking I/O; keep the async API worker responsive while delivery runs.
+        await asyncio.to_thread(
+            _send_agency_invitation_email, email, raw_token, agency.owner_email, payload.role
+        )
     except Exception as exc:
         logger.warning("Agency invitation email delivery failed: %s", type(exc).__name__)
         await operational_db.rollback()
