@@ -259,7 +259,7 @@ async def test_comprehensive_audit_records_browser_service_unavailable_without_f
         metadata = __import__("json").loads(saved_report.coverage_json)
         assert metadata["audit_run_context"]["module_statuses"]["browser_rendered"] == "unavailable"
         assert any("Rendered-browser diagnostics were not assessed" in item for item in captured[0].limitations)
-        assert any(item.check_id.startswith("browser.") and item.outcome == "not_assessed" for item in captured[0].check_outcomes)
+        assert any(item.check_id == "crawl.javascript_rendered_dom" and item.outcome == "not_assessed" for item in captured[0].check_outcomes)
     finally:
         main.app.dependency_overrides.clear()
 
