@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import hashlib
 import logging
+from itertools import islice
 from datetime import datetime, timezone
 
 from sqlalchemy import select, tuple_
@@ -249,9 +250,11 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         account_skipped = 0
         account_mismatch_count = 0
         account_mismatch_fields = set()
-        account_candidate_items = list(account_candidates.items())
-        for offset in range(0, len(account_candidate_items), MIGRATION_BATCH_SIZE):
-            candidate_batch = account_candidate_items[offset:offset + MIGRATION_BATCH_SIZE]
+        account_candidate_iterator = iter(account_candidates.items())
+        while True:
+            candidate_batch = list(islice(account_candidate_iterator, MIGRATION_BATCH_SIZE))
+            if not candidate_batch:
+                break
             expected_by_identity = {}
             for (license_key, email), (normalized_email, display_name, created_at) in candidate_batch:
                 expected_by_identity[(license_key, email)] = {
