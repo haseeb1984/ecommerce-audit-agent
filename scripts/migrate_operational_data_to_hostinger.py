@@ -185,6 +185,8 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
     source_count = 0
     copied = 0
     skipped = 0
+    already_present = 0
+    unmapped = 0
     mismatch_count = 0
     mismatch_fields = set()
     batch = []
@@ -211,6 +213,7 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
             values = transform(row, license_key_by_id) if resolve_license_keys else transform(row)
             if values is None:
                 skipped += 1
+                unmapped += 1
                 continue
             expected_by_key[values[key_name]] = values
 
@@ -233,6 +236,7 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
                 copied += 1
                 continue
             skipped += 1
+            already_present += 1
             fields = _mismatched_fields(existing, values)
             if fields:
                 mismatch_count += 1
@@ -265,6 +269,8 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
         "source": source_count,
         "to_copy": copied,
         "already_present_or_unmapped": skipped,
+        "already_present": already_present,
+        "unmapped": unmapped,
         "field_mismatches": mismatch_count,
         "mismatched_fields": sorted(mismatch_fields),
         "batch_size": MIGRATION_BATCH_SIZE,
