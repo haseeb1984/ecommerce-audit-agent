@@ -192,7 +192,7 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
     batch = []
 
     async def reconcile_batch(rows):
-        nonlocal copied, skipped, mismatch_count
+        nonlocal copied, skipped, already_present, unmapped, mismatch_count
         expected_by_key = {}
         license_key_by_id = {}
         if resolve_license_keys:
