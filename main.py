@@ -8890,7 +8890,7 @@ async def admin_list_client_sessions(
 ):
     """List customer session metadata without exposing bearer tokens or token digests."""
     _require_admin_key(request)
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     client = (await db.execute(
         select(SoftwareLicense).where(SoftwareLicense.id == license_id)
     )).scalar_one_or_none()
