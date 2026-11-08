@@ -46,6 +46,7 @@ from scan_worker_api import router as scan_worker_router
 from wordpress_identity_api import router as wordpress_identity_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
+from outbox_retry import outbox_retry_delay_seconds, next_outbox_attempt_count
 from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, get_customer_session_credentials
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
@@ -6138,18 +6139,25 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
                 mirror_error = type(exc).__name__
 
         if mirror_error:
+            retry_attempts = next_outbox_attempt_count(
+                pending.attempts if pending is not None else 0
+            )
+            retry_at = datetime.now(timezone.utc) + timedelta(
+                seconds=outbox_retry_delay_seconds(retry_attempts)
+            )
             if pending is None:
                 db.add(BillingMirrorSyncOutbox(
                     event_id=event_id,
                     status="pending",
-                    attempts=0,
-                    next_attempt_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+                    attempts=retry_attempts,
+                    next_attempt_at=retry_at,
                     last_error=mirror_error[:120],
                 ))
             else:
                 pending.status = "pending"
+                pending.attempts = retry_attempts
                 pending.last_error = mirror_error[:120]
-                pending.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+                pending.next_attempt_at = retry_at
                 pending.processed_at = None
             await db.commit()
             logger.warning(
