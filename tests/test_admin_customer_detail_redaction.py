@@ -65,3 +65,29 @@ def test_admin_client_detail_panels_ignore_stale_client_responses():
     assert "loadClientWordPressLinks(id,detailVersion)" in portal
     assert "loadClientApiKeys(id,detailVersion)" in portal
     assert "clientDetailVersion+=1;currentHistoryId=null;" in portal
+
+
+
+def test_admin_customer_detail_sublist_pagination_is_independent_and_bounded():
+    source = inspect.getsource(main.admin_customer_account_detail)
+
+    for parameter in ("session_limit", "wordpress_limit", "note_limit"):
+        assert f"{parameter}: int = Query(default=50, ge=1, le=100)" in source
+
+    for parameter in ("session_offset", "wordpress_offset", "note_offset"):
+        assert f"{parameter}: int = Query(default=0, ge=0, le=1000000)" in source
+
+    assert '"session_page"' in source
+    assert '"wordpress_page"' in source
+    assert '"note_page"' in source
+    assert "session_offset).limit(session_limit)" in source
+    assert "wordpress_offset).limit(wordpress_limit)" in source
+    assert "note_offset).limit(note_limit)" in source
+
+
+def test_admin_customer_detail_does_not_reference_removed_identity_truncation_variable():
+    source = inspect.getsource(main.admin_customer_account_detail)
+
+    # The full identity-key stream has no arbitrary truncation state anymore.
+    assert '"identity_keys_truncated": False' in source
+    assert '"identity_keys_truncated": identity_keys_truncated' not in source
