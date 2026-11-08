@@ -282,9 +282,9 @@ def test_billing_attention_recovery_queries_only_latest_event_per_subscription()
 @pytest.mark.parametrize(
     "incoming_event_id, expected_stale",
     [
-        ("evt_older", True),
+        ("evt_aaa", True),
         ("evt_same", True),
-        ("evt_newer", False),
+        ("evt_zzz", False),
     ],
 )
 async def test_equal_timestamp_subscription_events_use_event_id_tie_break(
