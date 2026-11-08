@@ -262,3 +262,17 @@ def test_paddle_checkout_legacy_duplicate_detection_fetches_at_most_two_license_
     lookup = source[start:end]
     assert ".distinct().limit(2)" in lookup
     assert "legacy_ids = (await db.execute(" in lookup
+
+
+
+def test_billing_attention_recovery_queries_only_latest_event_per_subscription():
+    import inspect
+
+    source = inspect.getsource(main._filter_recovered_billing_attention_events)
+    assert "sql_func.row_number().over(" in source
+    assert "partition_by=PaymentWebhookEvent.subscription_id" in source
+    assert "partition_by=CustomerBillingEvent.subscription_id" in source
+    assert "pg_ranked_recoveries.c.recovery_rank == 1" in source
+    assert "host_ranked_recoveries.c.recovery_rank == 1" in source
+    assert "sql_func.coalesce(" in source
+    assert ".scalars().all()" not in source
