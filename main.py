@@ -3965,6 +3965,36 @@ async def account_audit_activity(
     }
 
 
+async def _count_sorted_billing_event_id_union(left_stream, right_stream) -> int:
+    """Count a union of two sorted, unique event-ID streams using constant memory."""
+    left_iter = left_stream.__aiter__()
+    right_iter = right_stream.__aiter__()
+    sentinel = object()
+
+    async def next_or_end(iterator):
+        try:
+            return await iterator.__anext__()
+        except StopAsyncIteration:
+            return sentinel
+
+    left_value, right_value = await next_or_end(left_iter), await next_or_end(right_iter)
+    total = 0
+    while left_value is not sentinel or right_value is not sentinel:
+        total += 1
+        if left_value is sentinel:
+            right_value = await next_or_end(right_iter)
+        elif right_value is sentinel:
+            left_value = await next_or_end(left_iter)
+        elif left_value == right_value:
+            left_value = await next_or_end(left_iter)
+            right_value = await next_or_end(right_iter)
+        elif left_value < right_value:
+            left_value = await next_or_end(left_iter)
+        else:
+            right_value = await next_or_end(right_iter)
+    return total
+
+
 @app.get("/api/v1/account/billing-history")
 async def account_billing_history(
     response: Response,
@@ -3979,13 +4009,19 @@ async def account_billing_history(
 
     pg_filter = PaymentWebhookEvent.license_id == license_obj.id
     host_filter = CustomerBillingEvent.license_key == license_obj.license_key
-    pg_ids = set((await db.execute(
-        select(PaymentWebhookEvent.event_id).where(pg_filter)
-    )).scalars().all())
-    host_ids = set((await operational_db.execute(
-        select(CustomerBillingEvent.event_id).where(host_filter)
-    )).scalars().all())
-    total = len(pg_ids | host_ids)
+    # The stores are separate databases, so count their union by merging
+    # independently ordered streams rather than materializing every ID in RAM.
+    pg_id_stream = await db.stream_scalars(
+        select(PaymentWebhookEvent.event_id).where(pg_filter).order_by(PaymentWebhookEvent.event_id.asc())
+    )
+    host_id_stream = await operational_db.stream_scalars(
+        select(CustomerBillingEvent.event_id).where(host_filter).order_by(CustomerBillingEvent.event_id.asc())
+    )
+    try:
+        total = await _count_sorted_billing_event_id_union(pg_id_stream, host_id_stream)
+    finally:
+        await pg_id_stream.close()
+        await host_id_stream.close()
 
     candidate_limit = offset + limit
     pg_rows = (await db.execute(

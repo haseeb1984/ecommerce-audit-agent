@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 def test_customer_billing_history_new_session_supersedes_old_in_flight_load():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
@@ -24,3 +26,39 @@ def test_customer_billing_history_uses_request_generation_state():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
     assert "let billingLoadingSessionVersion = -1;" in portal
     assert "let billingRequestVersion = 0;" in portal
+
+
+class _AsyncValues:
+    def __init__(self, values):
+        self.values = iter(values)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.values)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+@pytest.mark.asyncio
+async def test_billing_history_union_count_merges_sorted_streams_with_duplicates():
+    from main import _count_sorted_billing_event_id_union
+
+    total = await _count_sorted_billing_event_id_union(
+        _AsyncValues(["evt-1", "evt-2", "evt-4", "evt-7"]),
+        _AsyncValues(["evt-2", "evt-3", "evt-4", "evt-5"]),
+    )
+
+    assert total == 6
+
+
+@pytest.mark.asyncio
+async def test_billing_history_union_count_handles_empty_and_disjoint_streams():
+    from main import _count_sorted_billing_event_id_union
+
+    assert await _count_sorted_billing_event_id_union(_AsyncValues([]), _AsyncValues([])) == 0
+    assert await _count_sorted_billing_event_id_union(
+        _AsyncValues(["a", "c"]), _AsyncValues(["b", "d"])
+    ) == 4
