@@ -5034,7 +5034,7 @@ async def create_paddle_checkout(
             select(PaymentWebhookEvent.license_id).where(
                 func.lower(PaymentWebhookEvent.recipient_email) == email,
                 PaymentWebhookEvent.license_id.is_not(None),
-            ).distinct()
+            ).distinct().limit(2)
         )).scalars().all()
         if len(legacy_ids) > 1:
             raise HTTPException(
@@ -5143,7 +5143,7 @@ async def _get_paddle_subscription_license_event(db: AsyncSession, subscription_
             PaymentWebhookEvent.subscription_id == subscription_id,
             PaymentWebhookEvent.license_id.is_not(None),
         )
-        .distinct()
+        .distinct().limit(2)
     )).scalars().all())
     if len(license_ids) > 1:
         subscription_fingerprint = hashlib.sha256(subscription_id.encode()).hexdigest()[:12]
