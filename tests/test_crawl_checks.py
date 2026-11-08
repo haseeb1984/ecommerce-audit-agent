@@ -2803,6 +2803,15 @@ def test_catalog_query_parameter_signature_classifies_only_value_free_ecommerce_
     assert crawl_checks._catalog_query_parameter_signature(
         "https://shop.example/?utm_source=campaign&gclid=tracking"
     ) is None
+    assert crawl_checks._catalog_query_parameter_signature(
+        "https://shop.example/blog?page=2&sort_by=recent"
+    ) is None
+    assert crawl_checks._catalog_query_parameter_signature(
+        "https://shop.example/collections/shoes?page=2&sort_by=price"
+    ) == (
+        "/collections/shoes",
+        (("page", "pagination"), ("sort_by", "sorting")),
+    )
 
 
 @pytest.mark.asyncio
