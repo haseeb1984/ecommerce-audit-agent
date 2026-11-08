@@ -1824,6 +1824,7 @@
   let scanBatchesLoading = false;
   let scanBatchesLoadingSessionVersion = -1;
   let scanBatchesRequestVersion = 0;
+  let scanBatchDetailRequestVersion = 0;
   async function loadScanBatches({append = false} = {}) {
     const requestSessionVersion = accountSessionVersion;
     if (scanBatchesLoading && scanBatchesLoadingSessionVersion === requestSessionVersion) return;
@@ -1946,61 +1947,77 @@
     }
   }
   async function loadScanBatchDetail(batchId) {
+    const requestSessionVersion = accountSessionVersion;
+    const requestVersion = ++scanBatchDetailRequestVersion;
     const container = $("scanBatchDetail");
     container.replaceChildren();
-    const response = await api("/api/v1/scan-batches/" + encodeURIComponent(batchId));
-    const batch = await response.json();
-    const heading = document.createElement("h3");
-    heading.textContent = "Batch " + batch.batch_number + " · " + batch.status;
-    container.append(heading);
-    for (const job of (Array.isArray(batch.jobs) ? batch.jobs : [])) {
-      const card = document.createElement("article"); card.className = "report";
-      const info = document.createElement("div");
-      const title = document.createElement("strong"); title.textContent = job.url;
-      const detail = document.createElement("small");
-      detail.textContent = "Status: " + job.status + " · Attempts: " + job.attempts + "/" + job.max_attempts +
-        (job.last_error_code ? " · Last error: " + job.last_error_code : "");
-      info.append(title, detail); card.append(info);
-      if (job.status === "completed") {
-        const resultButton = document.createElement("button"); resultButton.type = "button";
-        resultButton.className = "secondary"; resultButton.textContent = "View scan results";
-        resultButton.addEventListener("click", () => loadScanJobResult(job.id));
-        card.append(resultButton);
-      } else if (job.status === "failed") {
-        const retryButton = document.createElement("button");
-        retryButton.type = "button";
-        retryButton.className = "secondary";
-        retryButton.textContent = "Retry failed scan";
-        retryButton.disabled = batch.status !== "failed";
-        retryButton.title = batch.status !== "failed"
-          ? "Retry is available after the batch reaches failed status."
-          : "Queue this failed URL again without creating a duplicate job.";
-        retryButton.addEventListener("click", async () => {
-          if (retryButton.disabled) return;
-          retryButton.disabled = true;
-          retryButton.textContent = "Queuing retry…";
-          try {
-            await api("/api/v1/scan-jobs/" + encodeURIComponent(job.id) + "/retry", {method: "POST"});
-            setStatus("bulkScanStatus", "Retry queued for " + job.url + ". The existing job and batch were reused.", "success");
-            await loadScanBatches();
-            await loadScanBatchDetail(batch.id);
-          } catch (error) {
-            setStatus("bulkScanStatus", error.message, "error");
-            retryButton.disabled = batch.status !== "failed";
-            retryButton.textContent = "Retry failed scan";
-          }
-        });
-        card.append(retryButton);
+    try {
+      const response = await api("/api/v1/scan-batches/" + encodeURIComponent(batchId));
+      const batch = await response.json();
+      if (requestVersion !== scanBatchDetailRequestVersion || requestSessionVersion !== accountSessionVersion) return;
+      const heading = document.createElement("h3");
+      heading.textContent = "Batch " + batch.batch_number + " · " + batch.status;
+      container.append(heading);
+      for (const job of (Array.isArray(batch.jobs) ? batch.jobs : [])) {
+        const card = document.createElement("article"); card.className = "report";
+        const info = document.createElement("div");
+        const title = document.createElement("strong"); title.textContent = job.url;
+        const detail = document.createElement("small");
+        detail.textContent = "Status: " + job.status + " · Attempts: " + job.attempts + "/" + job.max_attempts +
+          (job.last_error_code ? " · Last error: " + job.last_error_code : "");
+        info.append(title, detail); card.append(info);
+        if (job.status === "completed") {
+          const resultButton = document.createElement("button"); resultButton.type = "button";
+          resultButton.className = "secondary"; resultButton.textContent = "View scan results";
+          resultButton.addEventListener("click", () => loadScanJobResult(job.id));
+          card.append(resultButton);
+        } else if (job.status === "failed") {
+          const retryButton = document.createElement("button");
+          retryButton.type = "button";
+          retryButton.className = "secondary";
+          retryButton.textContent = "Retry failed scan";
+          retryButton.disabled = batch.status !== "failed";
+          retryButton.title = batch.status !== "failed"
+            ? "Retry is available after the batch reaches failed status."
+            : "Queue this failed URL again without creating a duplicate job.";
+          retryButton.addEventListener("click", async () => {
+            if (retryButton.disabled) return;
+            const operationSessionVersion = accountSessionVersion;
+            const operationDetailVersion = scanBatchDetailRequestVersion;
+            retryButton.disabled = true;
+            retryButton.textContent = "Queuing retry…";
+            try {
+              await api("/api/v1/scan-jobs/" + encodeURIComponent(job.id) + "/retry", {method: "POST"});
+              if (operationSessionVersion !== accountSessionVersion || operationDetailVersion !== scanBatchDetailRequestVersion) return;
+              setStatus("bulkScanStatus", "Retry queued for " + job.url + ". The existing job and batch were reused.", "success");
+              await loadScanBatches();
+              if (operationSessionVersion !== accountSessionVersion || operationDetailVersion !== scanBatchDetailRequestVersion) return;
+              await loadScanBatchDetail(batch.id);
+            } catch (error) {
+              if (operationSessionVersion === accountSessionVersion && operationDetailVersion === scanBatchDetailRequestVersion) {
+                setStatus("bulkScanStatus", error.message, "error");
+                retryButton.disabled = batch.status !== "failed";
+                retryButton.textContent = "Retry failed scan";
+              }
+            }
+          });
+          card.append(retryButton);
+        }
+        container.append(card);
       }
-      container.append(card);
+      container.scrollIntoView({behavior:"smooth", block:"nearest"});
+    } catch (error) {
+      if (requestVersion === scanBatchDetailRequestVersion && requestSessionVersion === accountSessionVersion) throw error;
     }
-    container.scrollIntoView({behavior:"smooth", block:"nearest"});
   }
   async function loadScanJobResult(jobId) {
+    const requestSessionVersion = accountSessionVersion;
+    const requestVersion = ++scanBatchDetailRequestVersion;
     const container = $("scanBatchDetail");
     try {
       const response = await api("/api/v1/scan-jobs/" + encodeURIComponent(jobId) + "/result");
       const result = await response.json();
+      if (requestVersion !== scanBatchDetailRequestVersion || requestSessionVersion !== accountSessionVersion) return;
       const heading = document.createElement("h3"); heading.textContent = "Scan results · " + result.url;
       const summary = document.createElement("p"); summary.className = "muted";
       summary.textContent = "Status: " + result.status + " · Findings: " + result.finding_count +
@@ -2015,9 +2032,12 @@
       }
       container.replaceChildren(heading, summary, section);
     } catch (error) {
-      setStatus("bulkScanStatus", "Unable to load scan result. " + error.message, "error");
+      if (requestVersion === scanBatchDetailRequestVersion && requestSessionVersion === accountSessionVersion) {
+        setStatus("bulkScanStatus", "Unable to load scan result. " + error.message, "error");
+      }
     }
   }
+
   async function submitBulkScans() {
     if (!credential) { setStatus("bulkScanStatus", "Connect your license, API key, or customer account first.", "error"); return; }
     const urls = $("bulkUrls").value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
@@ -2088,6 +2108,7 @@
     activityLoading = false;
     activityLoadingSessionVersion = -1;
     scanBatchesRequestVersion += 1;
+    scanBatchDetailRequestVersion += 1;
     scanBatchesLoading = false;
     scanBatchesLoadingSessionVersion = -1;
     scanBatchOffset = 0;

@@ -114,3 +114,27 @@ def test_customer_scan_batch_actions_do_not_update_status_after_account_switch()
     assert "const operationSessionVersion = accountSessionVersion;" in source
     assert "if (operationSessionVersion === accountSessionVersion)" in source
     assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
+
+
+
+def test_customer_scan_batch_detail_requests_ignore_older_selection_responses():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("async function loadScanBatchDetail")
+    end = portal.index("async function submitBulkScans", start)
+    source = portal[start:end]
+
+    assert "let scanBatchDetailRequestVersion = 0;" in portal
+    assert source.count("const requestSessionVersion = accountSessionVersion;") == 2
+    assert source.count("const requestVersion = ++scanBatchDetailRequestVersion;") == 2
+    assert source.count("requestVersion !== scanBatchDetailRequestVersion || requestSessionVersion !== accountSessionVersion") == 2
+    assert source.index("requestVersion !== scanBatchDetailRequestVersion || requestSessionVersion !== accountSessionVersion") < source.index("container.append(heading);")
+    assert "operationDetailVersion !== scanBatchDetailRequestVersion" in source
+
+
+def test_customer_scan_batch_detail_requests_are_invalidated_on_account_clear():
+    portal = (Path(__file__).resolve().parents[1] / "customer_portal.html").read_text()
+    start = portal.index("function clearAccountView")
+    end = portal.index('$("requestLoginCode").addEventListener', start)
+    source = portal[start:end]
+
+    assert "scanBatchDetailRequestVersion += 1;" in source
