@@ -1884,7 +1884,6 @@ async def run_bounded_site_crawl(
                 # the implicit HTTPS port (or :80 and implicit HTTP) are equivalent.
                 if not _same_origin(absolute, final_home):
                     continue
-                record_parameterized_url(absolute)
                 candidate = _canonical_page_url(absolute)
                 if candidate in seen or candidate == _canonical_page_url(final_home):
                     continue
@@ -1896,6 +1895,7 @@ async def run_bounded_site_crawl(
             if suffix.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".pdf",
                                  ".css", ".js", ".woff", ".woff2", ".zip", ".xml")):
                 continue
+            record_parameterized_url(absolute)
             seen.add(candidate)
             candidates.append(candidate)
             if any(candidate == _canonical_page_url(item) for item in sitemap_urls):
@@ -2087,7 +2087,6 @@ async def run_bounded_site_crawl(
                         _ = parts.port
                         if not _same_origin(absolute, final_home):
                             continue
-                        record_parameterized_url(absolute)
                         candidate_url = _canonical_page_url(absolute)
                         if candidate_url in queued_urls:
                             continue
@@ -2099,6 +2098,7 @@ async def run_bounded_site_crawl(
                             ".pdf", ".css", ".js", ".woff", ".woff2", ".zip", ".xml",
                         )):
                             continue
+                        record_parameterized_url(absolute)
                         queued_urls.add(candidate_url)
                         crawl_queue.append(candidate_url)
                     except (ValueError, UnicodeError):
