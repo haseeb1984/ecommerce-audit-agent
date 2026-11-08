@@ -326,6 +326,17 @@ function eaa_wp_claim_customer_identity($token) {
     return $data;
 }
 
+/**
+ * Remove administrator identity metadata whenever its underlying site
+ * connection is retired or replaced. The identity link is license-scoped and
+ * must not survive a switch to another connection mode or license.
+ */
+function eaa_wp_clear_identity_link_settings(&$settings) {
+    foreach (array('identity_site_id', 'identity_wp_user_login', 'identity_linked_at') as $key) {
+        unset($settings[$key]);
+    }
+}
+
 function eaa_wp_disconnect_site() {
     $settings = eaa_wp_settings();
     if (!empty($settings['agency_site_token'])) {
@@ -341,11 +352,14 @@ function eaa_wp_disconnect_site() {
         }
         unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
               $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+        eaa_wp_clear_identity_link_settings($settings);
         update_option(EAA_WP_OPTION, $settings, false);
         return true;
     }
     $settings = eaa_wp_settings();
     if (empty($settings['site_id'])) {
+        eaa_wp_clear_identity_link_settings($settings);
+        update_option(EAA_WP_OPTION, $settings, false);
         return true;
     }
     $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/disconnect', 'POST', array(
@@ -360,6 +374,7 @@ function eaa_wp_disconnect_site() {
         }
     }
     unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+    eaa_wp_clear_identity_link_settings($settings);
     update_option(EAA_WP_OPTION, $settings, false);
     return true;
 }
