@@ -54,6 +54,15 @@ async def _license_map(source: AsyncSession) -> dict[int, SoftwareLicense]:
     return {row.id: row for row in rows}
 
 
+def _verification_gaps(reports):
+    """Return per-entity counts of mapped source rows still missing in Hostinger."""
+    return {
+        name: int(report.get("to_copy", 0))
+        for name, report in reports.items()
+        if int(report.get("to_copy", 0)) > 0
+    }
+
+
 def _billing_license_map(billing_rows, license_key_by_id):
     """Resolve email ownership only when every billing event agrees on one license."""
     candidates = {}
@@ -96,7 +105,7 @@ async def _copy_rows(source, target, source_model, target_model, transform, key_
     return {"source": len(rows), "to_copy": copied, "already_present_or_unmapped": skipped}
 
 
-async def migrate(apply_changes: bool) -> None:
+async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
     if AsyncSessionLocal is None or HostingerAsyncSessionLocal is None:
         raise RuntimeError("DATABASE_URL and HOSTINGER_DATABASE_URL must both be configured.")
     async with AsyncSessionLocal() as source, HostingerAsyncSessionLocal() as target:
@@ -322,20 +331,43 @@ async def migrate(apply_changes: bool) -> None:
         if apply_changes:
             await target.commit()
             logger.info("Hostinger operational records copied. PostgreSQL source records were retained.")
-        else:
-            await target.rollback()
-            logger.info("Dry run only. No Hostinger records were written.")
+            return True
+
+        # Verification uses the same complete source-to-target mapping as the
+        # dry run, but turns any still-missing mapped row into a failing result.
+        # The transaction is always rolled back; this mode never writes.
+        await target.rollback()
+        if verify_only:
+            gaps = _verification_gaps(reports)
+            for name, count in gaps.items():
+                logger.error("%s: %s mapped source rows are still missing in Hostinger", name, count)
+            if gaps:
+                logger.error("Operational migration verification FAILED. No records were written.")
+                return False
+            logger.info("Operational migration verification PASSED. All mapped source rows are present in Hostinger.")
+            return True
+
+        logger.info("Dry run only. No Hostinger records were written.")
+        return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--apply",
         action="store_true",
         help="Write missing records to Hostinger. Default behavior is dry-run only.",
     )
+    modes.add_argument(
+        "--verify",
+        action="store_true",
+        help="Read-only check that every mappable PostgreSQL source record already exists in Hostinger.",
+    )
     args = parser.parse_args()
-    asyncio.run(migrate(apply_changes=args.apply))
+    verified = asyncio.run(migrate(apply_changes=args.apply, verify_only=args.verify))
+    if args.verify and not verified:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
