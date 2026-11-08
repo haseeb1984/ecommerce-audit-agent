@@ -36,7 +36,24 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(101, reserved_at)))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
     monkeypatch.setattr(main.agent, "run_audit", AsyncMock(return_value=StoreAuditMetrics(
-        domain="shop.example", mobile_score=82, speed_index_sec=3.1, is_slow=False
+        domain="shop.example", mobile_score=82, speed_index_sec=3.1, is_slow=False,
+        field_metrics={
+            "url:LARGEST_CONTENTFUL_PAINT_MS": {
+                "percentile": 2400, "normalized_value": 2400, "unit": "ms", "category": "AVERAGE",
+                "distribution": [
+                    {"min": 0, "max": 2500, "proportion": 0.7},
+                    {"min": 2500, "max": 4000, "proportion": 0.2},
+                    {"min": 4000, "max": None, "proportion": 0.1},
+                ],
+            },
+        },
+        field_data_context={
+            "provider": "PageSpeed Insights loadingExperience field data (Chrome UX Report)",
+            "collection_window": "Rolling 28-day field-data window; exact dates not exposed.",
+            "sample_size": "Sample count is not exposed.",
+            "device_scope": "Device-specific field-data scope is not exposed; Lighthouse form_factor describes the lab run only.",
+            "url_overall_category": "AVERAGE",
+        },
     )))
     indexing_finding = AuditFinding(
         category="technical_seo",
@@ -101,6 +118,15 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
             and finding.status == "not_tested"
             for finding in reported.findings
         )
+        performance_finding = next(
+            finding for finding in reported.findings
+            if finding.category == "performance" and finding.title == "Google PageSpeed mobile performance snapshot"
+        )
+        assert "provider: PageSpeed Insights loadingExperience field data" in performance_finding.evidence
+        assert "collection_window: Rolling 28-day" in performance_finding.evidence
+        assert "sample_size: Sample count is not exposed" in performance_finding.evidence
+        assert "device_scope: Device-specific field-data scope is not exposed" in performance_finding.evidence
+        assert "url:LARGEST_CONTENTFUL_PAINT_MS distribution (ms): 0–2500: 70.0%; 2500–4000: 20.0%; ≥4000: 10.0%" in performance_finding.evidence
         assert any("Homepage-only phase one." in item for item in reported.limitations)
         assert len(db.added) == 2
         assert any(getattr(item, "source_channel", None) == "comprehensive_audit" for item in db.added)

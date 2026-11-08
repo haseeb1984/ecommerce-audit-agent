@@ -852,9 +852,13 @@ async def comprehensive_audit_pdf(
             field_metric_parts = []
             field_data_context = getattr(metrics, "field_data_context", {}) or {}
             if isinstance(field_data_context, dict):
-                for context_name, context_value in field_data_context.items():
-                    if context_name.endswith("_overall_category") and isinstance(context_value, str):
-                        field_metric_parts.append(f"{context_name}: {context_value}")
+                for context_name in (
+                    "provider", "collection_window", "sample_size", "device_scope",
+                    "url_overall_category", "origin_overall_category",
+                ):
+                    context_value = field_data_context.get(context_name)
+                    if isinstance(context_value, str) and context_value.strip():
+                        field_metric_parts.append(f"{context_name}: {context_value[:500]}")
             field_metrics = getattr(metrics, "field_metrics", {}) or {}
             if isinstance(field_metrics, dict):
                 for metric_name, metric_data in field_metrics.items():
@@ -864,12 +868,42 @@ async def comprehensive_audit_pdf(
                     normalized_value = metric_data.get("normalized_value", percentile)
                     unit = metric_data.get("unit")
                     category = metric_data.get("category")
-                    if isinstance(percentile, (int, float)):
+                    if isinstance(percentile, (int, float)) and not isinstance(percentile, bool):
                         field_metric_parts.append(
                             f"{metric_name}: p75={normalized_value}"
                             + (f" {unit}" if isinstance(unit, str) else "")
                             + (f", category={category}" if isinstance(category, str) else "")
                         )
+                    distribution = metric_data.get("distribution")
+                    if isinstance(distribution, list):
+                        distribution_bands = []
+                        for band in distribution[:5]:
+                            if not isinstance(band, dict):
+                                continue
+                            minimum = band.get("min")
+                            maximum = band.get("max")
+                            proportion = band.get("proportion")
+                            if (
+                                isinstance(minimum, bool) or not isinstance(minimum, (int, float))
+                                or not math.isfinite(float(minimum))
+                                or isinstance(proportion, bool) or not isinstance(proportion, (int, float))
+                                or not math.isfinite(float(proportion)) or not 0 <= proportion <= 1
+                            ):
+                                continue
+                            if maximum is not None and (
+                                isinstance(maximum, bool) or not isinstance(maximum, (int, float))
+                                or not math.isfinite(float(maximum)) or maximum < minimum
+                            ):
+                                continue
+                            range_label = (
+                                f"{minimum}–{maximum}" if maximum is not None else f"≥{minimum}"
+                            )
+                            distribution_bands.append(f"{range_label}: {proportion * 100:.1f}%")
+                        if distribution_bands:
+                            field_metric_parts.append(
+                                f"{metric_name} distribution ({unit or 'provider unit'}): "
+                                + "; ".join(distribution_bands)
+                            )
             performance_evidence = (
                 "Google PageSpeed Insights lab measurements: " + "; ".join(lab_metric_parts) + ". "
                 + (
