@@ -921,3 +921,10 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Scan batch size and retry-attempt limits reject booleans, non-integers, and out-of-range values rather than allowing implicit Python type coercion or invalid retry configuration into durable jobs.
 - Standard-license website binding now canonicalizes both historical inventory hostnames and submitted URL hostnames through the same IDNA normalization path, including case and trailing-dot normalization. Malformed legacy authority-like values fail closed instead of being treated as hostnames.
 - Regression contracts cover invalid retry limits, overlong request IDs, Unicode/punycode hostname equivalence, and malformed legacy hostname values. These tests are committed for CI; they have not yet been executed.
+
+
+## Durable scan hostname normalization follow-up
+
+- Website inventory host extraction now uses URL parsing and the same canonical host helper used by standard-license site binding, avoiding truncation of IPv6 literals at the first colon.
+- Public IPv6 hosts are canonicalized with the standard IP-address parser; malformed host authorities containing ports, credentials, paths, or brackets remain rejected as legacy hostname values.
+- Added regression coverage for IPv6 binding and persistence. CI execution is pending; no live scan or database migration was run.

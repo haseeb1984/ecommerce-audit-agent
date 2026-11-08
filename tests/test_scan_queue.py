@@ -506,3 +506,29 @@ def test_enqueue_rejects_whitespace_padded_request_id():
             urls=["https://shop.example/"],
             request_id=" request-1 ",
         ))
+
+
+def test_site_binding_accepts_and_canonicalizes_public_ipv6_hosts():
+    _validate_standard_license_site_binding(
+        registered_hosts=["2606:4700:4700:0000:0000:0000:0000:1111"],
+        submitted_urls=["https://[2606:4700:4700::1111]/products/1"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_ipv6_hostname_without_bracket_or_port_truncation():
+    from scan_queue import enqueue_scan_request
+    from hostinger_models import CustomerWebsite
+
+    db = EnqueueSession(None)
+    result = await enqueue_scan_request(
+        db,
+        license_key="license-ipv6",
+        package_tier="starter",
+        urls=["https://[2606:4700:4700::1111]/"],
+        request_id="ipv6-site-binding-001",
+    )
+
+    website = next(item for item in db.added if isinstance(item, CustomerWebsite))
+    assert website.host == "2606:4700:4700::1111"
+    assert result["new_jobs"] == 1
