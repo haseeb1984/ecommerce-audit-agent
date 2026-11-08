@@ -83,7 +83,7 @@ def test_customer_wordpress_portal_loads_installations_in_session_safe_pages():
     end = portal.index("async function loadProfile", start)
     source = portal[start:end]
     clear_start = portal.index("function clearAccountView")
-    clear_end = portal.index("function ", clear_start + 10)
+    clear_end = portal.index('$("requestLoginCode").addEventListener', clear_start)
     clear_source = portal[clear_start:clear_end]
 
     assert 'id="loadMoreWordPressSites"' in portal
