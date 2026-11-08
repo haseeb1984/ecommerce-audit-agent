@@ -36,6 +36,8 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
   let token = sessionStorage.getItem(tokenKey) || "";
   let sessionVersion = 0;
   let authAttemptVersion = 0;
+  let workspaceOffset = 0;
+  let workspaceLoadMore = null;
   function assertCurrentSession(version) {
     if (version !== sessionVersion) throw new Error("Your agency session changed. Refresh the portal to continue.");
   }
@@ -61,12 +63,21 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
     $("workspaces").replaceChildren();
     $("workspaceStatus").textContent = "";
   }
-  async function loadWorkspaces(expectedVersion = sessionVersion) {
-    const data = await api("/api/v1/agency/team/workspaces", {}, expectedVersion);
+  async function loadWorkspaces(expectedVersion = sessionVersion, offset = 0, append = false) {
+    const pageSize = 100;
+    const data = await api("/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset, {}, expectedVersion);
     assertCurrentSession(expectedVersion);
-    $("workspaces").replaceChildren();
+    if (!append) {
+      $("workspaces").replaceChildren();
+      workspaceOffset = 0;
+    }
     if (!data.items || !data.items.length) {
-      const p=document.createElement("p");p.className="muted";p.textContent="No active client workspaces have been assigned to you."; $("workspaces").append(p);return;
+      if (!append) {
+        const p=document.createElement("p");p.className="muted";p.textContent="No active client workspaces have been assigned to you."; $("workspaces").append(p);
+      }
+      if (workspaceLoadMore) workspaceLoadMore.remove();
+      workspaceLoadMore = null;
+      return;
     }
     for (const item of data.items) {
       const card=document.createElement("article");card.className="workspace";
@@ -189,6 +200,17 @@ button.secondary{background:#e9f0f6;color:#24445f}button:disabled{opacity:.55;cu
       }
       button.addEventListener("click",()=>loadHistoryPage(0,false));
       card.append(heading,role,submitForm,button,history);$("workspaces").append(card);
+    }
+    workspaceOffset = offset + data.items.length;
+    if (workspaceLoadMore) workspaceLoadMore.remove();
+    workspaceLoadMore = null;
+    if (data.page && data.page.has_more) {
+      workspaceLoadMore = document.createElement("button");
+      workspaceLoadMore.type = "button";
+      workspaceLoadMore.className = "secondary";
+      workspaceLoadMore.textContent = "Load more client workspaces";
+      workspaceLoadMore.addEventListener("click", () => loadWorkspaces(expectedVersion, workspaceOffset, true));
+      $("workspaces").append(workspaceLoadMore);
     }
   }
   async function showSignedIn(expectedVersion = sessionVersion) {
