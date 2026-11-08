@@ -246,6 +246,7 @@ async def main() -> int:
     # independently; a healthy Supabase connection does not imply Hostinger is ready.
     hostinger_missing: list[str] = []
     hostinger_missing_indexes: list[str] = []
+    hostinger_missing_foreign_keys: list[tuple] = []
     try:
         from sqlalchemy import UniqueConstraint
         from hostinger_database import HostingerBase, hostinger_engine
