@@ -5,9 +5,16 @@ import main
 
 def test_admin_activity_endpoint_supports_bounded_sanitized_filters():
     signature = inspect.signature(main.admin_action_history)
-    assert signature.parameters["action"].default.max_length == 100
-    assert signature.parameters["entity_type"].default.max_length == 80
-    assert signature.parameters["entity_id"].default.max_length == 160
+    def constraint(parameter, attribute):
+        return next(
+            getattr(item, attribute)
+            for item in parameter.default.metadata
+            if hasattr(item, attribute)
+        )
+
+    assert constraint(signature.parameters["action"], "max_length") == 100
+    assert constraint(signature.parameters["entity_type"], "max_length") == 80
+    assert constraint(signature.parameters["entity_id"], "max_length") == 160
 
     source = inspect.getsource(main.admin_action_history)
     assert "AdminActionLog.action.ilike" in source
