@@ -199,7 +199,10 @@ def _outbox_retry_delay_seconds(attempts: int | None) -> int:
         raise ValueError("Outbox retry attempts must be an integer.")
     else:
         normalized_attempts = max(0, attempts)
-    return min(3600, 30 * (2 ** min(normalized_attempts, 7)))
+    # attempts is incremented before scheduling a retry: attempt 1 is
+    # therefore the first retry and must receive the 30-second base delay.
+    retry_exponent = min(max(normalized_attempts - 1, 0), 7)
+    return min(3600, 30 * (2 ** retry_exponent))
 
 
 def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
