@@ -552,3 +552,40 @@ def test_license_keys_are_resolved_per_bounded_migration_batch():
     migrate_segment = ast.get_source_segment(source, migrate)
     assert "licenses = await _license_map(source)" not in migrate_segment
     assert migrate_segment.count("resolve_license_keys=True") == 7
+
+
+def test_admin_action_log_migration_does_not_request_license_id_resolution():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text(encoding="utf-8")
+    start = source.index('reports["admin_action_logs"]')
+    end = source.index('reports["operational_diagnostic_events"]', start)
+    call = source[start:end]
+
+    # Admin action logs have no license_id mapping requirement. Passing
+    # resolve_license_keys=True changes the transform call arity and crashes
+    # the migration with TypeError.
+    assert "resolve_license_keys=True" not in call
+    assert '"id"' in call
+
+
+def test_account_migration_preserves_source_updated_at_timestamp():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    query = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_account_candidate_statement"
+    )
+    query_source = ast.get_source_segment(source, query)
+    migrate = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
+    )
+    migrate_source = ast.get_source_segment(source, migrate)
+
+    assert "candidates.c.candidate_updated_at" in query_source
+    assert "ranked.c.candidate_updated_at" in query_source
+    assert '"updated_at": row.candidate_updated_at' in migrate_source
