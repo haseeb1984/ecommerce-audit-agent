@@ -2355,6 +2355,8 @@ async def require_agency_team_session(
 @app.get("/api/v1/account/agency/usage")
 async def get_business_agency_usage(
     response: Response,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=1000000),
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
@@ -2398,18 +2400,41 @@ async def get_business_agency_usage(
         AuditQuotaReservation.license_id == license_obj.id,
         AuditQuotaReservation.expires_at > now,
     ))).scalar_one() or 0)
-    usage_rows = (await operational_db.execute(
-        select(AgencyUsageEvent.workspace_id, sql_func.coalesce(sql_func.sum(AgencyUsageEvent.quantity), 0))
-        .where(
+    workspace_total = int((await operational_db.execute(
+        select(sql_func.count(AgencyClientWorkspace.id)).where(
+            AgencyClientWorkspace.agency_id == agency.id
+        )
+    )).scalar_one() or 0)
+    workspaces = (await operational_db.execute(
+        select(AgencyClientWorkspace).where(
+            AgencyClientWorkspace.agency_id == agency.id
+        ).order_by(
+            AgencyClientWorkspace.display_name.asc(),
+            AgencyClientWorkspace.id.asc(),
+        ).offset(offset).limit(limit)
+    )).scalars().all()
+    workspace_ids = [workspace.id for workspace in workspaces]
+    usage_by_workspace = {}
+    if workspace_ids:
+        usage_rows = (await operational_db.execute(
+            select(AgencyUsageEvent.workspace_id, sql_func.coalesce(sql_func.sum(AgencyUsageEvent.quantity), 0))
+            .where(
+                AgencyUsageEvent.agency_id == agency.id,
+                AgencyUsageEvent.period_start == month_start,
+                AgencyUsageEvent.event_type == "audit_completed",
+                AgencyUsageEvent.workspace_id.in_(workspace_ids),
+            ).group_by(AgencyUsageEvent.workspace_id)
+        )).all()
+        usage_by_workspace = {
+            workspace_id: int(quantity or 0) for workspace_id, quantity in usage_rows
+        }
+    agency_completed = int((await operational_db.execute(
+        select(sql_func.coalesce(sql_func.sum(AgencyUsageEvent.quantity), 0)).where(
             AgencyUsageEvent.agency_id == agency.id,
             AgencyUsageEvent.period_start == month_start,
             AgencyUsageEvent.event_type == "audit_completed",
-        ).group_by(AgencyUsageEvent.workspace_id)
-    )).all()
-    usage_by_workspace = {workspace_id: int(quantity or 0) for workspace_id, quantity in usage_rows}
-    workspaces = (await operational_db.execute(select(AgencyClientWorkspace).where(
-        AgencyClientWorkspace.agency_id == agency.id
-    ).order_by(AgencyClientWorkspace.display_name.asc()))).scalars().all()
+        )
+    )).scalar_one() or 0)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     consumed = used + pending
@@ -2422,13 +2447,19 @@ async def get_business_agency_usage(
         "active_concurrent_audits": active_reservations,
         "account_used_and_pending": consumed,
         "account_remaining": max(0, monthly_limit - consumed),
-        "agency_completed": sum(usage_by_workspace.values()),
+        "agency_completed": agency_completed,
         "items": [{
             "workspace_id": workspace.id,
             "workspace_name": workspace.display_name,
             "status": workspace.status,
             "completed_audits": usage_by_workspace.get(workspace.id, 0),
         } for workspace in workspaces],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": workspace_total,
+            "has_more": offset + len(workspaces) < workspace_total,
+        },
         "shared_quota_note": "All agency client audits and personal account audits consume the same Business license allowance and concurrency limit.",
     }
 
