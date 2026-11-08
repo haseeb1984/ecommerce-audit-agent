@@ -1569,6 +1569,10 @@ async def verify_customer_email_change(
     if candidate is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     await _lock_customer_email_change_license(operational_db, candidate.license_key)
+    # Share the old-email lock with login OTP issuance, verification, and logout-all.
+    # This prevents an in-flight OTP from minting an old-identity session while
+    # the verified email change consumes pending challenges and revokes devices.
+    await _lock_customer_login_email(operational_db, candidate.email.strip().lower())
     current = (await operational_db.execute(select(CustomerSession).where(
         CustomerSession.token_hash == token_hash,
         CustomerSession.license_key == candidate.license_key,
