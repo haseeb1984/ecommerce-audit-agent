@@ -50,6 +50,16 @@ def _legacy_account_id(license_key: str, email: str) -> str:
     return f"legacy-{digest[:48]}"
 
 
+def _migration_email(value: str | None, maximum: int = 254) -> str | None:
+    """Normalize an email only when it fits the destination column without truncation."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if not normalized or len(normalized) > maximum:
+        return None
+    return normalized
+
+
 async def _stream_rows(source: AsyncSession, model):
     """Yield source ORM rows without materializing the complete table."""
     result = await source.stream_scalars(
@@ -274,17 +284,23 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         account_mismatch_count = 0
         account_mismatch_fields = set()
         account_candidate_count = 0
+        account_overlength_email_count = 0
         candidate_result = await source.stream(_account_candidate_statement())
         account_batch = []
 
         async def reconcile_account_batch(rows):
             nonlocal account_copied, account_skipped, account_mismatch_count
+            nonlocal account_overlength_email_count
             expected_by_identity = {}
             for row in rows:
-                expected_by_identity[(row.license_key, row.email)] = {
-                    "id": _legacy_account_id(row.license_key, row.email),
+                normalized_email = _migration_email(row.email)
+                if normalized_email is None:
+                    account_overlength_email_count += 1
+                    continue
+                expected_by_identity[(row.license_key, normalized_email)] = {
+                    "id": _legacy_account_id(row.license_key, normalized_email),
                     "license_key": row.license_key,
-                    "email": row.email,
+                    "email": normalized_email,
                     "display_name": row.display_name,
                     "status": "active",
                     "created_at": row.candidate_created_at,
@@ -330,6 +346,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             await candidate_result.close()
         reports["customer_accounts"] = {
             "source_candidates": account_candidate_count,
+            "overlength_or_empty_email": account_overlength_email_count,
             "to_copy": account_copied,
             "already_present": account_skipped,
             "field_mismatches": account_mismatch_count,
@@ -341,13 +358,13 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             lambda row, license_key_by_id: ({
                 "id": row.id,
                 "license_key": license_key_by_id.get(row.license_id),
-                "email": row.email.lower(),
+                "email": _migration_email(row.email),
                 "code_hash": row.code_hash,
                 "expires_at": row.expires_at,
                 "attempts": row.attempts,
                 "consumed_at": row.consumed_at,
                 "created_at": row.created_at,
-            } if license_key_by_id.get(row.license_id) else None),
+            } if license_key_by_id.get(row.license_id) and _migration_email(row.email) else None),
             "id",
             stage_missing=apply_changes,
             resolve_license_keys=True,
@@ -357,14 +374,14 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             lambda row, license_key_by_id: ({
                 "token_hash": row.token_hash,
                 "license_key": license_key_by_id.get(row.license_id),
-                "email": row.email.lower(),
+                "email": _migration_email(row.email),
                 "expires_at": row.expires_at,
                 "revoked_at": row.revoked_at,
                 "created_at": row.created_at,
                 "last_seen_at": row.last_seen_at,
                 "public_id": row.public_id,
                 "user_agent": row.user_agent,
-            } if license_key_by_id.get(row.license_id) else None),
+            } if license_key_by_id.get(row.license_id) and _migration_email(row.email) else None),
             "token_hash",
             stage_missing=apply_changes,
             resolve_license_keys=True,
@@ -374,14 +391,14 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             lambda row, license_key_by_id: ({
                 "id": row.id,
                 "license_key": license_key_by_id.get(row.license_id),
-                "old_email": row.old_email.lower(),
-                "new_email": row.new_email.lower(),
+                "old_email": _migration_email(row.old_email),
+                "new_email": _migration_email(row.new_email),
                 "code_hash": row.code_hash,
                 "expires_at": row.expires_at,
                 "attempts": row.attempts,
                 "consumed_at": row.consumed_at,
                 "created_at": row.created_at,
-            } if license_key_by_id.get(row.license_id) else None),
+            } if license_key_by_id.get(row.license_id) and _migration_email(row.old_email) and _migration_email(row.new_email) else None),
             "id",
             stage_missing=apply_changes,
             resolve_license_keys=True,
@@ -426,14 +443,14 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             lambda row, license_key_by_id: ({
                 "event_id": row.event_id,
                 "license_key": license_key_by_id.get(row.license_id),
-                "recipient_email": (row.recipient_email or "").strip().lower()[:254],
-                "status": row.status[:40],
+                "recipient_email": _migration_email(row.recipient_email),
+                "status": row.status,
                 "transaction_id": row.transaction_id,
                 "subscription_id": row.subscription_id,
                 "paddle_customer_id": row.paddle_customer_id,
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
-            } if license_key_by_id.get(row.license_id) else None),
+            } if license_key_by_id.get(row.license_id) and _migration_email(row.recipient_email) else None),
             "event_id",
             stage_missing=apply_changes,
             resolve_license_keys=True,

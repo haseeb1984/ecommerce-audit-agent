@@ -928,3 +928,11 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - Website inventory host extraction now uses URL parsing and the same canonical host helper used by standard-license site binding, avoiding truncation of IPv6 literals at the first colon.
 - Public IPv6 hosts are canonicalized with the standard IP-address parser; malformed host authorities containing ports, credentials, paths, or brackets remain rejected as legacy hostname values.
 - Added regression coverage for IPv6 binding and persistence. CI execution is pending; no live scan or database migration was run.
+
+
+## Operational migration: prevent silent email truncation
+
+- Cross-database customer identity and billing-event transforms now normalize email addresses only when the complete value fits the Hostinger 254-character destination column.
+- Overlength or empty account-candidate emails are excluded from account creation and counted explicitly; related login/session/email-change/billing rows with unrepresentable email values are reported as unmapped rather than silently altered.
+- Billing-event status is copied as-is rather than sliced. The source and target status columns are both 40 characters, so a mismatch remains visible instead of being concealed.
+- Added regression contracts for exact email preservation and explicit overlength accounting. This does not run or authorize a live migration.

@@ -589,3 +589,33 @@ def test_account_migration_preserves_source_updated_at_timestamp():
     assert "candidates.c.candidate_updated_at" in query_source
     assert "ranked.c.candidate_updated_at" in query_source
     assert '"updated_at": row.candidate_updated_at' in migrate_source
+
+
+def test_migration_email_normalization_never_truncates_destination_values():
+    from scripts.migrate_operational_data_to_hostinger import _migration_email
+
+    assert _migration_email(" Customer@Example.com ") == "customer@example.com"
+    assert _migration_email("x" * 254 + "@a.co") is None
+    assert _migration_email("   ") is None
+    assert _migration_email(None) is None
+
+
+def test_operational_migration_does_not_truncate_billing_email_or_status():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+
+    assert '"recipient_email": _migration_email(row.recipient_email)' in source
+    assert '"status": row.status' in source
+    assert 'row.recipient_email or "").strip().lower()[:254]' not in source
+    assert '"status": row.status[:40]' not in source
+
+
+def test_customer_account_migration_reports_unrepresentable_email_candidates():
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+
+    assert '"overlength_or_empty_email": account_overlength_email_count' in source
+    assert 'normalized_email = _migration_email(row.email)' in source
+    assert 'if normalized_email is None:' in source
