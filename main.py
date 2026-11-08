@@ -1235,6 +1235,21 @@ async def customer_portal():
 
 
 @app.post("/api/v1/account/login", status_code=202)
+async def _lock_customer_login_email(operational_db: AsyncSession, email: str) -> None:
+    """Serialize login-code issuance, verification, and global session revocation by email."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects.mysql import insert as mysql_insert
+
+    await operational_db.execute(
+        mysql_insert(CustomerLoginThrottle)
+        .values(email=email)
+        .on_duplicate_key_update(email=CustomerLoginThrottle.email)
+    )
+    await operational_db.scalar(select(CustomerLoginThrottle).where(
+        CustomerLoginThrottle.email == email,
+    ).with_for_update())
+
+
 @app.post("/api/v1/account/auth/request-code", status_code=202)
 async def request_account_login_code(payload: AccountLoginRequest, response: Response, db: AsyncSession = Depends(get_async_db), operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Send a short-lived sign-in code without disclosing whether an email owns an account."""
@@ -1245,19 +1260,8 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     now = datetime.now(timezone.utc)
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    # A challenge-row lock is insufficient for first-time sign-in because no challenge
-    # exists yet. Create/lock a stable per-email row before reading either rate limit.
-    # MySQL's duplicate-key update waits for a concurrent request holding this row;
-    # the following locking read and challenge queries then observe its committed write.
-    from sqlalchemy.dialects.mysql import insert as mysql_insert
-    await operational_db.execute(
-        mysql_insert(CustomerLoginThrottle)
-        .values(email=email)
-        .on_duplicate_key_update(email=CustomerLoginThrottle.email)
-    )
-    await operational_db.scalar(select(CustomerLoginThrottle).where(
-        CustomerLoginThrottle.email == email,
-    ).with_for_update())
+    # Share the per-email lock with OTP verification and logout-all.
+    await _lock_customer_login_email(operational_db, email)
     recent_count = int((await operational_db.execute(select(func.count(CustomerLoginChallenge.id)).where(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.created_at >= now - timedelta(hours=1),
@@ -1337,6 +1341,8 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
     if len(auth_secret) < 32:
         raise HTTPException(status_code=503, detail="Customer sign-in is temporarily unavailable.")
     now = datetime.now(timezone.utc)
+    # Lock email before challenge, matching issuance and logout-all.
+    await _lock_customer_login_email(operational_db, email)
     challenge = (await operational_db.execute(select(CustomerLoginChallenge).where(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.consumed_at.is_(None),
@@ -1794,13 +1800,28 @@ async def logout_all_account_sessions(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Customer session is required.")
     digest = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-    current = await operational_db.scalar(select(CustomerSession).where(
+    candidate = await operational_db.scalar(select(CustomerSession).where(
         CustomerSession.token_hash == digest,
         CustomerSession.revoked_at.is_(None),
     ))
+    if candidate is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    email = candidate.email.strip().lower()
+    # Serialize with OTP verification: no pending code may mint a new session
+    # after this logout-all transaction has consumed challenges and revoked devices.
+    await _lock_customer_login_email(operational_db, email)
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == digest,
+        CustomerSession.email == email,
+        CustomerSession.revoked_at.is_(None),
+    ).with_for_update())
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
+    await operational_db.execute(update(CustomerLoginChallenge).where(
+        CustomerLoginChallenge.email == email,
+        CustomerLoginChallenge.consumed_at.is_(None),
+    ).values(consumed_at=now))
     result = await operational_db.execute(update(CustomerSession).where(
         CustomerSession.email == current.email,
         CustomerSession.created_at <= now,
