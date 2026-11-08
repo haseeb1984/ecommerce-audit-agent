@@ -42,3 +42,16 @@ def test_admin_customer_directory_merges_legacy_and_operational_identities():
         "operational-only@example.com",
     ]
     assert merged[0]["activity_at"] == recent
+
+
+def test_admin_customer_directory_resolves_page_licenses_in_one_batched_query():
+    import inspect
+
+    from main import admin_customer_directory
+
+    source = inspect.getsource(admin_customer_directory)
+    assert "page_license_keys = sorted({" in source
+    assert "page_license_rows = (await db.execute(" in source
+    assert "license_by_key = {item.license_key: item for item in page_license_rows}" in source
+    assert "license_by_key[license_key]" in source
+    assert "await db.execute(" not in source[source.index("items = []"):source.index('return {"items": items')]
