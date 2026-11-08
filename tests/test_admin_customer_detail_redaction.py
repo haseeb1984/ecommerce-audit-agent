@@ -129,3 +129,16 @@ def test_admin_customer_history_exposes_only_retryable_license_email_states():
     assert "if(licenseEmailRetryEligible(x))" in portal
     assert "if(licenseEmailRetryEligible(p))" in portal
     assert "if(licenseEmailRetryEligible(item))" in portal
+
+
+
+def test_admin_customer_detail_resolves_sublist_license_ids_outside_visible_license_page():
+    source = inspect.getsource(main.admin_customer_account_detail)
+
+    assert "related_license_keys = {" in source
+    assert "related_license_keys.update(" in source
+    assert "related_license_rows = (await db.execute(" in source
+    assert "SoftwareLicense.license_key.in_(related_license_keys)" in source
+    assert '"license_id": related_license_ids.get(item.license_key)' in source
+    assert '"license_id": related_license_ids.get(getattr(item, "license_key", None), getattr(item, "license_id", None))' in source
+    assert "next((lic.id for lic in rows if lic.license_key == item.license_key), None)" not in source
