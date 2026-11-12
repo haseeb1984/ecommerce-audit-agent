@@ -75,3 +75,7 @@ The repository contains a substantial automated test suite and a historical veri
 - Browser navigation should enforce SSRF protections and block private/internal network targets.
 - Keep credentials and license secrets out of logs.
 - Distinguish measured findings from inferred recommendations.
+
+## Project context for future development
+
+Read [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) before making changes. It contains the current source-reviewed architecture and Mermaid diagrams, end-to-end flow, feature inventory, prioritized roadmap, and a separate gap/verification register. It distinguishes implemented behavior from planned enhancements and review observations.
