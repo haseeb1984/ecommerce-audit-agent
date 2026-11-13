@@ -87,3 +87,24 @@
 - Detected analytics tags do not prove events or attribution work.
 - Security-header checks do not constitute a complete OWASP assessment or compliance certification.
 - Reports do not guarantee rankings, revenue, conversions, security or legal compliance.
+
+
+## Durable customer scan operations (source-verified)
+- Customer scan submission accepts up to 1,000 URLs, normalizes and validates every URL, requires all submitted URLs to belong to one host, and enqueues persistent 10/11-URL batches in the Hostinger operational database.
+- Optional Business-plan agency workspace assignment requires an active agency, active workspace, connected active WordPress client site, and exact submitted-host match.
+- Agency WordPress plugin/site integration authenticates with a hashed site token and checks the active agency/workspace/site relationship before queuing scans.
+- Customer APIs list paginated batches and scan history, retrieve batch/job results, cancel queued jobs, retry eligible failed jobs, and update/archive customer websites. Ownership is scoped to the authenticated license key in the inspected scan API paths.
+- Worker claims durable jobs, renews leases on a heartbeat, stops billable audit work if lease ownership cannot be confirmed, reserves quota, persists one audit lead per source job, and releases reservations on interrupted work.
+- Worker audit orchestration records module-level completion/unavailable/error states for homepage checks, PageSpeed, bounded crawl, conversion/paid-traffic checks, and rendered browser diagnostics; it does not infer passes for unavailable modules.
+
+## Account and agency lifecycle (source-verified)
+- Passwordless customer login uses emailed verification codes, hashed session tokens, expiring/revocable sessions, device-session listing, individual revocation, logout and revoke-other-sessions.
+- Customer email changes use a separate verification challenge and update/synchronization paths.
+- Customer profile, WordPress site status/disconnect, plugin guide/download, account billing and usage surfaces are implemented in the API/portal paths.
+- Business agency workflows include agency creation/lookup, team login, team invitations and roles (admin/analyst/viewer), workspace-scoped access, client websites, usage, and agency WordPress connection/audit flows.
+- White-label branding is represented as an entitlement-gated customer-facing branding capability; this is distinct from claiming every plan includes it.
+
+## Operational and report details
+- /health-check independently checks PostgreSQL licensing tables and Hostinger MySQL operational tables, including expected columns and indexes, and returns structured not-ready details when schema requirements are unmet.
+- Browser worker authenticates requests with timestamped HMAC-SHA256 signatures, rejects stale signatures, limits request body size, deduplicates request IDs in a bounded in-memory replay cache, validates public HTTP(S) targets, and caps rendered pages, browser requests and same-site navigation.
+- PDF reports consolidate findings, outcomes, evidence, limitations and prioritized remediation/business-impact content; report output includes designed scorecards and infographics. Security assessment is a structured heuristic summary, not a compliance certification.
