@@ -138,12 +138,15 @@ def test_admin_subscription_reconciliation_queues_customer_lifecycle_projection(
     import main
 
     source = inspect.getsource(main.admin_reconcile_subscription)
-    state_transition = source.index("if was_active != bool(license_obj.is_active):")
+    previous_state = source.index("was_active = _license_is_current(license_obj, now)")
+    period_update = source.index("billing_period_end = _apply_paddle_billing_period(", previous_state)
+    current_state = source.index("current_active = _license_is_current(license_obj, now)", period_update)
+    state_transition = source.index("if was_active != current_active:", current_state)
     outbox_insert = source.index("CustomerLifecycleSyncOutbox(", state_transition)
     canonical_commit = source.index("await db.commit()", outbox_insert)
 
-    assert state_transition < outbox_insert < canonical_commit
-    assert 'action="reactivate" if bool(license_obj.is_active) else "suspend"' in source
+    assert previous_state < period_update < current_state < state_transition < outbox_insert < canonical_commit
+    assert 'action="reactivate" if current_active else "suspend"' in source
     assert "license_key=license_obj.license_key" in source
     assert 'status="pending"' in source
 
