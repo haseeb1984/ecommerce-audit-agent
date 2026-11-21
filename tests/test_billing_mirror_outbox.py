@@ -108,7 +108,7 @@ def test_successful_live_mirror_persists_recovery_watermark():
     import main
 
     source = inspect.getsource(main._sync_billing_event_to_hostinger)
-    assert "event.billing_mirror_synced_at = datetime.now(timezone.utc)" in source
+    assert "event.billing_mirror_synced_at = max(synced_at, event_updated_at or synced_at)" in source
     assert source.index("event.billing_mirror_synced_at =") < source.index("await db.commit()", source.index("if pending is not None:"))
 
 
