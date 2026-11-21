@@ -100,7 +100,13 @@ class AuditReport(Base):
         index=True,
     )
     domain = Column(String(255), nullable=False, index=True)
-    pdf_bytes = Column(LargeBinary, nullable=False)
+    # Legacy PostgreSQL payload remains nullable for a safe, verified migration.
+    # New reports use the Hostinger private storage reference when configured.
+    pdf_bytes = Column(LargeBinary, nullable=True)
+    storage_key = Column(String(1024), nullable=True)
+    pdf_sha256 = Column(String(64), nullable=True)
+    pdf_byte_size = Column(BigInteger, nullable=True)
+    pdf_deleted_at = Column(DateTime(timezone=True), nullable=True)
     coverage_json = Column(Text, nullable=False, default="{}")
     finding_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
