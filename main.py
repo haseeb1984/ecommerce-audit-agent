@@ -8636,16 +8636,19 @@ async def cleanup_expired_report_pdfs(
     retention_days = _report_retention_days()
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=retention_days)
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
-    # Legacy PostgreSQL binaries are intentionally excluded here. The migration
-    # script must upload and verify each one before clearing pdf_bytes.
+    # Once a PDF has expired, retention policy permits deletion whether its
+    # bytes are still in PostgreSQL or have already moved to Hostinger.
     rows = (await db.execute(
         select(AuditReport)
         .where(
             AuditReport.created_at <= cutoff,
             AuditReport.pdf_deleted_at.is_(None),
-            AuditReport.storage_key.is_not(None),
+            or_(
+                AuditReport.storage_key.is_not(None),
+                AuditReport.pdf_bytes.is_not(None),
+            ),
         )
         .order_by(AuditReport.created_at.asc(), AuditReport.id.asc())
         .limit(100)
@@ -8662,6 +8665,9 @@ async def cleanup_expired_report_pdfs(
                 failed += 1
                 logger.error("Expired report deletion failed (error_type=%s)", type(exc).__name__)
                 continue
+        # Legacy PostgreSQL-only PDFs are also purged once their retention
+        # deadline has passed; unexpired binaries are handled by the verified
+        # migration script before they are cleared.
         report.storage_key = None
         report.pdf_bytes = None
         report.pdf_deleted_at = now
