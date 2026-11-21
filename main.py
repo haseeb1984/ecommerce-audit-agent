@@ -66,8 +66,8 @@ MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
 
 
 def _queue_customer_lifecycle_projection(db, license_obj, was_active: bool, now: datetime | None = None) -> bool:
-    """Queue Hostinger account/session projection after a canonical license state transition."""
-    is_active = bool(license_obj.is_active)
+    """Queue Hostinger projection using effective access, including license expiry."""
+    is_active = _license_is_current(license_obj, now)
     if bool(was_active) == is_active:
         return False
     queued_at = now or datetime.now(timezone.utc)
