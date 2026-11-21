@@ -146,3 +146,55 @@ def test_admin_subscription_reconciliation_queues_customer_lifecycle_projection(
     assert 'action="reactivate" if bool(license_obj.is_active) else "suspend"' in source
     assert "license_key=license_obj.license_key" in source
     assert 'status="pending"' in source
+
+
+def test_paddle_lifecycle_transition_queues_customer_projection_only_when_state_changes():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from main import _queue_customer_lifecycle_projection
+
+    class FakeDB:
+        def __init__(self):
+            self.items = []
+
+        def add(self, item):
+            self.items.append(item)
+
+    db = FakeDB()
+    license_obj = SimpleNamespace(license_key="license-123", is_active=False)
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+
+    assert _queue_customer_lifecycle_projection(db, license_obj, True, now)
+    assert len(db.items) == 1
+    assert db.items[0].action == "suspend"
+    assert db.items[0].license_key == "license-123"
+    assert db.items[0].status == "pending"
+    assert db.items[0].attempts == 0
+    assert db.items[0].next_attempt_at == now
+    assert db.items[0].created_at == now
+
+    assert not _queue_customer_lifecycle_projection(db, license_obj, False, now)
+    assert len(db.items) == 1
+
+    license_obj.is_active = True
+    assert _queue_customer_lifecycle_projection(db, license_obj, False, now)
+    assert db.items[-1].action == "reactivate"
+
+
+def test_paddle_subscription_webhooks_queue_projection_before_canonical_commit():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.paddle_webhook)
+    for event_marker in (
+        'if event_type in {"subscription.paused", "subscription.resumed", "subscription.activated"}:',
+        'if event_type == "subscription.canceled":',
+        'if event_type == "subscription.updated":',
+    ):
+        start = source.index(event_marker)
+        next_commit = source.index("await db.commit()", start)
+        next_event = source.find("if event_type", start + len(event_marker))
+        block_end = next_event if next_event >= 0 else len(source)
+        block = source[start:block_end]
+        assert "_queue_customer_lifecycle_projection(" in block
+        assert block.index("_queue_customer_lifecycle_projection(") < block.index("await db.commit()")
