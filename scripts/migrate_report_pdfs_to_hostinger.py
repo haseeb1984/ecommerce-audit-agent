@@ -27,6 +27,41 @@ from hostinger_storage import (
 logger = logging.getLogger("migrate_report_storage")
 
 
+async def _cleanup_unreferenced_uploads(uploaded_keys: list[str]) -> None:
+    """Delete only uploads confirmed unreferenced after a fresh database read.
+
+    A commit can succeed on PostgreSQL while its acknowledgement is lost. If
+    that happens, deleting every uploaded object in the exception handler would
+    leave committed report rows pointing at missing files. If the verification
+    read itself fails, preserve the objects; an orphan is safer than data loss.
+    """
+    if not uploaded_keys:
+        return
+
+    try:
+        async with AsyncSessionLocal() as verification_db:
+            result = await verification_db.execute(
+                select(AuditReport.storage_key).where(
+                    AuditReport.storage_key.in_(uploaded_keys)
+                )
+            )
+            referenced_keys = {key for key in result.scalars().all() if key}
+    except Exception as verification_error:
+        logger.error(
+            "Upload cleanup deferred because report references could not be verified (error_type=%s)",
+            type(verification_error).__name__,
+        )
+        return
+
+    for key in uploaded_keys:
+        if key in referenced_keys:
+            continue
+        try:
+            await asyncio.to_thread(delete_file, key)
+        except Exception as cleanup_error:
+            logger.error("Orphan cleanup failed (error_type=%s)", type(cleanup_error).__name__)
+
+
 async def migrate(batch_size: int) -> tuple[int, int]:
     if not storage_configured():
         raise RuntimeError("Configure HOSTINGER_STORAGE_BASE_URL and HOSTINGER_STORAGE_HMAC_SECRET first.")
@@ -86,11 +121,10 @@ async def migrate(batch_size: int) -> tuple[int, int]:
                 migrated += len(rows)
             except Exception:
                 await db.rollback()
-                for key in uploaded_keys:
-                    try:
-                        await asyncio.to_thread(delete_file, key)
-                    except Exception as cleanup_exc:
-                        logger.error("Orphan cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+                # A failed COMMIT acknowledgement is ambiguous: PostgreSQL may
+                # already have committed. Re-read references before deleting any
+                # remote object; if the read fails, preserve uploads for recovery.
+                await _cleanup_unreferenced_uploads(uploaded_keys)
                 skipped_or_failed += len(rows)
                 raise
 
