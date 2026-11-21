@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-from urllib.parse import urlencode
 
 
 _REPORT_KEY_RE = re.compile(r"^reports/[a-f0-9]{64}\.pdf$")
@@ -114,25 +113,6 @@ def _request(operation: str, storage_key: str, body: bytes = b"",
         raise HostingerStorageError(f"Hostinger storage {operation} failed: {detail}") from None
     except (URLError, TimeoutError, OSError):
         raise HostingerStorageError(f"Hostinger storage {operation} is unavailable.") from None
-
-
-def create_signed_logo_url(storage_key: str, expires_in: int = 300) -> str:
-    """Create a short-lived browser URL for an authenticated logo preview."""
-    base_url, secret = _storage_config()
-    _validate_key(storage_key)
-    if not storage_key.startswith("logos/"):
-        raise HostingerStorageError("Only logo objects can receive browser preview URLs.")
-    ttl = max(60, min(int(expires_in), 600))
-    expires = str(int(time.time()) + ttl)
-    canonical = "\n".join(("GET", expires, "logo", storage_key)).encode("utf-8")
-    signature = hmac.new(secret, canonical, hashlib.sha256).hexdigest()
-    query = urlencode({
-        "action": "logo",
-        "key": storage_key,
-        "expires": expires,
-        "signature": signature,
-    })
-    return f"{base_url}?{query}"
 
 
 def upload_report(pdf_bytes: bytes) -> StorageReceipt:
