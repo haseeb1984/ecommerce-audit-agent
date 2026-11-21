@@ -37,9 +37,10 @@ function eaa_theme_meta_description() {
         return;
     }
     $description = trim(preg_replace('/\s+/', ' ', $description));
-    if ($description !== '') {
-        echo '<meta name="description" content="' . esc_attr(wp_html_excerpt($description, 158, '…')) . '">' . "\n";
+    if ($description === '') {
+        $description = __('Ecommerce Audit Agent provides evidence-based ecommerce website audits and structured findings for store owners and agencies.', 'ecommerce-audit-agent');
     }
+    echo '<meta name="description" content="' . esc_attr(wp_html_excerpt($description, 158, '…')) . '">' . "\n";
 }
 add_action('wp_head', 'eaa_theme_meta_description', 2);
 
@@ -64,7 +65,7 @@ function eaa_theme_api_base() {
     $value = get_option('eaa_theme_api_base', EAA_THEME_DEFAULT_API);
     $value = esc_url_raw(trim((string) $value));
     $parts = wp_parse_url($value);
-    if (!$parts || empty($parts['scheme']) || strtolower($parts['scheme']) !== 'https' || empty($parts['host']) || !empty($parts['user']) || !empty($parts['pass']) || !empty($parts['query']) || !empty($parts['fragment'])) {
+    if (!$parts || empty($parts['scheme']) || strtolower($parts['scheme']) !== 'https' || empty($parts['host']) || !empty($parts['user']) || !empty($parts['pass']) || !empty($parts['query']) || !empty($parts['fragment']) || (!empty($parts['path']) && $parts['path'] !== '/')) {
         return EAA_THEME_DEFAULT_API;
     }
     return untrailingslashit($value);
@@ -95,6 +96,7 @@ function eaa_theme_proxy_plans() {
     $response = wp_remote_get(eaa_theme_api_base() . '/api/v1/billing/plans', array(
         'timeout' => 18,
         'redirection' => 0,
+        'limit_response_size' => 524288,
         'headers' => array('Accept' => 'application/json', 'Cache-Control' => 'no-cache'),
     ));
     if (is_wp_error($response)) {
@@ -161,6 +163,7 @@ function eaa_theme_checkout_handler() {
     $response = wp_remote_post(eaa_theme_api_base() . '/api/v1/billing/checkout', array(
         'timeout' => 22,
         'redirection' => 0,
+        'limit_response_size' => 65536,
         'headers' => array('Content-Type' => 'application/json', 'Accept' => 'application/json'),
         'body' => wp_json_encode(array('tier' => $tier, 'email' => $email)),
     ));
