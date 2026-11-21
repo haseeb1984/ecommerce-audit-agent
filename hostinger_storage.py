@@ -172,7 +172,17 @@ def _upload(kind: str, content: bytes) -> StorageReceipt:
         raise HostingerStorageError("Logo payload is not a valid WebP image.")
     folder = "reports" if kind == "report" else "logos"
     storage_key = f"{folder}/{secrets.token_hex(32)}{extension}"
-    response = _request("upload", storage_key, content, mime_type)
+    try:
+        response = _request("upload", storage_key, content, mime_type)
+    except HostingerStorageError:
+        # The bridge may have committed the object before a network failure. A
+        # second idempotent request prevents an ambiguous upload from leaking files.
+        try:
+            _request("delete", storage_key)
+        except HostingerStorageError:
+            pass
+        raise
+
     try:
         payload = json.loads(response.decode("utf-8"))
         expected_hash = hashlib.sha256(content).hexdigest()
@@ -181,7 +191,11 @@ def _upload(kind: str, content: bytes) -> StorageReceipt:
                 or int(payload.get("byte_size", -1)) != len(content)):
             raise ValueError("receipt mismatch")
     except Exception:
-        # A successful HTTP response without an exact integrity receipt is not success.
+        # The object key is ours even when the response is malformed; clean it up.
+        try:
+            _request("delete", storage_key)
+        except HostingerStorageError:
+            pass
         raise HostingerStorageError("Hostinger storage returned an invalid upload receipt.") from None
     return StorageReceipt(storage_key, expected_hash, len(content), mime_type)
 
