@@ -259,6 +259,21 @@ def _customer_email_identity_update_statement(license_id: int, old_email: str, n
     ).values(
         recipient_email=new_email.strip(),
         updated_at=func.now(),
+        billing_mirror_synced_at=None,
+    )
+
+
+def _customer_email_identity_completed_billing_outbox_cleanup_statement(
+    license_id: int, old_email: str
+):
+    """Remove only completed mirrors before changing canonical billing identity."""
+    affected_event_ids = select(PaymentWebhookEvent.event_id).where(
+        PaymentWebhookEvent.license_id == license_id,
+        func.lower(PaymentWebhookEvent.recipient_email) == old_email.strip().lower(),
+    )
+    return delete(BillingMirrorSyncOutbox).where(
+        BillingMirrorSyncOutbox.status == "completed",
+        BillingMirrorSyncOutbox.event_id.in_(affected_event_ids),
     )
 
 
@@ -759,6 +774,15 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                     )
                     if canonical_license is None:
                         raise RuntimeError("LicenseReferenceUnavailable")
+                    # Delete completed delivery markers first (outbox -> source
+                    # lock order), then invalidate the watermark while changing the
+                    # canonical email. Pending retries remain queued and will mirror
+                    # the latest recipient instead of being discarded.
+                    await licensing_db.execute(
+                        _customer_email_identity_completed_billing_outbox_cleanup_statement(
+                            canonical_license.id, event.old_email
+                        )
+                    )
                     await licensing_db.execute(_customer_email_identity_update_statement(
                         canonical_license.id, event.old_email, event.new_email
                     ))
