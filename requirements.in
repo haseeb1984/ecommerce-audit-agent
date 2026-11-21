@@ -8,6 +8,7 @@ asyncpg
 python-dotenv
 httpx
 supabase
+opentelemetry-api>=1.45.2,<2.0
 sqlalchemy[asyncio]
 greenlet
 psycopg2-binary
