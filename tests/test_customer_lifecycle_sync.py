@@ -131,3 +131,18 @@ def test_customer_lifecycle_worker_locks_canonical_license_before_operational_mi
     lock_read = worker_source.index("_customer_lifecycle_license_lock_query(license_key)")
     operational_write = worker_source.index("async with HostingerAsyncSessionLocal() as operational_db:", lock_read)
     assert lock_read < operational_write
+
+
+def test_admin_subscription_reconciliation_queues_customer_lifecycle_projection():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.admin_reconcile_subscription)
+    state_transition = source.index("if was_active != bool(license_obj.is_active):")
+    outbox_insert = source.index("CustomerLifecycleSyncOutbox(", state_transition)
+    canonical_commit = source.index("await db.commit()", outbox_insert)
+
+    assert state_transition < outbox_insert < canonical_commit
+    assert 'action="reactivate" if bool(license_obj.is_active) else "suspend"' in source
+    assert "license_key=license_obj.license_key" in source
+    assert 'status="pending"' in source
