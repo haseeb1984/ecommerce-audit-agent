@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 from unittest.mock import patch
 
@@ -70,3 +71,28 @@ def test_download_checks_sha256():
     with patch.object(storage, "_request", return_value=b"tampered"):
         with pytest.raises(storage.HostingerStorageError):
             storage.download_file("reports/" + "d" * 64 + ".pdf", digest)
+
+
+
+def test_storage_http_client_refuses_redirects():
+    from urllib.request import Request
+
+    handler = storage._NoRedirectHandler()
+    request = Request("https://storage.example/eaa-storage/api/index.php")
+    assert handler.redirect_request(
+        request, None, 302, "Found", {}, "https://attacker.example/collect"
+    ) is None
+
+
+def test_storage_http_response_reads_are_bounded():
+    response = io.BytesIO(b"x" * 1025)
+    response.headers = {}
+    with pytest.raises(storage.HostingerStorageError, match="exceeds the allowed size"):
+        storage._read_limited_response(response, 1024)
+
+
+def test_storage_http_response_rejects_oversized_content_length_before_read():
+    response = io.BytesIO(b"")
+    response.headers = {"Content-Length": "2048"}
+    with pytest.raises(storage.HostingerStorageError, match="exceeds the allowed size"):
+        storage._read_limited_response(response, 1024)
