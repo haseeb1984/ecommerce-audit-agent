@@ -1946,11 +1946,21 @@ async def revoke_other_customer_sessions(
     ))
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    # Serialize with OTP verification so a newly minted session cannot slip
+    # into the account after the revoke-others snapshot.
+    email = current.email.strip().lower()
+    await _lock_customer_login_email(operational_db, email)
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == digest,
+        CustomerSession.email == email,
+        CustomerSession.revoked_at.is_(None),
+    ).with_for_update())
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
     result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.email == current.email,
+        CustomerSession.email == email,
         CustomerSession.token_hash != digest,
-        CustomerSession.created_at <= now,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
@@ -2005,8 +2015,7 @@ async def logout_all_account_sessions(
         CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
     result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.email == current.email,
-        CustomerSession.created_at <= now,
+        CustomerSession.email == email,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
