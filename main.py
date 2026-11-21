@@ -8630,17 +8630,16 @@ async def cleanup_expired_report_pdfs(
     retention_days = _report_retention_days()
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=retention_days)
-    from sqlalchemy import select, or_
+    from sqlalchemy import select
 
+    # Legacy PostgreSQL binaries are intentionally excluded here. The migration
+    # script must upload and verify each one before clearing pdf_bytes.
     rows = (await db.execute(
         select(AuditReport)
         .where(
             AuditReport.created_at <= cutoff,
             AuditReport.pdf_deleted_at.is_(None),
-            or_(
-                AuditReport.storage_key.is_not(None),
-                AuditReport.pdf_bytes.is_not(None),
-            ),
+            AuditReport.storage_key.is_not(None),
         )
         .order_by(AuditReport.created_at.asc(), AuditReport.id.asc())
         .limit(100)
