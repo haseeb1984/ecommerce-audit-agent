@@ -45,7 +45,7 @@ No custom WordPress tables are created for SaaS operational, licensing or custom
 
 == Contact form ==
 
-The contact form validates fields server-side, uses a WordPress nonce, a hidden honeypot and a short per-email submission cooldown. It sends through wp_mail() to the WordPress administrator mailbox. Configure a reliable SMTP provider and update the public support email in EAA Website Settings.
+The contact form validates fields server-side, uses a WordPress nonce, a hidden honeypot and a short per-email submission cooldown. It sends through wp_mail() to the support email configured in EAA Website Settings (defaulting to the WordPress administrator email). Configure a reliable SMTP provider and verify delivery.
 
 == Before launch ==
 
