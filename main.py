@@ -5289,8 +5289,8 @@ def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role
     message["From"] = sender
     message["To"] = recipient
     message.set_content(
-        f"{inviter} invited you to join their agency as {role}.\\n\\n"
-        f"Accept this invitation within 48 hours: {invite_url}\\n\\n"
+        f"{inviter} invited you to join their agency as {role}.\n\n"
+        f"Accept this invitation within 48 hours: {invite_url}\n\n"
         "This link is single-use. If you were not expecting this invitation, ignore this email."
     )
     if mode == "ssl":
