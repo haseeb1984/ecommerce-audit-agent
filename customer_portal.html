@@ -175,6 +175,7 @@
   let pendingBulkScanFingerprint = "";
   let pendingBulkScanRequestId = "";
   let sessionToken = "";
+  let brandLogoObjectUrl = "";
   let headerName = "X-License-Key";
   // Invalidate in-flight authenticated requests whenever the connected identity changes
   // or the user disconnects, so late responses cannot repopulate another account's view.
@@ -226,12 +227,16 @@
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
   function applyBranding(branding) {
+    if (!branding?.logo_stored && brandLogoObjectUrl) {
+      URL.revokeObjectURL(brandLogoObjectUrl);
+      brandLogoObjectUrl = "";
+    }
     const color = /^#[0-9a-fA-F]{6}$/.test(branding?.primary_color || "") ? branding.primary_color : "#155a8a";
     const name = typeof branding?.brand_name === "string" && branding.brand_name.trim() ? branding.brand_name.trim() : "E-commerce Audit Dashboard";
     document.documentElement.style.setProperty("--brand-primary", color);
     $("portalBrandName").textContent = name;
     const logo = $("brandLogo");
-    const logoUrl = typeof branding?.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(branding.logo_url) ? branding.logo_url : "";
+    const logoUrl = !branding?.logo_stored && typeof branding?.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(branding.logo_url) ? branding.logo_url : "";
     logo.alt = name + " logo";
     logo.onerror = () => { logo.removeAttribute("src"); logo.style.display = "none"; };
     if (logoUrl) { logo.src = logoUrl; logo.style.display = "block"; }
@@ -760,6 +765,15 @@
     $("brandLogoUrl").value = branding.logo_stored ? "" : (branding.logo_url || "");
     $("brandColor").value = /^#[0-9a-fA-F]{6}$/.test(branding.primary_color || "") ? branding.primary_color : "#155a8a";
     applyBranding(branding);
+    if (branding.logo_stored) {
+      const logoResponse = await api("/api/v1/account/branding/logo");
+      const logoBlob = await logoResponse.blob();
+      if (brandLogoObjectUrl) URL.revokeObjectURL(brandLogoObjectUrl);
+      brandLogoObjectUrl = URL.createObjectURL(logoBlob);
+      const logo = $("brandLogo");
+      logo.src = brandLogoObjectUrl;
+      logo.style.display = "block";
+    }
     setStatus("brandingStatus", branding.configured ? "Saved white-label settings loaded." : "No custom branding saved yet. Set your brand details and save.", "success");
     return branding;
   }
@@ -782,7 +796,7 @@
       $("brandName").value = saved.brand_name || brandName;
       $("brandLogoUrl").value = saved.logo_stored ? "" : (saved.logo_url || "");
       $("brandColor").value = saved.primary_color || primaryColor;
-      applyBranding(saved);
+      await loadBranding();
       setStatus("brandingStatus", "White-label branding saved and applied to this portal.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
@@ -797,10 +811,10 @@
       const response = await api("/api/v1/account/branding/logo", {
         method: "POST", headers: {"Content-Type": file.type}, body: file
       });
-      const saved = await response.json();
+      await response.json();
       $("brandLogoFile").value = "";
       $("brandLogoUrl").value = "";
-      applyBranding({brand_name: $("brandName").value, primary_color: $("brandColor").value, logo_url: saved.logo_url});
+      await loadBranding();
       setStatus("brandingStatus", "Logo uploaded to private storage and applied.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
@@ -812,7 +826,7 @@
       await api("/api/v1/account/branding/logo", {method: "DELETE"});
       $("brandLogoFile").value = "";
       $("brandLogoUrl").value = "";
-      applyBranding({brand_name: $("brandName").value, primary_color: $("brandColor").value, logo_url: null});
+      await loadBranding();
       setStatus("brandingStatus", "Logo removed.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
