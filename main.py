@@ -8911,6 +8911,19 @@ async def admin_reconcile_subscription(
     if plan is not None and provider_status in {"active", "trialing", "paused", "past_due"}:
         license_obj.tier = plan["tier"]
         license_obj.max_monthly_audits = plan["monthly_audit_allowance"]
+    # Keep the Hostinger customer account/session projection in sync with an
+    # admin-triggered provider reconciliation. The worker applies this durable
+    # outbox after the canonical license transaction commits.
+    if was_active != bool(license_obj.is_active):
+        db.add(CustomerLifecycleSyncOutbox(
+            id=secrets.token_urlsafe(24),
+            license_key=license_obj.license_key,
+            action="reactivate" if bool(license_obj.is_active) else "suspend",
+            status="pending",
+            attempts=0,
+            next_attempt_at=now,
+            created_at=now,
+        ))
     billing_period_end = _apply_paddle_billing_period(
         license_obj, data,
         extend_expiry=provider_status in {"active", "trialing"},
