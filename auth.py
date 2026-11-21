@@ -12,6 +12,16 @@ from hostinger_database import HostingerAsyncSessionLocal
 from hostinger_models import CustomerSession
 from plan_features import plan_features
 
+
+def _license_is_expired(license_obj, now=None) -> bool:
+    """Return whether a license has passed its explicit expiry timestamp."""
+    expires_at = getattr(license_obj, "expires_at", None)
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at <= (now or datetime.now(timezone.utc))
+
 # Define explicit scheme_names to prevent Swagger UI schema collisions
 API_KEY_HEADER = APIKeyHeader(
     name="X-API-Key",
@@ -244,6 +254,8 @@ async def verify_customer_account(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Customer account is unavailable.")
         if not license_obj.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
+        if _license_is_expired(license_obj):
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="License expired. Renewal required.")
         return license_obj
 
     # Backward compatibility for existing license-key and API-key customers.
@@ -260,6 +272,8 @@ async def verify_customer_account(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid account credentials.")
     if not license_obj.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
+    if _license_is_expired(license_obj):
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="License expired. Renewal required.")
     return license_obj
 
 
