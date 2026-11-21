@@ -926,9 +926,12 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                         stored.paddle_customer_id = event.paddle_customer_id
                         stored.updated_at = event.updated_at
                     await operational_db.commit()
-                synced_at = datetime.now(timezone.utc)
-                event.billing_mirror_synced_at = synced_at
-                _mark_billing_mirror_outbox_completed(item, synced_at)
+                processed_at = datetime.now(timezone.utc)
+                event_updated_at = event.updated_at
+                if event_updated_at is not None and event_updated_at.tzinfo is None:
+                    event_updated_at = event_updated_at.replace(tzinfo=timezone.utc)
+                event.billing_mirror_synced_at = max(processed_at, event_updated_at or processed_at)
+                _mark_billing_mirror_outbox_completed(item, processed_at)
                 await licensing_db.commit()
                 counts["processed"] += 1
             except Exception as exc:
