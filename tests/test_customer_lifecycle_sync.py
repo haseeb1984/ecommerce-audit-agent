@@ -65,9 +65,14 @@ def test_admin_customer_lifecycle_audit_is_attempted_before_operational_mutation
     audit_write = source.index('await _write_admin_log(db, "customer.account_"')
     operational_mutation = source.index("await operational_db.execute(update(CustomerAccount)")
     session_mutation = source.index("await operational_db.execute(update(CustomerSession)")
-    audit_commit = source.index("await db.commit()", audit_write)
-    assert canonical_commit < read_rollback < audit_write < audit_commit < operational_mutation
-    assert audit_commit < session_mutation
+    helper_source = inspect.getsource(main._write_admin_log)
+    assert canonical_commit < read_rollback < audit_write < operational_mutation
+    assert operational_mutation < session_mutation
+    # The audit helper owns a separate Hostinger transaction and commits it
+    # before returning; committing the Supabase session here would be unrelated.
+    assert "async with HostingerAsyncSessionLocal() as operational_db" in helper_source
+    assert "await operational_db.commit()" in helper_source
+    assert "except Exception as exc" in helper_source
     assert '"operational_sync": "queued"' in source
     assert '"changed_count": changed' not in source
 
