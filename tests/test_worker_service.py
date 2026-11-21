@@ -444,3 +444,77 @@ def test_worker_loop_resets_consecutive_failures_after_success():
     assert success < reset_after_success
     assert "consecutive_failures += 1" in source
     assert "_worker_retry_delay(consecutive_failures, poll_seconds)" in source
+
+
+
+@pytest.mark.asyncio
+async def test_scan_worker_confirms_live_queue_lease_before_billable_commit(monkeypatch):
+    from contextlib import asynccontextmanager
+    import asyncio
+    import scan_worker
+
+    calls = []
+
+    class OperationalSession:
+        pass
+
+    @asynccontextmanager
+    async def session_factory():
+        yield OperationalSession()
+
+    async def renew(db, *, job_id, worker_id):
+        calls.append((job_id, worker_id))
+        return True
+
+    monkeypatch.setattr(scan_worker, "HostingerAsyncSessionLocal", session_factory)
+    monkeypatch.setattr(scan_worker, "renew_scan_job_lease", renew)
+
+    confirmed = await scan_worker._confirm_scan_job_lease(
+        "job-lease-check", "worker-1", asyncio.Event(),
+    )
+
+    assert confirmed is True
+    assert calls == [("job-lease-check", "worker-1")]
+
+
+@pytest.mark.asyncio
+async def test_scan_worker_refuses_billable_commit_after_lease_reclaimed(monkeypatch):
+    from contextlib import asynccontextmanager
+    import asyncio
+    import scan_worker
+
+    @asynccontextmanager
+    async def session_factory():
+        yield object()
+
+    async def renew(db, *, job_id, worker_id):
+        return False
+
+    monkeypatch.setattr(scan_worker, "HostingerAsyncSessionLocal", session_factory)
+    monkeypatch.setattr(scan_worker, "renew_scan_job_lease", renew)
+
+    confirmed = await scan_worker._confirm_scan_job_lease(
+        "job-reclaimed", "old-worker", asyncio.Event(),
+    )
+
+    assert confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_scan_worker_does_not_renew_lease_after_heartbeat_loss(monkeypatch):
+    import asyncio
+    import scan_worker
+
+    lease_unconfirmed = asyncio.Event()
+    lease_unconfirmed.set()
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("lost lease must be rejected before database access")
+
+    monkeypatch.setattr(scan_worker, "renew_scan_job_lease", should_not_run)
+
+    confirmed = await scan_worker._confirm_scan_job_lease(
+        "job-lost", "worker-1", lease_unconfirmed,
+    )
+
+    assert confirmed is False
