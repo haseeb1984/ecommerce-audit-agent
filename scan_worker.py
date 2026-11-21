@@ -256,7 +256,10 @@ def _customer_email_identity_update_statement(license_id: int, old_email: str, n
     return update(PaymentWebhookEvent).where(
         PaymentWebhookEvent.license_id == license_id,
         func.lower(PaymentWebhookEvent.recipient_email) == old_email.strip().lower(),
-    ).values(recipient_email=new_email.strip())
+    ).values(
+        recipient_email=new_email.strip(),
+        updated_at=func.now(),
+    )
 
 
 
