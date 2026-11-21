@@ -1,5 +1,6 @@
 """Keep the Hostinger scan-batch migration aligned with its ORM contract."""
 
+import ast
 from pathlib import Path
 
 from hostinger_models import ScanBatch
