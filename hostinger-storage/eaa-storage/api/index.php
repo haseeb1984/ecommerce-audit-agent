@@ -153,7 +153,11 @@ if ($operation === 'upload') {
     if (!$validContent) eaa_fail(415, 'File content is invalid');
     if (is_file($targetPath)) eaa_fail(409, 'Storage key already exists');
     $tempPath = dirname($targetPath) . '/.upload-' . bin2hex(random_bytes(16));
-    if (@file_put_contents($tempPath, $body, LOCK_EX) === false) eaa_fail(507, 'Unable to store file');
+    $writtenBytes = @file_put_contents($tempPath, $body, LOCK_EX);
+    if ($writtenBytes === false || $writtenBytes !== strlen($body)) {
+        @unlink($tempPath);
+        eaa_fail(507, 'Unable to store complete file');
+    }
     @chmod($tempPath, 0600);
     if (!@rename($tempPath, $targetPath)) {
         @unlink($tempPath);
