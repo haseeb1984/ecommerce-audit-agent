@@ -1,0 +1,18 @@
+Options -Indexes
+
+# The private directory contains reports, logos, and nonce state. It must never
+# be served directly, even if a storage key is guessed or copied.
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^private(?:/|$) - [F,L,NC]
+</IfModule>
+
+<Files "config.php">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</Files>
