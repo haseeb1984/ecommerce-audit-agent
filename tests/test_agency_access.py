@@ -404,11 +404,19 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     class OperationalSession:
         def __init__(self):
             self.calls = []
+            self.execute_calls = []
         async def scalar(self, statement):
             self.calls.append(statement)
-            return [member, agency, recent][len(self.calls) - 1]
-        async def execute(self, _statement):
-            raise AssertionError("A recent challenge must stop OTP issuance.")
+            return [
+                SimpleNamespace(email="teammate@example.com"),
+                member,
+                agency,
+                member,
+                recent,
+            ][len(self.calls) - 1]
+        async def execute(self, statement):
+            self.execute_calls.append(statement)
+            return SimpleNamespace(rowcount=1)
         async def commit(self):
             raise AssertionError("A cooldown response must not issue a new challenge.")
 
@@ -429,8 +437,11 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     )
 
     assert result["status"] == "accepted"
-    assert len(operational.calls) == 3
+    assert len(operational.calls) == 5
+    assert len(operational.execute_calls) == 1
     assert operational.calls[0]._for_update_arg is not None
+    assert operational.calls[2]._for_update_arg is not None
+    assert operational.calls[3]._for_update_arg is not None
 
 
 
