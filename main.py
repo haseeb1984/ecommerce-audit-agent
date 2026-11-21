@@ -9636,6 +9636,10 @@ async def admin_customer_account_action(
         "reason": payload.reason.strip(),
         "operational_sync": "queued",
     })
+    # Persist the canonical action audit before the independent Hostinger
+    # mirror update. The lifecycle outbox remains the recovery path if that
+    # operational transaction fails after the canonical action is committed.
+    await db.commit()
 
     if payload.action in {"suspend", "reactivate"}:
         active = payload.action == "reactivate"
