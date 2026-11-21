@@ -440,6 +440,21 @@ async def _release_scan_reservation(reservation_id: int | None) -> None:
         )
 
 
+async def _confirm_scan_job_lease(
+    job_id: str,
+    worker_id: str,
+    lease_unconfirmed: asyncio.Event,
+) -> bool:
+    """Renew and confirm queue ownership immediately before committing billable work."""
+    if lease_unconfirmed.is_set():
+        return False
+    async with HostingerAsyncSessionLocal() as operational_db:
+        owned = await renew_scan_job_lease(
+            operational_db, job_id=job_id, worker_id=worker_id,
+        )
+    return bool(owned and not lease_unconfirmed.is_set())
+
+
 async def process_one_scan(worker_id: str) -> dict:
     if HostingerAsyncSessionLocal is None:
         raise RuntimeError("Hostinger operational database is not configured.")
@@ -510,6 +525,12 @@ async def process_one_scan(worker_id: str) -> dict:
                 reserved_at = existing_lead.created_at or datetime.now(timezone.utc)
 
         result = await _run_audit_with_lease_guard(target_url, lease_unconfirmed)
+
+        # The audit guard may return just before a lease expires or ownership is
+        # reclaimed. Renew under the operational DB's owner predicate before
+        # writing the billable lead to PostgreSQL.
+        if not await _confirm_scan_job_lease(job_id, worker_id, lease_unconfirmed):
+            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
 
         # Re-check entitlement after the external audit and serialize the final
         # quota commit with Paddle/admin license transitions. A pause, cancellation,
