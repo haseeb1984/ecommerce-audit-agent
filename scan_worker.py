@@ -500,12 +500,31 @@ async def process_one_scan(worker_id: str) -> dict:
 
         result = await _run_audit_with_lease_guard(target_url, lease_unconfirmed)
 
-        # Persist the successful quota consumption in Supabase exactly once per scan job.
+        # Re-check entitlement after the external audit and serialize the final
+        # quota commit with Paddle/admin license transitions. A pause, cancellation,
+        # expiry, or admin suspension during a long-running scan must not create a
+        # newly billable lead after access has been revoked.
         async with AsyncSessionLocal() as licensing_db:
+            current_license = await licensing_db.scalar(
+                select(SoftwareLicense)
+                .where(SoftwareLicense.license_key == license_key)
+                .with_for_update()
+            )
+            if current_license is None:
+                raise HTTPException(status_code=403, detail="LICENSE_NOT_FOUND")
             existing_lead = await licensing_db.scalar(
                 select(AuditLead).where(AuditLead.source_job_id == job_id)
             )
             if existing_lead is None:
+                current_expiry = current_license.expires_at
+                if current_expiry is not None and current_expiry.tzinfo is None:
+                    current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+                if (
+                    not current_license.is_active
+                    or (current_expiry is not None and current_expiry <= datetime.now(timezone.utc))
+                ):
+                    raise HTTPException(status_code=403, detail="LICENSE_INACTIVE_OR_EXPIRED")
+                license_obj = current_license
                 lead = AuditLead(
                     license_id=license_obj.id,
                     domain=target_url.split("/")[2],
