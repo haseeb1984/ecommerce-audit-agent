@@ -51,7 +51,6 @@ async def migrate(batch_size: int) -> tuple[int, int]:
                 for report in rows:
                     payload = bytes(report.pdf_bytes or b"")
                     if not payload.startswith(b"%PDF-"):
-                        skipped_or_failed += 1
                         logger.error("Report row rejected: stored payload is not a PDF.")
                         raise RuntimeError("A legacy report payload failed PDF signature validation.")
 
