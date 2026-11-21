@@ -16,13 +16,13 @@
 <a class="screen-reader-text" href="#main-content"><?php esc_html_e('Skip to content', 'ecommerce-audit-agent'); ?></a>
 <header class="site-header">
   <div class="wrap site-nav">
-    <a class="site-brand" href="<?php echo esc_url(home_url('/')); ?>" aria-label="<?php echo esc_attr(get_bloginfo('name')); ?>">
+    <div class="site-brand">
       <?php if (has_custom_logo()) : ?>
         <?php the_custom_logo(); ?>
       <?php else : ?>
-        <span><?php echo esc_html(get_bloginfo('name') ?: 'Ecommerce Audit Agent'); ?></span>
+        <a class="site-brand" href="<?php echo esc_url(home_url('/')); ?>"><?php echo esc_html(get_bloginfo('name') ?: 'Ecommerce Audit Agent'); ?></a>
       <?php endif; ?>
-    </a>
+    </div>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="eaa-primary-menu"><?php esc_html_e('Menu', 'ecommerce-audit-agent'); ?></button>
     <nav class="primary-nav" id="eaa-primary-menu" aria-label="<?php esc_attr_e('Primary navigation', 'ecommerce-audit-agent'); ?>">
       <?php
