@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -29,6 +31,15 @@ async def migrate(batch_size: int) -> tuple[int, int]:
     if not storage_configured():
         raise RuntimeError("Configure HOSTINGER_STORAGE_BASE_URL and HOSTINGER_STORAGE_HMAC_SECRET first.")
 
+    retention_raw = os.getenv("REPORT_RETENTION_DAYS", "7").strip()
+    try:
+        retention_days = int(retention_raw)
+    except ValueError:
+        raise RuntimeError("REPORT_RETENTION_DAYS must be an integer.") from None
+    if not 1 <= retention_days <= 3650:
+        raise RuntimeError("REPORT_RETENTION_DAYS must be between 1 and 3650.")
+    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
     migrated = 0
     skipped_or_failed = 0
     async with AsyncSessionLocal() as db:
@@ -38,6 +49,8 @@ async def migrate(batch_size: int) -> tuple[int, int]:
                 .where(
                     AuditReport.pdf_bytes.is_not(None),
                     AuditReport.storage_key.is_(None),
+                    AuditReport.pdf_deleted_at.is_(None),
+                    AuditReport.created_at > retention_cutoff,
                 )
                 .order_by(AuditReport.id.asc())
                 .limit(batch_size)
