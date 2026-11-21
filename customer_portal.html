@@ -61,8 +61,9 @@
   <div><label for="brandName">Brand name</label><input id="brandName" type="text" maxlength="100" placeholder="Your agency name"></div>
   <div><label for="brandColor">Primary brand color</label><input id="brandColor" type="color" value="#155a8a" style="width:100%;min-height:44px"></div>
 </div>
-<label for="brandLogoUrl">Logo URL (HTTPS)</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.png">
-<div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
+<label for="brandLogoFile">Upload logo (PNG, JPEG, or WebP; max 5 MB)</label><input id="brandLogoFile" type="file" accept="image/png,image/jpeg,image/webp">
+<label for="brandLogoUrl">Or use an external HTTPS logo URL</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.png">
+<div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="uploadBrandLogo" class="secondary" type="button" disabled>Upload logo</button><button id="removeBrandLogo" class="secondary" type="button" disabled>Remove logo</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
 <div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to load white-label settings.</div>
 </section>
 <section class="panel" id="agencyPanel" aria-labelledby="agencyHeading" hidden>
@@ -238,7 +239,7 @@
   }
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "uploadBrandLogo", "removeBrandLogo", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
@@ -756,7 +757,7 @@
     const response = await api("/api/v1/account/branding");
     const branding = await response.json();
     $("brandName").value = branding.brand_name || "";
-    $("brandLogoUrl").value = branding.logo_url || "";
+    $("brandLogoUrl").value = branding.logo_stored ? "" : (branding.logo_url || "");
     $("brandColor").value = /^#[0-9a-fA-F]{6}$/.test(branding.primary_color || "") ? branding.primary_color : "#155a8a";
     applyBranding(branding);
     setStatus("brandingStatus", branding.configured ? "Saved white-label settings loaded." : "No custom branding saved yet. Set your brand details and save.", "success");
@@ -779,10 +780,40 @@
       });
       const saved = await response.json();
       $("brandName").value = saved.brand_name || brandName;
-      $("brandLogoUrl").value = saved.logo_url || "";
+      $("brandLogoUrl").value = saved.logo_stored ? "" : (saved.logo_url || "");
       $("brandColor").value = saved.primary_color || primaryColor;
       applyBranding(saved);
       setStatus("brandingStatus", "White-label branding saved and applied to this portal.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message, "error");
+    } finally { button.disabled = !credential && !sessionToken; }
+  }
+  async function uploadBrandLogo() {
+    const file = $("brandLogoFile").files && $("brandLogoFile").files[0];
+    if (!file) { setStatus("brandingStatus", "Choose a PNG, JPEG, or WebP logo first.", "error"); return; }
+    if (file.size > 5 * 1024 * 1024) { setStatus("brandingStatus", "Logo must be 5 MB or smaller.", "error"); return; }
+    const button = $("uploadBrandLogo"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/branding/logo", {
+        method: "POST", headers: {"Content-Type": file.type}, body: file
+      });
+      const saved = await response.json();
+      $("brandLogoFile").value = "";
+      $("brandLogoUrl").value = "";
+      applyBranding({brand_name: $("brandName").value, primary_color: $("brandColor").value, logo_url: saved.logo_url});
+      setStatus("brandingStatus", "Logo uploaded to private storage and applied.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message, "error");
+    } finally { button.disabled = !credential && !sessionToken; }
+  }
+  async function removeBrandLogo() {
+    const button = $("removeBrandLogo"); button.disabled = true;
+    try {
+      await api("/api/v1/account/branding/logo", {method: "DELETE"});
+      $("brandLogoFile").value = "";
+      $("brandLogoUrl").value = "";
+      applyBranding({brand_name: $("brandName").value, primary_color: $("brandColor").value, logo_url: null});
+      setStatus("brandingStatus", "Logo removed.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
     } finally { button.disabled = !credential && !sessionToken; }
@@ -2528,6 +2559,8 @@
     catch (error) { setStatus("agencyStatus", error.message, "error"); }
   });
   $("saveBranding").addEventListener("click", saveBranding);
+  $("uploadBrandLogo").addEventListener("click", uploadBrandLogo);
+  $("removeBrandLogo").addEventListener("click", removeBrandLogo);
   $("refreshBranding").addEventListener("click", async () => {
     try { await loadBranding(); }
     catch (error) { setStatus("brandingStatus", error.message, "error"); }
