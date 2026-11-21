@@ -119,7 +119,7 @@ function eaa_theme_proxy_plans() {
         }
         $features = array();
         foreach ($feature_keys as $feature_key) {
-            $features[$feature_key] = !empty($plan['features'][$feature_key]);
+            $features[$feature_key] = is_array($plan['features'] ?? null) && !empty($plan['features'][$feature_key]);
         }
         $safe_plan = array(
             'tier' => $tier,
@@ -395,7 +395,7 @@ function eaa_theme_settings_page() {
         <?php settings_fields('eaa_theme_settings'); ?>
         <table class="form-table" role="presentation">
           <tr><th scope="row"><label for="eaa_theme_api_base"><?php esc_html_e('SaaS API base URL', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="url" id="eaa_theme_api_base" name="eaa_theme_api_base" value="<?php echo esc_attr(eaa_theme_api_base()); ?>" required><p class="description"><?php esc_html_e('Must be an HTTPS origin. Defaults to the existing Ecommerce Audit Agent deployment.', 'ecommerce-audit-agent'); ?></p></td></tr>
-          <tr><th scope="row"><label for="eaa_theme_support_email"><?php esc_html_e('Public support email', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="email" id="eaa_theme_support_email" name="eaa_theme_support_email" value="<?php echo esc_attr(get_option('eaa_theme_support_email', get_option('admin_email'))); ?>"><p class="description"><?php esc_html_e('Contact form delivery still uses the WordPress administrator mailbox until SMTP is configured.', 'ecommerce-audit-agent'); ?></p></td></tr>
+          <tr><th scope="row"><label for="eaa_theme_support_email"><?php esc_html_e('Public support email', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="email" id="eaa_theme_support_email" name="eaa_theme_support_email" value="<?php echo esc_attr(get_option('eaa_theme_support_email', get_option('admin_email'))); ?>"><p class="description"><?php esc_html_e('Contact form delivery uses this address; configure SMTP separately to ensure reliable delivery.', 'ecommerce-audit-agent'); ?></p></td></tr>
         </table>
         <?php submit_button(); ?>
       </form>
