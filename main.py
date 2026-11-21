@@ -4363,11 +4363,16 @@ async def get_account_branding_logo(
         logger.error("Brand logo read failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Brand logo storage is temporarily unavailable.") from None
     mime_type = item.logo_mime_type or "application/octet-stream"
-    response.headers["Cache-Control"] = "no-store, private"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Content-Disposition"] = "inline; filename=brand-logo"
-    return Response(content=logo_bytes, media_type=mime_type, headers=dict(response.headers))
+    return Response(
+        content=logo_bytes,
+        media_type=mime_type,
+        headers={
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline; filename=brand-logo",
+        },
+    )
 
 
 @app.delete("/api/v1/account/branding/logo")
