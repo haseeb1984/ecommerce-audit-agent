@@ -6898,7 +6898,11 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
         # The marker is committed with the canonical event row. If this commit
         # fails after the Hostinger write, the worker's missing-marker backfill
         # safely replays the idempotent mirror operation.
-        event.billing_mirror_synced_at = datetime.now(timezone.utc)
+        synced_at = datetime.now(timezone.utc)
+        event_updated_at = event.updated_at
+        if event_updated_at is not None and event_updated_at.tzinfo is None:
+            event_updated_at = event_updated_at.replace(tzinfo=timezone.utc)
+        event.billing_mirror_synced_at = max(synced_at, event_updated_at or synced_at)
         # Release both row locks before the caller proceeds with any other work.
         await db.commit()
         return True
