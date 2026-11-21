@@ -113,8 +113,19 @@ $skew = max(30, min(600, (int)($config['clock_skew_seconds'] ?? 300)));
 if (abs(time() - $timestamp) > $skew) eaa_fail(401, 'Request timestamp expired');
 
 [$targetPath, $expectedMime, $maxBytes] = eaa_resolve_key($privateRoot, $storageKey);
-$body = file_get_contents('php://input');
+$contentLength = (string)($_SERVER['CONTENT_LENGTH'] ?? '');
+if ($contentLength !== '' && ctype_digit($contentLength)) {
+    $declaredLength = (int)$contentLength;
+    if ($operation === 'upload' && $declaredLength > $maxBytes) eaa_fail(413, 'File is too large');
+    if ($operation !== 'upload' && $declaredLength > 0) eaa_fail(400, 'Request body must be empty');
+}
+$bodyLimit = $operation === 'upload' ? $maxBytes : 0;
+$inputStream = @fopen('php://input', 'rb');
+if ($inputStream === false) eaa_fail(400, 'Unable to read request body');
+$body = stream_get_contents($inputStream, $bodyLimit + 1);
+fclose($inputStream);
 if ($body === false) eaa_fail(400, 'Unable to read request body');
+if (strlen($body) > $bodyLimit) eaa_fail(413, 'Request body is too large');
 $actualMime = $mime !== '' ? $mime : 'application/octet-stream';
 $canonical = implode("\n", [
     'POST', $timestampRaw, $nonce, $operation, $storageKey, $actualMime, hash('sha256', $body)
