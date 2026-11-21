@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 _REPORT_KEY_RE = re.compile(r"^reports/[a-f0-9]{64}\.pdf$")
@@ -30,6 +30,24 @@ _ALLOWED_UPLOADS = {
 
 class HostingerStorageError(RuntimeError):
     """Storage bridge request failed or returned an invalid response."""
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Never forward signed storage headers or upload bytes to a redirect target."""
+
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+
+def _read_limited_response(response, limit: int) -> bytes:
+    """Read at most limit+1 bytes, rejecting oversized or misleading responses."""
+    declared_length = response.headers.get("Content-Length")
+    if declared_length and declared_length.isdigit() and int(declared_length) > limit:
+        raise HostingerStorageError("Hostinger storage response exceeds the allowed size.")
+    payload = response.read(limit + 1)
+    if len(payload) > limit:
+        raise HostingerStorageError("Hostinger storage response exceeds the allowed size.")
+    return payload
 
 
 @dataclass(frozen=True)
@@ -98,9 +116,15 @@ def _request(operation: str, storage_key: str, body: bytes = b"",
             "X-EAA-Signature": signature,
         },
     )
+    response_limit = (
+        25 * 1024 * 1024 if _REPORT_KEY_RE.fullmatch(storage_key)
+        else 5 * 1024 * 1024 if operation == "download"
+        else 64 * 1024
+    )
     try:
-        with urlopen(request, timeout=30) as response:
-            return response.read()
+        opener = build_opener(_NoRedirectHandler)
+        with opener.open(request, timeout=30) as response:
+            return _read_limited_response(response, response_limit)
     except HTTPError as exc:
         # Do not include response URLs, headers, or request credentials in logs.
         detail = "storage bridge rejected the request"
