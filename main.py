@@ -6895,6 +6895,10 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
 
         if pending is not None:
             await db.delete(pending)
+        # The marker is committed with the canonical event row. If this commit
+        # fails after the Hostinger write, the worker's missing-marker backfill
+        # safely replays the idempotent mirror operation.
+        event.billing_mirror_synced_at = datetime.now(timezone.utc)
         # Release both row locks before the caller proceeds with any other work.
         await db.commit()
         return True
