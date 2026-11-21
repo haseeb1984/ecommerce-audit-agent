@@ -201,3 +201,33 @@ def test_paddle_subscription_webhooks_queue_projection_before_canonical_commit()
         block = source[start:block_end]
         assert "_queue_customer_lifecycle_projection(" in block
         assert block.index("_queue_customer_lifecycle_projection(") < block.index("await db.commit()")
+
+
+def test_license_projection_treats_expired_active_license_as_inactive():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from scan_worker import _license_projection_is_active
+
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    expired = SimpleNamespace(is_active=True, expires_at=now - timedelta(seconds=1))
+    current = SimpleNamespace(is_active=True, expires_at=now + timedelta(seconds=1))
+    no_expiry = SimpleNamespace(is_active=True, expires_at=None)
+    inactive = SimpleNamespace(is_active=False, expires_at=now + timedelta(days=1))
+
+    assert _license_projection_is_active(expired, now) is False
+    assert _license_projection_is_active(current, now) is True
+    assert _license_projection_is_active(no_expiry, now) is True
+    assert _license_projection_is_active(inactive, now) is False
+    assert _license_projection_is_active(None, now) is None
+
+
+def test_admin_expiry_change_queues_effective_access_lifecycle_projection():
+    import inspect
+    import main
+
+    source = inspect.getsource(main.admin_update_client)
+    assert "previous_active = _license_is_current(client, lifecycle_now)" in source
+    assert "current_active = _license_is_current(client, lifecycle_now)" in source
+    assert "if current_active != previous_active:" in source
+    assert 'action="reactivate" if current_active else "suspend"' in source
+    assert "if \"is_active\" in changes and" not in source
