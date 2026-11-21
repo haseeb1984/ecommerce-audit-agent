@@ -41,3 +41,11 @@ def test_wordpress_registration_url_rejects_query_and_fragment():
         with pytest.raises(HTTPException) as exc:
             _normalize_wordpress_registration_url(value)
         assert exc.value.status_code == 422
+
+
+def test_standard_and_agency_registration_share_url_validation():
+    import inspect
+    import main
+
+    assert "_normalize_wordpress_registration_url(payload.site_url)" in inspect.getsource(main.register_wordpress_site)
+    assert "_normalize_wordpress_registration_url(payload.site_url)" in inspect.getsource(main.register_agency_wordpress_site)
