@@ -164,7 +164,7 @@ def test_paddle_lifecycle_transition_queues_customer_projection_only_when_state_
             self.items.append(item)
 
     db = FakeDB()
-    license_obj = SimpleNamespace(license_key="license-123", is_active=False)
+    license_obj = SimpleNamespace(license_key="license-123", is_active=False, expires_at=None)
     now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
 
     assert _queue_customer_lifecycle_projection(db, license_obj, True, now)
@@ -234,3 +234,28 @@ def test_admin_expiry_change_queues_effective_access_lifecycle_projection():
     assert "if current_active != previous_active:" in source
     assert 'action="reactivate" if current_active else "suspend"' in source
     assert "if \"is_active\" in changes and" not in source
+
+
+def test_paddle_lifecycle_projection_suspends_expired_but_raw_active_license():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from main import _queue_customer_lifecycle_projection
+
+    class FakeDB:
+        def __init__(self):
+            self.items = []
+
+        def add(self, item):
+            self.items.append(item)
+
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    db = FakeDB()
+    license_obj = SimpleNamespace(
+        license_key="license-expired",
+        is_active=True,
+        expires_at=now - timedelta(seconds=1),
+    )
+
+    assert _queue_customer_lifecycle_projection(db, license_obj, True, now)
+    assert len(db.items) == 1
+    assert db.items[0].action == "suspend"
