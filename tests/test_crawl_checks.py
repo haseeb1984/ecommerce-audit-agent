@@ -2859,7 +2859,7 @@ async def test_bounded_crawl_reports_parameterized_catalog_links_without_persist
     outcome = next(item for item in outcomes if item.check_id == "ecommerce_catalog.parameterized_internal_urls")
     assert outcome.outcome == "warning"
     assert "Query values are intentionally omitted" in outcome.evidence
-    assert any("Query values were not stored" in item for item in limitations)
+    assert any("Query values were omitted" in item for item in limitations)
 
 
 @pytest.mark.asyncio
