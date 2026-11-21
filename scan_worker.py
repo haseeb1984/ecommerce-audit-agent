@@ -188,6 +188,19 @@ def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bo
         return license_is_active is True
     return action == "revoke_sessions"
 
+def _license_projection_is_active(license_obj, now: datetime | None = None) -> bool | None:
+    """Return canonical effective access state for Hostinger lifecycle projection."""
+    if license_obj is None:
+        return None
+    if not bool(license_obj.is_active):
+        return False
+    expires_at = license_obj.expires_at
+    if expires_at is None:
+        return True
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > (now or datetime.now(timezone.utc))
+
 def _customer_lifecycle_license_lock_query(license_key: str):
     """Lock canonical license state before mirroring lifecycle changes to Hostinger."""
     return (
@@ -661,7 +674,7 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                 canonical_license = await licensing_db.scalar(
                     _customer_lifecycle_license_lock_query(license_key)
                 )
-                license_is_active = bool(canonical_license.is_active) if canonical_license is not None else None
+                license_is_active = _license_projection_is_active(canonical_license)
                 action_applies = _lifecycle_action_applies(action, license_is_active)
                 async with HostingerAsyncSessionLocal() as operational_db:
                     if action_applies and action in {"suspend", "reactivate"}:
