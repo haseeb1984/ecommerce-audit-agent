@@ -40,6 +40,12 @@ class StorageReceipt:
     mime_type: str
 
 
+def storage_configured() -> bool:
+    """Return whether both deployment settings are present; never logs their values."""
+    return bool(os.getenv("HOSTINGER_STORAGE_BASE_URL", "").strip()
+                and os.getenv("HOSTINGER_STORAGE_HMAC_SECRET", ""))
+
+
 def _storage_config() -> tuple[str, bytes]:
     base_url = os.getenv("HOSTINGER_STORAGE_BASE_URL", "").strip().rstrip("/")
     secret = os.getenv("HOSTINGER_STORAGE_HMAC_SECRET", "")
