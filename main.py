@@ -65,6 +65,24 @@ logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
 
 
+def _queue_customer_lifecycle_projection(db, license_obj, was_active: bool, now: datetime | None = None) -> bool:
+    """Queue Hostinger account/session projection after a canonical license state transition."""
+    is_active = bool(license_obj.is_active)
+    if bool(was_active) == is_active:
+        return False
+    queued_at = now or datetime.now(timezone.utc)
+    db.add(CustomerLifecycleSyncOutbox(
+        id=secrets.token_urlsafe(24),
+        license_key=license_obj.license_key,
+        action="reactivate" if is_active else "suspend",
+        status="pending",
+        attempts=0,
+        next_attempt_at=queued_at,
+        created_at=queued_at,
+    ))
+    return True
+
+
 def _license_is_current(license_obj) -> bool:
     """Return true only for an active, non-expired licensing record."""
     if license_obj is None or not bool(license_obj.is_active):
@@ -6083,6 +6101,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=occurred_at,
             updated_at=occurred_at,
         ))
+        _queue_customer_lifecycle_projection(db, license_obj, was_active, now)
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
         if was_active != bool(license_obj.is_active):
@@ -6132,6 +6151,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=occurred_at,
             updated_at=occurred_at,
         ))
+        _queue_customer_lifecycle_projection(db, license_obj, changed, now)
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
         if changed:
@@ -6252,6 +6272,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
             created_at=occurred_at, updated_at=occurred_at,
         ))
+        _queue_customer_lifecycle_projection(db, license_obj, was_active, now)
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
         if was_active != bool(license_obj.is_active) or (plan is not None and not is_canceled and status_supported):
