@@ -886,16 +886,46 @@ async def comprehensive_audit_pdf(
                 )
             else:
                 module_statuses["browser_rendered"] = "partial"
+                result.check_outcomes.append(CheckOutcome(
+                    check_id="browser.rendered_viewport",
+                    category="mobile_ux",
+                    page_url=target_url,
+                    outcome="not_assessed",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="isolated rendered-browser diagnostics",
+                    evidence="The browser service responded but did not render a page successfully; rendered DOM and viewport checks were not assessed.",
+                    evidence_ref="browser.rendered_viewport",
+                ))
                 result.limitations.append(
                     "The isolated browser service responded but could not complete page navigation; rendered DOM and viewport checks remain not assessed."
                 )
         except BrowserAuditUnavailable as browser_exc:
             module_statuses["browser_rendered"] = "unavailable"
+            result.check_outcomes.append(CheckOutcome(
+                check_id="browser.rendered_viewport",
+                category="mobile_ux",
+                page_url=target_url,
+                outcome="not_assessed",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="isolated rendered-browser diagnostics",
+                evidence=f"Rendered-browser checks were not assessed because the browser service was unavailable ({type(browser_exc).__name__}).",
+                evidence_ref="browser.rendered_viewport",
+            ))
             result.limitations.append(
                 f"Rendered-browser diagnostics were not assessed ({str(browser_exc)}); static HTML signals do not establish rendered mobile behavior."
             )
         except Exception as browser_exc:
             module_statuses["browser_rendered"] = "error"
+            result.check_outcomes.append(CheckOutcome(
+                check_id="browser.rendered_viewport",
+                category="mobile_ux",
+                page_url=target_url,
+                outcome="not_assessed",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="isolated rendered-browser diagnostics",
+                evidence=f"Rendered-browser checks were not assessed after a safe failure ({type(browser_exc).__name__}).",
+                evidence_ref="browser.rendered_viewport",
+            ))
             result.limitations.append(
                 f"Rendered-browser diagnostics failed safely ({type(browser_exc).__name__}); no browser pass is inferred."
             )
