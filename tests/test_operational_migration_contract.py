@@ -186,24 +186,24 @@ def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constrain
 
 
 def test_support_note_migration_refuses_ambiguous_email_to_license_mapping():
-    from types import SimpleNamespace
+    import ast
 
-    from scripts.migrate_operational_data_to_hostinger import _billing_license_map
-
-    billing_rows = [
-        SimpleNamespace(recipient_email=" Shared@Example.com ", license_id=1),
-        SimpleNamespace(recipient_email="shared@example.com", license_id=2),
-        SimpleNamespace(recipient_email="single@example.com", license_id=3),
-        SimpleNamespace(recipient_email="orphan@example.com", license_id=None),
-    ]
-
-    resolved, ambiguous = _billing_license_map(
-        billing_rows,
-        {1: "license-one", 2: "license-two", 3: "license-three"},
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    migrate = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
     )
+    segment = ast.get_source_segment(source, migrate)
 
-    assert resolved == {"single@example.com": "license-three"}
-    assert ambiguous == {"shared@example.com"}
+    assert "if license_count > 1:" in segment
+    assert "note_ambiguous += 1" in segment
+    assert "continue" in segment
+    assert "if license_count is None or license_count == 0:" in segment
+    assert "note_unmapped += 1" in segment
+    assert "AdminCustomerNote(**expected_note)" in segment
 
 
 
@@ -399,29 +399,33 @@ def test_account_and_support_note_migration_streams_source_and_batches_target_lo
     assert "_stream_rows(source, AccountSession)" not in migrate_segment
     assert "_stream_rows(source, WordPressSite)" not in migrate_segment
     assert "account_candidates = {}" not in migrate_segment
-    assert '"source": account_candidate_count' in migrate_segment
-    assert "_stream_rows(source, SaaSAdminCustomerNote)" in migrate_segment
+    assert '"source_candidates": account_candidate_count' in migrate_segment
+    assert "source.stream(_support_note_migration_statement())" in migrate_segment
+    assert "_stream_rows(source, SaaSAdminCustomerNote)" not in migrate_segment
     assert "tuple_(CustomerAccount.license_key, CustomerAccount.email).in_(identity_keys)" in migrate_segment
     assert "AdminCustomerNote.id.in_(list(expected_by_id))" in migrate_segment
     assert '"source": note_source_count' in migrate_segment
 
 
-def test_operational_license_identity_map_uses_streaming_projection():
+def test_operational_license_identity_lookup_is_batched_per_source_page():
     import ast
 
     source = (
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
     tree = ast.parse(source)
-    license_map = next(
+    copy_rows = next(
         node for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_license_map"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_copy_rows"
     )
-    segment = ast.get_source_segment(source, license_map)
+    segment = ast.get_source_segment(source, copy_rows)
 
-    assert "source.stream(" in segment
-    assert "SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name" in segment
-    assert ".scalars().all()" not in segment
+    assert "license_ids = {" in segment
+    assert "row.license_id for row in rows" in segment
+    assert "SoftwareLicense.id.in_(license_ids)" in segment
+    assert "license_key_by_id = {" in segment
+    assert "source.stream_scalars(statement)" in segment
+    assert "async for row in result" in segment
     assert "await result.close()" in segment
 
 
