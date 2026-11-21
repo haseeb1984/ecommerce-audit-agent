@@ -244,7 +244,7 @@
   }
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "uploadBrandLogo", "removeBrandLogo", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "uploadBrandLogo", "removeBrandLogo", "brandLogoFile", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
