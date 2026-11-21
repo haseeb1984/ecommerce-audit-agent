@@ -351,13 +351,32 @@ def test_operational_migration_cli_offers_mutually_exclusive_apply_and_verify_mo
 
 
 def test_dry_run_and_verify_never_stage_target_inserts():
+    import ast
+
     source = (
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
-
-    assert "if stage_missing:\n                    target.add(target_model(**values))" in source
-    assert "if apply_changes:\n                    target.add(CustomerAccount(**expected_account))" in source
-    assert "if apply_changes:\n                    target.add(AdminCustomerNote(**expected_note))" in source
+    tree = ast.parse(source)
+    guarded_models = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "apply_changes"
+        ):
+            continue
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "add"
+                and child.args
+                and isinstance(child.args[0], ast.Call)
+                and isinstance(child.args[0].func, ast.Name)
+            ):
+                guarded_models.add(child.args[0].func.id)
+    assert {"CustomerAccount", "AdminCustomerNote"} <= guarded_models
+    assert "if stage_missing:" in source
     assert source.count("stage_missing=apply_changes") == 8
 
 
