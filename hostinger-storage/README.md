@@ -59,6 +59,8 @@ Do not put the secret in WordPress settings, a public page, or a committed file.
 - Uploads are bounded and checked against their expected MIME type and file
   signature. SVG is deliberately not accepted.
 - Download and delete operations require a fresh valid signature.
+- Customer logo previews are streamed through the authenticated FastAPI account
+  endpoint; storage keys and Hostinger file URLs are never sent to the browser.
 - The API never accepts a caller-supplied filesystem path.
 
 URL encoding is not treated as an authorization control. No permanent public
@@ -94,11 +96,12 @@ Before migrating existing reports:
 1. Back up Supabase PostgreSQL.
 2. Upload the PHP bridge and complete the direct-access, HMAC, replay, and
    upload/download/delete checks above.
-3. Apply `migrations/20261121_hostinger_report_storage.sql` to PostgreSQL.
-4. Set `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`,
+3. Apply `migrations/20261121_hostinger_report_storage.sql` to Supabase PostgreSQL.
+4. Apply `migrations/20261121_hostinger_branding_storage.mysql.sql` to Hostinger MySQL.
+5. Set `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`,
    `REPORT_RETENTION_DAYS=7`, and a strong `CRON_SECRET` in the FastAPI
    runtime.
-5. Run the verified migration from the repository root:
+6. Run the verified migration from the repository root:
 
 ```bash
 python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10
@@ -115,6 +118,16 @@ The daily Vercel Cron calls
 `CRON_SECRET` in the deployment environment; the endpoint rejects requests
 without the matching Bearer token. If the FastAPI runtime is not Vercel, set up
 an equivalent daily HTTPS scheduler with the same Authorization header.
+
+The report cleanup job deliberately ignores legacy PostgreSQL-only PDFs. The
+migration script must first upload and verify those objects; only Hostinger
+storage references are eligible for automatic expiry deletion.
+
+Customer logos use the separate `logos/` storage folder and are not subject to
+report retention. The customer portal uploads PNG, JPEG, or WebP files through
+the authenticated API; logo reads are proxied through the same customer
+authorization check. Replacing or removing a logo deletes its prior private
+object where possible.
 
 Retention is calculated dynamically from each report's original
 `created_at` plus the current `REPORT_RETENTION_DAYS`. Changing the setting
