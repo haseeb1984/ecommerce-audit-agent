@@ -110,3 +110,29 @@ def test_successful_live_mirror_persists_recovery_watermark():
     source = inspect.getsource(main._sync_billing_event_to_hostinger)
     assert "event.billing_mirror_synced_at = datetime.now(timezone.utc)" in source
     assert source.index("event.billing_mirror_synced_at =") < source.index("await db.commit()", source.index("if pending is not None:"))
+
+
+def test_customer_email_change_invalidates_watermark_and_cleans_completed_outbox_first():
+    import inspect
+    import scan_worker
+
+    update_sql = str(
+        _compile_sql(scan_worker._customer_email_identity_update_statement(7, "old@example.com", "new@example.com"))
+    ).lower()
+    cleanup_sql = str(
+        _compile_sql(scan_worker._customer_email_identity_completed_billing_outbox_cleanup_statement(7, "old@example.com"))
+    ).lower()
+    worker_source = inspect.getsource(scan_worker.reconcile_customer_email_identity_outbox)
+
+    assert "billing_mirror_synced_at=null" in update_sql
+    assert "recipient_email" in update_sql
+    assert "status" in cleanup_sql and "completed" in cleanup_sql
+    assert "billing_mirror_sync_outbox.event_id in" in cleanup_sql
+    assert worker_source.index("_customer_email_identity_completed_billing_outbox_cleanup_statement(") < worker_source.index(
+        "_customer_email_identity_update_statement("
+    )
+
+
+def _compile_sql(statement):
+    from sqlalchemy.dialects import postgresql
+    return statement.compile(dialect=postgresql.dialect())
