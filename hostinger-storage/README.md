@@ -54,6 +54,7 @@ Do not put the secret in WordPress settings, a public page, or a committed file.
 - Every bridge operation is a POST signed with HMAC-SHA256.
 - The Python client refuses HTTP redirects so signed headers and upload bodies are never forwarded to a redirect target.
 - Storage responses are read with operation-specific size limits, including when the server omits `Content-Length`.
+- If an upload times out after the bridge may have stored the object, the client attempts an idempotent signed delete to avoid orphaned files.
 - Timestamp validation and a locked nonce cache reject stale/replayed requests.
 - Storage keys are random 256-bit identifiers, constrained to fixed report/logo
   patterns, and sent in signed headers rather than URL paths.
