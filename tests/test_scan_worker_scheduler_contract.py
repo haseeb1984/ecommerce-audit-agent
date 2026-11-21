@@ -29,3 +29,17 @@ def test_scheduled_worker_has_visible_configuration_validation_and_bounded_retri
     assert '--header "Authorization: Bearer $CRON_SECRET"' in workflow
     # The scheduler must not silently skip when its endpoint variable is absent.
     assert "if: ${{ vars.SCAN_WORKER_URL" not in workflow
+
+
+
+def test_scan_worker_rechecks_license_under_lock_before_first_quota_commit():
+    worker = (ROOT / "scan_worker.py").read_text(encoding="utf-8")
+
+    audit_complete = worker.index("result = await _run_audit_with_lease_guard")
+    revalidation = worker.index("select(SoftwareLicense)", audit_complete)
+    row_lock = worker.index(".with_for_update()", revalidation)
+    first_lead_insert = worker.index("lead = AuditLead(", row_lock)
+    entitlement_check = worker.index("LICENSE_INACTIVE_OR_EXPIRED", row_lock)
+
+    assert audit_complete < revalidation < row_lock < entitlement_check < first_lead_insert
+    assert "if existing_lead is None:" in worker[row_lock:first_lead_insert]
