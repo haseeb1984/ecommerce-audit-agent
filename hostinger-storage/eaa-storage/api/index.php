@@ -34,8 +34,12 @@ function eaa_claim_nonce(string $privateRoot, string $nonce, int $timestamp): bo
     try {
         $entries = [];
         if (is_file($cachePath)) {
-            $decoded = json_decode((string)@file_get_contents($cachePath), true);
-            if (is_array($decoded)) $entries = $decoded;
+            $rawCache = @file_get_contents($cachePath);
+            if ($rawCache === false) return false;
+            $decoded = json_decode($rawCache, true);
+            // Fail closed if replay state is corrupt; never silently reset the nonce cache.
+            if (!is_array($decoded)) return false;
+            $entries = $decoded;
         }
         $cutoff = time() - 600;
         foreach ($entries as $key => $seenAt) {
