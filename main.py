@@ -104,6 +104,31 @@ def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool)
         )
 
 
+def _normalize_wordpress_registration_url(raw_url: str) -> tuple[str, str]:
+    """Validate and canonicalize a standard-port HTTPS WordPress site URL."""
+    try:
+        parsed = urlsplit(raw_url.strip())
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        raise HTTPException(status_code=422, detail="WordPress site URL is malformed.") from None
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
+    if parsed.query or parsed.fragment or len(hostname) > 253:
+        raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
+    if port not in (None, 443):
+        raise HTTPException(status_code=422, detail="WordPress site URL must use the standard HTTPS port.")
+    try:
+        host = hostname.encode("idna").decode("ascii").lower().rstrip(".")
+    except UnicodeError:
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from None
+    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    path = parsed.path.rstrip("/")
+    site_url = f"https://{host}{path}/" if path else f"https://{host}/"
+    return site_url, host
+
+
 def _report_retention_days() -> int:
     """Read the shared retention policy; it is evaluated against each report's original creation time."""
     raw_value = os.getenv("REPORT_RETENTION_DAYS", "7").strip()
@@ -2010,19 +2035,10 @@ async def register_wordpress_site(
     ).with_for_update())
     if locked_license_id is None:
         raise HTTPException(status_code=404, detail="The license is no longer available for WordPress registration.")
-    raw_url = payload.site_url.strip()
-    parsed = urlsplit(raw_url)
-    if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
-    if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
-        raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
-    host = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
-    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
-        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    site_url, host = _normalize_wordpress_registration_url(payload.site_url)
     admin_email = payload.admin_email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
-    site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
     owner_email = await operational_db.scalar(select(CustomerBillingEvent.recipient_email).where(
         CustomerBillingEvent.license_key == license_obj.license_key,
