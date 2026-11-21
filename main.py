@@ -58,6 +58,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
+from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file
 from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
@@ -83,6 +84,52 @@ def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool)
             status_code=409,
             detail="This license already has a connected WordPress site. Disconnect it before connecting another site.",
         )
+
+
+def _report_retention_days() -> int:
+    """Read the shared retention policy; it is evaluated against each report's original creation time."""
+    raw_value = os.getenv("REPORT_RETENTION_DAYS", "7").strip()
+    try:
+        days = int(raw_value)
+    except (TypeError, ValueError):
+        raise RuntimeError("REPORT_RETENTION_DAYS must be an integer.") from None
+    if not 1 <= days <= 3650:
+        raise RuntimeError("REPORT_RETENTION_DAYS must be between 1 and 3650.")
+    return days
+
+
+def _report_expires_at(report: AuditReport) -> datetime:
+    created_at = report.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at + timedelta(days=_report_retention_days())
+
+
+def _report_pdf_available(report: AuditReport, now: datetime | None = None) -> bool:
+    current = now or datetime.now(timezone.utc)
+    if report.pdf_deleted_at is not None or _report_expires_at(report) <= current:
+        return False
+    return bool(report.storage_key or report.pdf_bytes is not None)
+
+
+async def _read_report_pdf(report: AuditReport) -> bytes:
+    """Read a report only while its configured retention window is active."""
+    if not _report_pdf_available(report):
+        raise HTTPException(
+            status_code=410,
+            detail="This PDF has expired or is no longer available. The report history remains in your dashboard.",
+        )
+    if report.storage_key:
+        try:
+            return await asyncio.to_thread(
+                download_file, report.storage_key, report.pdf_sha256
+            )
+        except HostingerStorageError as exc:
+            logger.error("Report storage read failed (error_type=%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Report file storage is temporarily unavailable.") from None
+    if report.pdf_bytes is not None:
+        return bytes(report.pdf_bytes)
+    raise HTTPException(status_code=410, detail="The report PDF is no longer available.")
 
 
 app = FastAPI(
@@ -612,6 +659,7 @@ async def comprehensive_audit_pdf(
 
     license_id = license_obj.id
     reservation_id = None
+    uploaded_storage_key = None
     try:
         audit_started_at_utc = datetime.now(timezone.utc).isoformat()
         module_statuses = {
@@ -1148,10 +1196,25 @@ async def comprehensive_audit_pdf(
                 "query_strings_and_fragments_removed_from_evidence_urls": True,
             },
         }
+        storage_receipt = None
+        if storage_configured():
+            try:
+                storage_receipt = await asyncio.to_thread(upload_report, pdf_bytes)
+                uploaded_storage_key = storage_receipt.storage_key
+            except HostingerStorageError as exc:
+                logger.error("Report storage upload failed (error_type=%s)", type(exc).__name__)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Report storage is not available; the audit report was not saved.",
+                ) from None
+
         report = AuditReport(
             license_id=license_id,
             domain=urlsplit(target_url).hostname or (metrics.domain if metrics else "website"),
-            pdf_bytes=pdf_bytes,
+            pdf_bytes=None if storage_receipt else pdf_bytes,
+            storage_key=storage_receipt.storage_key if storage_receipt else None,
+            pdf_sha256=storage_receipt.sha256 if storage_receipt else None,
+            pdf_byte_size=storage_receipt.byte_size if storage_receipt else len(pdf_bytes),
             coverage_json=json.dumps(report_metadata, separators=(",", ":")),
             finding_count=len(result.findings),
             created_at=reserved_at,
@@ -1177,6 +1240,7 @@ async def comprehensive_audit_pdf(
         )
         await db.commit()
         reservation_id = None
+        uploaded_storage_key = None
 
         hostname = urlsplit(target_url).hostname or "website"
         safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:180]
@@ -1191,6 +1255,12 @@ async def comprehensive_audit_pdf(
         )
     except HTTPException as exc:
         await db.rollback()
+        if uploaded_storage_key:
+            try:
+                await asyncio.to_thread(delete_file, uploaded_storage_key)
+            except HostingerStorageError as cleanup_exc:
+                logger.error("Uncommitted report cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+            uploaded_storage_key = None
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
@@ -1201,6 +1271,12 @@ async def comprehensive_audit_pdf(
         raise
     except Exception as exc:
         await db.rollback()
+        if uploaded_storage_key:
+            try:
+                await asyncio.to_thread(delete_file, uploaded_storage_key)
+            except HostingerStorageError as cleanup_exc:
+                logger.error("Uncommitted report cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+            uploaded_storage_key = None
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
@@ -4808,6 +4884,9 @@ async def list_audit_reports(
                 "domain": row.domain,
                 "finding_count": row.finding_count,
                 "created_at": row.created_at.isoformat(),
+                "pdf_expires_at": _report_expires_at(row).isoformat(),
+                "pdf_days_remaining": max(0, int((_report_expires_at(row) - datetime.now(timezone.utc)).total_seconds() // 86400)),
+                "pdf_available": _report_pdf_available(row),
                 "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
                 "download_url": f"/api/v1/reports/{row.id}/pdf",
                 "coverage_url": f"/api/v1/reports/{row.id}/coverage",
@@ -4831,9 +4910,10 @@ async def download_audit_report(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
+    pdf_bytes = await _read_report_pdf(row)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", row.domain)[:180] or "website"
     return Response(
-        content=row.pdf_bytes,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{row.id}.pdf"',
@@ -6355,11 +6435,12 @@ async def email_audit_report(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    if len(row.pdf_bytes) > 10 * 1024 * 1024:
+    pdf_bytes = await _read_report_pdf(row)
+    if len(pdf_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Report exceeds the email attachment size limit.")
     try:
         await asyncio.to_thread(
-            _send_pdf_email, recipient, row.domain, row.id, row.pdf_bytes
+            _send_pdf_email, recipient, row.domain, row.id, pdf_bytes
         )
     except RuntimeError as exc:
         if str(exc) == "Email delivery is not configured":
@@ -8364,9 +8445,10 @@ async def admin_download_audit_report(report_id: int, request: Request,
     report = (await db.execute(select(AuditReport).where(AuditReport.id == report_id))).scalar_one_or_none()
     if report is None:
         raise HTTPException(status_code=404, detail="Audit report not found.")
+    pdf_bytes = await _read_report_pdf(report)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
     return Response(
-        content=report.pdf_bytes,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"',
