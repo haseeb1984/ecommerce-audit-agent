@@ -228,7 +228,12 @@ class CustomerBranding(HostingerBase):
     __tablename__ = "customer_branding"
     license_key = Column(String(100), primary_key=True)
     brand_name = Column(String(100), nullable=False)
+    # logo_url is retained for legacy external HTTPS logos during transition.
     logo_url = Column(String(2048), nullable=True)
+    logo_storage_key = Column(String(1024), nullable=True)
+    logo_sha256 = Column(String(64), nullable=True)
+    logo_mime_type = Column(String(100), nullable=True)
+    logo_byte_size = Column(BigInteger, nullable=True)
     primary_color = Column(String(7), nullable=False, default="#155a8a")
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
