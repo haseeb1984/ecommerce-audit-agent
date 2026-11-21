@@ -8459,6 +8459,64 @@ async def admin_download_audit_report(report_id: int, request: Request,
     )
 
 
+@app.get("/api/v1/internal/report-retention/cleanup", include_in_schema=False)
+async def cleanup_expired_report_pdfs(
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Daily scheduler endpoint; removes expired PDF objects but preserves report metadata."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    authorization = request.headers.get("authorization", "")
+    expected_authorization = f"Bearer {cron_secret}" if cron_secret else ""
+    if not cron_secret or not hmac.compare_digest(authorization, expected_authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    retention_days = _report_retention_days()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=retention_days)
+    from sqlalchemy import select, or_
+
+    rows = (await db.execute(
+        select(AuditReport)
+        .where(
+            AuditReport.created_at <= cutoff,
+            AuditReport.pdf_deleted_at.is_(None),
+            or_(
+                AuditReport.storage_key.is_not(None),
+                AuditReport.pdf_bytes.is_not(None),
+            ),
+        )
+        .order_by(AuditReport.created_at.asc(), AuditReport.id.asc())
+        .limit(100)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+
+    deleted = 0
+    failed = 0
+    for report in rows:
+        if report.storage_key:
+            try:
+                await asyncio.to_thread(delete_file, report.storage_key)
+            except HostingerStorageError as exc:
+                failed += 1
+                logger.error("Expired report deletion failed (error_type=%s)", type(exc).__name__)
+                continue
+        report.storage_key = None
+        report.pdf_bytes = None
+        report.pdf_deleted_at = now
+        deleted += 1
+
+    await db.commit()
+    return {
+        "status": "completed",
+        "retention_days": retention_days,
+        "processed": len(rows),
+        "deleted": deleted,
+        "failed": failed,
+        "has_more": len(rows) == 100,
+    }
+
+
 @app.get("/api/v1/admin/reports/{report_id}/evidence")
 async def admin_report_evidence(
     report_id: int,
