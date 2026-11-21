@@ -204,6 +204,44 @@ def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
     item.last_error = None
 
 
+async def _backfill_missing_billing_mirror_outbox(
+    licensing_db, *, now: datetime, batch_size: int
+) -> int:
+    """Recreate retry rows for committed billing events whose mirror bookkeeping was lost."""
+    has_outbox = select(BillingMirrorSyncOutbox.event_id).where(
+        BillingMirrorSyncOutbox.event_id == PaymentWebhookEvent.event_id
+    ).exists()
+    stale_mirror = or_(
+        PaymentWebhookEvent.billing_mirror_synced_at.is_(None),
+        PaymentWebhookEvent.billing_mirror_synced_at < PaymentWebhookEvent.updated_at,
+    )
+    events = list((await licensing_db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.license_id.is_not(None),
+            stale_mirror,
+            ~has_outbox,
+        )
+        .order_by(
+            PaymentWebhookEvent.created_at.asc(),
+            PaymentWebhookEvent.event_id.asc(),
+        )
+        .limit(batch_size)
+        .with_for_update(skip_locked=True)
+    )).scalars().all())
+    for event in events:
+        licensing_db.add(BillingMirrorSyncOutbox(
+            event_id=event.event_id,
+            status="pending",
+            attempts=0,
+            next_attempt_at=now,
+            created_at=event.created_at,
+        ))
+    if events:
+        await licensing_db.commit()
+    return len(events)
+
+
 def _customer_email_identity_license_lock_query(license_key: str):
     """Lock the canonical tenant before changing its billing identity projection."""
     return (
@@ -807,8 +845,14 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
     if batch_size < 1 or batch_size > 200:
         raise ValueError("batch_size must be between 1 and 200.")
     now = datetime.now(timezone.utc)
-    counts = {"processed": 0, "deferred": 0, "discarded": 0}
+    counts = {"processed": 0, "deferred": 0, "discarded": 0, "recovered": 0}
     async with AsyncSessionLocal() as licensing_db:
+        # A webhook may commit its canonical event and then lose both the direct
+        # mirror write and the outbox insert. Recreate those queue rows from the
+        # canonical table before claiming work; this is bounded and idempotent.
+        counts["recovered"] = await _backfill_missing_billing_mirror_outbox(
+            licensing_db, now=now, batch_size=batch_size
+        )
         for _ in range(batch_size):
             item = (await licensing_db.execute(
                 _billing_mirror_outbox_claim_statement(now)
@@ -855,9 +899,9 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                         stored.paddle_customer_id = event.paddle_customer_id
                         stored.updated_at = event.updated_at
                     await operational_db.commit()
-                _mark_billing_mirror_outbox_completed(
-                    item, datetime.now(timezone.utc)
-                )
+                synced_at = datetime.now(timezone.utc)
+                event.billing_mirror_synced_at = synced_at
+                _mark_billing_mirror_outbox_completed(item, synced_at)
                 await licensing_db.commit()
                 counts["processed"] += 1
             except Exception as exc:
