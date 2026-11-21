@@ -48,10 +48,9 @@ function eaa_claim_nonce(string $privateRoot, string $nonce, int $timestamp): bo
         $nonceHash = hash('sha256', $nonce);
         if (isset($entries[$nonceHash])) return false;
         $entries[$nonceHash] = $timestamp;
-        if (count($entries) > 20000) {
-            asort($entries, SORT_NUMERIC);
-            $entries = array_slice($entries, -10000, null, true);
-        }
+        // Never evict a nonce that may still be inside the accepted timestamp
+        // window. If the live cache is saturated, fail closed until entries expire.
+        if (count($entries) >= 20000) return false;
         $json = json_encode($entries, JSON_UNESCAPED_SLASHES);
         if ($json === false) return false;
         $temp = $cachePath . '.tmp-' . bin2hex(random_bytes(8));
