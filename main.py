@@ -5046,7 +5046,7 @@ async def list_audit_reports(
                 "finding_count": row.finding_count,
                 "created_at": row.created_at.isoformat(),
                 "pdf_expires_at": _report_expires_at(row).isoformat(),
-                "pdf_days_remaining": max(0, int((_report_expires_at(row) - datetime.now(timezone.utc)).total_seconds() // 86400)),
+                "pdf_days_remaining": max(0, int(((_report_expires_at(row) - datetime.now(timezone.utc)).total_seconds() + 86399) // 86400)),
                 "pdf_available": _report_pdf_available(row),
                 "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
                 "download_url": f"/api/v1/reports/{row.id}/pdf",
