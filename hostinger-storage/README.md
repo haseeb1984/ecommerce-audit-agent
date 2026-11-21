@@ -80,3 +80,44 @@ After upload, verify all of the following on the actual Hostinger plan:
 
 This repository package does not deploy itself. Do not enable the application
 storage integration until the bridge is uploaded and these checks pass.
+
+## PostgreSQL report migration and retention
+
+The FastAPI code uses the Hostinger bridge for new report PDFs when both
+`HOSTINGER_STORAGE_BASE_URL` and `HOSTINGER_STORAGE_HMAC_SECRET` are set.
+Until those variables are configured, it retains the legacy PostgreSQL binary
+path for backwards-compatible development. Do not consider storage migration
+complete while that fallback is active in production.
+
+Before migrating existing reports:
+
+1. Back up Supabase PostgreSQL.
+2. Upload the PHP bridge and complete the direct-access, HMAC, replay, and
+   upload/download/delete checks above.
+3. Apply `migrations/20261121_hostinger_report_storage.sql` to PostgreSQL.
+4. Set `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`,
+   `REPORT_RETENTION_DAYS=7`, and a strong `CRON_SECRET` in the FastAPI
+   runtime.
+5. Run the verified migration from the repository root:
+
+```bash
+python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10
+```
+
+The migration downloads each uploaded object and verifies its SHA-256 and exact
+bytes before setting the PostgreSQL `pdf_bytes` field to NULL. On a failed
+batch it rolls back the database transaction and attempts to remove uploaded
+objects. Review the final database counts and Hostinger storage before enabling
+scheduled cleanup.
+
+The daily Vercel Cron calls
+`/api/v1/internal/report-retention/cleanup` at 02:15 UTC. Configure
+`CRON_SECRET` in the deployment environment; the endpoint rejects requests
+without the matching Bearer token. If the FastAPI runtime is not Vercel, set up
+an equivalent daily HTTPS scheduler with the same Authorization header.
+
+Retention is calculated dynamically from each report's original
+`created_at` plus the current `REPORT_RETENTION_DAYS`. Changing the setting
+therefore affects existing and new reports. Once a PDF has actually been
+deleted, increasing retention cannot restore it. The dashboard retains report
+history and shows the expiry date and remaining days.
