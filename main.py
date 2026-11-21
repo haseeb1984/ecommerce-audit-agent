@@ -83,7 +83,7 @@ def _queue_customer_lifecycle_projection(db, license_obj, was_active: bool, now:
     return True
 
 
-def _license_is_current(license_obj) -> bool:
+def _license_is_current(license_obj, now: datetime | None = None) -> bool:
     """Return true only for an active, non-expired licensing record."""
     if license_obj is None or not bool(license_obj.is_active):
         return False
@@ -92,7 +92,7 @@ def _license_is_current(license_obj) -> bool:
         return True
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    return expires_at > datetime.now(timezone.utc)
+    return expires_at > (now or datetime.now(timezone.utc))
 
 
 def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool) -> None:
@@ -10153,7 +10153,8 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
-    previous_active = bool(client.is_active)
+    lifecycle_now = datetime.now(timezone.utc)
+    previous_active = _license_is_current(client, lifecycle_now)
     audited_fields = ("client_name", "tier", "max_monthly_audits", "is_active", "expires_at")
     previous_values = {
         key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
@@ -10179,15 +10180,16 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     # lifecycle outbox used by account-wide admin actions. Without this record,
     # the canonical license changes but Hostinger customer status and browser
     # sessions can remain stale indefinitely.
-    if "is_active" in changes and bool(client.is_active) != previous_active:
+    current_active = _license_is_current(client, lifecycle_now)
+    if current_active != previous_active:
         db.add(CustomerLifecycleSyncOutbox(
             id=secrets.token_urlsafe(24),
             license_key=client.license_key,
-            action="reactivate" if bool(client.is_active) else "suspend",
+            action="reactivate" if current_active else "suspend",
             status="pending",
             attempts=0,
-            next_attempt_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc),
+            next_attempt_at=lifecycle_now,
+            created_at=lifecycle_now,
         ))
     await db.commit()
     await db.refresh(client)
