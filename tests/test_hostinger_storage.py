@@ -129,3 +129,54 @@ def test_ambiguous_upload_failure_attempts_idempotent_cleanup():
             storage.upload_report(b"%PDF-1.7 test")
 
     assert operations == ["upload", "delete"]
+
+
+@pytest.mark.asyncio
+async def test_migration_cleanup_preserves_objects_referenced_after_ambiguous_commit(monkeypatch):
+    from contextlib import asynccontextmanager
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    referenced = "reports/" + "a" * 64 + ".pdf"
+    orphaned = "reports/" + "b" * 64 + ".pdf"
+    deleted = []
+
+    class Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return [referenced]
+
+    class VerificationSession:
+        async def execute(self, statement):
+            return Result()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield VerificationSession()
+
+    monkeypatch.setattr(migration, "AsyncSessionLocal", session_factory)
+    monkeypatch.setattr(migration, "delete_file", lambda key: deleted.append(key))
+    await migration._cleanup_unreferenced_uploads([referenced, orphaned])
+
+    assert deleted == [orphaned]
+
+
+@pytest.mark.asyncio
+async def test_migration_cleanup_preserves_all_objects_when_reference_check_fails(monkeypatch):
+    from contextlib import asynccontextmanager
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    keys = ["reports/" + "c" * 64 + ".pdf"]
+    deleted = []
+
+    @asynccontextmanager
+    async def session_factory():
+        raise RuntimeError("database unavailable")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(migration, "AsyncSessionLocal", session_factory)
+    monkeypatch.setattr(migration, "delete_file", lambda key: deleted.append(key))
+    await migration._cleanup_unreferenced_uploads(keys)
+
+    assert deleted == []
