@@ -119,9 +119,10 @@ The daily Vercel Cron calls
 without the matching Bearer token. If the FastAPI runtime is not Vercel, set up
 an equivalent daily HTTPS scheduler with the same Authorization header.
 
-The report cleanup job deliberately ignores legacy PostgreSQL-only PDFs. The
-migration script must first upload and verify those objects; only Hostinger
-storage references are eligible for automatic expiry deletion.
+The report cleanup job deletes expired PDFs from either Hostinger storage
+or the legacy PostgreSQL binary column. The migration script only uploads
+unexpired legacy PDFs and verifies each remote object before clearing its
+PostgreSQL binary; already-expired PDFs are left for the retention cleanup job.
 
 Customer logos use the separate `logos/` storage folder and are not subject to
 report retention. The customer portal uploads PNG, JPEG, or WebP files through
