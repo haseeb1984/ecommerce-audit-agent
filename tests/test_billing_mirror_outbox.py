@@ -101,3 +101,12 @@ def test_missing_operational_license_mapping_releases_billing_mirror_row_locks()
     missing_mapping = source[source.index("if not license_key:"):source.index("mirror_error = None")]
     assert "await db.rollback()" in missing_mapping
     assert missing_mapping.index("await db.rollback()") < missing_mapping.index("return False")
+
+
+def test_successful_live_mirror_persists_recovery_watermark():
+    import inspect
+    import main
+
+    source = inspect.getsource(main._sync_billing_event_to_hostinger)
+    assert "event.billing_mirror_synced_at = datetime.now(timezone.utc)" in source
+    assert source.index("event.billing_mirror_synced_at =") < source.index("await db.commit()", source.index("if pending is not None:"))
