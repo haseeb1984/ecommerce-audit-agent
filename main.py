@@ -58,7 +58,7 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file, upload_logo, create_signed_logo_url
+from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file, upload_logo
 from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
@@ -4200,12 +4200,6 @@ async def get_account_branding(
         CustomerBranding.license_key == license_obj.license_key
     ))
     logo_url = item.logo_url if item else None
-    if item and item.logo_storage_key:
-        try:
-            logo_url = create_signed_logo_url(item.logo_storage_key)
-        except HostingerStorageError as exc:
-            logger.error("Brand logo URL signing failed (error_type=%s)", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Brand logo storage is temporarily unavailable.") from None
     response.headers["Cache-Control"] = "no-store, private"
     return {
         "brand_name": item.brand_name if item else license_obj.client_name,
@@ -4269,17 +4263,8 @@ async def update_account_branding(
             await asyncio.to_thread(delete_file, old_storage_key)
         except HostingerStorageError as exc:
             logger.error("Replaced brand logo cleanup failed (error_type=%s)", type(exc).__name__)
-    effective_logo_url = logo_url
-    logo_stored = False
-    if item.logo_storage_key:
-        try:
-            effective_logo_url = create_signed_logo_url(item.logo_storage_key)
-            logo_stored = True
-        except HostingerStorageError as exc:
-            logger.error("Brand logo URL signing failed (error_type=%s)", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Brand logo storage is temporarily unavailable.") from None
-    elif not effective_logo_url:
-        effective_logo_url = item.logo_url
+    effective_logo_url = item.logo_url
+    logo_stored = bool(item.logo_storage_key)
     response.headers["Cache-Control"] = "no-store, private"
     return {"brand_name": brand_name, "logo_url": effective_logo_url, "logo_stored": logo_stored, "primary_color": color, "updated": True}
 
@@ -4351,13 +4336,38 @@ async def upload_account_branding_logo(
             await asyncio.to_thread(delete_file, old_storage_key)
         except HostingerStorageError as exc:
             logger.error("Replaced logo cleanup failed (error_type=%s)", type(exc).__name__)
-    try:
-        logo_url = create_signed_logo_url(receipt.storage_key)
-    except HostingerStorageError as exc:
-        logger.error("Brand logo URL signing failed (error_type=%s)", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Logo was stored but its preview URL could not be created.") from None
     response.headers["Cache-Control"] = "no-store, private"
-    return {"logo_url": logo_url, "logo_stored": True, "mime_type": receipt.mime_type, "byte_size": receipt.byte_size}
+    return {"logo_stored": True, "mime_type": receipt.mime_type, "byte_size": receipt.byte_size}
+
+
+@app.get("/api/v1/account/branding/logo", response_class=Response)
+async def get_account_branding_logo(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Stream a private logo through the authenticated API; never expose its storage key."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
+    from sqlalchemy import select
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == license_obj.license_key
+    ))
+    if item is None or not item.logo_storage_key:
+        raise HTTPException(status_code=404, detail="No uploaded brand logo is available.")
+    try:
+        logo_bytes = await asyncio.to_thread(
+            download_file, item.logo_storage_key, item.logo_sha256
+        )
+    except HostingerStorageError as exc:
+        logger.error("Brand logo read failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Brand logo storage is temporarily unavailable.") from None
+    mime_type = item.logo_mime_type or "application/octet-stream"
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Disposition"] = "inline; filename=brand-logo"
+    return Response(content=logo_bytes, media_type=mime_type, headers=dict(response.headers))
 
 
 @app.delete("/api/v1/account/branding/logo")
