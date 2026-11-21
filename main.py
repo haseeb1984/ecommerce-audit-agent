@@ -2239,7 +2239,7 @@ async def list_account_wordpress_sites(
     response: Response,
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List a bounded page of WordPress installations linked to the customer license."""
@@ -2298,7 +2298,7 @@ async def list_account_wordpress_sites(
 async def customer_disconnect_wordpress_site(
     site_id: str,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -2347,7 +2347,7 @@ async def customer_disconnect_wordpress_site(
 @app.get("/api/v1/account/profile")
 async def get_account_profile(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return customer profile from Hostinger and licensing status from Supabase."""
@@ -2383,7 +2383,7 @@ async def get_account_profile(
 async def update_account_profile(
     payload: AccountProfileUpdate,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Update the operational customer display name in Hostinger."""
@@ -2516,7 +2516,7 @@ async def get_business_agency_usage(
     response: Response,
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -2625,7 +2625,7 @@ async def get_business_agency_usage(
 
 @app.get("/api/v1/account/agency/clients/{workspace_id}/website")
 async def get_agency_client_website(workspace_id: str, response: Response,
-                                    license_obj: SoftwareLicense = Depends(verify_customer_account),
+                                    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
                                     operational_db: AsyncSession = Depends(get_hostinger_db)):
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website connections are available on the Business plan.")
@@ -2679,7 +2679,7 @@ async def get_agency_client_website(workspace_id: str, response: Response,
 
 @app.post("/api/v1/account/agency/clients/{workspace_id}/website/disconnect")
 async def disconnect_agency_client_website(workspace_id: str, response: Response,
-                                            license_obj: SoftwareLicense = Depends(verify_customer_account),
+                                            license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
                                             operational_db: AsyncSession = Depends(get_hostinger_db)):
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website management is available on the Business plan.")
@@ -3580,7 +3580,7 @@ async def list_business_agency_team(
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
     workspace_ids: list[str] = Query(default=[], max_length=100),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     if not plan_features(license_obj.tier)["agency_management"]:
@@ -3889,7 +3889,7 @@ async def remove_business_agency_team_workspace_access(
     member_id: str,
     workspace_id: str,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Remove one explicit client workspace grant without revoking the whole team account."""
@@ -3934,7 +3934,7 @@ async def remove_business_agency_team_workspace_access(
 async def revoke_business_agency_team_member(
     member_id: str,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     if not plan_features(license_obj.tier)["agency_management"]:
@@ -3984,7 +3984,7 @@ async def list_business_agency_clients(
     response: Response,
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List only the client workspaces owned by the caller's Business agency."""
@@ -4546,7 +4546,7 @@ async def account_audit_activity(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=10000000),
     domain: str = Query(default="", max_length=253),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return customer scan history from Hostinger without exposing lead-contact data."""
@@ -4616,7 +4616,7 @@ async def account_billing_history(
     response: Response,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=10000000),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
