@@ -2844,20 +2844,10 @@ async def register_agency_wordpress_site(
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
-    raw_url = payload.site_url.strip()
-    try:
-        parsed = urlsplit(raw_url)
-        host = (parsed.hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
-    except (ValueError, UnicodeError):
-        raise HTTPException(status_code=422, detail="WordPress site URL is invalid.")
-    if parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise HTTPException(status_code=422, detail="WordPress site URL must be HTTPS without credentials, query, or fragment.")
-    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
-        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    site_url, host = _normalize_wordpress_registration_url(payload.site_url)
     admin_email = payload.admin_email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
-    site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     agency_host_owner = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
         AgencyClientWebsite.site_host == host,
