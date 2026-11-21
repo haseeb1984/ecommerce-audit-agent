@@ -124,7 +124,7 @@ def create_signed_logo_url(storage_key: str, expires_in: int = 300) -> str:
         raise HostingerStorageError("Only logo objects can receive browser preview URLs.")
     ttl = max(60, min(int(expires_in), 600))
     expires = str(int(time.time()) + ttl)
-    canonical = "\\n".join(("GET", expires, "logo", storage_key)).encode("utf-8")
+    canonical = "\n".join(("GET", expires, "logo", storage_key)).encode("utf-8")
     signature = hmac.new(secret, canonical, hashlib.sha256).hexdigest()
     query = urlencode({
         "action": "logo",
