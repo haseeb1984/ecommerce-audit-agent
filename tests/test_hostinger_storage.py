@@ -96,3 +96,36 @@ def test_storage_http_response_rejects_oversized_content_length_before_read():
     response.headers = {"Content-Length": "2048"}
     with pytest.raises(storage.HostingerStorageError, match="exceeds the allowed size"):
         storage._read_limited_response(response, 1024)
+
+
+
+def test_invalid_upload_receipt_triggers_private_object_cleanup():
+    operations = []
+
+    def fake_request(operation, storage_key, body=b"", mime_type="application/octet-stream"):
+        operations.append(operation)
+        if operation == "upload":
+            return b"{}"
+        return b'{"deleted":true}'
+
+    with patch.object(storage, "_request", side_effect=fake_request):
+        with pytest.raises(storage.HostingerStorageError, match="invalid upload receipt"):
+            storage.upload_report(b"%PDF-1.7 test")
+
+    assert operations == ["upload", "delete"]
+
+
+def test_ambiguous_upload_failure_attempts_idempotent_cleanup():
+    operations = []
+
+    def fake_request(operation, storage_key, body=b"", mime_type="application/octet-stream"):
+        operations.append(operation)
+        if operation == "upload":
+            raise storage.HostingerStorageError("simulated network timeout")
+        return b'{"deleted":true}'
+
+    with patch.object(storage, "_request", side_effect=fake_request):
+        with pytest.raises(storage.HostingerStorageError, match="simulated network timeout"):
+            storage.upload_report(b"%PDF-1.7 test")
+
+    assert operations == ["upload", "delete"]
