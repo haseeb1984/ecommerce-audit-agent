@@ -4276,7 +4276,7 @@ async def upload_account_branding_logo(
     license_obj: SoftwareLicense = Depends(verify_customer_account),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
-    """Store a customer logo privately; browser previews use short-lived signed URLs."""
+    """Store a customer logo privately; browser previews use the authenticated API proxy."""
     if not plan_features(license_obj.tier)["white_label_branding"]:
         raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
