@@ -22,7 +22,7 @@ from models import (
     SaaSPlanPackage,
     SoftwareLicense,
 )
-from quota import reserve_audit_slot, release_audit_reservation
+from quota import reserve_audit_slot, release_audit_reservation, renew_audit_reservation
 from audit_checks import AuditFinding, CheckOutcome, run_phase_one_checks
 from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
 from crawl_checks import run_bounded_site_crawl
@@ -466,6 +466,17 @@ async def process_one_scan(worker_id: str) -> dict:
                     logger.warning("Scan worker lease ownership lost (job_id=%s)", job_id)
                     lease_unconfirmed.set()
                     return
+                # Queue ownership alone is not enough: the PostgreSQL quota hold
+                # must remain live for the entire external audit as well.
+                if reservation_id is not None:
+                    async with AsyncSessionLocal() as licensing_db:
+                        reservation_renewed = await renew_audit_reservation(
+                            licensing_db, reservation_id,
+                        )
+                    if not reservation_renewed:
+                        logger.warning("Scan quota reservation renewal failed (job_id=%s)", job_id)
+                        lease_unconfirmed.set()
+                        return
             except Exception as heartbeat_error:
                 # If ownership cannot be renewed or confirmed, stop doing billable work.
                 # The stale-lease reconciler will safely recover the job after its lease expires.
