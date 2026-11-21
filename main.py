@@ -1141,6 +1141,7 @@ async def comprehensive_audit_pdf(
             screenshot_data_uri=getattr(metrics, "screenshot_data_uri", None),
             coverage_manifest=coverage_manifest,
         )
+        report_generated_at = datetime.now(timezone.utc)
         # Persist the explicit bounded outcome records beside the conservative
         # coverage manifest so saved-report history retains the evidence behind PDF counts.
         report_metadata = {
@@ -1217,7 +1218,7 @@ async def comprehensive_audit_pdf(
             pdf_byte_size=storage_receipt.byte_size if storage_receipt else len(pdf_bytes),
             coverage_json=json.dumps(report_metadata, separators=(",", ":")),
             finding_count=len(result.findings),
-            created_at=reserved_at,
+            created_at=report_generated_at,
         )
         db.add(report)
         await db.flush()
