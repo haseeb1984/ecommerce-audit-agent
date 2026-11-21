@@ -75,9 +75,8 @@ function eaa_resolve_key(string $privateRoot, string $key): array {
     eaa_fail(400, 'Invalid storage key');
 }
 
-$method = (string)($_SERVER['REQUEST_METHOD'] ?? '');
-if (!in_array($method, ['GET', 'POST'], true)) {
-    header('Allow: GET, POST');
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+    header('Allow: POST');
     eaa_fail(405, 'Method not allowed');
 }
 
@@ -95,40 +94,6 @@ foreach ([$privateRoot, $privateRoot . '/reports', $privateRoot . '/logos'] as $
         eaa_fail(503, 'Private storage is unavailable');
     }
     @chmod($dir, 0700);
-}
-
-if ($method === 'GET') {
-    $action = (string)($_GET['action'] ?? '');
-    $storageKey = (string)($_GET['key'] ?? '');
-    $expiresRaw = (string)($_GET['expires'] ?? '');
-    $signature = (string)($_GET['signature'] ?? '');
-    if ($action !== 'logo'
-        || !preg_match('/^[0-9]{10}$/D', $expiresRaw)
-        || !preg_match('/^[a-f0-9]{64}$/D', $signature)
-        || !str_starts_with($storageKey, 'logos/')) {
-        eaa_fail(401, 'Invalid signed logo URL');
-    }
-    $expires = (int)$expiresRaw;
-    if ($expires < time() || $expires > time() + 600) {
-        eaa_fail(401, 'Signed logo URL expired');
-    }
-    [$logoPath, $logoMime, $logoMaxBytes] = eaa_resolve_key($privateRoot, $storageKey);
-    $canonical = implode("\n", ['GET', $expiresRaw, 'logo', $storageKey]);
-    $expectedSignature = hash_hmac('sha256', $canonical, $secret);
-    if (!hash_equals($expectedSignature, $signature)) {
-        eaa_fail(401, 'Signed logo URL invalid');
-    }
-    if (!is_file($logoPath)) eaa_fail(404, 'Stored logo not found');
-    $logoSize = filesize($logoPath);
-    if ($logoSize === false || $logoSize < 1 || $logoSize > $logoMaxBytes) {
-        eaa_fail(500, 'Stored logo size is invalid');
-    }
-    header('Content-Type: ' . $logoMime);
-    header('Content-Length: ' . (string)$logoSize);
-    header('Content-Disposition: inline; filename="logo"');
-    header('X-Content-Type-Options: nosniff');
-    readfile($logoPath);
-    exit;
 }
 
 $timestampRaw = eaa_header('X-EAA-Timestamp');
