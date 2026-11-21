@@ -43,3 +43,17 @@ def test_scan_worker_rechecks_license_under_lock_before_first_quota_commit():
 
     assert audit_complete < revalidation < row_lock < entitlement_check < first_lead_insert
     assert "if existing_lead is None:" in worker[row_lock:first_lead_insert]
+
+
+def test_scan_worker_heartbeat_renews_quota_reservation_and_stops_on_loss():
+    worker = (ROOT / "scan_worker.py").read_text(encoding="utf-8")
+    quota = (ROOT / "quota.py").read_text(encoding="utf-8")
+
+    heartbeat_start = worker.index("async def _heartbeat():")
+    queue_renewal = worker.index("renew_scan_job_lease(", heartbeat_start)
+    reservation_renewal = worker.index("renew_audit_reservation(", queue_renewal)
+    stop_signal = worker.index("lease_unconfirmed.set()", reservation_renewal)
+
+    assert heartbeat_start < queue_renewal < reservation_renewal < stop_signal
+    assert "AuditQuotaReservation.expires_at > now" in quota
+    assert ".values(expires_at=now + ttl)" in quota
