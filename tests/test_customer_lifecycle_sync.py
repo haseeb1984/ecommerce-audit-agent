@@ -186,15 +186,18 @@ def test_paddle_subscription_webhooks_queue_projection_before_canonical_commit()
     import main
 
     source = inspect.getsource(main.paddle_webhook)
-    for event_marker in (
+    event_markers = (
         'if event_type in {"subscription.paused", "subscription.resumed", "subscription.activated"}:',
         'if event_type == "subscription.canceled":',
         'if event_type == "subscription.updated":',
-    ):
+    )
+    for index, event_marker in enumerate(event_markers):
         start = source.index(event_marker)
-        next_commit = source.index("await db.commit()", start)
-        next_event = source.find("if event_type", start + len(event_marker))
-        block_end = next_event if next_event >= 0 else len(source)
+        block_end = (
+            source.index(event_markers[index + 1], start + len(event_marker))
+            if index + 1 < len(event_markers)
+            else len(source)
+        )
         block = source[start:block_end]
         assert "_queue_customer_lifecycle_projection(" in block
         assert block.index("_queue_customer_lifecycle_projection(") < block.index("await db.commit()")
