@@ -1521,6 +1521,16 @@
       const detail = document.createElement("small");
       detail.textContent = new Date(item.created_at).toLocaleString() + " · " + item.finding_count + " findings · report #" + item.id;
       meta.append(name, detail);
+      const expiry = document.createElement("small");
+      if (item.pdf_available && item.pdf_expires_at) {
+        const expiryDate = new Date(item.pdf_expires_at);
+        const remaining = Math.max(0, Number(item.pdf_days_remaining) || 0);
+        expiry.textContent = "PDF expires " + expiryDate.toLocaleString() + " · " + remaining + " day(s) remaining. Download and save it before expiry.";
+      } else {
+        expiry.textContent = "PDF expired or unavailable. Report summary and history remain available.";
+      }
+      expiry.className = "muted";
+      meta.append(expiry);
       const outcomeSummary = item.check_outcome_summary;
       if (outcomeSummary && Number(outcomeSummary.denominator) > 0 && outcomeSummary.counts) {
         const outcomeLine = document.createElement("small");
@@ -1543,6 +1553,8 @@
       }
       const actions = document.createElement("div"); actions.className = "report-actions";
       const download = document.createElement("button"); download.type = "button"; download.textContent = "Download PDF";
+      download.disabled = item.pdf_available !== true;
+      download.title = download.disabled ? "This PDF has expired or is unavailable." : "Download and save this PDF before its expiry date.";
       download.addEventListener("click", async () => {
         try { const r = await api(item.download_url); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "ecommerce-audit-" + item.id + ".pdf"; a.hidden = true; document.body.append(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 30000); }
         catch (e) { setStatus("connectStatus", e.message, "error"); }
