@@ -224,6 +224,7 @@ class PaymentWebhookEvent(Base):
     recipient_email = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    billing_mirror_synced_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 
