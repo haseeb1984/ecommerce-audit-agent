@@ -12,6 +12,37 @@ if (!defined('ABSPATH')) {
 define('EAA_THEME_VERSION', '1.0.0');
 define('EAA_THEME_DEFAULT_API', 'https://ecommerce-audit-agent.vercel.app');
 
+function eaa_theme_page_url($slug) {
+    $page = get_page_by_path(sanitize_title($slug), OBJECT, 'page');
+    return $page instanceof WP_Post ? get_permalink($page) : home_url('/' . trim($slug, '/') . '/');
+}
+
+function eaa_theme_fallback_menu($args = array()) {
+    $class = !empty($args['menu_class']) ? sanitize_html_class($args['menu_class']) : 'menu';
+    echo '<ul class="' . esc_attr($class) . '">';
+    wp_list_pages(array('title_li' => '', 'depth' => 1, 'sort_column' => 'menu_order,post_title'));
+    echo '</ul>';
+}
+
+function eaa_theme_meta_description() {
+    if (is_admin() || is_feed()) {
+        return;
+    }
+    if (is_front_page()) {
+        $description = __('Evidence-based ecommerce website audits, technical and customer-experience insights, and practical findings for store owners and agencies.', 'ecommerce-audit-agent');
+    } elseif (is_singular()) {
+        $post = get_queried_object();
+        $description = has_excerpt($post) ? get_the_excerpt($post) : wp_strip_all_tags(strip_shortcodes($post->post_content));
+    } else {
+        return;
+    }
+    $description = trim(preg_replace('/\s+/', ' ', $description));
+    if ($description !== '') {
+        echo '<meta name="description" content="' . esc_attr(wp_html_excerpt($description, 158, '…')) . '">' . "\n";
+    }
+}
+add_action('wp_head', 'eaa_theme_meta_description', 2);
+
 function eaa_theme_setup() {
     load_theme_textdomain('ecommerce-audit-agent', get_template_directory() . '/languages');
     add_theme_support('title-tag');
@@ -75,11 +106,41 @@ function eaa_theme_proxy_plans() {
         return new WP_Error('eaa_catalogue_invalid', __('The package catalogue could not be verified. Please try again later.', 'ecommerce-audit-agent'), array('status' => 503));
     }
     $plans = array();
+    $feature_keys = array('standard_audits', 'conversion_dossier', 'white_label_branding', 'agency_management', 'direct_api_access');
     foreach ($payload['plans'] as $plan) {
-        if (!is_array($plan) || !in_array(strtolower((string) ($plan['tier'] ?? '')), array('starter', 'pro', 'business'), true)) {
+        if (!is_array($plan)) {
             continue;
         }
-        $plans[] = $plan;
+        $tier = strtolower(sanitize_key((string) ($plan['tier'] ?? '')));
+        if (!in_array($tier, array('starter', 'pro', 'business'), true)) {
+            continue;
+        }
+        $features = array();
+        foreach ($feature_keys as $feature_key) {
+            $features[$feature_key] = !empty($plan['features'][$feature_key]);
+        }
+        $safe_plan = array(
+            'tier' => $tier,
+            'label' => sanitize_text_field((string) ($plan['label'] ?? ucfirst($tier))),
+            'monthly_audit_allowance' => max(0, absint($plan['monthly_audit_allowance'] ?? 0)),
+            'max_concurrent_audits' => max(0, absint($plan['max_concurrent_audits'] ?? 0)),
+            'features' => $features,
+            'price' => null,
+        );
+        if (isset($plan['price']) && is_array($plan['price'])) {
+            $currency = strtoupper(sanitize_text_field((string) ($plan['price']['currency_code'] ?? '')));
+            $amount = $plan['price']['amount_minor'] ?? null;
+            if (preg_match('/^[A-Z]{3}$/', $currency) && is_numeric($amount) && (float) $amount >= 0) {
+                $interval = sanitize_key((string) ($plan['price']['billing_cycle_interval'] ?? ''));
+                $safe_plan['price'] = array(
+                    'currency_code' => $currency,
+                    'amount_minor' => (string) $amount,
+                    'billing_cycle_interval' => in_array($interval, array('day', 'week', 'month', 'year'), true) ? $interval : null,
+                    'billing_cycle_frequency' => max(1, absint($plan['price']['billing_cycle_frequency'] ?? 1)),
+                );
+            }
+        }
+        $plans[] = $safe_plan;
     }
     $result = new WP_REST_Response(array('plans' => $plans), 200);
     $result->header('Cache-Control', 'no-store, private');
@@ -140,7 +201,7 @@ function eaa_theme_contact_handler() {
     if (get_transient($rate_key)) {
         wp_die(esc_html__('A message from this email was submitted recently. Please wait before sending another.', 'ecommerce-audit-agent'), '', array('response' => 429));
     }
-    $recipient = sanitize_email(get_option('admin_email'));
+    $recipient = sanitize_email(get_option('eaa_theme_support_email', get_option('admin_email')));
     if (!is_email($recipient)) {
         wp_die(esc_html__('The website administrator email is not configured. Please use the site administrator contact.', 'ecommerce-audit-agent'), '', array('response' => 503));
     }
