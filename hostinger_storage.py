@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import mimetypes
 import os
 import re
 import secrets
