@@ -1039,3 +1039,12 @@ def test_agency_team_workspace_listing_locks_current_grants_in_stable_order():
     assert "AgencyWorkspaceAccess.team_member_id == identity[\"member\"].id" in source
     assert "AgencyClientWorkspace.agency_id == identity[\"agency\"].id" in source
     assert "AgencyClientWorkspace.status == \"active\"" in source
+
+def test_admin_agency_detail_pagination_errors_are_session_guarded():
+    portal = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text(encoding="utf-8")
+    start = portal.index("async function showAgencyDetail(")
+    end = portal.index("async function refreshAgencies()", start)
+    source = portal[start:end]
+
+    assert 'if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){moreSites.disabled=false;status(error.message,"error")}' in source
+    assert source.count('if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){more.disabled=false;status(error.message,"error")}') == 2
