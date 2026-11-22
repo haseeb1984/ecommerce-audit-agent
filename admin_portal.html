@@ -463,7 +463,7 @@ async function showAgencyDetail(agencyId){
      appendWebsiteRows(nextWorkspace.website_connections);p.offset=nextWorkspace.website_connections_page.offset;p.has_more=nextWorkspace.website_connections_page.has_more;
      if(websiteSummary){const shown=websiteRows.querySelectorAll("p").length-(websiteSummary?1:0);websiteSummary.textContent="Showing "+shown+" of "+workspace.website_connection_count+" website connections."}
      if(!p.has_more)moreSites.remove();else moreSites.disabled=false;
-    }catch(error){moreSites.disabled=false;status(error.message,"error")}});
+    }catch(error){if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){moreSites.disabled=false;status(error.message,"error")}}});
     item.append(moreSites);
    }
    workspaceList.append(item);
@@ -476,7 +476,7 @@ async function showAgencyDetail(agencyId){
     if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
     appendWorkspaces(next.workspaces,p.workspace_offset+p.workspace_limit);p.workspace_offset=next.page.workspace_offset;p.workspaces_has_more=next.page.workspaces_has_more;
     if(!p.workspaces_has_more)more.remove();else more.disabled=false;
-   }catch(error){more.disabled=false;status(error.message,"error")}});
+   }catch(error){if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){more.disabled=false;status(error.message,"error")}}});
    workspaceList.append(more);
   }
   const teamTitle=el("h4","Team members ("+d.page.team_members_total+")"),memberList=el("div");
