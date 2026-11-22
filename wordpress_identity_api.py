@@ -168,8 +168,9 @@ async def claim_wordpress_site_identity(
         raise HTTPException(status_code=422, detail="WordPress user login contains unsupported characters.")
     wp_email = _valid_email(payload.wp_user_email)
     token_hash = _token_digest(payload.token)
-    # Read the license key without taking an operational-row lock. All identity
-    # mutations acquire the canonical PostgreSQL license lock before locking
+    # All identity mutations acquire the canonical PostgreSQL license lock
+    # before locking Hostinger operational rows. Read the license key without
+    # taking an operational-row lock first; reversing this order can deadlock.
     # Hostinger rows; taking these locks in the opposite order can deadlock across
     # the two independent database transactions.
     challenge_reference = await operational_db.scalar(
