@@ -722,3 +722,28 @@ def test_operational_apply_returns_nonzero_when_reconciliation_blockers_remain()
     assert "blockers = _apply_blockers(reports)" in source
     assert "if (args.apply or args.verify) and not verified:" in source
     assert "Operational migration applied partially." in source
+
+def test_hostinger_customer_report_file_model_and_schema_cover_pdf_lifecycle_metadata():
+    from hostinger_models import CustomerReportFile
+
+    columns = set(CustomerReportFile.__table__.columns.keys())
+    assert {
+        "report_id", "license_key", "report_name", "domain", "finding_count",
+        "storage_key", "storage_key_hash", "mime_type", "byte_size",
+        "created_at", "expires_at", "deleted_at",
+    } <= columns
+
+    baseline = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    table_start = baseline.index("CREATE TABLE IF NOT EXISTS customer_report_files")
+    table_end = baseline.index(") ENGINE=InnoDB", table_start)
+    report_ddl = baseline[table_start:table_end]
+    for field in ("report_id", "domain", "finding_count", "expires_at", "deleted_at"):
+        assert field in report_ddl
+
+    migration = (
+        ROOT / "migrations" / "20261122_hostinger_report_metadata.mysql.sql"
+    ).read_text()
+    for field in ("report_id", "domain", "finding_count", "expires_at", "deleted_at"):
+        assert f"ADD COLUMN {field}" in migration
+    assert "uq_customer_report_files_report_id" in migration
+    assert "ix_customer_report_files_expiry" in migration
