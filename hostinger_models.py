@@ -249,16 +249,22 @@ class AdminCustomerNote(HostingerBase):
 
 
 class CustomerReportFile(HostingerBase):
+    """Customer-facing PDF pointer; the file itself lives only in Hostinger private storage."""
     __tablename__ = "customer_report_files"
     id = Column(String(64), primary_key=True)
+    report_id = Column(BigInteger, nullable=True, unique=True, index=True)
     license_key = Column(String(100), nullable=False, index=True)
     job_id = Column(String(64), nullable=True, index=True)
     report_name = Column(String(255), nullable=False)
+    domain = Column(String(253), nullable=True, index=True)
+    finding_count = Column(Integer, nullable=False, default=0)
     storage_key = Column(String(1024), nullable=False)
     storage_key_hash = Column(String(64), nullable=False, unique=True)
     mime_type = Column(String(100), nullable=False, default="application/pdf")
     byte_size = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class WebsiteScanResult(HostingerBase):
