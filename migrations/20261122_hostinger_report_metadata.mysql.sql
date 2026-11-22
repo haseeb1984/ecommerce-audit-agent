@@ -6,7 +6,8 @@ ALTER TABLE customer_report_files
     ADD COLUMN domain VARCHAR(253) NULL,
     ADD COLUMN finding_count INT NOT NULL DEFAULT 0,
     ADD COLUMN expires_at DATETIME(6) NULL,
-    ADD COLUMN deleted_at DATETIME(6) NULL;
+    ADD COLUMN deleted_at DATETIME(6) NULL,
+    ADD COLUMN pdf_sha256 CHAR(64) NULL;
 
 CREATE UNIQUE INDEX uq_customer_report_files_report_id
     ON customer_report_files (report_id);
