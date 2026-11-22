@@ -53,7 +53,10 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
     assert "wordpress_installations.status = 'active'" in order_by[0]
     assert order_by[1] == "wordpress_installations.last_seen_at DESC"
     assert "LIMIT 100" in sql
-    assert result == {"items": []}
+    assert result == {
+        "items": [],
+        "page": {"limit": 100, "offset": 0, "total": 0, "has_more": False},
+    }
     assert response.headers["Cache-Control"] == "no-store, private"
     assert response.headers["Pragma"] == "no-cache"
 
