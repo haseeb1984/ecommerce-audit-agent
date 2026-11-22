@@ -60,7 +60,7 @@ from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
 from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file, upload_logo
-from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_models import CustomerReportFile, CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -157,7 +157,7 @@ def _report_pdf_available(report: AuditReport, now: datetime | None = None) -> b
 
 
 async def _read_report_pdf(report: AuditReport) -> bytes:
-    """Read a report only while its configured retention window is active."""
+    """Read a legacy PostgreSQL-linked report while its retention window is active."""
     if not _report_pdf_available(report):
         raise HTTPException(
             status_code=410,
@@ -169,11 +169,39 @@ async def _read_report_pdf(report: AuditReport) -> bytes:
                 download_file, report.storage_key, report.pdf_sha256
             )
         except HostingerStorageError as exc:
-            logger.error("Report storage read failed (error_type=%s)", type(exc).__name__)
+            logger.error("Legacy report storage read failed (error_type=%s)", type(exc).__name__)
             raise HTTPException(status_code=503, detail="Report file storage is temporarily unavailable.") from None
     if report.pdf_bytes is not None:
         return bytes(report.pdf_bytes)
     raise HTTPException(status_code=410, detail="The report PDF is no longer available.")
+
+
+def _report_file_expiry(created_at: datetime) -> datetime:
+    created = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at
+    return created + timedelta(days=_report_retention_days())
+
+
+def _customer_report_file_available(report_file: CustomerReportFile, now: datetime | None = None) -> bool:
+    current = now or datetime.now(timezone.utc)
+    expires_at = report_file.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return bool(report_file.storage_key and report_file.deleted_at is None
+                and (expires_at is None or expires_at > current))
+
+
+async def _read_customer_report_file(report_file: CustomerReportFile) -> bytes:
+    """Read a customer-owned PDF from Hostinger private storage, checking expiry and integrity."""
+    if not _customer_report_file_available(report_file):
+        raise HTTPException(
+            status_code=410,
+            detail="This PDF has expired or is no longer available. The report history remains in your dashboard.",
+        )
+    try:
+        return await asyncio.to_thread(download_file, report_file.storage_key, report_file.pdf_sha256)
+    except HostingerStorageError as exc:
+        logger.error("Customer report storage read failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Report file storage is temporarily unavailable.") from None
 
 
 app = FastAPI(
@@ -692,6 +720,7 @@ async def comprehensive_audit_pdf(
     domain: str = Query(..., min_length=1, max_length=2048, description="Public website URL or domain"),
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Create an evidence report as a PDF, using the existing license quota."""
     if not plan_features(license_obj.tier)["standard_audits"]:
@@ -701,9 +730,12 @@ async def comprehensive_audit_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    if not storage_configured():
+        raise HTTPException(status_code=503, detail="Private report storage is not configured; the audit report was not generated.")
     license_id = license_obj.id
     reservation_id = None
     uploaded_storage_key = None
+    uploaded_report_file_id = None
     try:
         audit_started_at_utc = datetime.now(timezone.utc).isoformat()
         module_statuses = {
@@ -1271,25 +1303,23 @@ async def comprehensive_audit_pdf(
                 "query_strings_and_fragments_removed_from_evidence_urls": True,
             },
         }
-        storage_receipt = None
-        if storage_configured():
-            try:
-                storage_receipt = await asyncio.to_thread(upload_report, pdf_bytes)
-                uploaded_storage_key = storage_receipt.storage_key
-            except HostingerStorageError as exc:
-                logger.error("Report storage upload failed (error_type=%s)", type(exc).__name__)
-                raise HTTPException(
-                    status_code=503,
-                    detail="Report storage is not available; the audit report was not saved.",
-                ) from None
+        try:
+            storage_receipt = await asyncio.to_thread(upload_report, pdf_bytes)
+            uploaded_storage_key = storage_receipt.storage_key
+        except HostingerStorageError as exc:
+            logger.error("Report storage upload failed (error_type=%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Report storage is not available; the audit report was not saved.") from None
 
+        report_domain = urlsplit(target_url).hostname or (metrics.domain if metrics else "website")
         report = AuditReport(
             license_id=license_id,
-            domain=urlsplit(target_url).hostname or (metrics.domain if metrics else "website"),
-            pdf_bytes=None if storage_receipt else pdf_bytes,
-            storage_key=storage_receipt.storage_key if storage_receipt else None,
-            pdf_sha256=storage_receipt.sha256 if storage_receipt else None,
-            pdf_byte_size=storage_receipt.byte_size if storage_receipt else len(pdf_bytes),
+            domain=report_domain,
+            # PostgreSQL retains audit evidence/history; PDF binary and pointer
+            # are authoritative in Hostinger MySQL + private file storage.
+            pdf_bytes=None,
+            storage_key=None,
+            pdf_sha256=None,
+            pdf_byte_size=storage_receipt.byte_size,
             coverage_json=json.dumps(report_metadata, separators=(",", ":")),
             finding_count=len(result.findings),
             created_at=report_generated_at,
@@ -1297,6 +1327,26 @@ async def comprehensive_audit_pdf(
         db.add(report)
         await db.flush()
         report_id = report.id
+
+        uploaded_report_file_id = secrets.token_urlsafe(32)
+        operational_db.add(CustomerReportFile(
+            id=uploaded_report_file_id,
+            report_id=report_id,
+            license_key=license_obj.license_key,
+            report_name=f"ecommerce-audit-{report_domain[:180]}-{report_id}.pdf",
+            domain=report_domain[:253],
+            finding_count=len(result.findings),
+            storage_key=storage_receipt.storage_key,
+            storage_key_hash=hashlib.sha256(storage_receipt.storage_key.encode("utf-8")).hexdigest(),
+            pdf_sha256=storage_receipt.sha256,
+            mime_type=storage_receipt.mime_type,
+            byte_size=storage_receipt.byte_size,
+            created_at=report_generated_at,
+            expires_at=_report_file_expiry(report_generated_at),
+        ))
+        # If the PostgreSQL transaction later fails, the exception handler
+        # compensates by deleting this metadata row and its private object.
+        await operational_db.commit()
 
         db.add(AuditLead(
             license_id=license_id,
@@ -1316,6 +1366,7 @@ async def comprehensive_audit_pdf(
         await db.commit()
         reservation_id = None
         uploaded_storage_key = None
+        uploaded_report_file_id = None
 
         hostname = urlsplit(target_url).hostname or "website"
         safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:180]
@@ -1330,6 +1381,14 @@ async def comprehensive_audit_pdf(
         )
     except HTTPException as exc:
         await db.rollback()
+        await operational_db.rollback()
+        if uploaded_report_file_id:
+            try:
+                await operational_db.execute(delete(CustomerReportFile).where(CustomerReportFile.id == uploaded_report_file_id))
+                await operational_db.commit()
+            except Exception as cleanup_exc:
+                await operational_db.rollback()
+                logger.error("Report metadata compensation failed (error_type=%s)", type(cleanup_exc).__name__)
         if uploaded_storage_key:
             try:
                 await asyncio.to_thread(delete_file, uploaded_storage_key)
@@ -1346,6 +1405,14 @@ async def comprehensive_audit_pdf(
         raise
     except Exception as exc:
         await db.rollback()
+        await operational_db.rollback()
+        if uploaded_report_file_id:
+            try:
+                await operational_db.execute(delete(CustomerReportFile).where(CustomerReportFile.id == uploaded_report_file_id))
+                await operational_db.commit()
+            except Exception as cleanup_exc:
+                await operational_db.rollback()
+                logger.error("Report metadata compensation failed (error_type=%s)", type(cleanup_exc).__name__)
         if uploaded_storage_key:
             try:
                 await asyncio.to_thread(delete_file, uploaded_storage_key)
@@ -5082,6 +5149,7 @@ async def list_audit_reports(
     domain: str = Query(default="", max_length=253),
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List only reports owned by the authenticated license; never expose PDF bytes here."""
     from sqlalchemy import select, func as sql_func
@@ -5097,29 +5165,43 @@ async def list_audit_reports(
         .order_by(AuditReport.created_at.desc(), AuditReport.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
+    report_ids = [row.id for row in rows]
+    report_files = {}
+    if report_ids:
+        file_rows = (await operational_db.execute(select(CustomerReportFile).where(
+            CustomerReportFile.report_id.in_(report_ids),
+            CustomerReportFile.license_key == license_obj.license_key,
+        ))).scalars().all()
+        report_files = {item.report_id: item for item in file_rows}
+
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "domain": normalized_domain,
-        "reports": [
-            {
-                "id": row.id,
-                "domain": row.domain,
-                "finding_count": row.finding_count,
-                "created_at": row.created_at.isoformat(),
-                "pdf_expires_at": _report_expires_at(row).isoformat(),
-                "pdf_days_remaining": max(0, int(((_report_expires_at(row) - datetime.now(timezone.utc)).total_seconds() + 86399) // 86400)),
-                "pdf_available": _report_pdf_available(row),
-                "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
-                "download_url": f"/api/v1/reports/{row.id}/pdf",
-                "coverage_url": f"/api/v1/reports/{row.id}/coverage",
-            }
-            for row in rows
-        ],
-    }
+    now = datetime.now(timezone.utc)
+    reports = []
+    for row in rows:
+        report_file = report_files.get(row.id)
+        if report_file is not None:
+            expiry = report_file.expires_at
+            if expiry is not None and expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            available = _customer_report_file_available(report_file, now)
+        else:
+            # Legacy reports remain visible and downloadable during transition.
+            expiry = _report_expires_at(row)
+            available = _report_pdf_available(row, now)
+        reports.append({
+            "id": row.id,
+            "domain": row.domain,
+            "finding_count": row.finding_count,
+            "created_at": row.created_at.isoformat(),
+            "pdf_expires_at": expiry.isoformat() if expiry else None,
+            "pdf_days_remaining": max(0, int(((expiry - now).total_seconds() + 86399) // 86400)) if expiry else None,
+            "pdf_available": available,
+            "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
+            "download_url": f"/api/v1/reports/{row.id}/pdf",
+            "coverage_url": f"/api/v1/reports/{row.id}/coverage",
+        })
+    return {"total": total, "limit": limit, "offset": offset, "domain": normalized_domain, "reports": reports}
 
 
 @app.get("/api/v1/reports/{report_id}/pdf", response_class=Response)
@@ -5127,6 +5209,7 @@ async def download_audit_report(
     report_id: int,
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Download a stored report only when it belongs to the authenticated license."""
     from sqlalchemy import select
@@ -5136,7 +5219,11 @@ async def download_audit_report(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    pdf_bytes = await _read_report_pdf(row)
+    report_file = (await operational_db.execute(select(CustomerReportFile).where(
+        CustomerReportFile.report_id == row.id,
+        CustomerReportFile.license_key == license_obj.license_key,
+    ))).scalar_one_or_none()
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", row.domain)[:180] or "website"
     return Response(
         content=pdf_bytes,
@@ -8675,14 +8762,22 @@ async def admin_overview(
 
 @app.get("/api/v1/admin/reports/{report_id}/pdf", response_class=Response)
 async def admin_download_audit_report(report_id: int, request: Request,
-                                      db: AsyncSession = Depends(get_async_db)):
+                                      db: AsyncSession = Depends(get_async_db),
+                                      operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Allow authenticated operators to retrieve a saved customer report for support."""
     _require_admin_key(request)
     from sqlalchemy import select
     report = (await db.execute(select(AuditReport).where(AuditReport.id == report_id))).scalar_one_or_none()
     if report is None:
         raise HTTPException(status_code=404, detail="Audit report not found.")
-    pdf_bytes = await _read_report_pdf(report)
+    owner = await db.get(SoftwareLicense, report.license_id)
+    report_file = None
+    if owner is not None:
+        report_file = (await operational_db.execute(select(CustomerReportFile).where(
+            CustomerReportFile.report_id == report.id,
+            CustomerReportFile.license_key == owner.license_key,
+        ))).scalar_one_or_none()
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(report)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
     return Response(
         content=pdf_bytes,
@@ -8700,6 +8795,7 @@ async def admin_download_audit_report(report_id: int, request: Request,
 async def cleanup_expired_report_pdfs(
     request: Request,
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Daily scheduler endpoint; removes expired PDF objects but preserves report metadata."""
     cron_secret = os.getenv("CRON_SECRET", "")
@@ -8713,8 +8809,33 @@ async def cleanup_expired_report_pdfs(
     cutoff = now - timedelta(days=retention_days)
     from sqlalchemy import or_, select
 
-    # Once a PDF has expired, retention policy permits deletion whether its
-    # bytes are still in PostgreSQL or have already moved to Hostinger.
+    # Hostinger owns all new customer-facing PDF pointers. Keep failures
+    # retryable and mark deletion only after the private bridge confirms it.
+    hostinger_rows = (await operational_db.execute(
+        select(CustomerReportFile)
+        .where(
+            CustomerReportFile.expires_at.is_not(None),
+            CustomerReportFile.expires_at <= now,
+            CustomerReportFile.deleted_at.is_(None),
+        )
+        .order_by(CustomerReportFile.expires_at.asc(), CustomerReportFile.id.asc())
+        .limit(100)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    hostinger_deleted = 0
+    hostinger_failed = 0
+    for report_file in hostinger_rows:
+        try:
+            await asyncio.to_thread(delete_file, report_file.storage_key)
+        except HostingerStorageError as exc:
+            hostinger_failed += 1
+            logger.error("Expired Hostinger report deletion failed (error_type=%s)", type(exc).__name__)
+            continue
+        report_file.deleted_at = now
+        hostinger_deleted += 1
+    await operational_db.commit()
+
+    # Preserve legacy cleanup for PDFs whose pointers/bytes still live in PostgreSQL.
     rows = (await db.execute(
         select(AuditReport)
         .where(
@@ -8752,10 +8873,10 @@ async def cleanup_expired_report_pdfs(
     return {
         "status": "completed",
         "retention_days": retention_days,
-        "processed": len(rows),
-        "deleted": deleted,
-        "failed": failed,
-        "has_more": len(rows) == 100,
+        "processed": len(hostinger_rows) + len(rows),
+        "deleted": hostinger_deleted + deleted,
+        "failed": hostinger_failed + failed,
+        "has_more": len(hostinger_rows) == 100 or len(rows) == 100,
     }
 
 
