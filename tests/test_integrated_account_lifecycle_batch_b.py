@@ -95,7 +95,7 @@ def test_agency_team_revocation_uses_agency_first_lock_order():
 
 def test_customer_portal_confirms_and_reports_team_member_revocation():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadAgencyTeam()")
+    start = portal.index("async function loadAgencyTeam(append = false)")
     end = portal.index("async function inviteAgencyTeam()", start)
     section = portal[start:end]
 
@@ -269,7 +269,7 @@ def _portal():
 
 def _device_loader(source):
     start = source.index("  async function loadDeviceSessions() {")
-    end = source.index("  async function loadWordPressSites()", start)
+    end = source.index("  async function loadWordPressSites(", start)
     return source[start:end]
 
 
