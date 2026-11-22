@@ -21,7 +21,7 @@ def test_agency_portal_protects_workspace_and_saved_audit_requests():
     start = portal.index("(() => {")
     script = portal[start:portal.index("</script>", start)]
 
-    assert '"/api/v1/agency/team/workspaces", {}, expectedVersion' in script
+    assert '"/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset, {}, expectedVersion' in script
     assert '"/api/v1/agency/team/auth/me",{},expectedVersion' in script
     assert '"/audits?limit="+historyPageSize+"&offset="+offset,{},actionVersion' in script
     assert '"/audit-results?batch_id="+encodeURIComponent(batch.id)+"&limit=25",{},evidenceVersion' in script
