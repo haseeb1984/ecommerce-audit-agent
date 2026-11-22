@@ -1403,6 +1403,7 @@ async def comprehensive_audit_pdf(
         reservation_id = None
         uploaded_storage_key = None
         uploaded_report_file_id = None
+        uploaded_report_file_data = None
 
         hostname = urlsplit(target_url).hostname or "website"
         safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:180]
