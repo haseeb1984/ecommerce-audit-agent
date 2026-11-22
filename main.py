@@ -6737,6 +6737,7 @@ async def email_audit_report(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Email a saved PDF only on explicit request and only for a report owned by this license."""
     from sqlalchemy import select
@@ -6751,7 +6752,11 @@ async def email_audit_report(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    pdf_bytes = await _read_report_pdf(row)
+    report_file = (await operational_db.execute(select(CustomerReportFile).where(
+        CustomerReportFile.report_id == row.id,
+        CustomerReportFile.license_key == license_obj.license_key,
+    ))).scalar_one_or_none()
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row)
     if len(pdf_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Report exceeds the email attachment size limit.")
     try:
