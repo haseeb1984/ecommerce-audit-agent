@@ -92,12 +92,14 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
     assert result["team_sessions_revoked"] is True
     from sqlalchemy.sql.dml import Update
 
-    assert len(db.statements) == 3
+    assert len(db.statements) == 5
     assert all(isinstance(statement, Update) for statement in db.statements)
     statement_sql = [str(statement) for statement in db.statements]
     assert any("agency_team_sessions" in sql and "revoked_at" in sql for sql in statement_sql)
     assert any("agency_team_login_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
     assert any("agency_team_members" in sql and "invitation_token_hash" in sql for sql in statement_sql)
+    assert any("agency_client_websites" in sql and "site_token_hash" in sql for sql in statement_sql)
+    assert any("agency_website_connect_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
     invitation_update = next(statement for statement in db.statements if "agency_team_members" in str(statement))
     invitation_values = invitation_update.compile().params
     assert "revoked" in invitation_values.values()
@@ -106,8 +108,8 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
 
 
 class AgencyWorkspaceGrantSession:
-    def __init__(self, agency, access):
-        self.rows = [agency, access]
+    def __init__(self, agency, member, workspace, access):
+        self.rows = [agency, member, workspace, access]
         self.deleted = []
         self.committed = False
 
@@ -127,11 +129,13 @@ async def test_owner_can_remove_one_team_workspace_grant_without_revoking_member
     from main import remove_business_agency_team_workspace_access
 
     agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
+    member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active")
+    workspace = SimpleNamespace(id="workspace-1", agency_id="agency-1", status="active")
     grant = SimpleNamespace(
         id="grant-1", agency_id="agency-1",
         team_member_id="member-1", workspace_id="workspace-1",
     )
-    db = AgencyWorkspaceGrantSession(agency, grant)
+    db = AgencyWorkspaceGrantSession(agency, member, workspace, grant)
     license_obj = SimpleNamespace(license_key="business-license", tier="business")
     monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
 
@@ -397,7 +401,7 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     from main import AgencyTeamLoginRequest, request_agency_team_login
 
     now = datetime.now(timezone.utc)
-    member = SimpleNamespace(id="member-1", agency_id="agency-1")
+    member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active")
     agency = SimpleNamespace(id="agency-1", owner_license_key="business-license")
     recent = SimpleNamespace(created_at=now - timedelta(seconds=10))
 
@@ -466,7 +470,9 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
     suspend_invite_revoke = suspend_source.index("AgencyTeamMember.status == \"invited\"")
     assert suspend_agency_lock < suspend_invite_revoke
-    assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
+    invitation_update = suspend_source[suspend_invite_revoke:]
+    assert ".values(" in invitation_update
+    assert "invitation_token_hash=None" in invitation_update
 
 
 
