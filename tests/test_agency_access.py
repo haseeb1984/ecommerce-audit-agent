@@ -902,7 +902,7 @@ def test_admin_agency_detail_caps_website_connections_per_workspace_and_reports_
     source = inspect.getsource(admin_get_business_agency_detail)
     assert "func.row_number().over(" in source
     assert "partition_by=AgencyClientWebsite.workspace_id" in source
-    assert "ranked_website_ids.c.site_rank <= 100" in source
+    assert "ranked_website_ids.c.site_rank <= website_offset + website_limit" in source
     assert "website_count_rows" in source
     assert '"website_connection_count": website_counts.get(item.id, 0)' in source
     assert '"website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))' in source
