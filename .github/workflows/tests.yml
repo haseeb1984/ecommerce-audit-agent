@@ -79,7 +79,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y php-cli
-          find wordpress-plugin -name '*.php' -print0 | xargs -0 -n1 php -l
+          find wordpress-plugin hostinger-storage/eaa-storage -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Syntax-check embedded SaaS frontend JavaScript
         run: python scripts/check_frontend_syntax.py
       - name: Generate synthetic PDF report for layout review
