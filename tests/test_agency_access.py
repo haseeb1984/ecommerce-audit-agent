@@ -536,17 +536,20 @@ def test_agency_wordpress_site_registration_rechecks_single_active_workspace_aft
 class BusinessAgencyTeamListSession:
     def __init__(self, agency, members, access_rows=()):
         self.agency = agency
-        self.results = [list(members), list(access_rows)]
+        self.members = list(members)
+        self.access_rows = list(access_rows)
+        self.execute_calls = 0
 
     async def scalar(self, _statement):
         return self.agency
 
     async def execute(self, _statement):
-        values = self.results.pop(0)
-        return SimpleNamespace(
-            scalars=lambda: SimpleNamespace(all=lambda: values),
-            all=lambda: values,
-        )
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return SimpleNamespace(scalar_one=lambda: len(self.members))
+        if self.execute_calls == 2:
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.members))
+        return SimpleNamespace(all=lambda: self.access_rows)
 
 
 @pytest.mark.asyncio
