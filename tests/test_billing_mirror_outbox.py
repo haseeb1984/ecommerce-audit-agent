@@ -120,15 +120,16 @@ def test_customer_email_change_invalidates_watermark_and_cleans_completed_outbox
         scan_worker._customer_email_identity_update_statement(7, "old@example.com", "new@example.com")
     )
     update_sql = str(compiled_update).lower()
-    cleanup_sql = str(
-        _compile_sql(scan_worker._customer_email_identity_completed_billing_outbox_cleanup_statement(7, "old@example.com"))
-    ).lower()
+    compiled_cleanup = _compile_sql(
+        scan_worker._customer_email_identity_completed_billing_outbox_cleanup_statement(7, "old@example.com")
+    )
+    cleanup_sql = str(compiled_cleanup).lower()
     worker_source = inspect.getsource(scan_worker.reconcile_customer_email_identity_outbox)
 
     assert "billing_mirror_synced_at=" in update_sql
     assert compiled_update.params["billing_mirror_synced_at"] is None
     assert "recipient_email" in update_sql
-    assert "status" in cleanup_sql and "completed" in cleanup_sql
+    assert "status" in cleanup_sql and "completed" in compiled_cleanup.params.values()
     assert "billing_mirror_sync_outbox.event_id in" in cleanup_sql
     assert worker_source.index("_customer_email_identity_completed_billing_outbox_cleanup_statement(") < worker_source.index(
         "_customer_email_identity_update_statement("
