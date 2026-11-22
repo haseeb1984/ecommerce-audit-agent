@@ -22,6 +22,10 @@ class _OperationalSession:
     def __init__(self):
         self.statement = None
 
+    async def scalar(self, statement):
+        self.count_statement = statement
+        return 0
+
     async def execute(self, statement):
         self.statement = statement
         return _Result()
