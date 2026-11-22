@@ -203,6 +203,40 @@ async def _read_customer_report_file(report_file: CustomerReportFile) -> bytes:
         logger.error("Customer report storage read failed (error_type=%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Report file storage is temporarily unavailable.") from None
 
+async def _compensate_customer_report_upload(
+    operational_db: AsyncSession,
+    report_file_data: dict,
+) -> None:
+    """Delete a failed audit's PDF, or retain an immediately-expiring retry pointer."""
+    await operational_db.rollback()
+    storage_key = report_file_data["storage_key"]
+    try:
+        await asyncio.to_thread(delete_file, storage_key)
+    except HostingerStorageError as exc:
+        logger.error("Report upload compensation delete failed (error_type=%s)", type(exc).__name__)
+        try:
+            existing = await operational_db.get(CustomerReportFile, report_file_data["id"])
+            if existing is None:
+                recovery_data = dict(report_file_data)
+                recovery_data["expires_at"] = datetime.now(timezone.utc)
+                operational_db.add(CustomerReportFile(**recovery_data))
+            else:
+                existing.expires_at = datetime.now(timezone.utc)
+            await operational_db.commit()
+        except Exception as recovery_exc:
+            await operational_db.rollback()
+            logger.error("Retryable report cleanup pointer could not be persisted (error_type=%s)", type(recovery_exc).__name__)
+        return
+
+    try:
+        existing = await operational_db.get(CustomerReportFile, report_file_data["id"])
+        if existing is not None:
+            await operational_db.delete(existing)
+        await operational_db.commit()
+    except Exception as cleanup_exc:
+        await operational_db.rollback()
+        logger.error("Compensated report metadata cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+
 
 app = FastAPI(
     title="AI E-Commerce Audit Engine - Commercial Edition",
@@ -736,6 +770,7 @@ async def comprehensive_audit_pdf(
     reservation_id = None
     uploaded_storage_key = None
     uploaded_report_file_id = None
+    uploaded_report_file_data = None
     try:
         audit_started_at_utc = datetime.now(timezone.utc).isoformat()
         module_statuses = {
@@ -1329,21 +1364,22 @@ async def comprehensive_audit_pdf(
         report_id = report.id
 
         uploaded_report_file_id = secrets.token_urlsafe(32)
-        operational_db.add(CustomerReportFile(
-            id=uploaded_report_file_id,
-            report_id=report_id,
-            license_key=license_obj.license_key,
-            report_name=f"ecommerce-audit-{report_domain[:180]}-{report_id}.pdf",
-            domain=report_domain[:253],
-            finding_count=len(result.findings),
-            storage_key=storage_receipt.storage_key,
-            storage_key_hash=hashlib.sha256(storage_receipt.storage_key.encode("utf-8")).hexdigest(),
-            pdf_sha256=storage_receipt.sha256,
-            mime_type=storage_receipt.mime_type,
-            byte_size=storage_receipt.byte_size,
-            created_at=report_generated_at,
-            expires_at=_report_file_expiry(report_generated_at),
-        ))
+        uploaded_report_file_data = {
+            "id": uploaded_report_file_id,
+            "report_id": report_id,
+            "license_key": license_obj.license_key,
+            "report_name": f"ecommerce-audit-{report_domain[:180]}-{report_id}.pdf",
+            "domain": report_domain[:253],
+            "finding_count": len(result.findings),
+            "storage_key": storage_receipt.storage_key,
+            "storage_key_hash": hashlib.sha256(storage_receipt.storage_key.encode("utf-8")).hexdigest(),
+            "pdf_sha256": storage_receipt.sha256,
+            "mime_type": storage_receipt.mime_type,
+            "byte_size": storage_receipt.byte_size,
+            "created_at": report_generated_at,
+            "expires_at": _report_file_expiry(report_generated_at),
+        }
+        operational_db.add(CustomerReportFile(**uploaded_report_file_data))
         # If the PostgreSQL transaction later fails, the exception handler
         # compensates by deleting this metadata row and its private object.
         await operational_db.commit()
@@ -1382,14 +1418,10 @@ async def comprehensive_audit_pdf(
     except HTTPException as exc:
         await db.rollback()
         await operational_db.rollback()
-        if uploaded_report_file_id:
-            try:
-                await operational_db.execute(delete(CustomerReportFile).where(CustomerReportFile.id == uploaded_report_file_id))
-                await operational_db.commit()
-            except Exception as cleanup_exc:
-                await operational_db.rollback()
-                logger.error("Report metadata compensation failed (error_type=%s)", type(cleanup_exc).__name__)
-        if uploaded_storage_key:
+        if uploaded_report_file_data is not None:
+            await _compensate_customer_report_upload(operational_db, uploaded_report_file_data)
+            uploaded_storage_key = None
+        elif uploaded_storage_key:
             try:
                 await asyncio.to_thread(delete_file, uploaded_storage_key)
             except HostingerStorageError as cleanup_exc:
