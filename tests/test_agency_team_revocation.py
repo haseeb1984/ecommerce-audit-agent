@@ -114,7 +114,7 @@ def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_or
     assert agency_lock < workspace_lock < site_lock < challenge_update < commit
     assert ".with_for_update()" in source[agency_lock:workspace_lock]
     assert ".with_for_update()" in source[workspace_lock:site_lock]
-    assert ".with_for_update()" in source[site_lock:challenge_lock]
+    assert ".with_for_update()" in source[site_lock:challenge_update]
     assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[challenge_update:commit]
     assert ".values(consumed_at=now)" in source[challenge_update:commit]
     assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
