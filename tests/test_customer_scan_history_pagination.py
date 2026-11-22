@@ -115,7 +115,10 @@ def test_customer_scan_batch_actions_do_not_update_status_after_account_switch()
 
     assert "const operationSessionVersion = accountSessionVersion;" in source
     assert "if (operationSessionVersion === accountSessionVersion)" in source
-    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
+    loader_start = portal.index("async function loadScanBatches")
+    loader_end = portal.index("async function loadScanBatchDetail", loader_start)
+    loader = portal[loader_start:loader_end]
+    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in loader
 
 
 
