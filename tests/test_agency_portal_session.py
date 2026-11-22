@@ -140,7 +140,7 @@ def test_agency_team_portal_loads_assigned_workspaces_in_session_guarded_pages()
     assert "let workspaceLoadMore = null;" in script
     assert '"/api/v1/agency/team/workspaces?limit="+pageSize+"&offset="+offset' in script
     assert 'workspaceLoadMore.textContent = "Load more client workspaces";' in script
-    assert "loadWorkspaces(expectedVersion, workspaceOffset, true)" in script
+    assert "loadWorkspaces(expectedVersion, nextOffset, true)" in script
     assert "assertCurrentSession(expectedVersion);" in script
 
 
