@@ -80,7 +80,14 @@ class AgencyArchiveSession:
         return self.rows.pop(0)
 
     async def execute(self, _statement):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.challenges))
+        now = datetime.now(timezone.utc)
+        pending = [item for item in self.challenges if item.consumed_at is None]
+        for item in pending:
+            item.consumed_at = now
+        return SimpleNamespace(
+            rowcount=len(pending),
+            scalars=lambda: SimpleNamespace(all=lambda: self.challenges),
+        )
 
     async def commit(self):
         self.committed = True
