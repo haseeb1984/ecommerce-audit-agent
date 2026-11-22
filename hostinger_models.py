@@ -260,6 +260,7 @@ class CustomerReportFile(HostingerBase):
     finding_count = Column(Integer, nullable=False, default=0)
     storage_key = Column(String(1024), nullable=False)
     storage_key_hash = Column(String(64), nullable=False, unique=True)
+    pdf_sha256 = Column(String(64), nullable=True)
     mime_type = Column(String(100), nullable=False, default="application/pdf")
     byte_size = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
