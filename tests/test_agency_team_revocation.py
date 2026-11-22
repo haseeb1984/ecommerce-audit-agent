@@ -119,7 +119,7 @@ def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_or
     assert ".values(consumed_at=now)" in source[challenge_update:commit]
     assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
     assert 'workspace.status != "active"' in source[workspace_lock:site_lock]
-    assert "site.site_token_hash = None" in source[site_lock:challenge_lock]
+    assert "site.site_token_hash = None" in source[site_lock:challenge_update]
 
 
 def test_agency_wordpress_heartbeat_revalidates_credential_under_lifecycle_locks():
