@@ -4,6 +4,7 @@ Only network-dependent audit stages and persistence are stubbed. The PDF rendere
 is deliberately real so this test exercises the actual response artifact.
 """
 from datetime import datetime, timezone
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -35,8 +36,20 @@ class FakeDB:
 
 @pytest.mark.asyncio
 async def test_comprehensive_audit_returns_real_rendered_pdf_with_findings(monkeypatch):
+    operational_db = FakeDB()
+    monkeypatch.setattr(main, "storage_configured", lambda: True)
+
+    def fake_upload(payload):
+        return SimpleNamespace(
+            storage_key="reports/" + "c" * 64 + ".pdf",
+            sha256=hashlib.sha256(payload).hexdigest(),
+            byte_size=len(payload),
+            mime_type="application/pdf",
+        )
+
+    monkeypatch.setattr(main, "upload_report", fake_upload)
     db = FakeDB()
-    license_obj = SimpleNamespace(id=44, tier="starter")
+    license_obj = SimpleNamespace(id=44, tier="starter", license_key="real-pdf-license")
     reserved_at = datetime(2026, 10, 17, tzinfo=timezone.utc)
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(101, reserved_at)))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
@@ -96,6 +109,7 @@ async def test_comprehensive_audit_returns_real_rendered_pdf_with_findings(monke
     # Do not mock main.render_audit_pdf: the purpose is to exercise real rendering.
     main.app.dependency_overrides[main.verify_license_or_api_key] = lambda: license_obj
     main.app.dependency_overrides[main.get_async_db] = lambda: db
+    main.app.dependency_overrides[main.get_hostinger_db] = lambda: operational_db
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=main.app),
@@ -115,6 +129,10 @@ async def test_comprehensive_audit_returns_real_rendered_pdf_with_findings(monke
         assert len(db.added) == 2
         assert any(getattr(item, "source_channel", None) == "comprehensive_audit" for item in db.added)
         assert any(item.__class__.__name__ == "AuditReport" for item in db.added)
+        hostinger_report = next(item for item in operational_db.added if item.__class__.__name__ == "CustomerReportFile")
+        assert hostinger_report.report_id == 500
+        assert hostinger_report.pdf_sha256 == hashlib.sha256(response.content).hexdigest()
+        operational_db.commit.assert_awaited_once()
         db.commit.assert_awaited_once()
     finally:
         main.app.dependency_overrides.clear()
