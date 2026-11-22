@@ -38,6 +38,8 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
 
     result = await list_account_wordpress_sites(
         response=response,
+        limit=100,
+        offset=0,
         license_obj=SimpleNamespace(license_key="license-test"),
         operational_db=operational_db,
     )
@@ -73,7 +75,7 @@ def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replac
     assert 'connectWebsite.textContent = "Generate replacement token";' in section
     assert 'window.confirm("Generate a replacement token?' in section
     assert 'Generating another token invalidates this one.' in section
-    assert 'refreshWebsiteStatus();' in section
+    assert 'refreshWebsite.addEventListener("click", () => refreshWebsiteStatus())' in section
 
 
 class _ScalarSiteResult:
