@@ -294,7 +294,7 @@ async def test_admin_sync_outbox_retry_requeues_bounded_pending_rows(
 
     monkeypatch.setattr(main, "_write_admin_log", write_log)
     result = await main.admin_retry_sync_outbox(
-        request=_admin_request(), queue=queue, limit=2, db=db
+        request=_admin_request(), queue=queue, limit=2, db=db, operational_db=db
     )
 
     assert result["queue"] == queue
