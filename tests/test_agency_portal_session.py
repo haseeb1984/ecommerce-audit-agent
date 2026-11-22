@@ -83,7 +83,7 @@ def test_customer_portal_confirms_and_reports_team_member_revocation():
 
     assert 'window.confirm("Revoke access for " + item.email' in section
     assert 'method:"DELETE"' in section
-    assert 'setStatus("agencyStatus", "Access revoked for " + item.email, "success")' in section
+    assert 'setStatus("agencyStatus", "Access revoked for " + item.email + ".", "success")' in section
     assert "revoke.disabled = true" in section
 
 
