@@ -135,7 +135,7 @@ def test_admin_api_key_inventory_ignores_stale_client_and_session_responses():
     source = portal[start:end]
 
     assert "const requestVersion=++clientApiKeyRequestVersion" in source
-    assert "const sessionVersion=adminSessionVersion" in source
+    assert "sessionVersion=adminSessionVersion" in source
     assert "if(expectedDetailVersion!==clientDetailVersion||currentHistoryId!==id)return;" in source
     assert "requestVersion!==clientApiKeyRequestVersion" in source
     assert "sessionVersion!==adminSessionVersion" in source
@@ -145,8 +145,8 @@ def test_admin_api_key_inventory_ignores_stale_client_and_session_responses():
 
 def test_admin_api_key_revoke_and_clipboard_feedback_are_selection_guarded():
     portal = Path("admin_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadClientApiKeys(id)")
-    end = portal.index("async function loadClientSessions(id)", start)
+    start = portal.index("async function loadClientApiKeys(id,expectedDetailVersion=clientDetailVersion)")
+    end = portal.index("async function loadClientSessions(id,expectedDetailVersion=clientDetailVersion)", start)
     source = portal[start:end]
 
     assert "const operationSessionVersion=adminSessionVersion;" in source
