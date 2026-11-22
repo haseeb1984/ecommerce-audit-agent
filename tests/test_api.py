@@ -15,6 +15,8 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
+from hostinger_database import HostingerAsyncSessionLocal
+from hostinger_models import CustomerReportFile
 from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
@@ -846,8 +848,17 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
         saved = (await db.execute(
             select(AuditReport).where(AuditReport.id == report_id, AuditReport.license_id == owner_id)
         )).scalar_one()
-        assert saved.pdf_bytes == b"%PDF-journey-test"
+        assert saved.pdf_bytes is None
+        assert saved.storage_key is None
         assert await db.scalar(select(func.count(AuditQuotaReservation.id))) == 0
+
+    async with HostingerAsyncSessionLocal() as operational_db:
+        stored_file = (await operational_db.execute(select(CustomerReportFile).where(
+            CustomerReportFile.report_id == report_id,
+            CustomerReportFile.license_key == owner_key,
+        ))).scalar_one()
+        assert stored_file.pdf_sha256 == hashlib.sha256(b"%PDF-journey-test").hexdigest()
+        assert stored_file.byte_size == len(b"%PDF-journey-test")
 
 
 @pytest.mark.asyncio
