@@ -252,7 +252,7 @@ class CustomerReportFile(HostingerBase):
     """Customer-facing PDF pointer; the file itself lives only in Hostinger private storage."""
     __tablename__ = "customer_report_files"
     id = Column(String(64), primary_key=True)
-    report_id = Column(BigInteger, nullable=True, unique=True, index=True)
+    report_id = Column(BigInteger, nullable=True, unique=True)
     license_key = Column(String(100), nullable=False, index=True)
     job_id = Column(String(64), nullable=True, index=True)
     report_name = Column(String(255), nullable=False)
