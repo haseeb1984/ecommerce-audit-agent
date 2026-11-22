@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS customer_report_files (
   finding_count INT NOT NULL DEFAULT 0,
   storage_key VARCHAR(1024) NOT NULL,
   storage_key_hash CHAR(64) NOT NULL UNIQUE,
+  pdf_sha256 CHAR(64) NULL,
   mime_type VARCHAR(100) NOT NULL DEFAULT 'application/pdf',
   byte_size BIGINT NOT NULL,
   created_at DATETIME(6) NOT NULL,
