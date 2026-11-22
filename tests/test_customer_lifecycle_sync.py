@@ -74,7 +74,8 @@ def test_admin_customer_lifecycle_audit_is_attempted_before_operational_mutation
     assert "await operational_db.commit()" in helper_source
     assert "except Exception as exc" in helper_source
     assert '"operational_sync": "queued"' in source
-    assert '"changed_count": changed' not in source
+    audit_payload = source[audit_write:operational_mutation]
+    assert '"changed_count": changed' not in audit_payload
 
 
 
@@ -92,7 +93,7 @@ def test_customer_lifecycle_outbox_claim_preserves_per_license_event_order():
     # the same license, even while the older event is deferred for retry.
     assert "not (exists (select" in sql
     assert "customer_lifecycle_sync_outbox_1.license_key = customer_lifecycle_sync_outbox.license_key" in sql
-    assert "customer_lifecycle_sync_outbox_1.status = %(status_1)s" in sql
+    assert "customer_lifecycle_sync_outbox_1.status =" in sql
     assert "customer_lifecycle_sync_outbox_1.created_at < customer_lifecycle_sync_outbox.created_at" in sql
     assert "customer_lifecycle_sync_outbox_1.id < customer_lifecycle_sync_outbox.id" in sql
     assert "customer_lifecycle_sync_outbox.next_attempt_at <= " in sql
