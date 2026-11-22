@@ -4,6 +4,7 @@ import hmac
 import json
 import time
 import threading
+import secrets
 from pathlib import Path
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,32 @@ def make_dossier(domain, email="", source="web_audit"):
             email_body="I noticed an opportunity to improve your mobile experience.",
         ),
     )
+
+
+def mock_hostinger_report_storage(monkeypatch):
+    stored_files = {}
+
+    def fake_upload(payload):
+        key = f"reports/{secrets.token_hex(32)}.pdf"
+        content = bytes(payload)
+        stored_files[key] = content
+        return SimpleNamespace(
+            storage_key=key,
+            sha256=hashlib.sha256(content).hexdigest(),
+            byte_size=len(content),
+            mime_type="application/pdf",
+        )
+
+    def fake_download(storage_key, expected_sha256=None):
+        content = stored_files[storage_key]
+        if expected_sha256:
+            assert hashlib.sha256(content).hexdigest() == expected_sha256
+        return content
+
+    monkeypatch.setattr(main, "storage_configured", lambda: True)
+    monkeypatch.setattr(main, "upload_report", fake_upload)
+    monkeypatch.setattr(main, "download_file", fake_download)
+    return stored_files
 
 
 @pytest.fixture
@@ -673,6 +700,7 @@ async def test_report_history_is_scoped_to_authenticated_license(client, monkeyp
 
 @pytest.mark.asyncio
 async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_in_email(client, monkeypatch):
+    mock_hostinger_report_storage(monkeypatch)
     owner_key = "journey-owner-license"
     other_key = "journey-other-license"
     owner_id = await create_license(key=owner_key, quota=3)
@@ -1913,6 +1941,7 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
 
 @pytest.mark.asyncio
 async def test_pagespeed_provider_failure_still_saves_partial_audit_without_fake_metrics(client, monkeypatch):
+    mock_hostinger_report_storage(monkeypatch)
     license_key = "partial-audit-pagespeed-failure"
     await create_license(key=license_key, quota=2)
 
