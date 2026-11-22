@@ -526,9 +526,10 @@ def test_scan_worker_rechecks_lease_loss_before_billable_quota_commit():
     import scan_worker
 
     source = inspect.getsource(scan_worker.process_one_scan)
-    guard = source.index('if lease_unconfirmed.is_set():', source.index('current_license ='))
+    license_lookup = source.index('current_license =')
+    reservation_cleanup = source.index('delete(AuditQuotaReservation)', license_lookup)
+    guard = source.index('if lease_unconfirmed.is_set():', reservation_cleanup)
     commit = source.index('await licensing_db.commit()', guard)
-    reservation_cleanup = source.index('delete(AuditQuotaReservation)', guard)
 
-    assert reservation_cleanup < guard < commit
+    assert license_lookup < reservation_cleanup < guard < commit
     assert 'raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")' in source[guard:commit]
