@@ -33,9 +33,9 @@ import main
 
 def test_admin_activity_endpoint_supports_bounded_sanitized_filters():
     signature = inspect.signature(main.admin_action_history)
-    assert signature.parameters["action"].default.max_length == 100
-    assert signature.parameters["entity_type"].default.max_length == 80
-    assert signature.parameters["entity_id"].default.max_length == 160
+    for parameter, maximum in (("action", 100), ("entity_type", 80), ("entity_id", 160)):
+        query = signature.parameters[parameter].default
+        assert any(getattr(item, "max_length", None) == maximum for item in query.metadata)
 
     source = inspect.getsource(main.admin_action_history)
     assert "AdminActionLog.action.ilike" in source
