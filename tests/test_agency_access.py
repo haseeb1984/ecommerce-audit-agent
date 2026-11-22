@@ -914,7 +914,7 @@ def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_trunca
     source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
     assert "workspace.website_connection_count" in source
     assert "workspace.website_connections_truncated" in source
-    assert "Showing latest 100" in source
+    assert "Showing latest "+workspace.website_connections.length+" of "+workspace.website_connection_count in source
 
 
 
