@@ -75,7 +75,9 @@ def test_customer_scan_batches_are_scoped_to_the_active_account_session():
     assert "const requestSessionVersion = accountSessionVersion;" in source
     assert "scanBatchesLoadingSessionVersion === requestSessionVersion" in source
     assert "const requestVersion = ++scanBatchesRequestVersion;" in source
-    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in source
+    loader_start = portal.index("async function loadScanBatches")
+    loader_end = portal.index("async function loadScanBatchDetail", loader_start)
+    assert "requestVersion !== scanBatchesRequestVersion || requestSessionVersion !== accountSessionVersion" in portal[loader_start:loader_end]
     assert "if (requestVersion === scanBatchesRequestVersion)" in source
 
 
