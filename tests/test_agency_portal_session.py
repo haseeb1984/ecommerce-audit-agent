@@ -77,7 +77,7 @@ def test_agency_member_role_api_updates_default_role_without_overwriting_custom_
 
 def test_customer_portal_confirms_and_reports_team_member_revocation():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadAgencyTeam()")
+    start = portal.index("async function loadAgencyTeam(append = false)")
     end = portal.index("async function inviteAgencyTeam()", start)
     section = portal[start:end]
 
