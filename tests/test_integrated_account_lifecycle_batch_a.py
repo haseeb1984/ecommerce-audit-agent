@@ -206,7 +206,7 @@ def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replac
     assert 'connectWebsite.textContent = "Generate replacement token";' in section
     assert 'window.confirm("Generate a replacement token?' in section
     assert 'Generating another token invalidates this one.' in section
-    assert 'refreshWebsiteStatus();' in section
+    assert 'refreshWebsite.addEventListener("click", () => refreshWebsiteStatus())' in section
 
 
 
