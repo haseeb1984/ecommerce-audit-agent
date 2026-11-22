@@ -1020,6 +1020,7 @@
             const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
             website = await websiteResponse.json();
           }
+          if (requestVersion !== agencyClientRequestVersion || sessionVersion !== accountSessionVersion) return;
           if (website.connected) {
             const health = website.connection_health === "healthy" ? "Healthy heartbeat"
               : website.connection_health === "stale" ? "Heartbeat stale — check the WordPress plugin"
@@ -1036,7 +1037,9 @@
         } catch (error) {
           websiteStatus.textContent = error.message;
         } finally {
-          refreshWebsite.disabled = false;
+          if (requestVersion === agencyClientRequestVersion && sessionVersion === accountSessionVersion) {
+            refreshWebsite.disabled = false;
+          }
         }
       }
       connectWebsite.addEventListener("click", async () => {
@@ -1077,7 +1080,7 @@
       });
       websitePanel.append(websiteStatus, connectWebsite, disconnectWebsite, refreshWebsite, tokenPanel);
       if (item.status !== "active") connectWebsite.disabled = true;
-      if (item.status === "active") refreshWebsiteStatus(item.website || {connected: false});
+      if (item.status === "active") refreshWebsiteStatus();
       card.append(info, actions, websitePanel, auditHistoryPanel);
       container.append(card);
     }
