@@ -2164,7 +2164,7 @@ async def test_saved_report_evidence_is_allowlisted_redacted_and_email_is_privat
     assert outcomes.json()["total"] == 1
     assert outcomes.json()["outcome_summary"]["denominator"] == 1
 
-    async def fake_send(*args, **kwargs):
+    def fake_send(*args, **kwargs):
         return None
 
     monkeypatch.setattr(main, "_send_pdf_email", fake_send)
