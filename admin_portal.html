@@ -490,7 +490,7 @@ async function showAgencyDetail(agencyId){
     if(requestVersion!==agencyDetailRequestVersion||sessionVersion!==adminSessionVersion)return;
     appendMembers(next.team_members);p.member_offset=next.page.member_offset;p.members_has_more=next.page.members_has_more;
     if(!p.members_has_more)more.remove();else more.disabled=false;
-   }catch(error){more.disabled=false;status(error.message,"error")}});
+   }catch(error){if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){more.disabled=false;status(error.message,"error")}}});
    memberList.append(more);
   }
   const close=el("button","Close details","secondary");close.addEventListener("click",()=>{agencyDetailRequestVersion+=1;box.hidden=true;box.replaceChildren()});box.append(close);
