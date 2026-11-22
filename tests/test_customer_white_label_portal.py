@@ -11,7 +11,7 @@ def test_customer_white_label_settings_apply_to_the_portal_theme():
     assert "function applyBranding(branding)" in portal
     assert 'document.documentElement.style.setProperty("--brand-primary", color)' in portal
     assert "applyBranding(branding);" in portal
-    assert "applyBranding(saved);" in portal
+    assert "await loadBranding();" in portal
     assert 'applyBranding(null);' in portal
 
 
@@ -23,5 +23,5 @@ def test_customer_white_label_save_supports_passwordless_bearer_sessions():
 
     assert 'if (!credential && !sessionToken)' in handler
     assert 'api("/api/v1/account/branding"' in handler
-    assert "applyBranding(saved);" in handler
+    assert "await loadBranding();" in handler
     assert 'finally { button.disabled = !credential && !sessionToken; }' in handler
