@@ -573,6 +573,11 @@ async def process_one_scan(worker_id: str) -> dict:
                     await licensing_db.execute(
                         delete(AuditQuotaReservation).where(AuditQuotaReservation.id == reservation_id)
                     )
+                # The queue heartbeat can fail while this transaction waits on
+                # the canonical license row lock. Re-check before committing the
+                # billable lead so a worker that has lost its lease cannot charge.
+                if lease_unconfirmed.is_set():
+                    raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
                 await licensing_db.commit()
                 reservation_id = None
 
