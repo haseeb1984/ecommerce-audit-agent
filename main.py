@@ -48,7 +48,7 @@ from wordpress_identity_api import router as wordpress_identity_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
 from outbox_retry import outbox_retry_delay_seconds, next_outbox_attempt_count
-from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, get_customer_session_credentials
+from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, verify_customer_account_for_usage, get_customer_session_credentials
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
@@ -4489,7 +4489,7 @@ def _load_customer_usage_details(details_json: str | None) -> dict:
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_usage),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
