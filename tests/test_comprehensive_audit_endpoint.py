@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -28,10 +29,30 @@ class FakeDB:
                 self._next_id += 1
 
 
+@pytest.fixture(autouse=True)
+def hostinger_storage_dependencies(monkeypatch):
+    operational_db = FakeDB()
+    monkeypatch.setattr(main, "storage_configured", lambda: True)
+
+    def fake_upload(payload):
+        key = "reports/" + "a" * 64 + ".pdf"
+        return SimpleNamespace(
+            storage_key=key,
+            sha256=hashlib.sha256(payload).hexdigest(),
+            byte_size=len(payload),
+            mime_type="application/pdf",
+        )
+
+    monkeypatch.setattr(main, "upload_report", fake_upload)
+    main.app.dependency_overrides[main.get_hostinger_db] = lambda: operational_db
+    yield operational_db
+    main.app.dependency_overrides.clear()
+
+
 @pytest.mark.asyncio
-async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monkeypatch):
+async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monkeypatch, hostinger_storage_dependencies):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=44, tier="starter")
+    license_obj = SimpleNamespace(id=44, tier="starter", license_key="license-44")
     reserved_at = datetime(2026, 10, 17, tzinfo=timezone.utc)
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(101, reserved_at)))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
@@ -131,6 +152,13 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
         assert len(db.added) == 2
         assert any(getattr(item, "source_channel", None) == "comprehensive_audit" for item in db.added)
         saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
+        hostinger_report = next(item for item in hostinger_storage_dependencies.added if item.__class__.__name__ == "CustomerReportFile")
+        assert hostinger_report.report_id == saved_report.id
+        assert hostinger_report.license_key == license_obj.license_key
+        assert hostinger_report.storage_key_hash == hashlib.sha256(hostinger_report.storage_key.encode("utf-8")).hexdigest()
+        assert hostinger_report.pdf_sha256 == hashlib.sha256(response.content).hexdigest()
+        assert hostinger_report.byte_size == len(response.content)
+        hostinger_storage_dependencies.commit.assert_awaited_once()
         persisted_metadata = __import__("json").loads(saved_report.coverage_json)
         assert persisted_metadata["check_outcomes"][0]["check_id"] == "html.title_present"
         assert persisted_metadata["check_outcomes"][0]["outcome"] == "pass"
@@ -144,7 +172,7 @@ async def test_comprehensive_audit_returns_pdf_and_commits_one_quota_record(monk
 @pytest.mark.asyncio
 async def test_comprehensive_audit_rejects_private_target_before_quota(monkeypatch):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=44, tier="business")
+    license_obj = SimpleNamespace(id=44, tier="business", license_key="license-44")
     reserve = AsyncMock()
     monkeypatch.setattr(main, "reserve_audit_slot", reserve)
     main.app.dependency_overrides[main.verify_license_or_api_key] = lambda: license_obj
@@ -168,7 +196,7 @@ async def test_comprehensive_audit_rejects_private_target_before_quota(monkeypat
 @pytest.mark.asyncio
 async def test_comprehensive_audit_merges_isolated_rendered_browser_findings_and_coverage(monkeypatch):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=45, tier="pro")
+    license_obj = SimpleNamespace(id=45, tier="pro", license_key="license-45")
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(102, datetime(2026, 10, 17, tzinfo=timezone.utc))))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
     monkeypatch.setattr(main.agent, "run_audit", AsyncMock(return_value=StoreAuditMetrics(
@@ -231,7 +259,7 @@ async def test_comprehensive_audit_merges_isolated_rendered_browser_findings_and
 @pytest.mark.asyncio
 async def test_comprehensive_audit_records_browser_service_unavailable_without_failing_audit(monkeypatch):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=46, tier="starter")
+    license_obj = SimpleNamespace(id=46, tier="starter", license_key="license-46")
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(103, datetime(2026, 10, 17, tzinfo=timezone.utc))))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
     monkeypatch.setattr(main.agent, "run_audit", AsyncMock(return_value=StoreAuditMetrics(
@@ -267,7 +295,7 @@ async def test_comprehensive_audit_records_browser_service_unavailable_without_f
 @pytest.mark.asyncio
 async def test_comprehensive_audit_does_not_mark_empty_browser_response_as_completed(monkeypatch):
     db = FakeDB()
-    license_obj = SimpleNamespace(id=47, tier="starter")
+    license_obj = SimpleNamespace(id=47, tier="starter", license_key="license-47")
     monkeypatch.setattr(main, "reserve_audit_slot", AsyncMock(return_value=(104, datetime(2026, 10, 17, tzinfo=timezone.utc))))
     monkeypatch.setattr(main, "release_audit_reservation", AsyncMock())
     monkeypatch.setattr(main.agent, "run_audit", AsyncMock(return_value=StoreAuditMetrics(
