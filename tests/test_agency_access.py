@@ -402,7 +402,7 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
 
     now = datetime.now(timezone.utc)
     member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active")
-    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license")
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
     recent = SimpleNamespace(created_at=now - timedelta(seconds=10))
 
     class OperationalSession:
@@ -497,7 +497,9 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
     suspend_invite_revoke = suspend_source.index('AgencyTeamMember.status == "invited"')
     assert suspend_agency_lock < suspend_invite_revoke
-    assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
+    invitation_revoke = suspend_source[suspend_invite_revoke:]
+    assert ".values(" in invitation_revoke
+    assert "invitation_token_hash=None" in invitation_revoke
 
 
 def test_agency_wordpress_connection_mutations_share_tenant_lock_order():
@@ -570,6 +572,8 @@ async def test_agency_team_list_exposes_invitation_expiry_without_token_material
 
     result = await list_business_agency_team(
         Response(),
+        limit=100,
+        offset=0,
         license_obj=SimpleNamespace(license_key="business-license", tier="business"),
         operational_db=db,
     )
@@ -908,7 +912,7 @@ def test_admin_agency_detail_caps_website_connections_per_workspace_and_reports_
     assert "ranked_website_ids.c.site_rank <= website_offset + website_limit" in source
     assert "website_count_rows" in source
     assert '"website_connection_count": website_counts.get(item.id, 0)' in source
-    assert '"website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))' in source
+    assert '"website_connections_truncated": website_offset + len(websites_by_workspace.get(item.id, [])) < website_counts.get(item.id, 0)' in source
 
 
 def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_truncation():
