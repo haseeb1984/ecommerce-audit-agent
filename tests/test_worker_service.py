@@ -437,8 +437,8 @@ def test_worker_loop_resets_consecutive_failures_after_success():
     import worker_service
 
     source = inspect.getsource(worker_service.run_worker)
-    reset = source.index("consecutive_failures = 0", source.index("while not stop.is_set()"))
-    success = source.index("result = await process_scan_queue", reset)
+    loop = source.index("while not stop.is_set()")
+    success = source.index("result = await process_scan_queue", loop)
     reset_after_success = source.index("consecutive_failures = 0", success)
 
     assert success < reset_after_success
