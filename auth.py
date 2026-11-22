@@ -335,3 +335,16 @@ async def verify_customer_account_for_management(
     if not license_obj.is_active and not is_expired:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer account is suspended or inactive.")
     return license_obj
+
+
+def verify_customer_account_for_usage(
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
+    api_key: str = Security(API_KEY_HEADER),
+) -> SoftwareLicense:
+    """Allow expired customers to inspect usage while preserving API-key entitlements."""
+    if api_key and not plan_features(license_obj.tier)["direct_api_access"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct API access is not included in the current plan.",
+        )
+    return license_obj
