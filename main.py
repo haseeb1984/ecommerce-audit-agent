@@ -9529,7 +9529,6 @@ async def admin_customer_account_detail(
             "offset": license_offset,
             "total": license_total,
             "has_more": license_offset + len(rows) < license_total,
-            "identity_keys_truncated": False,
         },
         "licenses": [{
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
