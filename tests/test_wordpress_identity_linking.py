@@ -154,7 +154,9 @@ def test_remote_agency_disconnect_clears_identity_and_cached_status_metadata():
     agency_sync = plugin[start:end]
 
     assert "agency/sites/status" in agency_sync
-    assert "unset($settings['last_status']);" in agency_sync
+    unset_start = agency_sync.index("unset(")
+    unset_end = agency_sync.index(");", unset_start)
+    assert "$settings['last_status']" in agency_sync[unset_start:unset_end]
     assert "eaa_wp_clear_identity_link_settings($settings);" in agency_sync
 
 
