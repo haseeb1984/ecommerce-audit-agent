@@ -238,6 +238,18 @@ class CustomerBranding(HostingerBase):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class CustomerBrandingLogoCleanup(HostingerBase):
+    """Durable retry queue for private logo objects detached from customer branding."""
+    __tablename__ = "customer_branding_logo_cleanup"
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    storage_key = Column(String(1024), nullable=False, unique=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class AdminCustomerNote(HostingerBase):
     __tablename__ = "admin_customer_notes"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
