@@ -12,6 +12,7 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     HRFlowable,
     Flowable,
@@ -495,13 +496,18 @@ def _prioritized_actions(findings: list[dict[str, object]]) -> list[dict[str, ob
 
 class PremiumCoverHero(Flowable):
     """Premium editorial cover panel with evidence-based audit metrics."""
-    def __init__(self, target_url: str, generated_at: str, pages: int, findings: int, priority: int):
+    def __init__(self, target_url: str, generated_at: str, pages: int, findings: int, priority: int,
+                 brand_name: str | None = None, brand_color: str | None = None,
+                 brand_logo_bytes: bytes | None = None):
         super().__init__()
         self.target_url = target_url
         self.generated_at = generated_at
         self.pages = pages
         self.findings = findings
         self.priority = priority
+        self.brand_name = (brand_name or "").strip()[:100]
+        self.brand_color = brand_color if isinstance(brand_color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", brand_color) else "#49D3C4"
+        self.brand_logo_bytes = brand_logo_bytes if isinstance(brand_logo_bytes, bytes) and len(brand_logo_bytes) <= 5 * 1024 * 1024 else None
         self.width = 174 * mm
         self.height = 65 * mm
 
@@ -510,7 +516,7 @@ class PremiumCoverHero(Flowable):
         c.saveState()
         navy = colors.HexColor("#10243A")
         blue = colors.HexColor("#1C4164")
-        teal = colors.HexColor("#49D3C4")
+        teal = colors.HexColor(self.brand_color)
         muted = colors.HexColor("#D5E2EF")
         c.setFillColor(navy)
         c.roundRect(0, 0, self.width, self.height, 5 * mm, fill=1, stroke=0)
@@ -518,7 +524,13 @@ class PremiumCoverHero(Flowable):
         c.roundRect(0, 0, 3 * mm, self.height, 1.5 * mm, fill=1, stroke=0)
         c.setFillColor(teal)
         c.setFont("Helvetica-Bold", 7.5)
-        c.drawString(9 * mm, self.height - 9 * mm, "ECOMMERCE AUDIT AGENT  /  CLIENT REPORT")
+        c.drawString(9 * mm, self.height - 9 * mm, (self.brand_name or "ECOMMERCE AUDIT AGENT")[:48].upper() + "  /  CLIENT REPORT")
+        if self.brand_logo_bytes:
+            try:
+                c.drawImage(ImageReader(BytesIO(self.brand_logo_bytes)), self.width - 34 * mm, self.height - 23 * mm,
+                            width=24 * mm, height=16 * mm, preserveAspectRatio=True, anchor="c", mask="auto")
+            except Exception:
+                pass
         c.setFillColor(colors.white)
         c.setFont("Helvetica-Bold", 22)
         c.drawString(9 * mm, self.height - 21 * mm, "Ecommerce website")
@@ -1226,6 +1238,9 @@ def render_audit_pdf(
     desktop_screenshot_data_uri: str | None = None,
     coverage_manifest: dict[str, object] | None = None,
     issue_screenshots_by_url: dict[str, str] | None = None,
+    brand_name: str | None = None,
+    brand_color: str | None = None,
+    brand_logo_bytes: bytes | None = None,
 ) -> bytes:
     """Render an audit result into a readable, text-selectable PDF."""
     buffer = BytesIO()
@@ -1276,6 +1291,9 @@ def render_audit_pdf(
             len(set(result.pages_checked)),
             len(cover_findings),
             cover_priority_count,
+            brand_name=brand_name,
+            brand_color=brand_color,
+            brand_logo_bytes=brand_logo_bytes,
         ),
         Spacer(1, 5 * mm),
         Paragraph("Executive overview", section_style),
