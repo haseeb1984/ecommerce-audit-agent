@@ -3,7 +3,7 @@
 CREATE TABLE customer_branding_logo_cleanup (
     id VARCHAR(64) NOT NULL PRIMARY KEY,
     license_key VARCHAR(100) NOT NULL,
-    storage_key VARCHAR(1024) NOT NULL,
+    storage_key VARCHAR(512) NOT NULL,
     attempts INT NOT NULL DEFAULT 0,
     last_error VARCHAR(120) NULL,
     created_at DATETIME(6) NOT NULL,
