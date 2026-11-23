@@ -68,8 +68,16 @@ def _storage_config() -> tuple[str, bytes]:
     base_url = os.getenv("HOSTINGER_STORAGE_BASE_URL", "").strip().rstrip("/")
     secret = os.getenv("HOSTINGER_STORAGE_HMAC_SECRET", "")
     parsed = urlsplit(base_url)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-        raise HostingerStorageError("HOSTINGER_STORAGE_BASE_URL must be an HTTPS URL.")
+    try:
+        valid_port = parsed.port is None or 1 <= parsed.port <= 65535
+    except ValueError:
+        valid_port = False
+    if (parsed.scheme != "https" or not parsed.hostname or not valid_port
+            or parsed.path.rstrip("/") != "/eaa-storage/api/index.php"
+            or parsed.username or parsed.password):
+        raise HostingerStorageError(
+            "HOSTINGER_STORAGE_BASE_URL must target the HTTPS /eaa-storage/api/index.php bridge."
+        )
     if parsed.query or parsed.fragment:
         raise HostingerStorageError("HOSTINGER_STORAGE_BASE_URL cannot contain a query or fragment.")
     if len(secret.encode("utf-8")) < 32:
