@@ -4447,3 +4447,67 @@ async def test_customer_brand_logo_cleanup_queue_retries_storage_failures(client
     async with HostingerAsyncSessionLocal() as operational_db:
         assert await operational_db.get(CustomerBrandingLogoCleanup, "brand-logo-cleanup-retry-test") is None
 
+
+
+@pytest.mark.asyncio
+async def test_customer_branding_logo_api_lifecycle_is_private_and_license_scoped(client, monkeypatch):
+    owner_id = await create_license(key="branding-logo-api-owner", tier="business")
+    other_id = await create_license(key="branding-logo-api-other", tier="business")
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
+        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
+
+    uploaded = []
+    def fake_upload_logo(payload, mime_type):
+        index = len(uploaded) + 1
+        key = f"logos/{index:064x}.png"
+        uploaded.append((key, bytes(payload), mime_type))
+        return SimpleNamespace(storage_key=key, sha256=hashlib.sha256(payload).hexdigest(),
+                               byte_size=len(payload), mime_type=mime_type)
+    monkeypatch.setattr(main, "upload_logo", fake_upload_logo)
+    monkeypatch.setattr(main, "download_file", lambda key, expected=None: next(
+        item[1] for item in uploaded if item[0] == key
+    ))
+    main.app.dependency_overrides[main.verify_customer_account] = lambda: owner
+    try:
+        first = await client.post(
+            "/api/v1/account/branding/logo",
+            content=b"fake-png-bytes",
+            headers={"Content-Type": "image/png"},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["logo_stored"] is True
+
+        second = await client.post(
+            "/api/v1/account/branding/logo",
+            content=b"replacement-png",
+            headers={"Content-Type": "image/png"},
+        )
+        assert second.status_code == 200, second.text
+
+        preview = await client.get("/api/v1/account/branding/logo")
+        assert preview.status_code == 200
+        assert preview.content == b"replacement-png"
+        assert preview.headers["cache-control"] == "no-store, private"
+
+        async with HostingerAsyncSessionLocal() as operational_db:
+            queued = (await operational_db.execute(select(CustomerBrandingLogoCleanup))).scalars().all()
+            assert len(queued) == 1
+            assert queued[0].storage_key == uploaded[0][0]
+
+        main.app.dependency_overrides[main.verify_customer_account] = lambda: other
+        foreign = await client.get("/api/v1/account/branding/logo")
+        assert foreign.status_code == 404
+
+        main.app.dependency_overrides[main.verify_customer_account] = lambda: owner
+        removed = await client.delete("/api/v1/account/branding/logo")
+        assert removed.status_code == 200
+        assert removed.json()["logo_removed"] is True
+        async with HostingerAsyncSessionLocal() as operational_db:
+            queued = (await operational_db.execute(
+                select(CustomerBrandingLogoCleanup).order_by(CustomerBrandingLogoCleanup.created_at.asc())
+            )).scalars().all()
+            assert {row.storage_key for row in queued} == {uploaded[0][0], uploaded[1][0]}
+    finally:
+        main.app.dependency_overrides.pop(main.verify_customer_account, None)
+
