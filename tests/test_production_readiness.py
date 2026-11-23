@@ -52,6 +52,8 @@ def _set_complete_configuration(monkeypatch):
         "GROQ_API_KEY": "groq-test",
         "ACCOUNT_AUTH_SECRET": "a" * 40,
         "HOSTINGER_DATABASE_URL": "mysql+asyncmy://test:test@localhost/test",
+        "HOSTINGER_STORAGE_BASE_URL": "https://storage.example.com/eaa-storage/api/index.php",
+        "HOSTINGER_STORAGE_HMAC_SECRET": "s" * 48,
         "PUBLIC_APP_URL": "https://app.example.com",
         "PADDLE_ENVIRONMENT": "sandbox",
         "SMTP_PORT": "587",
@@ -95,3 +97,35 @@ def test_direct_worker_token_does_not_mask_missing_scheduler_secret(monkeypatch)
 
     assert "scheduled_scan_worker" in failed
     assert any("CRON_SECRET" in detail for detail in details)
+
+
+def test_hostinger_private_storage_url_requires_secure_credential_free_endpoint():
+    from scripts.check_production_readiness import _valid_hostinger_storage_url
+
+    assert _valid_hostinger_storage_url("https://storage.example.com/eaa-storage/api/index.php")
+    assert not _valid_hostinger_storage_url("http://storage.example.com/eaa-storage/api/index.php")
+    assert not _valid_hostinger_storage_url("https:///eaa-storage/api/index.php")
+    assert not _valid_hostinger_storage_url("https://user:password@storage.example.com/api")
+    assert not _valid_hostinger_storage_url("https://storage.example.com/api?token=secret")
+    assert not _valid_hostinger_storage_url("https://storage.example.com/api#fragment")
+
+
+def test_readiness_requires_hostinger_private_storage_url_and_hmac_secret(monkeypatch):
+    _set_complete_configuration(monkeypatch)
+    monkeypatch.delenv("HOSTINGER_STORAGE_BASE_URL")
+    monkeypatch.setenv("HOSTINGER_STORAGE_HMAC_SECRET", "short")
+
+    failed, details = _configuration_status()
+
+    assert "hostinger_private_storage" in failed
+    assert any("HOSTINGER_STORAGE_BASE_URL" in detail for detail in details)
+    assert any("HOSTINGER_STORAGE_HMAC_SECRET" in detail for detail in details)
+
+
+def test_readiness_accepts_valid_hostinger_private_storage_configuration(monkeypatch):
+    _set_complete_configuration(monkeypatch)
+
+    failed, details = _configuration_status()
+
+    assert "hostinger_private_storage" not in failed
+    assert not any("HOSTINGER_STORAGE_" in detail for detail in details)
