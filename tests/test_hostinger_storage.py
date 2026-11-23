@@ -8,6 +8,27 @@ import pytest
 import hostinger_storage as storage
 
 
+def test_storage_config_requires_exact_https_bridge_endpoint(monkeypatch):
+    monkeypatch.setenv(
+        "HOSTINGER_STORAGE_BASE_URL",
+        "https://storage.example.com/eaa-storage/api/index.php",
+    )
+    monkeypatch.setenv("HOSTINGER_STORAGE_HMAC_SECRET", "s" * 32)
+    assert storage._storage_config()[0] == (
+        "https://storage.example.com/eaa-storage/api/index.php"
+    )
+
+    for invalid_url in (
+        "https://storage.example.com/",
+        "https://storage.example.com/other/index.php",
+        "https://:443/eaa-storage/api/index.php",
+        "https://storage.example.com:70000/eaa-storage/api/index.php",
+    ):
+        monkeypatch.setenv("HOSTINGER_STORAGE_BASE_URL", invalid_url)
+        with pytest.raises(storage.HostingerStorageError):
+            storage._storage_config()
+
+
 def test_storage_keys_are_opaque_and_allow_listed():
     storage._validate_key("reports/" + "a" * 64 + ".pdf")
     storage._validate_key("logos/" + "b" * 64 + ".png")
