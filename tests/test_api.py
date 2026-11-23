@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 import main
 from database import AsyncSessionLocal
 from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import CustomerReportFile, PlatformSetting
+from hostinger_models import CustomerReportFile, CustomerBrandingLogoCleanup, PlatformSetting
 from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
@@ -4401,3 +4401,49 @@ async def test_paddle_older_subscription_resume_cannot_override_newer_pause(clie
         assert pause_event.updated_at.replace(tzinfo=timezone.utc) == datetime(
             2026, 11, 7, 10, 0, tzinfo=timezone.utc
         )
+
+
+@pytest.mark.asyncio
+async def test_customer_brand_logo_cleanup_queue_retries_storage_failures(client, monkeypatch):
+    """A failed private-object delete remains durable and is retried by the cron endpoint."""
+    monkeypatch.setenv("CRON_SECRET", "brand-logo-cleanup-test-secret")
+    storage_key = "logos/detached-customer-logo-test.png"
+    async with HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add(CustomerBrandingLogoCleanup(
+            id="brand-logo-cleanup-retry-test",
+            license_key="brand-logo-cleanup-license",
+            storage_key=storage_key,
+            attempts=0,
+            created_at=datetime.now(timezone.utc),
+        ))
+        await operational_db.commit()
+
+    attempts = {"count": 0}
+    def flaky_delete(key):
+        assert key == storage_key
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise main.HostingerStorageError("temporary storage outage")
+
+    monkeypatch.setattr(main, "delete_file", flaky_delete)
+    headers = {"Authorization": "Bearer brand-logo-cleanup-test-secret"}
+    first = await client.get("/api/v1/internal/report-retention/cleanup", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["logo_cleanup"] == {"processed": 1, "deleted": 0, "failed": 1}
+    async with HostingerAsyncSessionLocal() as operational_db:
+        pending = await operational_db.get(CustomerBrandingLogoCleanup, "brand-logo-cleanup-retry-test")
+        assert pending is not None
+        assert pending.attempts == 1
+        assert pending.last_error == "HostingerStorageError"
+
+    def successful_delete(key):
+        assert key == storage_key
+        attempts["count"] += 1
+
+    monkeypatch.setattr(main, "delete_file", successful_delete)
+    second = await client.get("/api/v1/internal/report-retention/cleanup", headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json()["logo_cleanup"] == {"processed": 1, "deleted": 1, "failed": 0}
+    async with HostingerAsyncSessionLocal() as operational_db:
+        assert await operational_db.get(CustomerBrandingLogoCleanup, "brand-logo-cleanup-retry-test") is None
+
