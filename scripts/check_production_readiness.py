@@ -109,7 +109,8 @@ def _valid_hostinger_storage_url(value: str) -> bool:
         parsed = urlsplit(candidate)
         return bool(
             parsed.scheme == "https"
-            and parsed.netloc
+            and parsed.hostname
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
             and not parsed.username
             and not parsed.password
             and not parsed.query
