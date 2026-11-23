@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS customer_branding (
 CREATE TABLE IF NOT EXISTS customer_branding_logo_cleanup (
   id VARCHAR(64) NOT NULL PRIMARY KEY,
   license_key VARCHAR(100) NOT NULL,
-  storage_key VARCHAR(1024) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
   attempts INT NOT NULL DEFAULT 0,
   last_error VARCHAR(120) NULL,
   created_at DATETIME(6) NOT NULL,
@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS customer_report_files (
   report_name VARCHAR(255) NOT NULL,
   domain VARCHAR(253) NULL,
   finding_count INT NOT NULL DEFAULT 0,
-  storage_key VARCHAR(1024) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
   storage_key_hash CHAR(64) NOT NULL UNIQUE,
   pdf_sha256 CHAR(64) NULL,
   mime_type VARCHAR(100) NOT NULL DEFAULT 'application/pdf',
