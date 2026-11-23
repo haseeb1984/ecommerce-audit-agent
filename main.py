@@ -5,6 +5,7 @@ import hmac
 import secrets
 import time
 import logging
+import math
 import os
 import smtplib
 import json
@@ -1883,11 +1884,12 @@ async def logout_all_account_sessions(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
-    result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.email == current.email,
-        CustomerSession.created_at <= now,
-        CustomerSession.revoked_at.is_(None),
-    ).values(revoked_at=now))
+    result = await operational_db.execute(
+        update(CustomerSession).where(
+            CustomerSession.email == current.email,
+            CustomerSession.revoked_at.is_(None),
+        ).values(revoked_at=now).execution_options(synchronize_session=False)
+    )
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -4499,6 +4501,8 @@ async def create_account_billing_portal(
         ),
         None,
     )
+    if not customer_id:
+        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     subscription_rows = await db.execute(
         select(PaymentWebhookEvent.subscription_id)
         .where(
@@ -4517,8 +4521,6 @@ async def create_account_billing_portal(
         for subscription_id in subscription_rows.scalars().all()
         if isinstance(subscription_id, str) and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id)
     ]
-    if not customer_id:
-        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     payload = {"subscription_ids": subscription_ids} if subscription_ids else {}
     try:
         result = await asyncio.to_thread(
@@ -9132,7 +9134,6 @@ async def admin_customer_account_detail(
             "offset": license_offset,
             "total": license_total,
             "has_more": license_offset + len(rows) < license_total,
-            "identity_keys_truncated": False,
         },
         "licenses": [{
             "id": item.id, "client_name": item.client_name, "tier": item.tier,

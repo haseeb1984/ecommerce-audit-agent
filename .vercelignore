@@ -1,6 +1,9 @@
 # Keep development-only files out of Vercel deployment uploads.
 # Keep runtime modules, requirements.txt, vercel.json, and the Supabase CA certificate.
 # SQL migrations remain tracked in Git for controlled database operations but are not needed in the runtime bundle.
+# main.py is a supported FastAPI entrypoint; exclude pyproject.toml so Vercel installs
+# the pinned runtime dependencies from requirements.txt instead of the entrypoint-only config.
+pyproject.toml
 .git/
 .github/
 docs/

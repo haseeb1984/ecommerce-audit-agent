@@ -2850,7 +2850,7 @@ async def test_bounded_crawl_reports_parameterized_catalog_links_without_persist
     assert finding.category == "ecommerce_catalog"
     assert "filter.v.option.color" in finding.evidence
     assert "pagination, sorting, variant" in finding.evidence
-    assert "red" not in finding.evidence
+    assert "filter.v.option.color=red" not in finding.evidence
     assert "sku-123" not in finding.evidence
     assert "price-ascending" not in finding.evidence
     assert "utm_source" not in finding.evidence

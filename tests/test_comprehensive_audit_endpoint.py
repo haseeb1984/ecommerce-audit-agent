@@ -222,7 +222,7 @@ async def test_comprehensive_audit_merges_isolated_rendered_browser_findings_and
         assert any(item.check_id == "browser.rendered_viewport" and item.outcome == "pass" for item in reported.check_outcomes)
         saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
         metadata = __import__("json").loads(saved_report.coverage_json)
-        assert metadata["run_context"]["modules"]["browser_rendered"] == "completed"
+        assert metadata["audit_run_context"]["module_statuses"]["browser_rendered"] == "completed"
         assert any("Rendered-browser diagnostics completed" in item for item in reported.limitations)
     finally:
         main.app.dependency_overrides.clear()
@@ -257,9 +257,28 @@ async def test_comprehensive_audit_records_browser_service_unavailable_without_f
         assert response.status_code == 200
         saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
         metadata = __import__("json").loads(saved_report.coverage_json)
-        assert metadata["run_context"]["modules"]["browser_rendered"] == "unavailable"
+        assert metadata["audit_run_context"]["module_statuses"]["browser_rendered"] == "unavailable"
         assert any("Rendered-browser diagnostics were not assessed" in item for item in captured[0].limitations)
-        assert any(item.check_id.startswith("browser.") and item.outcome == "not_assessed" for item in captured[0].check_outcomes)
+        assert any(
+            item.check_id in {
+                "seo.javascript_rendered_metadata",
+                "crawl.javascript_rendered_dom",
+                "crawl.javascript_internal_pages",
+                "mobile_ux.rendered_viewport_matrix",
+                "mobile_ux.rendered_orientation",
+                "performance.browser_console_errors",
+                "performance.browser_network_failures",
+                "performance.browser_navigation_timing",
+                "performance.browser_lab_vitals",
+                "accessibility.rendered_images_alt",
+                "accessibility.rendered_text_contrast",
+                "accessibility.rendered_controls_name",
+                "accessibility.keyboard_focus_order",
+                "ecommerce.product_page_rendered_signals",
+            }
+            and item.outcome == "not_assessed"
+            for item in captured[0].check_outcomes
+        )
     finally:
         main.app.dependency_overrides.clear()
 
@@ -294,7 +313,7 @@ async def test_comprehensive_audit_does_not_mark_empty_browser_response_as_compl
         assert response.status_code == 200
         saved_report = next(item for item in db.added if item.__class__.__name__ == "AuditReport")
         metadata = __import__("json").loads(saved_report.coverage_json)
-        assert metadata["run_context"]["modules"]["browser_rendered"] == "partial"
+        assert metadata["audit_run_context"]["module_statuses"]["browser_rendered"] == "partial"
         assert any("could not complete page navigation" in item for item in captured[0].limitations)
     finally:
         main.app.dependency_overrides.clear()

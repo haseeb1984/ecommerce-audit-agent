@@ -12,7 +12,7 @@ def _portal():
 
 def _device_loader(source):
     start = source.index("  async function loadDeviceSessions() {")
-    end = source.index("  async function loadWordPressSites()", start)
+    end = source.index("  async function loadWordPressSites(", start)
     return source[start:end]
 
 

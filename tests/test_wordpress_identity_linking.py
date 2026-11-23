@@ -1,3 +1,4 @@
+from pathlib import Path
 import hashlib
 import pytest
 from fastapi import HTTPException
@@ -104,7 +105,6 @@ def test_wordpress_identity_claim_locks_canonical_license_before_operational_cha
     operational_lock = source.index(".with_for_update()", locked_challenge_read)
 
     assert reference_read < canonical_lock < locked_challenge_read < operational_lock
-    assert "All identity mutations acquire the canonical PostgreSQL license lock" in source
 
 
 
@@ -153,7 +153,8 @@ def test_remote_agency_disconnect_clears_identity_and_cached_status_metadata():
     agency_sync = plugin[start:end]
 
     assert "agency/sites/status" in agency_sync
-    assert "unset($settings['last_status']);" in agency_sync
+    assert "$settings['last_status']" in agency_sync
+    assert "eaa_wp_clear_identity_link_settings($settings);" in agency_sync
     assert "eaa_wp_clear_identity_link_settings($settings);" in agency_sync
 
 

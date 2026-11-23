@@ -168,5 +168,9 @@ def test_customer_session_revocation_actions_have_request_time_cutoffs():
     logout_all = inspect.getsource(main.logout_all_account_sessions)
 
     assert "CustomerSession.created_at <= now" in revoke_others
-    assert "CustomerSession.created_at <= now" in logout_all
+    email_lock = logout_all.index("await _lock_customer_login_email(operational_db, email)")
+    session_update = logout_all.index("update(CustomerSession)")
+    assert email_lock < session_update
+    assert "CustomerSession.email == current.email" in logout_all
+    assert "CustomerSession.created_at <= now" not in logout_all
 

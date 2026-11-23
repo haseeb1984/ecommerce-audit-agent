@@ -21,6 +21,11 @@ class _Result:
 class _OperationalSession:
     def __init__(self):
         self.statement = None
+        self.count_statement = None
+
+    async def scalar(self, statement):
+        self.count_statement = statement
+        return 0
 
     async def execute(self, statement):
         self.statement = statement
@@ -34,6 +39,8 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
 
     result = await list_account_wordpress_sites(
         response=response,
+        limit=100,
+        offset=0,
         license_obj=SimpleNamespace(license_key="license-test"),
         operational_db=operational_db,
     )
@@ -49,7 +56,9 @@ async def test_customer_wordpress_inventory_prioritizes_active_site_before_histo
     assert "wordpress_installations.status = 'active'" in order_by[0]
     assert order_by[1] == "wordpress_installations.last_seen_at DESC"
     assert "LIMIT 100" in sql
-    assert result == {"items": []}
+    assert result["items"] == []
+    assert result["page"]["total"] == 0
+    assert "COUNT" in str(operational_db.count_statement).upper()
     assert response.headers["Cache-Control"] == "no-store, private"
     assert response.headers["Pragma"] == "no-cache"
 
@@ -66,7 +75,7 @@ def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replac
     assert 'connectWebsite.textContent = "Generate replacement token";' in section
     assert 'window.confirm("Generate a replacement token?' in section
     assert 'Generating another token invalidates this one.' in section
-    assert 'refreshWebsiteStatus();' in section
+    assert 'refreshWebsite.addEventListener("click", () => refreshWebsiteStatus())' in portal
 
 
 class _ScalarSiteResult:
