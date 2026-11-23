@@ -243,7 +243,7 @@ class CustomerBrandingLogoCleanup(HostingerBase):
     __tablename__ = "customer_branding_logo_cleanup"
     id = Column(String(64), primary_key=True)
     license_key = Column(String(100), nullable=False, index=True)
-    storage_key = Column(String(1024), nullable=False, unique=True)
+    storage_key = Column(String(512), nullable=False, unique=True)
     attempts = Column(Integer, nullable=False, default=0)
     last_error = Column(String(120), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
