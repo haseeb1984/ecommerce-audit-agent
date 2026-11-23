@@ -147,7 +147,19 @@ def _configuration_status() -> tuple[list[str], list[str]]:
     details: list[str] = []
 
     for group, names in REQUIRED_ENV_GROUPS.items():
-        if group == "scheduled_scan_worker":
+        if group == "hostinger_private_storage":
+            storage_url_ready = _valid_hostinger_storage_url(
+                os.getenv("HOSTINGER_STORAGE_BASE_URL", "")
+            )
+            storage_secret_ready = len(
+                os.getenv("HOSTINGER_STORAGE_HMAC_SECRET", "").encode("utf-8")
+            ) >= 32
+            ready = storage_url_ready and storage_secret_ready
+            if not storage_url_ready:
+                details.append("HOSTINGER_STORAGE_BASE_URL must be a credential-free HTTPS URL without a query or fragment")
+            if not storage_secret_ready:
+                details.append("HOSTINGER_STORAGE_HMAC_SECRET must contain at least 32 bytes")
+        elif group == "scheduled_scan_worker":
             worker_url_ready = _valid_scan_worker_url(os.getenv("SCAN_WORKER_URL", ""))
             # The scheduled GitHub Actions workflow injects CRON_SECRET.
             # SCAN_WORKER_TOKEN is accepted by direct API invocations only.
