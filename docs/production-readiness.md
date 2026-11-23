@@ -20,7 +20,7 @@ Run from the repository root in a controlled environment configured with the pro
 python scripts/check_production_readiness.py
 ```
 
-The script independently checks the Supabase PostgreSQL licensing/audit schema and Hostinger MySQL operational schema, including mapped columns, indexes, and Hostinger operational foreign-key relationships. It also requires verified TLS for both databases and checks worker, billing, email, and audit-provider configuration groups. The scheduled GitHub Actions worker specifically requires `SCAN_WORKER_URL` to target `/internal/scan-worker/run` over HTTPS and the `CRON_SECRET` repository secret; `SCAN_WORKER_TOKEN` is only a supported direct-invocation credential and does not satisfy the scheduled workflow. It reports only configuration-presence booleans and schema identifiers; it does not print secret values or apply changes. A non-zero exit code means one or both schemas or a required configuration group needs attention.
+The script independently checks the Supabase PostgreSQL licensing/audit schema and Hostinger MySQL operational schema, including mapped columns, indexes, and Hostinger operational foreign-key relationships. It also requires verified TLS for both databases and validates the Hostinger private storage bridge HTTPS URL and 32-byte HMAC secret, plus worker, billing, email, and audit-provider configuration groups. The scheduled GitHub Actions worker specifically requires `SCAN_WORKER_URL` to target `/internal/scan-worker/run` over HTTPS and the `CRON_SECRET` repository secret; `SCAN_WORKER_TOKEN` is only a supported direct-invocation credential and does not satisfy the scheduled workflow. It reports only configuration-presence booleans and schema identifiers; it does not print secret values or apply changes. A non-zero exit code means one or both schemas or a required configuration group needs attention.
 
 The key report-history and billing migration is `migrations/2026-10-22-audit-reports.sql`; the admin package/operations migration is `migrations/20261023_admin_packages_and_actions.sql`. Review each SQL file and confirm its prerequisites before applying it. Keep a backup and record the migration result. The admin migration expects `payment_webhook_events` to exist, so apply the audit-reports migration first on a database where it is not already present.
 
@@ -28,7 +28,8 @@ The additive Phase 5 schema alignment is `migrations/20261101_saas_database_inte
 
 ## Acceptance checks before calling the SaaS ready
 
-- [ ] Production schema check passes; report-history and webhook columns are present.
+- [ ] Production schema and configuration check passes; report-history, webhook, Hostinger private storage URL, and HMAC secret are present and valid.
+- [ ] Hostinger private storage bridge is installed; direct HTTP access to its private directory and config file is denied; authenticated upload/download/delete smoke tests pass.
 - [ ] `ADMIN_API_KEY` exists in Vercel Production Environment Variables; admin console authenticates and displays health.
 - [ ] A valid licensed audit returns a PDF and `X-Audit-Report-ID`.
 - [ ] The same license can list and download that report; another license cannot access it.
