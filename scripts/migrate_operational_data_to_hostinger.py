@@ -635,7 +635,20 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
             logger.info("Operational migration verification PASSED. All mapped source rows are present and field-matched in Hostinger.")
             return True
 
-        logger.info("Dry run only. No Hostinger records were written.")
+        blockers = _apply_blockers(reports)
+        if blockers:
+            for name, details in blockers.items():
+                logger.error(
+                    "%s: migration preflight requires manual reconciliation: %s",
+                    name, details,
+                )
+            logger.error(
+                "Dry run found migration blockers. No Hostinger records were written; "
+                "resolve the reported issues before applying."
+            )
+            return False
+
+        logger.info("Dry run only. No Hostinger records were written; no migration blockers detected.")
         return True
 
 
@@ -653,7 +666,20 @@ def main() -> None:
         help="Read-only check that every mappable PostgreSQL source record already exists in Hostinger.",
     )
     args = parser.parse_args()
-    verified = asyncio.run(migrate(apply_changes=args.apply, verify_only=args.verify))
+    if args.apply:
+        # Run the complete source-to-target reconciliation before the first
+        # INSERT. This prevents known mapping/mismatch blockers from producing
+        # an avoidable partially applied migration. Keep source writes frozen
+        # between preflight and apply so the reviewed snapshot does not drift.
+        logger.info("Running read-only preflight before any Hostinger writes.")
+        preflight_ok = asyncio.run(migrate(apply_changes=False))
+        if not preflight_ok:
+            logger.error("Apply aborted before writes. Resolve preflight blockers and rerun.")
+            raise SystemExit(1)
+        verified = asyncio.run(migrate(apply_changes=True))
+    else:
+        verified = asyncio.run(migrate(apply_changes=False, verify_only=args.verify))
+
     if (args.apply or args.verify) and not verified:
         raise SystemExit(1)
 
