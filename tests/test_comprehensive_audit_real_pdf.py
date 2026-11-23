@@ -19,7 +19,7 @@ from ecommerce_agent import StoreAuditMetrics
 class FakeDB:
     def __init__(self):
         self.added = []
-        self.execute = AsyncMock()
+        self.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
         self._next_id = 500
