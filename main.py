@@ -60,9 +60,28 @@ from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
 from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file, upload_logo
-from hostinger_models import PlatformSetting, CustomerReportFile, CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_models import PlatformSetting, CustomerReportFile, CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, CustomerBrandingLogoCleanup, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
+
+
+async def _queue_brand_logo_cleanup(operational_db, license_key: str, storage_key: str | None) -> None:
+    """Persist detached logo keys so transient storage failures can be retried safely."""
+    if not storage_key:
+        return
+    from sqlalchemy import select
+    existing = await operational_db.scalar(select(CustomerBrandingLogoCleanup).where(
+        CustomerBrandingLogoCleanup.storage_key == storage_key
+    ))
+    if existing is None:
+        operational_db.add(CustomerBrandingLogoCleanup(
+            id=secrets.token_urlsafe(24),
+            license_key=license_key,
+            storage_key=storage_key,
+            attempts=0,
+            created_at=datetime.now(timezone.utc),
+        ))
+
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
 
 
@@ -4465,12 +4484,8 @@ async def update_account_branding(
             item.logo_mime_type = None
             item.logo_byte_size = None
         item.updated_at = now
+    await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, old_storage_key)
     await operational_db.commit()
-    if old_storage_key:
-        try:
-            await asyncio.to_thread(delete_file, old_storage_key)
-        except HostingerStorageError as exc:
-            logger.error("Replaced brand logo cleanup failed (error_type=%s)", type(exc).__name__)
     effective_logo_url = item.logo_url
     logo_stored = bool(item.logo_storage_key)
     response.headers["Cache-Control"] = "no-store, private"
@@ -4530,6 +4545,7 @@ async def upload_account_branding_logo(
         item.logo_mime_type = receipt.mime_type
         item.logo_byte_size = receipt.byte_size
         item.updated_at = now
+    await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, old_storage_key)
     try:
         await operational_db.commit()
     except Exception:
@@ -4539,11 +4555,6 @@ async def upload_account_branding_logo(
         except HostingerStorageError as cleanup_exc:
             logger.error("Uncommitted logo cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
         raise
-    if old_storage_key:
-        try:
-            await asyncio.to_thread(delete_file, old_storage_key)
-        except HostingerStorageError as exc:
-            logger.error("Replaced logo cleanup failed (error_type=%s)", type(exc).__name__)
     response.headers["Cache-Control"] = "no-store, private"
     return {"logo_stored": True, "mime_type": receipt.mime_type, "byte_size": receipt.byte_size}
 
@@ -4605,13 +4616,8 @@ async def delete_account_branding_logo(
     item.logo_mime_type = None
     item.logo_byte_size = None
     item.updated_at = datetime.now(timezone.utc)
+    await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, old_storage_key)
     await operational_db.commit()
-    if old_storage_key:
-        try:
-            await asyncio.to_thread(delete_file, old_storage_key)
-        except HostingerStorageError as exc:
-            logger.error("Brand logo deletion failed (error_type=%s)", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Logo metadata was cleared but stored file cleanup failed.") from None
     response.headers["Cache-Control"] = "no-store, private"
     return {"logo_removed": True}
 
@@ -8982,6 +8988,29 @@ async def cleanup_expired_report_pdfs(
         hostinger_deleted += 1
     await operational_db.commit()
 
+    # Retry detached customer logo objects from the durable Hostinger queue.
+    logo_cleanup_rows = (await operational_db.execute(
+        select(CustomerBrandingLogoCleanup)
+        .order_by(CustomerBrandingLogoCleanup.created_at.asc(), CustomerBrandingLogoCleanup.id.asc())
+        .limit(100)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    logo_deleted = 0
+    logo_failed = 0
+    for cleanup in logo_cleanup_rows:
+        cleanup.attempts = int(cleanup.attempts or 0) + 1
+        cleanup.last_attempt_at = now
+        try:
+            await asyncio.to_thread(delete_file, cleanup.storage_key)
+        except HostingerStorageError as exc:
+            logo_failed += 1
+            cleanup.last_error = type(exc).__name__[:120]
+            logger.error("Queued brand logo cleanup failed (error_type=%s)", type(exc).__name__)
+            continue
+        await operational_db.delete(cleanup)
+        logo_deleted += 1
+    await operational_db.commit()
+
     # Preserve legacy cleanup for PDFs whose pointers/bytes still live in PostgreSQL.
     rows = (await db.execute(
         select(AuditReport)
@@ -9020,10 +9049,11 @@ async def cleanup_expired_report_pdfs(
     return {
         "status": "completed",
         "retention_days": retention_days,
-        "processed": len(hostinger_rows) + len(rows),
-        "deleted": hostinger_deleted + deleted,
-        "failed": hostinger_failed + failed,
-        "has_more": len(hostinger_rows) == 100 or len(rows) == 100,
+        "processed": len(hostinger_rows) + len(logo_cleanup_rows) + len(rows),
+        "deleted": hostinger_deleted + logo_deleted + deleted,
+        "failed": hostinger_failed + logo_failed + failed,
+        "logo_cleanup": {"processed": len(logo_cleanup_rows), "deleted": logo_deleted, "failed": logo_failed},
+        "has_more": len(hostinger_rows) == 100 or len(logo_cleanup_rows) == 100 or len(rows) == 100,
     }
 
 
