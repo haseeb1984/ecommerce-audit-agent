@@ -8012,6 +8012,7 @@ async def admin_get_report_retention(
 ):
     """Return the owner-managed PDF retention policy from Hostinger MySQL."""
     _require_admin_key(request)
+    from sqlalchemy import select
     days = await _get_report_retention_days(operational_db)
     setting = (await operational_db.execute(
         select(PlatformSetting).where(PlatformSetting.setting_key == "report_retention_days")
