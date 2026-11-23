@@ -60,7 +60,7 @@ from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
 from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file, upload_logo
-from hostinger_models import CustomerReportFile, CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_models import PlatformSetting, CustomerReportFile, CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
@@ -142,23 +142,40 @@ def _report_retention_days() -> int:
     return days
 
 
-def _report_expires_at(report: AuditReport) -> datetime:
+async def _get_report_retention_days(operational_db: AsyncSession) -> int:
+    """Read the persisted owner policy, falling back to the deployment default before initialization."""
+    from sqlalchemy import select
+    setting = (await operational_db.execute(
+        select(PlatformSetting).where(PlatformSetting.setting_key == "report_retention_days")
+    )).scalar_one_or_none()
+    if setting is None:
+        return _report_retention_days()
+    try:
+        days = int(setting.setting_value)
+    except (TypeError, ValueError):
+        raise RuntimeError("Stored report_retention_days setting is invalid.") from None
+    if not 1 <= days <= 3650:
+        raise RuntimeError("Stored report_retention_days setting is outside the supported range.")
+    return days
+
+
+def _report_expires_at(report: AuditReport, retention_days: int) -> datetime:
     created_at = report.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
-    return created_at + timedelta(days=_report_retention_days())
+    return created_at + timedelta(days=retention_days)
 
 
-def _report_pdf_available(report: AuditReport, now: datetime | None = None) -> bool:
+def _report_pdf_available(report: AuditReport, retention_days: int, now: datetime | None = None) -> bool:
     current = now or datetime.now(timezone.utc)
-    if report.pdf_deleted_at is not None or _report_expires_at(report) <= current:
+    if report.pdf_deleted_at is not None or _report_expires_at(report, retention_days) <= current:
         return False
     return bool(report.storage_key or report.pdf_bytes is not None)
 
 
-async def _read_report_pdf(report: AuditReport) -> bytes:
+async def _read_report_pdf(report: AuditReport, retention_days: int) -> bytes:
     """Read a legacy PostgreSQL-linked report while its retention window is active."""
-    if not _report_pdf_available(report):
+    if not _report_pdf_available(report, retention_days):
         raise HTTPException(
             status_code=410,
             detail="This PDF has expired or is no longer available. The report history remains in your dashboard.",
@@ -176,9 +193,9 @@ async def _read_report_pdf(report: AuditReport) -> bytes:
     raise HTTPException(status_code=410, detail="The report PDF is no longer available.")
 
 
-def _report_file_expiry(created_at: datetime) -> datetime:
+def _report_file_expiry(created_at: datetime, retention_days: int) -> datetime:
     created = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at
-    return created + timedelta(days=_report_retention_days())
+    return created + timedelta(days=retention_days)
 
 
 def _customer_report_file_available(report_file: CustomerReportFile, now: datetime | None = None) -> bool:
@@ -1283,6 +1300,7 @@ async def comprehensive_audit_pdf(
             coverage_manifest=coverage_manifest,
         )
         report_generated_at = datetime.now(timezone.utc)
+        report_retention_days = await _get_report_retention_days(operational_db)
         # Persist the explicit bounded outcome records beside the conservative
         # coverage manifest so saved-report history retains the evidence behind PDF counts.
         report_metadata = {
@@ -1377,7 +1395,7 @@ async def comprehensive_audit_pdf(
             "mime_type": storage_receipt.mime_type,
             "byte_size": storage_receipt.byte_size,
             "created_at": report_generated_at,
-            "expires_at": _report_file_expiry(report_generated_at),
+            "expires_at": _report_file_expiry(report_generated_at, report_retention_days),
         }
         operational_db.add(CustomerReportFile(**uploaded_report_file_data))
         # If the PostgreSQL transaction later fails, the exception handler
@@ -5210,6 +5228,7 @@ async def list_audit_reports(
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     now = datetime.now(timezone.utc)
+    report_retention_days = await _get_report_retention_days(operational_db)
     reports = []
     for row in rows:
         report_file = report_files.get(row.id)
@@ -5220,8 +5239,8 @@ async def list_audit_reports(
             available = _customer_report_file_available(report_file, now)
         else:
             # Legacy reports remain visible and downloadable during transition.
-            expiry = _report_expires_at(row)
-            available = _report_pdf_available(row, now)
+            expiry = _report_expires_at(row, report_retention_days)
+            available = _report_pdf_available(row, report_retention_days, now)
         reports.append({
             "id": row.id,
             "domain": row.domain,
@@ -5256,7 +5275,8 @@ async def download_audit_report(
         CustomerReportFile.report_id == row.id,
         CustomerReportFile.license_key == license_obj.license_key,
     ))).scalar_one_or_none()
-    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row)
+    retention_days = await _get_report_retention_days(operational_db)
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row, retention_days)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", row.domain)[:180] or "website"
     return Response(
         content=pdf_bytes,
@@ -6789,7 +6809,8 @@ async def email_audit_report(
         CustomerReportFile.report_id == row.id,
         CustomerReportFile.license_key == license_obj.license_key,
     ))).scalar_one_or_none()
-    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row)
+    retention_days = await _get_report_retention_days(operational_db)
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row, retention_days)
     if len(pdf_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Report exceeds the email attachment size limit.")
     try:
@@ -7983,6 +8004,67 @@ async def admin_dashboard_page():
     return FileResponse(Path(__file__).resolve().parent / "admin_portal.html")
 
 
+@app.get("/api/v1/admin/settings/report-retention")
+async def admin_get_report_retention(
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return the owner-managed PDF retention policy from Hostinger MySQL."""
+    _require_admin_key(request)
+    days = await _get_report_retention_days(operational_db)
+    setting = (await operational_db.execute(
+        select(PlatformSetting).where(PlatformSetting.setting_key == "report_retention_days")
+    )).scalar_one_or_none()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "retention_days": days,
+        "source": "hostinger_mysql" if setting is not None else "environment_default",
+        "minimum_days": 1,
+        "maximum_days": 3650,
+        "applies_to": "new_reports",
+    }
+
+
+@app.put("/api/v1/admin/settings/report-retention")
+async def admin_update_report_retention(
+    request: Request,
+    response: Response,
+    days: int = Query(..., ge=1, le=3650),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Persist the retention policy for newly generated reports in Hostinger MySQL."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    setting = (await operational_db.execute(
+        select(PlatformSetting)
+        .where(PlatformSetting.setting_key == "report_retention_days")
+        .with_for_update()
+    )).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if setting is None:
+        operational_db.add(PlatformSetting(
+            setting_key="report_retention_days",
+            setting_value=str(days),
+            updated_at=now,
+        ))
+    else:
+        setting.setting_value = str(days)
+        setting.updated_at = now
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "retention_days": days,
+        "source": "hostinger_mysql",
+        "minimum_days": 1,
+        "maximum_days": 3650,
+        "applies_to": "new_reports",
+        "updated_at": now.isoformat(),
+    }
+
+
 
 @app.get("/api/v1/admin/payment-events")
 async def admin_payment_events(
@@ -8815,7 +8897,8 @@ async def admin_download_audit_report(report_id: int, request: Request,
             CustomerReportFile.report_id == report.id,
             CustomerReportFile.license_key == owner.license_key,
         ))).scalar_one_or_none()
-    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(report)
+    retention_days = await _get_report_retention_days(operational_db)
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(report, retention_days)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
     return Response(
         content=pdf_bytes,
@@ -8842,7 +8925,7 @@ async def cleanup_expired_report_pdfs(
     if not cron_secret or not hmac.compare_digest(authorization, expected_authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    retention_days = _report_retention_days()
+    retention_days = await _get_report_retention_days(operational_db)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=retention_days)
     from sqlalchemy import or_, select
