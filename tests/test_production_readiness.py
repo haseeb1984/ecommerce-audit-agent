@@ -108,6 +108,9 @@ def test_hostinger_private_storage_url_requires_secure_credential_free_endpoint(
     assert not _valid_hostinger_storage_url("https://user:password@storage.example.com/api")
     assert not _valid_hostinger_storage_url("https://storage.example.com/api?token=secret")
     assert not _valid_hostinger_storage_url("https://storage.example.com/api#fragment")
+    assert not _valid_hostinger_storage_url("https://:443/eaa-storage/api/index.php")
+    assert not _valid_hostinger_storage_url("https://storage.example.com:70000/eaa-storage/api/index.php")
+    assert not _valid_hostinger_storage_url("https://storage.example.com:bad/eaa-storage/api/index.php")
 
 
 def test_readiness_requires_hostinger_private_storage_url_and_hmac_secret(monkeypatch):
