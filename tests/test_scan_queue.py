@@ -533,3 +533,119 @@ async def test_enqueue_persists_ipv6_hostname_without_bracket_or_port_truncation
     website = next(item for item in db.added if isinstance(item, CustomerWebsite))
     assert website.host == "2606:4700:4700::1111"
     assert result["new_jobs"] == 1
+
+
+class CancelResult:
+    def __init__(self, *, rows=None, value=None):
+        self.rows = list(rows or [])
+        self.value = value
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def scalar_one(self):
+        return self.value
+
+
+class CancelSession:
+    def __init__(self, batch, pending, in_flight):
+        self.batch_rows = [batch, batch]
+        self.execute_results = [
+            CancelResult(rows=pending),
+            CancelResult(value=in_flight),
+        ]
+        self.scalar_statements = []
+        self.execute_statements = []
+        self.committed = False
+        self.rolled_back = False
+
+    async def scalar(self, statement):
+        self.scalar_statements.append(statement)
+        return self.batch_rows.pop(0)
+
+    async def execute(self, statement):
+        self.execute_statements.append(statement)
+        return self.execute_results.pop(0)
+
+    async def commit(self):
+        self.committed = True
+
+    async def rollback(self):
+        self.rolled_back = True
+
+
+@pytest.mark.asyncio
+async def test_cancel_scan_batch_cancels_pending_and_waits_for_in_flight_jobs():
+    from scan_queue import cancel_scan_batch
+
+    pending = [
+        SimpleNamespace(status="queued", completed_at=None, last_error_code=None),
+        SimpleNamespace(status="retry_wait", completed_at=None, last_error_code=None),
+    ]
+    batch = SimpleNamespace(
+        id="batch-cancel-1", license_key="license-1", status="processing",
+        total_urls=4, queued_count=2, processing_count=1, completed_count=1,
+        failed_count=0, cancelled_count=0, completed_at=None,
+    )
+    db = CancelSession(batch, pending, in_flight=1)
+
+    result = await cancel_scan_batch(
+        db, batch_id="batch-cancel-1", license_key="license-1",
+    )
+
+    assert result == {
+        "batch_id": "batch-cancel-1", "status": "cancel_requested",
+        "cancelled_jobs": 2, "in_flight_jobs": 1,
+    }
+    assert all(job.status == "cancelled" for job in pending)
+    assert all(job.last_error_code == "CANCELLED_BY_CUSTOMER" for job in pending)
+    assert all(job.completed_at is not None for job in pending)
+    assert batch.queued_count == 0 and batch.cancelled_count == 2
+    assert batch.status == "cancel_requested" and batch.completed_at is None
+    assert db.committed and not db.rolled_back
+    for statement in db.scalar_statements:
+        params = statement.compile().params
+        assert "license-1" in params.values()
+        assert "batch-cancel-1" in params.values()
+
+
+@pytest.mark.asyncio
+async def test_cancel_scan_batch_finishes_immediately_when_no_jobs_are_in_flight():
+    from scan_queue import cancel_scan_batch
+
+    pending = [
+        SimpleNamespace(status="queued", completed_at=None, last_error_code=None),
+        SimpleNamespace(status="queued", completed_at=None, last_error_code=None),
+    ]
+    batch = SimpleNamespace(
+        id="batch-cancel-2", license_key="license-1", status="queued",
+        total_urls=2, queued_count=2, processing_count=0, completed_count=0,
+        failed_count=0, cancelled_count=0, completed_at=None,
+    )
+    db = CancelSession(batch, pending, in_flight=0)
+
+    result = await cancel_scan_batch(
+        db, batch_id="batch-cancel-2", license_key="license-1",
+    )
+
+    assert result["status"] == "cancelled"
+    assert result["cancelled_jobs"] == 2 and result["in_flight_jobs"] == 0
+    assert batch.status == "cancelled" and batch.completed_at is not None
+    assert batch.queued_count == 0 and batch.cancelled_count == 2
+    assert db.committed and not db.rolled_back
+
+
+@pytest.mark.asyncio
+async def test_cancel_scan_batch_does_not_disclose_another_license_batch():
+    from scan_queue import cancel_scan_batch
+
+    db = FakeSession(None)
+    result = await cancel_scan_batch(
+        db, batch_id="private-batch", license_key="other-license",
+    )
+
+    assert result is None
+    assert db.rolled_back and not db.committed
