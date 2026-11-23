@@ -32,7 +32,7 @@ The current migration utility covers legacy customer accounts, billing-event his
 - Bulk scan inventory, batches, jobs, status, retries, and customer-visible scan history are durable in Hostinger MySQL. Jobs run in bounded concurrent groups according to the plan entitlement; the next batch is not released until the current batch is complete.
 - The Paddle event ledger in PostgreSQL prevents duplicate license provisioning and applies subscription entitlement changes. A customer-facing billing history mirror is persisted in Hostinger MySQL.
 - Admin/customer operational activity is persisted in Hostinger MySQL.
-- PDF bytes are not part of the final database boundary: the remaining report-file migration is intentionally deferred to the final refinement phase.
+- New PDF bytes are written to Hostinger private storage and report metadata is persisted in Hostinger MySQL. The older PostgreSQL PDF payload remains available as a compatibility fallback until the separately approved historical backfill and retirement are completed.
 
 ## Required production environment
 
