@@ -1294,10 +1294,35 @@ async def comprehensive_audit_pdf(
                 },
             },
         )
+        # Apply the authenticated customer's saved white-label settings to the PDF.
+        # Logo bytes are fetched from private storage only for plans entitled to branding;
+        # they remain in memory and are never persisted as a separate file.
+        pdf_brand_name = None
+        pdf_brand_color = None
+        pdf_brand_logo_bytes = None
+        if plan_features(license_obj.tier)["white_label_branding"]:
+            from sqlalchemy import select
+            branding = await operational_db.scalar(select(CustomerBranding).where(
+                CustomerBranding.license_key == license_obj.license_key
+            ))
+            if branding is not None:
+                pdf_brand_name = branding.brand_name
+                pdf_brand_color = branding.primary_color
+                if branding.logo_storage_key:
+                    try:
+                        pdf_brand_logo_bytes = await asyncio.to_thread(
+                            download_file, branding.logo_storage_key, branding.logo_sha256
+                        )
+                    except HostingerStorageError as exc:
+                        # A logo outage must not block an otherwise valid audit report.
+                        logger.warning("PDF branding logo unavailable (error_type=%s)", type(exc).__name__)
         pdf_bytes = render_audit_pdf(
             result,
             screenshot_data_uri=getattr(metrics, "screenshot_data_uri", None),
             coverage_manifest=coverage_manifest,
+            brand_name=pdf_brand_name,
+            brand_color=pdf_brand_color,
+            brand_logo_bytes=pdf_brand_logo_bytes,
         )
         report_generated_at = datetime.now(timezone.utc)
         report_retention_days = await _get_report_retention_days(operational_db)
