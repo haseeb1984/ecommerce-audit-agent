@@ -218,6 +218,18 @@ CREATE TABLE IF NOT EXISTS customer_branding (
   updated_at DATETIME(6) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS customer_branding_logo_cleanup (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  license_key VARCHAR(100) NOT NULL,
+  storage_key VARCHAR(1024) NOT NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(120) NULL,
+  created_at DATETIME(6) NOT NULL,
+  last_attempt_at DATETIME(6) NULL,
+  UNIQUE KEY uq_brand_logo_cleanup_storage_key (storage_key),
+  KEY ix_brand_logo_cleanup_license_created (license_key, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS admin_customer_notes (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
   license_key VARCHAR(100) NOT NULL,
