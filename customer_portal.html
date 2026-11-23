@@ -1893,24 +1893,26 @@
       const archive = document.createElement("button");
       archive.type = "button";
       archive.className = "secondary";
-      archive.textContent = "Archive";
-      archive.disabled = site.status === "archived";
+      archive.textContent = site.status === "archived" ? "Reactivate" : "Archive";
       archive.addEventListener("click", async () => {
-        if (!window.confirm("Archive this website from your inventory? Existing scan history will be preserved.")) return;
+        const isArchived = site.status === "archived";
+        if (isArchived && !window.confirm("Reactivate this website in your inventory? Existing scan history will be preserved.")) return;
+        if (!isArchived && !window.confirm("Archive this website from your inventory? Existing scan history will be preserved.")) return;
         archive.disabled = true;
         try {
-          const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
+          const result = isArchived
+            ? await api("/api/v1/websites/" + encodeURIComponent(site.id) + "/reactivate", {method: "POST"})
+            : await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
           if (!result.ok) {
-            let message = "Website archive failed.";
+            let message = isArchived ? "Website reactivation failed." : "Website archive failed.";
             try { const body = await result.json(); if (typeof body.detail === "string") message = body.detail; } catch (_) {}
             throw new Error(message);
           }
-          setStatus("connectStatus", "Website archived. Existing scan history is preserved.", "success");
+          setStatus("connectStatus", isArchived ? "Website reactivated." : "Website archived. Existing scan history is preserved.", "success");
           await loadWebsites();
         } catch (error) {
-          setStatus("connectStatus", error.message || "Website archive failed.", "error");
-        } finally {
-          archive.disabled = site.status === "archived";
+          setStatus("connectStatus", error.message || (site.status === "archived" ? "Website reactivation failed." : "Website archive failed."), "error");
+          archive.disabled = false;
         }
       });
       card.append(label, view, save, archive);
