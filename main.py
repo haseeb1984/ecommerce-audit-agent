@@ -4941,7 +4941,6 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
     """Deliver a newly provisioned license using SMTP secrets from the runtime environment."""
     message = EmailMessage()
     message["Subject"] = "Your E-commerce Audit Agent license"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         "Your payment has been confirmed and your audit license is ready.\n\n"
@@ -4963,7 +4962,6 @@ def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role
     invite_url = app_url + "/app?agency_invitation=" + token
     message = EmailMessage()
     message["Subject"] = "Invitation to join an Ecommerce Audit Agent agency"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"{inviter} invited you to join their agency as {role}.\\n\\n"
@@ -4977,7 +4975,6 @@ def _send_account_login_code(recipient: str, code: str) -> None:
     """Send a short-lived passwordless sign-in code through the configured SMTP relay."""
     message = EmailMessage()
     message["Subject"] = "Your E-commerce Audit Agent sign-in code"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your customer account sign-in code is: {code}\n\n"
@@ -4991,7 +4988,6 @@ def _send_account_email_change_code(recipient: str, code: str) -> None:
     """Deliver a new-address ownership challenge using the configured SMTP relay."""
     message = EmailMessage()
     message["Subject"] = "Verify your new E-commerce Audit Agent account email"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your new customer account email verification code is: {code}\n\n"
@@ -6176,7 +6172,6 @@ def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: byte
 
     message = EmailMessage()
     message["Subject"] = f"Your e-commerce audit report for {domain}"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your requested e-commerce audit report for {domain} is attached.\n\n"
