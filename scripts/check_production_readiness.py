@@ -77,6 +77,7 @@ REQUIRED_ENV_GROUPS = {
     "ai_provider": ("GROQ_API_KEY",),
     "customer_account_auth": ("ACCOUNT_AUTH_SECRET",),
     "hostinger_operational_database": ("HOSTINGER_DATABASE_URL",),
+    "hostinger_private_storage": ("HOSTINGER_STORAGE_BASE_URL", "HOSTINGER_STORAGE_HMAC_SECRET"),
     "public_app_url": ("PUBLIC_APP_URL",),
     "scheduled_scan_worker": ("SCAN_WORKER_URL", "CRON_SECRET"),
 }
@@ -94,6 +95,26 @@ def _valid_public_app_url(value: str) -> bool:
             and parsed.hostname
             and not parsed.username
             and not parsed.password
+        )
+    except ValueError:
+        return False
+
+
+def _valid_hostinger_storage_url(value: str) -> bool:
+    """Require the private storage bridge to use a credential-free HTTPS URL."""
+    candidate = value.strip()
+    if not candidate:
+        return False
+    try:
+        parsed = urlsplit(candidate)
+        return bool(
+            parsed.scheme == "https"
+            and parsed.netloc
+            and not parsed.username
+            and not parsed.password
+            and not parsed.query
+            and not parsed.fragment
+            and not any(character.isspace() for character in parsed.netloc)
         )
     except ValueError:
         return False
