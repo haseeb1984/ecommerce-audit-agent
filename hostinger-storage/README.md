@@ -133,8 +133,9 @@ the authenticated API; logo reads are proxied through the same customer
 authorization check. Replacing or removing a logo deletes its prior private
 object where possible.
 
-Retention is calculated dynamically from each report's original
-`created_at` plus the current `REPORT_RETENTION_DAYS`. Changing the setting
-therefore affects existing and new reports. Once a PDF has actually been
-deleted, increasing retention cannot restore it. The dashboard retains report
-history and shows the expiry date and remaining days.
+The configured retention period is assigned to each newly generated
+report when its `expires_at` value is created. Changing the owner-managed
+retention setting affects new reports only; existing reports keep their
+previously assigned expiry dates. Once a PDF has actually been deleted,
+increasing retention cannot restore it. The dashboard retains report history
+and shows each report's stored expiry date and remaining days.
