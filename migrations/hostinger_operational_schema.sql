@@ -214,6 +214,10 @@ CREATE TABLE IF NOT EXISTS customer_branding (
   license_key VARCHAR(100) NOT NULL PRIMARY KEY,
   brand_name VARCHAR(100) NOT NULL,
   logo_url VARCHAR(2048) NULL,
+  logo_storage_key VARCHAR(1024) NULL,
+  logo_sha256 VARCHAR(64) NULL,
+  logo_mime_type VARCHAR(100) NULL,
+  logo_byte_size BIGINT NULL,
   primary_color VARCHAR(7) NOT NULL DEFAULT '#155a8a',
   updated_at DATETIME(6) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
