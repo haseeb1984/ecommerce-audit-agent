@@ -4551,9 +4551,11 @@ async def upload_account_branding_logo(
     except Exception:
         await operational_db.rollback()
         try:
-            await asyncio.to_thread(delete_file, receipt.storage_key)
-        except HostingerStorageError as cleanup_exc:
-            logger.error("Uncommitted logo cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+            await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, receipt.storage_key)
+            await operational_db.commit()
+        except Exception as cleanup_exc:
+            await operational_db.rollback()
+            logger.error("Uncommitted logo cleanup queue persistence failed (error_type=%s)", type(cleanup_exc).__name__)
         raise
     response.headers["Cache-Control"] = "no-store, private"
     return {"logo_stored": True, "mime_type": receipt.mime_type, "byte_size": receipt.byte_size}
