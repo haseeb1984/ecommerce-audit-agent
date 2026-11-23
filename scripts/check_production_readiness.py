@@ -111,6 +111,7 @@ def _valid_hostinger_storage_url(value: str) -> bool:
             parsed.scheme == "https"
             and parsed.hostname
             and (parsed.port is None or 1 <= parsed.port <= 65535)
+            and parsed.path.rstrip("/") == "/eaa-storage/api/index.php"
             and not parsed.username
             and not parsed.password
             and not parsed.query
