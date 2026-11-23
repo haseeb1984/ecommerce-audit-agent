@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 import main
 from database import AsyncSessionLocal
 from hostinger_database import HostingerAsyncSessionLocal
-from hostinger_models import CustomerReportFile
+from hostinger_models import CustomerReportFile, PlatformSetting
 from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
@@ -916,6 +916,51 @@ async def test_report_history_requires_authentication(client):
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_admin_report_retention_policy_is_persisted_in_hostinger_mysql(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-report-retention-key")
+    monkeypatch.setenv("REPORT_RETENTION_DAYS", "9")
+    headers = {"X-Admin-Key": "test-report-retention-key"}
+
+    unauthorized = await client.get("/api/v1/admin/settings/report-retention")
+    assert unauthorized.status_code == 401
+
+    initial = await client.get("/api/v1/admin/settings/report-retention", headers=headers)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["retention_days"] == 9
+    assert initial.json()["source"] == "environment_default"
+    assert initial.json()["applies_to"] == "new_reports"
+    assert initial.headers["cache-control"] == "no-store, private"
+
+    invalid = await client.put(
+        "/api/v1/admin/settings/report-retention?days=0", headers=headers
+    )
+    assert invalid.status_code == 422
+
+    saved = await client.put(
+        "/api/v1/admin/settings/report-retention?days=30", headers=headers
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["retention_days"] == 30
+    assert saved.json()["source"] == "hostinger_mysql"
+
+    async with HostingerAsyncSessionLocal() as operational_db:
+        setting = (await operational_db.execute(
+            select(PlatformSetting).where(
+                PlatformSetting.setting_key == "report_retention_days"
+            )
+        )).scalar_one()
+        assert setting.setting_value == "30"
+
+        created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert main._report_file_expiry(created_at, 30) == created_at + timedelta(days=30)
+
+    reloaded = await client.get("/api/v1/admin/settings/report-retention", headers=headers)
+    assert reloaded.status_code == 200
+    assert reloaded.json()["retention_days"] == 30
+    assert reloaded.json()["source"] == "hostinger_mysql"
 
 
 @pytest.mark.asyncio
