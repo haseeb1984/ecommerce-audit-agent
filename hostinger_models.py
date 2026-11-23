@@ -501,3 +501,11 @@ class AgencyUsageEvent(HostingerBase):
         Index("ix_agency_usage_tenant_period", "agency_id", "period_start", "event_type"),
         UniqueConstraint("agency_id", "source_reference", name="uq_agency_usage_source_reference"),
     )
+
+
+class PlatformSetting(HostingerBase):
+    """Owner-managed platform policy values stored in operational MySQL."""
+    __tablename__ = "platform_settings"
+    setting_key = Column(String(100), primary_key=True)
+    setting_value = Column(String(255), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
