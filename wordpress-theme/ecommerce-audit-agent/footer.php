@@ -4,7 +4,7 @@
  *
  * @package EcommerceAuditAgent
  */
-$support_email = get_option('eaa_theme_support_email', get_option('admin_email'));
+$support_email = sanitize_email((string) get_option('eaa_theme_support_email', ''));
 ?>
 <footer class="site-footer">
   <div class="wrap">
@@ -30,6 +30,7 @@ $support_email = get_option('eaa_theme_support_email', get_option('admin_email')
     <div class="footer-bottom">
       <span>&copy; <?php echo esc_html(gmdate('Y')); ?> <?php echo esc_html(get_bloginfo('name')); ?></span>
       <span><?php esc_html_e('Audit findings are informational and do not guarantee rankings, revenue, security or compliance outcomes.', 'ecommerce-audit-agent'); ?></span>
+      <span><?php esc_html_e('Powered by', 'ecommerce-audit-agent'); ?> <a href="https://juncsys.com" target="_blank" rel="noopener noreferrer">Junction Systems</a></span>
     </div>
   </div>
 </footer>
