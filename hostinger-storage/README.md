@@ -10,6 +10,11 @@ public_html/eaa-storage/
 The Python API remains on its existing runtime. It calls
 `https://YOUR-WORDPRESS-DOMAIN/eaa-storage/api/index.php` over HTTPS.
 
+The PHP storage bridge requires **PHP 8.0 or later** (`match` expressions and
+`str_contains()` are used by the endpoint). This is separate from the marketing
+theme's PHP 7.4 compatibility declaration; the bridge and theme have different
+runtime requirements.
+
 ## Folder layout
 
 ```text
