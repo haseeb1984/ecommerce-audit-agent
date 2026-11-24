@@ -98,6 +98,13 @@ def _canonical_request(timestamp: str, nonce: str, operation: str,
     )).encode("utf-8")
 
 
+def _response_limit(operation: str, storage_key: str) -> int:
+    """Allow large bodies only for downloads; mutation responses are small JSON receipts."""
+    if operation != "download":
+        return 64 * 1024
+    return 25 * 1024 * 1024 if _REPORT_KEY_RE.fullmatch(storage_key) else 5 * 1024 * 1024
+
+
 def _request(operation: str, storage_key: str, body: bytes = b"",
              mime_type: str = "application/octet-stream") -> bytes:
     base_url, secret = _storage_config()
@@ -124,11 +131,7 @@ def _request(operation: str, storage_key: str, body: bytes = b"",
             "X-EAA-Signature": signature,
         },
     )
-    response_limit = (
-        25 * 1024 * 1024 if _REPORT_KEY_RE.fullmatch(storage_key)
-        else 5 * 1024 * 1024 if operation == "download"
-        else 64 * 1024
-    )
+    response_limit = _response_limit(operation, storage_key)
     try:
         opener = build_opener(_NoRedirectHandler)
         with opener.open(request, timeout=30) as response:
