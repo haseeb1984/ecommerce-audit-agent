@@ -100,7 +100,17 @@ Before migrating existing reports:
 2. Upload the PHP bridge and complete the direct-access, HMAC, replay, and
    upload/download/delete checks above.
 3. Apply `migrations/20261121_hostinger_report_storage.sql` to Supabase PostgreSQL.
-4. Apply `migrations/20261121_hostinger_branding_storage.mysql.sql` to Hostinger MySQL.
+4. Check the Hostinger MySQL schema before applying the optional branding upgrade:
+   - If the database was created from `migrations/hostinger_operational_schema.sql`,
+     **skip** `migrations/20261121_hostinger_branding_storage.mysql.sql`. The
+     fresh baseline already includes all four logo-storage columns, and this
+     incremental migration uses an unguarded `ALTER TABLE ... ADD COLUMN`.
+   - If this is an older operational database, back it up and inspect
+     `information_schema.columns` for `customer_branding.logo_storage_key`,
+     `logo_sha256`, `logo_mime_type`, and `logo_byte_size`. Apply the
+     incremental migration only when all four columns are absent and its
+     prerequisites match. If the schema is partially upgraded, reconcile it
+     manually rather than replaying the full migration.
 5. Set `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`,
    `REPORT_RETENTION_DAYS=7`, and a strong `CRON_SECRET` in the FastAPI
    runtime.
