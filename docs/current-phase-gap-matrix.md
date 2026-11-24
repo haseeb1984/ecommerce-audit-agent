@@ -4,6 +4,14 @@
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
+## Latest verification evidence — 2026-11-24
+
+- Backend CI run [#45310567513](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45310567513) passed on `da64b13a94d59117e22eb97ccbb689fa690545f2`: **1,523 tests passed, 216 warnings**; dependency audits, Python compilation, PHP lint, frontend JavaScript syntax checks and synthetic PDF generation/upload also passed.
+- Current branch HEAD `957dd5a6513eb9eb956f43b1372cac3c79dd5f4d` has the tested commit as its first parent; the first-parent diff is documentation-only (`README.md`, `docs/DEPENDENCIES.md`), so application source remains the tested source tree.
+- This does not verify live database schemas, migrations, browser/provider workflows or production deployment. The PR CI run skipped real-public-website PDF smoke tests by workflow design.
+- The scheduled worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) stopped at configuration validation: repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are missing. The worker endpoint was not invoked.
+- Vercel's current check is blocked by its deployment-rate limit; do not treat that status as a backend test result.
+
 ## Status meanings
 
 - **Implemented, verify release:** code/tests exist, but acceptance evidence for the whole production workflow is still needed.
