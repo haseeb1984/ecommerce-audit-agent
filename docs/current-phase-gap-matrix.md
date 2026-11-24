@@ -6,6 +6,10 @@
 
 ## Latest verification evidence — 2026-11-24
 
+- Backend CI run [#45384242376](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45384242376) passed for the current branch at documentation commit `beffc573c7d6ee1d1629df5e370649262d3668cb`; full repository suite: **1,524 passed, 216 warnings**. Dependency vulnerability audit, dependency pin/hash verification, Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
+- This run validates the same application code as `13e64fa601043356e24320337cc01ef0fed552eb`; the intervening commits update documentation only. Real-public-site PDF smoke tests remain skipped by the pull-request workflow.
+- Matching application preview at `13e64fa` remains READY but its health check is not ready: Supabase PostgreSQL is reachable with missing outbox tables; Hostinger MySQL is not configured/connected. No live migration or production change was performed.
+
 - Backend CI run [#45375145059](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45375145059) passed for PR #364 at commit `18294acdaeb31619595a5feeb68081c069462f7a`: **1,523 tests passed, 216 warnings**. Dependency audits, Python compilation, PHP lint, frontend JavaScript syntax checks, synthetic PDF generation, and WordPress theme package build/upload also passed.
 - The WordPress marketing theme customer-login CTA now builds its `/app` URL from the configured SaaS API origin; a regression assertion protects against reintroducing the fixed Vercel host.
 - Vercel reported preview deployment completion for this commit. The pull-request workflow skipped real-public-website PDF smoke tests; live WordPress runtime, provider journeys and production acceptance remain unverified.
