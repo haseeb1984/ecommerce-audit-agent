@@ -120,8 +120,12 @@ Before migrating existing reports:
 python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10
 ```
 
-The migration downloads each uploaded object and verifies its SHA-256 and exact
-bytes before setting the PostgreSQL `pdf_bytes` field to NULL. On a failed
+The migration requires `HOSTINGER_DATABASE_URL` as well as the PostgreSQL and storage
+configuration. It reads the authoritative `report_retention_days` value from
+Hostinger MySQL (falling back to `REPORT_RETENTION_DAYS`, default 7, only when
+no owner-managed setting exists) so its expiry cutoff matches the application.
+It downloads each uploaded object and verifies its SHA-256 and exact bytes
+before setting the PostgreSQL `pdf_bytes` field to NULL. On a failed
 batch it rolls back the database transaction and attempts to remove uploaded
 objects. Review the final database counts and Hostinger storage before enabling
 scheduled cleanup.
