@@ -28,11 +28,17 @@ async def test_health_check_identifies_unconfigured_hostinger_database(client):
         "engine": "postgresql",
         "connected": True,
         "schema_ready": True,
+        "missing_tables": [],
+        "missing_columns": {},
+        "missing_indexes": [],
     }
     assert detail["operational_database"] == {
         "engine": "mysql",
         "connected": False,
         "schema_ready": None,
+        "missing_tables": [],
+        "missing_columns": {},
+        "missing_indexes": [],
     }
 
 
@@ -61,10 +67,16 @@ async def test_health_check_identifies_postgres_connection_failure(client):
         "engine": "postgresql",
         "connected": False,
         "schema_ready": None,
+        "missing_tables": [],
+        "missing_columns": {},
+        "missing_indexes": [],
     }
     assert detail["operational_database"] == {
         "engine": "mysql",
         "connected": None,
         "schema_ready": None,
+        "missing_tables": [],
+        "missing_columns": {},
+        "missing_indexes": [],
     }
     assert "sensitive connection details" not in response.text
