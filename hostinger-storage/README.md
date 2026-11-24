@@ -117,7 +117,11 @@ Before migrating existing reports:
 6. Run the verified migration from the repository root:
 
 ```bash
+# Read-only eligibility preview; this is the default.
 python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10
+
+# Only after reviewing the preview and approving the migration:
+python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10 --apply
 ```
 
 The migration requires `HOSTINGER_DATABASE_URL` as well as the PostgreSQL and storage
