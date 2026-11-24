@@ -12,6 +12,14 @@
 - The scheduled worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) stopped before invocation because repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are missing.
 - Passing CI does not replace staging database/schema validation, migrations, SMTP/Paddle acceptance, private-storage deployment or production approval.
 
+## Read-only deployment configuration findings — 2026-11-24
+
+- Vercel environment-variable names were inspected without decrypting or reading secret values. The project inventory contains 21 names. Present names include `DATABASE_URL`, Paddle, SMTP, `ADMIN_API_KEY`, `GROQ_API_KEY` and `GOOGLE_PAGESPEED_API_KEY`.
+- Absent required Vercel names: `HOSTINGER_DATABASE_URL`, `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`, `ACCOUNT_AUTH_SECRET`, `CRON_SECRET`, `PUBLIC_APP_URL`, `EAA_CONTACT_FORM_SECRET`, and `EAA_CONTACT_TO_EMAIL`. `REPORT_RETENTION_DAYS` is absent but defaults to seven days.
+- The readiness script accepts `GOOGLE_PAGESPEED_API_KEY` as an alternative to `PAGE_SPEED_API_KEY`, so the listed Google key satisfies the name check.
+- GitHub Actions run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) confirms that GitHub repository variable `SCAN_WORKER_URL` and secret `CRON_SECRET` are missing. The worker was not invoked.
+- These are configuration blockers, not source-code defects. No secrets were read or changed, no database was contacted, and no deployment or migration was performed.
+
 ## Status meanings
 
 - **Implemented, verify release:** code/tests exist, but acceptance evidence for the whole production workflow is still needed.
