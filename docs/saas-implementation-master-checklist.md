@@ -11,6 +11,15 @@
 - **Partial** — useful implementation exists, but agreed scope or acceptance is incomplete.
 - **Blocked** — needs production configuration, provider credentials, human approval, or external acceptance.
 
+## Latest automated verification — 2026-11-24
+
+- GitHub Actions Backend tests run [#45310567513](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45310567513) (workflow run #2931) completed successfully for commit `da64b13a94d59117e22eb97ccbb689fa690545f2` on PR #364.
+- The run reports **1,523 passed, 216 warnings**. Both Python dependency vulnerability-audit commands reported no known vulnerabilities. Python compilation, PHP lint for the WordPress plugin/storage bridge/marketing theme, embedded frontend JavaScript syntax checks, synthetic PDF generation and artifact upload completed successfully.
+- Current branch HEAD `957dd5a6513eb9eb956f43b1372cac3c79dd5f4d` is a merge commit whose first parent is the tested commit above; inspection of its first-parent diff shows only `README.md` and `docs/DEPENDENCIES.md` changed. Application source and tests are therefore unchanged from the successful run.
+- This is isolated CI evidence, not production or staging acceptance. The pull-request workflow does not execute the real-public-website PDF smoke-test step. PostgreSQL/Hostinger production schema, SMTP inbox, Paddle sandbox lifecycle, WordPress runtime, worker scheduling and private-storage deployment remain separate acceptance gates.
+- The scheduled Durable scan worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) failed before invocation because repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are not configured. No worker request was sent.
+- The Vercel check on current HEAD reports a deployment-rate limit; this is an external preview/deployment constraint, not a backend test failure.
+
 ## SaaS product flows
 
 | Requirement area | Current status | Evidence / remaining gate |
