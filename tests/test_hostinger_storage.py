@@ -201,3 +201,81 @@ async def test_migration_cleanup_preserves_all_objects_when_reference_check_fail
     await migration._cleanup_unreferenced_uploads(keys)
 
     assert deleted == []
+
+@pytest.mark.asyncio
+async def test_pdf_migration_uses_owner_managed_hostinger_retention_over_environment(monkeypatch):
+    from contextlib import asynccontextmanager
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    class Result:
+        def scalar_one_or_none(self):
+            return "30"
+
+    class OperationalSession:
+        async def execute(self, statement):
+            return Result()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield OperationalSession()
+
+    monkeypatch.setattr(migration, "HostingerAsyncSessionLocal", session_factory)
+    monkeypatch.setenv("REPORT_RETENTION_DAYS", "7")
+
+    assert await migration._effective_retention_days() == 30
+
+
+@pytest.mark.asyncio
+async def test_pdf_migration_uses_environment_default_only_when_no_owner_setting(monkeypatch):
+    from contextlib import asynccontextmanager
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    class Result:
+        def scalar_one_or_none(self):
+            return None
+
+    class OperationalSession:
+        async def execute(self, statement):
+            return Result()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield OperationalSession()
+
+    monkeypatch.setattr(migration, "HostingerAsyncSessionLocal", session_factory)
+    monkeypatch.setenv("REPORT_RETENTION_DAYS", "14")
+
+    assert await migration._effective_retention_days() == 14
+
+
+@pytest.mark.asyncio
+async def test_pdf_migration_requires_hostinger_database_for_authoritative_retention(monkeypatch):
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    monkeypatch.setattr(migration, "HostingerAsyncSessionLocal", None)
+
+    with pytest.raises(RuntimeError, match="HOSTINGER_DATABASE_URL"):
+        await migration._effective_retention_days()
+
+
+@pytest.mark.asyncio
+async def test_pdf_migration_rejects_invalid_owner_managed_retention(monkeypatch):
+    from contextlib import asynccontextmanager
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    class Result:
+        def scalar_one_or_none(self):
+            return "0"
+
+    class OperationalSession:
+        async def execute(self, statement):
+            return Result()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield OperationalSession()
+
+    monkeypatch.setattr(migration, "HostingerAsyncSessionLocal", session_factory)
+
+    with pytest.raises(RuntimeError, match="between 1 and 3650"):
+        await migration._effective_retention_days()
