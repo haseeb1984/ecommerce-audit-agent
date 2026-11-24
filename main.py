@@ -7,11 +7,15 @@ import secrets
 import time
 import logging
 import os
-import smtplib
 import json
 import io
 import zipfile
 from email.message import EmailMessage
+from email_service import (
+    configured_smtp_port as _configured_smtp_port,
+    send_email as _send_email_message,
+    smtp_configuration_status as _smtp_configuration_status,
+)
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import re
@@ -5412,56 +5416,10 @@ async def get_audit_report_evidence(
 
 
 
-def _smtp_configuration_status() -> dict:
-    """Describe SMTP readiness without returning configured values or secrets."""
-    issues = []
-    if not os.getenv("SMTP_HOST", "").strip():
-        issues.append("SMTP_HOST missing")
-    if not os.getenv("SMTP_FROM", "").strip():
-        issues.append("SMTP_FROM missing")
-    try:
-        port = int(os.getenv("SMTP_PORT", "587").strip())
-        if not 1 <= port <= 65535:
-            raise ValueError
-    except (TypeError, ValueError):
-        issues.append("SMTP_PORT must be an integer from 1 to 65535")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        issues.append("SMTP_TLS_MODE must be starttls or ssl")
-    username = os.getenv("SMTP_USERNAME", "").strip()
-    password = os.getenv("SMTP_PASSWORD", "")
-    if bool(username) != bool(password):
-        issues.append("SMTP_USERNAME and SMTP_PASSWORD must both be set or both be empty")
-    return {"configured": not issues, "issues": issues}
-
-
-def _configured_smtp_port() -> int:
-    """Validate SMTP port configuration before opening a network connection."""
-    raw_port = os.getenv("SMTP_PORT", "587").strip()
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("SMTP port configuration is invalid") from exc
-    if not 1 <= port <= 65535:
-        raise RuntimeError("SMTP port configuration is invalid")
-    return port
-
-
 def _send_license_email(recipient: str, license_key: str, tier: str, quota: int) -> None:
     """Deliver a newly provisioned license using SMTP secrets from the runtime environment."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     message = EmailMessage()
     message["Subject"] = "Your E-commerce Audit Agent license"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         "Your payment has been confirmed and your audit license is ready.\n\n"
@@ -5469,33 +5427,11 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
         "Open the customer dashboard, choose License key, and paste this key to access your reports. "
         "Keep this key private; it authorizes use of your account allowance."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role: str) -> None:
     """Send a single-use, 48-hour agency team invitation through configured SMTP."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
     if not app_url:
         raise RuntimeError("PUBLIC_APP_URL is required for secure agency invitation links")
@@ -5505,79 +5441,32 @@ def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role
     invite_url = app_url + "/app?agency_invitation=" + token
     message = EmailMessage()
     message["Subject"] = "Invitation to join an Ecommerce Audit Agent agency"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"{inviter} invited you to join their agency as {role}.\n\n"
         f"Accept this invitation within 48 hours: {invite_url}\n\n"
         "This link is single-use. If you were not expecting this invitation, ignore this email."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _send_account_login_code(recipient: str, code: str) -> None:
     """Send a short-lived passwordless sign-in code through the configured SMTP relay."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     message = EmailMessage()
     message["Subject"] = "Your E-commerce Audit Agent sign-in code"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your customer account sign-in code is: {code}\n\n"
         "This code expires in 10 minutes and can be used once. "
         "If you did not request it, you can ignore this email."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _send_account_email_change_code(recipient: str, code: str) -> None:
     """Deliver a new-address ownership challenge using the configured SMTP relay."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     message = EmailMessage()
     message["Subject"] = "Verify your new E-commerce Audit Agent account email"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your new customer account email verification code is: {code}\n\n"
@@ -5585,19 +5474,7 @@ def _send_account_email_change_code(recipient: str, code: str) -> None:
         "Your existing account email remains active until this code is verified. "
         "If you did not request this change, ignore this message and your account will remain unchanged."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _is_valid_paddle_hosted_url(value: object) -> bool:
@@ -6774,20 +6651,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 
 def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: bytes) -> None:
     """Send a user-requested report using SMTP configuration supplied only via environment."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
 
     message = EmailMessage()
     message["Subject"] = f"Your e-commerce audit report for {domain}"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your requested e-commerce audit report for {domain} is attached.\n\n"
@@ -6801,19 +6667,7 @@ def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: byte
         subtype="pdf",
         filename=f"ecommerce-audit-{report_id}.pdf",
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 @app.post("/api/v1/reports/{report_id}/email")
