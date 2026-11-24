@@ -348,3 +348,14 @@ def test_storage_bridge_readme_declares_php_8_runtime_requirement():
     ).read_text()
     assert "PHP 8.0 or later" in readme
     assert "marketing" in readme and "PHP 7.4" in readme
+
+
+
+def test_storage_response_limits_reserve_large_bodies_for_downloads_only():
+    report_key = "reports/" + "a" * 64 + ".pdf"
+    logo_key = "logos/" + "b" * 64 + ".png"
+
+    assert storage._response_limit("download", report_key) == 25 * 1024 * 1024
+    assert storage._response_limit("download", logo_key) == 5 * 1024 * 1024
+    assert storage._response_limit("upload", report_key) == 64 * 1024
+    assert storage._response_limit("delete", report_key) == 64 * 1024
