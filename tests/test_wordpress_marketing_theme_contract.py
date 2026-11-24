@@ -6,8 +6,11 @@ def test_public_marketing_contact_uses_signed_backend_delivery_not_wp_mail():
     theme = root / "wordpress-theme" / "ecommerce-audit-agent"
     functions = (theme / "functions.php").read_text(encoding="utf-8")
     footer = (theme / "footer.php").read_text(encoding="utf-8")
+    header = (theme / "header.php").read_text(encoding="utf-8")
     backend = (root / "main.py").read_text(encoding="utf-8")
 
+    assert """href="<?php echo esc_url(eaa_theme_api_base() . '/app'); ?>"""" in header
+    assert "ecommerce-audit-agent.vercel.app/app" not in header
     assert "wp_mail(" not in functions
     assert "get_option('admin_email')" not in functions
     assert "get_option('admin_email')" not in footer
