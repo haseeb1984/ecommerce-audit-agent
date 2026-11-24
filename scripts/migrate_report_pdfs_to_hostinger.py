@@ -94,9 +94,6 @@ async def _cleanup_unreferenced_uploads(uploaded_keys: list[str]) -> None:
 
 
 async def migrate(batch_size: int, apply_changes: bool = False) -> tuple[int, int]:
-    if not storage_configured():
-        raise RuntimeError("Configure HOSTINGER_STORAGE_BASE_URL and HOSTINGER_STORAGE_HMAC_SECRET first.")
-
     retention_days = await _effective_retention_days()
     retention_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
 
@@ -112,6 +109,9 @@ async def migrate(batch_size: int, apply_changes: bool = False) -> tuple[int, in
                 select(func.count(AuditReport.id)).where(*eligible_filter)
             )).scalar_one() or 0)
         return eligible, 0
+
+    if not storage_configured():
+        raise RuntimeError("Configure HOSTINGER_STORAGE_BASE_URL and HOSTINGER_STORAGE_HMAC_SECRET first.")
 
     migrated = 0
     skipped_or_failed = 0
