@@ -35,6 +35,6 @@
       ));
       ?>
     </nav>
-    <a class="nav-cta" href="https://ecommerce-audit-agent.vercel.app/app"><?php esc_html_e('Customer login', 'ecommerce-audit-agent'); ?></a>
+    <a class="nav-cta" href="<?php echo esc_url(eaa_theme_api_base() . '/app'); ?>"><?php esc_html_e('Customer login', 'ecommerce-audit-agent'); ?></a>
   </div>
 </header>
