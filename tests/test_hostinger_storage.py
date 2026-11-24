@@ -297,8 +297,11 @@ async def test_pdf_migration_dry_run_only_counts_eligible_rows(monkeypatch):
     async def session_factory():
         yield ReadOnlySession()
 
+    async def fake_retention_days():
+        return 7
+
     monkeypatch.setattr(migration, "storage_configured", lambda: False)
-    monkeypatch.setattr(migration, "_effective_retention_days", lambda: _resolved(7))
+    monkeypatch.setattr(migration, "_effective_retention_days", fake_retention_days)
     monkeypatch.setattr(migration, "AsyncSessionLocal", session_factory)
 
     async def unexpected_upload(*args, **kwargs):
@@ -307,10 +310,6 @@ async def test_pdf_migration_dry_run_only_counts_eligible_rows(monkeypatch):
     monkeypatch.setattr(migration, "upload_report", unexpected_upload)
 
     assert await migration.migrate(batch_size=10) == (3, 0)
-
-
-async def _resolved(value):
-    return value
 
 
 @pytest.mark.parametrize(
