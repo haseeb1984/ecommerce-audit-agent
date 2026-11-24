@@ -491,7 +491,7 @@ async def health_check(
         "billing_mirror_sync_outbox",
     }
     licensing_connected = False
-    operational_connected = False
+    operational_connected = None
     licensing_ready = None
     operational_ready = None
     active_database = "licensing"
@@ -546,7 +546,9 @@ async def health_check(
 
         active_database = "operational"
         if operational_db is None:
+            operational_connected = False
             raise RuntimeError("Hostinger operational database is not configured.")
+        operational_connected = False
         mysql_ping = await operational_db.execute(text("SELECT 1"))
         operational_connected = True
         mysql_table_result = await operational_db.execute(text(
