@@ -124,10 +124,12 @@ python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10
 python scripts/migrate_report_pdfs_to_hostinger.py --batch-size 10 --apply
 ```
 
-The migration requires `HOSTINGER_DATABASE_URL` as well as the PostgreSQL and storage
-configuration. It reads the authoritative `report_retention_days` value from
+Both preview and apply require `HOSTINGER_DATABASE_URL` plus the PostgreSQL
+connection so the authoritative `report_retention_days` value can be read from
 Hostinger MySQL (falling back to `REPORT_RETENTION_DAYS`, default 7, only when
-no owner-managed setting exists) so its expiry cutoff matches the application.
+no owner-managed setting exists). The read-only preview does not require storage
+credentials; the `--apply` pass also requires the Hostinger storage bridge URL
+and HMAC secret.
 It downloads each uploaded object and verifies its SHA-256 and exact bytes
 before setting the PostgreSQL `pdf_bytes` field to NULL. On a failed
 batch it rolls back the database transaction and attempts to remove uploaded
