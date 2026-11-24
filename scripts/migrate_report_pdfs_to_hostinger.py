@@ -1,8 +1,11 @@
 """Safely migrate legacy PostgreSQL report PDFs to the Hostinger private bridge.
 
-Run only after applying migrations/20261121_hostinger_report_storage.sql and
-verifying the deployed PHP bridge. Each object is uploaded and downloaded with
-a SHA-256 verification before its PostgreSQL binary is nulled.
+The default invocation is a read-only eligibility preview. Pass --apply only
+after reviewing the count and approving the migration. Apply mode requires
+both databases, the storage bridge, and its verified deployment.
+
+Each object is uploaded and downloaded with a SHA-256 verification before its
+PostgreSQL binary is nulled.
 """
 from __future__ import annotations
 
