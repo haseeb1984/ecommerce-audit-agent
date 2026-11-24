@@ -20,6 +20,15 @@
 - Real-public-website PDF smoke tests were skipped because this was a pull-request workflow. Staging database schemas/migrations, SMTP inbox delivery, Paddle sandbox lifecycle, WordPress runtime, worker scheduling and Hostinger private-storage deployment remain separate acceptance gates.
 - The scheduled Durable scan worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) failed before invocation because repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are not configured. No worker request was sent.
 
+## Read-only Vercel configuration review — 2026-11-24
+
+- The Vercel project environment-variable inventory was inspected with decryption disabled; no secret values were read. The project lists 21 variable names, including `DATABASE_URL`, Paddle, SMTP, `ADMIN_API_KEY`, `GROQ_API_KEY`, and `GOOGLE_PAGESPEED_API_KEY`.
+- Required names absent from the Vercel inventory: `HOSTINGER_DATABASE_URL`, `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`, `ACCOUNT_AUTH_SECRET`, `CRON_SECRET`, `PUBLIC_APP_URL`, `EAA_CONTACT_FORM_SECRET`, and `EAA_CONTACT_TO_EMAIL`. `REPORT_RETENTION_DAYS` is also not set; code defaults retention to seven days.
+- `PAGE_SPEED_API_KEY` is absent, but `GOOGLE_PAGESPEED_API_KEY` is present and the production-readiness script accepts either name.
+- The scan-worker workflow independently confirmed that GitHub repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are missing. No worker request was sent.
+- This inventory proves only that the variable names are absent/present; secret values and provider connectivity were not inspected. Do not infer that listed Paddle, SMTP or database credentials are valid.
+- These missing settings block customer passwordless auth, Hostinger operational DB access, private report storage, agency invitation URLs, the WordPress contact form, and scheduled worker operation until configured. No environment variables were changed.
+
 ## SaaS product flows
 
 | Requirement area | Current status | Evidence / remaining gate |
