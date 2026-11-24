@@ -297,7 +297,7 @@ async def test_pdf_migration_dry_run_only_counts_eligible_rows(monkeypatch):
     async def session_factory():
         yield ReadOnlySession()
 
-    monkeypatch.setattr(migration, "storage_configured", lambda: True)
+    monkeypatch.setattr(migration, "storage_configured", lambda: False)
     monkeypatch.setattr(migration, "_effective_retention_days", lambda: _resolved(7))
     monkeypatch.setattr(migration, "AsyncSessionLocal", session_factory)
 
