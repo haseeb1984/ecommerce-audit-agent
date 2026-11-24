@@ -490,12 +490,14 @@ async def health_check(
         "customer_lifecycle_sync_outbox",
         "billing_mirror_sync_outbox",
     }
+    licensing_connected = False
+    operational_connected = False
+    licensing_ready = None
+    operational_ready = None
+    active_database = "licensing"
     try:
-        # Optional dependency lets this endpoint normalize missing Hostinger
-        # configuration into the same structured 503 response as DB outages.
-        if operational_db is None:
-            raise RuntimeError("Hostinger operational database is not configured.")
         pg_ping = await db.execute(text("SELECT 1"))
+        licensing_connected = True
         pg_table_result = await db.execute(text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = current_schema()"
@@ -538,7 +540,15 @@ async def health_check(
             pg_required_indexes.add("uq_saas_plan_packages_paddle_price_id")
             pg_missing_indexes = sorted(pg_required_indexes - pg_existing_indexes)
 
+        licensing_ready = not (
+            pg_missing_tables or pg_missing_columns or pg_missing_indexes
+        )
+
+        active_database = "operational"
+        if operational_db is None:
+            raise RuntimeError("Hostinger operational database is not configured.")
         mysql_ping = await operational_db.execute(text("SELECT 1"))
+        operational_connected = True
         mysql_table_result = await operational_db.execute(text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = DATABASE()"
@@ -587,9 +597,6 @@ async def health_check(
             }
             mysql_missing_indexes = sorted(mysql_required_indexes - mysql_existing_indexes)
 
-        licensing_ready = not (
-            pg_missing_tables or pg_missing_columns or pg_missing_indexes
-        )
         operational_ready = not (
             mysql_missing_tables or mysql_missing_columns or mysql_missing_indexes
         )
@@ -642,12 +649,31 @@ async def health_check(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Health check failed (error_type=%s)", type(exc).__name__)
+        logger.error(
+            "Health check failed (database=%s, error_type=%s)",
+            active_database,
+            type(exc).__name__,
+        )
+        failed_database = (
+            "The Supabase PostgreSQL licensing/audit database is unavailable."
+            if active_database == "licensing"
+            else "The Hostinger MySQL operational database is unavailable or not configured."
+        )
         raise HTTPException(
             status_code=503,
             detail={
                 "status": "not_ready",
-                "message": "One or more required databases are unavailable.",
+                "message": failed_database,
+                "licensing_database": {
+                    "engine": "postgresql",
+                    "connected": licensing_connected,
+                    "schema_ready": licensing_ready,
+                },
+                "operational_database": {
+                    "engine": "mysql",
+                    "connected": operational_connected,
+                    "schema_ready": operational_ready,
+                },
             },
         )
 
