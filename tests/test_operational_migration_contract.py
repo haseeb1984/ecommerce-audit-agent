@@ -783,3 +783,42 @@ def test_storage_readme_skips_branding_upgrade_after_fresh_hostinger_baseline():
     assert "fresh baseline already includes all four logo-storage columns" in readme
     assert "**skip**" in readme
     assert "information_schema.columns" in readme
+
+
+
+def test_wordpress_installation_migration_rejects_unrepresentable_required_admin_email():
+    from types import SimpleNamespace
+    from scripts.migrate_operational_data_to_hostinger import (
+        _wordpress_installation_payload,
+    )
+
+    row = SimpleNamespace(
+        id="wp-1",
+        license_id=7,
+        site_url="https://shop.example.com",
+        site_host="shop.example.com",
+        admin_email=" Admin@Example.com ",
+        customer_email=" Customer@Example.com ",
+        wordpress_version="6.8",
+        woocommerce_version="10.0",
+        plugin_version="1.2.3",
+        status="active",
+        created_at=None,
+        last_seen_at=None,
+        disconnected_at=None,
+    )
+
+    payload = _wordpress_installation_payload(row, {7: "license-key"})
+    assert payload["admin_email"] == "admin@example.com"
+    assert payload["customer_email"] == "customer@example.com"
+
+    row.admin_email = " " * 2
+    assert _wordpress_installation_payload(row, {7: "license-key"}) is None
+
+    row.admin_email = "x" * 250 + "@example.com"
+    assert _wordpress_installation_payload(row, {7: "license-key"}) is None
+
+    row.admin_email = "admin@example.com"
+    row.customer_email = "x" * 250 + "@example.com"
+    payload = _wordpress_installation_payload(row, {7: "license-key"})
+    assert payload["customer_email"] is None
