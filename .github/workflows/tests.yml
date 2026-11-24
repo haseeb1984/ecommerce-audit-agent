@@ -93,6 +93,32 @@ jobs:
           path: audit-report-sample.pdf
           if-no-files-found: warn
           retention-days: 14
+      - name: Build WordPress marketing theme package
+        if: success()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          theme_dir = Path("wordpress-theme/ecommerce-audit-agent")
+          output = Path("ecommerce-audit-agent.zip")
+          with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+              for path in sorted(theme_dir.rglob("*")):
+                  if path.is_file():
+                      archive.write(path, path.relative_to(theme_dir.parent))
+          with ZipFile(output) as archive:
+              names = set(archive.namelist())
+              assert "ecommerce-audit-agent/functions.php" in names
+              assert "ecommerce-audit-agent/style.css" in names
+          PY
+      - name: Upload WordPress theme package
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wordpress-theme-package
+          path: ecommerce-audit-agent.zip
+          if-no-files-found: warn
+          retention-days: 14
       # On main pushes and manual QA runs, verify real-site PDF generation too.
       # Pull requests retain isolated deterministic tests and do not crawl external sites.
       - name: Install browser for real website screenshots
