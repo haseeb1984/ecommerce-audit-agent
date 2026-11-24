@@ -64,7 +64,7 @@ async def test_health_check_identifies_postgres_connection_failure(client):
     }
     assert detail["operational_database"] == {
         "engine": "mysql",
-        "connected": False,
+        "connected": None,
         "schema_ready": None,
     }
     assert "sensitive connection details" not in response.text
