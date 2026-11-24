@@ -13,12 +13,12 @@
 
 ## Latest automated verification — 2026-11-24
 
-- GitHub Actions Backend tests run [#45310567513](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45310567513) (workflow run #2931) completed successfully for commit `da64b13a94d59117e22eb97ccbb689fa690545f2` on PR #364.
-- The run reports **1,523 passed, 216 warnings**. Both Python dependency vulnerability-audit commands reported no known vulnerabilities. Python compilation, PHP lint for the WordPress plugin/storage bridge/marketing theme, embedded frontend JavaScript syntax checks, synthetic PDF generation and artifact upload completed successfully.
-- At the time of that run, PR #364 pointed to `957dd5a6513eb9eb956f43b1372cac3c79dd5f4d`, a merge commit whose first parent is the tested SHA; its first-parent diff changed only `README.md` and `docs/DEPENDENCIES.md`. The later branch commits in this verification update changed only these tracking documents. Application source and tests remain unchanged from the successful run.
-- This is isolated CI evidence, not production or staging acceptance. The pull-request workflow does not execute the real-public-website PDF smoke-test step. PostgreSQL/Hostinger production schema, SMTP inbox, Paddle sandbox lifecycle, WordPress runtime, worker scheduling and private-storage deployment remain separate acceptance gates.
+- Backend CI run [#45375145059](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45375145059) completed successfully for PR #364 at commit `18294acdaeb31619595a5feeb68081c069462f7a`.
+- The run reports **1,523 passed, 216 warnings**. Both dependency vulnerability-audit commands reported no known vulnerabilities. Python compilation, PHP lint for the WordPress plugin/storage bridge/marketing theme, embedded frontend JavaScript syntax checks, synthetic PDF generation/upload, and WordPress theme package build/upload all passed.
+- The WordPress marketing theme customer-login CTA now derives its `/app` destination from the configured SaaS API origin rather than embedding the Vercel hostname. A regression assertion protects this contract.
+- Vercel reported the preview deployment completed for this commit. This is deployment/check status only; it does not establish live WordPress installation or customer journey acceptance.
+- Real-public-website PDF smoke tests were skipped because this was a pull-request workflow. Staging database schemas/migrations, SMTP inbox delivery, Paddle sandbox lifecycle, WordPress runtime, worker scheduling and Hostinger private-storage deployment remain separate acceptance gates.
 - The scheduled Durable scan worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) failed before invocation because repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are not configured. No worker request was sent.
-- The Vercel status attached to the PR head at the time of review reported a deployment-rate limit; this is an external preview/deployment constraint, not a backend test failure.
 
 ## SaaS product flows
 
