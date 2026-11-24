@@ -60,6 +60,29 @@ def _migration_email(value: str | None, maximum: int = 254) -> str | None:
     return normalized
 
 
+def _wordpress_installation_payload(row, license_key_by_id):
+    """Map a WordPress installation only when its required admin email is representable."""
+    license_key = license_key_by_id.get(row.license_id)
+    admin_email = _migration_email(row.admin_email)
+    if not license_key or not admin_email:
+        return None
+    return {
+        "id": row.id,
+        "license_key": license_key,
+        "site_url": row.site_url,
+        "site_host": row.site_host,
+        "admin_email": admin_email,
+        "customer_email": _migration_email(row.customer_email),
+        "wordpress_version": row.wordpress_version,
+        "woocommerce_version": row.woocommerce_version,
+        "plugin_version": row.plugin_version,
+        "status": row.status,
+        "created_at": row.created_at,
+        "last_seen_at": row.last_seen_at,
+        "disconnected_at": row.disconnected_at,
+    }
+
+
 async def _stream_rows(source: AsyncSession, model):
     """Yield source ORM rows without materializing the complete table."""
     result = await source.stream_scalars(
@@ -435,21 +458,7 @@ async def migrate(apply_changes: bool, verify_only: bool = False) -> bool:
         )
         reports["wordpress_installations"] = await _copy_rows(
             source, target, WordPressSite, WordPressInstallation,
-            lambda row, license_key_by_id: ({
-                "id": row.id,
-                "license_key": license_key_by_id.get(row.license_id),
-                "site_url": row.site_url,
-                "site_host": row.site_host,
-                "admin_email": row.admin_email,
-                "customer_email": row.customer_email,
-                "wordpress_version": row.wordpress_version,
-                "woocommerce_version": row.woocommerce_version,
-                "plugin_version": row.plugin_version,
-                "status": row.status,
-                "created_at": row.created_at,
-                "last_seen_at": row.last_seen_at,
-                "disconnected_at": row.disconnected_at,
-            } if license_key_by_id.get(row.license_id) else None),
+            _wordpress_installation_payload,
             "id",
             stage_missing=apply_changes,
             resolve_license_keys=True,
