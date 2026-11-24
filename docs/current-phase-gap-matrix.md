@@ -966,3 +966,12 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - The migration apply command now returns an unsuccessful process status when any source rows remain unmapped, account emails cannot fit the destination schema, support-note ownership is ambiguous/unmapped, or existing target rows have field mismatches.
 - Already committed 500-row batches remain safely persisted and source records remain untouched; the nonzero result explicitly means the migration is partial and requires reconciliation before cutover, not that the operation rolled back.
 - Added blocker aggregation and CLI exit-code regression contracts. No live migration is run by this change.
+
+
+## Latest preview database readiness result — 2026-11-24
+
+- CI run [#45377765113](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45377765113) passed at `13e64fa601043356e24320337cc01ef0fed552eb`: **1,524 passed, 216 warnings**; real-public-site PDF screenshot smoke tests were skipped.
+- Preview deployment [`dpl_2awdAvBQ4JdCDE7wveLNTEDrPSxU`](https://ecommerce-audit-agent-m3hzitjn8-junction-tec.vercel.app) is READY. Its read-only `/health-check` response is HTTP 503: Supabase PostgreSQL is reachable but schema readiness is false because `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox` are absent; Hostinger MySQL is disconnected/unconfigured.
+- The two absent PostgreSQL tables are created by existing migrations `20261106_billing_mirror_sync_outbox.sql` and `20261105_customer_lifecycle_sync_outbox.sql`. PR #364 also lists `20261121_billing_mirror_recovery.sql` in its PostgreSQL rollout sequence. Do not apply these PostgreSQL migrations to Hostinger MySQL.
+- This is evidence from the preview's configured connections only. No migration, database write, secret read, Hostinger deployment, or production change was performed. The Hostinger integration is not available in this session, so operational DB connectivity and private-storage bridge acceptance remain blocked.
+- Next step is staging-first: confirm database targets and backup, apply the documented PostgreSQL and Hostinger migration sets to their respective engines with owner authorization, configure missing environment names, then re-run health and signed-storage lifecycle acceptance. No production migration or release without explicit approval.
