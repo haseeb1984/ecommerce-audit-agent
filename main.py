@@ -495,6 +495,12 @@ async def health_check(
     licensing_ready = None
     operational_ready = None
     active_database = "licensing"
+    pg_missing_tables = []
+    pg_missing_columns = {}
+    pg_missing_indexes = []
+    mysql_missing_tables = []
+    mysql_missing_columns = {}
+    mysql_missing_indexes = []
     try:
         pg_ping = await db.execute(text("SELECT 1"))
         licensing_connected = True
@@ -670,11 +676,17 @@ async def health_check(
                     "engine": "postgresql",
                     "connected": licensing_connected,
                     "schema_ready": licensing_ready,
+                    "missing_tables": pg_missing_tables if licensing_connected else [],
+                    "missing_columns": pg_missing_columns if licensing_connected else {},
+                    "missing_indexes": pg_missing_indexes if licensing_connected else [],
                 },
                 "operational_database": {
                     "engine": "mysql",
                     "connected": operational_connected,
                     "schema_ready": operational_ready,
+                    "missing_tables": mysql_missing_tables if operational_connected else [],
+                    "missing_columns": mysql_missing_columns if operational_connected else {},
+                    "missing_indexes": mysql_missing_indexes if operational_connected else [],
                 },
             },
         )
