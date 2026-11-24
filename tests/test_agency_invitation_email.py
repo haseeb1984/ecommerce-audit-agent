@@ -1,4 +1,5 @@
 def test_agency_invitation_email_uses_real_line_breaks(monkeypatch):
+    import email_service
     import main
 
     sent_messages = []
@@ -29,7 +30,7 @@ def test_agency_invitation_email_uses_real_line_breaks(monkeypatch):
     monkeypatch.setenv("SMTP_PORT", "587")
     monkeypatch.setenv("SMTP_TLS_MODE", "starttls")
     monkeypatch.setenv("PUBLIC_APP_URL", "https://app.example.test")
-    monkeypatch.setattr(main.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(email_service.smtplib, "SMTP", FakeSMTP)
 
     main._send_agency_invitation_email(
         "teammate@example.test",
