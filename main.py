@@ -2,6 +2,7 @@ import asyncio
 import math
 import ipaddress
 import hashlib
+import html as html_lib
 import hmac
 import secrets
 import time
@@ -332,6 +333,13 @@ class ReportEmailRequest(BaseModel):
     # Bound untrusted request data before the route performs DB lookup or SMTP work.
     recipient_email: str = Field(..., min_length=3, max_length=254)
     recipient_confirmed: bool = False
+
+
+class PublicContactRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    email: str = Field(..., min_length=3, max_length=254)
+    subject: str = Field(..., min_length=1, max_length=160)
+    message: str = Field(..., min_length=15, max_length=6000)
 
 
 class AdminAgencyStatusUpdate(BaseModel):
@@ -4924,6 +4932,67 @@ async def account_billing_history(
             "has_more": offset + len(events) < total,
         },
     }
+
+@app.post("/api/v1/public/contact")
+async def submit_public_contact(payload: PublicContactRequest, request: Request):
+    """Accept a signed marketing-site contact request and deliver it through platform SMTP."""
+    shared_secret = os.getenv("EAA_CONTACT_FORM_SECRET", "").strip()
+    recipient = os.getenv("EAA_CONTACT_TO_EMAIL", "").strip()
+    if not shared_secret or not recipient or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", recipient):
+        raise HTTPException(status_code=503, detail="Contact form delivery is not configured.")
+
+    timestamp = request.headers.get("x-eaa-timestamp", "")
+    signature = request.headers.get("x-eaa-signature", "")
+    if not timestamp.isdigit() or len(timestamp) > 12 or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise HTTPException(status_code=401, detail="Contact request authentication failed.")
+    request_time = int(timestamp)
+    if abs(int(time.time()) - request_time) > 300:
+        raise HTTPException(status_code=401, detail="Contact request has expired.")
+
+    raw_body = await request.body()
+    signed_value = timestamp.encode("ascii") + b"\\n" + raw_body
+    expected_signature = hmac.new(shared_secret.encode("utf-8"), signed_value, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature):
+        raise HTTPException(status_code=401, detail="Contact request authentication failed.")
+
+    email = payload.email.strip()
+    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+        raise HTTPException(status_code=422, detail="A valid reply email is required.")
+    name = payload.name.strip()
+    subject = payload.subject.strip()
+    message_text = payload.message.strip()
+    if not name or not subject or len(message_text) < 15:
+        raise HTTPException(status_code=422, detail="Please complete all contact form fields.")
+
+    mail = EmailMessage()
+    mail["Subject"] = f"[Ecommerce Audit Agent] {subject}"
+    mail["To"] = recipient
+    mail["From"] = os.getenv("SMTP_FROM", "").strip()
+    mail["Reply-To"] = email
+    mail.set_content(f"Name: {name}\\nEmail: {email}\\n\\n{message_text}")
+    safe_name = html_lib.escape(name)
+    safe_email = html_lib.escape(email)
+    safe_subject = html_lib.escape(subject)
+    safe_message = html_lib.escape(message_text).replace("\\n", "<br>")
+    mail.add_alternative(
+        "<!doctype html><html><body style='margin:0;padding:24px;background:#f4f7fb;font-family:Arial,sans-serif;color:#172033'>"
+        "<div style='max-width:640px;margin:0 auto;background:#fff;border:1px solid #e4eaf2;border-radius:12px;padding:28px'>"
+        "<p style='margin:0 0 8px;color:#155a8a;font-weight:700;letter-spacing:.08em;text-transform:uppercase'>Ecommerce Audit Agent</p>"
+        f"<h1 style='font-size:22px;margin:0 0 22px'>{safe_subject}</h1>"
+        f"<p><strong>From:</strong> {safe_name} &lt;{safe_email}&gt;</p>"
+        f"<div style='line-height:1.65'>{safe_message}</div>"
+        "<hr style='border:0;border-top:1px solid #e4eaf2;margin:24px 0'>"
+        "<p style='font-size:12px;color:#64748b'>Submitted through the Ecommerce Audit Agent website contact form.</p>"
+        "</div></body></html>",
+        subtype="html",
+    )
+    try:
+        await asyncio.to_thread(_send_email_message, mail)
+    except Exception as exc:
+        logger.error("Public contact email delivery failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Your message could not be delivered right now.") from None
+    return {"status": "sent"}
+
 
 @app.post("/api/v1/account/billing-portal")
 async def create_account_billing_portal(
