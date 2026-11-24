@@ -20,7 +20,7 @@ The pricing display reads the active Starter / Pro / Business catalogue through 
 3. On activation, the theme creates any missing public information pages and assigns the Home page as the static front page.
 4. Review Appearance > Menus and Settings > Reading after activation.
 5. Open Appearance > EAA Website Settings. Confirm the SaaS API base URL and public support email.
-6. Set the Vercel contact API shared secret in WordPress and as `EAA_CONTACT_FORM_SECRET` in Vercel; set `EAA_CONTACT_TO_EMAIL` in Vercel. The Vercel API sends contact messages through the existing platform SMTP settings. Submit a controlled contact-form test.
+6. Configure WordPress SMTP/mail delivery and submit a controlled contact-form test.
 7. Review every generated legal page and replace all bracketed placeholders before treating those pages as final policy statements.
 
 Existing pages with matching slugs are preserved; the theme does not overwrite their content. The theme does not delete pages or user content when switched off.
@@ -45,7 +45,7 @@ No custom WordPress tables are created for SaaS operational, licensing or custom
 
 == Contact form ==
 
-The contact form validates fields server-side, uses a WordPress nonce, a hidden honeypot and a short per-email submission cooldown. WordPress signs the request and sends it server-to-server to the FastAPI `/api/v1/public/contact` endpoint. Vercel verifies the shared HMAC secret and sends a branded HTML email through the existing platform SMTP configuration, with the visitor's address as Reply-To. The public contact email is display-only; leaving it blank hides it without disabling the form. No `wp_mail()` is used.
+The contact form validates fields server-side, uses a WordPress nonce, a hidden honeypot and a short per-email submission cooldown. It sends through wp_mail() to the support email configured in EAA Website Settings (defaulting to the WordPress administrator email). Configure a reliable SMTP provider and verify delivery.
 
 == Before launch ==
 

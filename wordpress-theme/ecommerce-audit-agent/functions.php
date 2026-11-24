@@ -197,35 +197,22 @@ function eaa_theme_contact_handler() {
     $email = sanitize_email(wp_unslash($_POST['email'] ?? ''));
     $subject = sanitize_text_field(wp_unslash($_POST['subject'] ?? ''));
     $message = sanitize_textarea_field(wp_unslash($_POST['message'] ?? ''));
-    if ($name === '' || !is_email($email) || strlen($email) > 254 || $subject === '' || strlen($subject) > 160 || strlen($message) < 15 || strlen($message) > 6000) {
+    if ($name === '' || !is_email($email) || strlen($email) > 254 || $subject === '' || strlen($message) < 15 || strlen($message) > 6000) {
         wp_die(esc_html__('Please complete every field with a valid email and a message between 15 and 6,000 characters.', 'ecommerce-audit-agent'), '', array('response' => 422));
     }
     $rate_key = 'eaa_contact_' . hash('sha256', strtolower($email));
     if (get_transient($rate_key)) {
         wp_die(esc_html__('A message from this email was submitted recently. Please wait before sending another.', 'ecommerce-audit-agent'), '', array('response' => 429));
     }
-    $secret = trim((string) get_option('eaa_theme_contact_secret', ''));
-    if ($secret === '') {
-        wp_die(esc_html__('The website contact integration is not configured yet.', 'ecommerce-audit-agent'), '', array('response' => 503));
+    $recipient = sanitize_email(get_option('eaa_theme_support_email', get_option('admin_email')));
+    if (!is_email($recipient)) {
+        wp_die(esc_html__('The website administrator email is not configured. Please use the site administrator contact.', 'ecommerce-audit-agent'), '', array('response' => 503));
     }
-    $payload = array('name' => $name, 'email' => $email, 'subject' => $subject, 'message' => $message);
-    $body = wp_json_encode($payload);
-    $timestamp = (string) time();
-    $signature = hash_hmac('sha256', $timestamp . "\n" . $body, $secret);
-    $response = wp_remote_post(eaa_theme_api_base() . '/api/v1/public/contact', array(
-        'timeout' => 20,
-        'redirection' => 0,
-        'sslverify' => true,
-        'headers' => array(
-            'Content-Type' => 'application/json',
-            'X-EAA-Timestamp' => $timestamp,
-            'X-EAA-Signature' => $signature,
-        ),
-        'body' => $body,
-        'data_format' => 'body',
-    ));
-    if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) {
-        wp_die(esc_html__('Your message could not be delivered right now. Please try again later.', 'ecommerce-audit-agent'), '', array('response' => 503));
+    $mail_subject = sprintf('[%s] %s', wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES), $subject);
+    $mail_body = "Name: {$name}\nEmail: {$email}\n\n{$message}";
+    $sent = wp_mail($recipient, $mail_subject, $mail_body, array('Reply-To: ' . $name . ' <' . $email . '>'));
+    if (!$sent) {
+        wp_die(esc_html__('Your message could not be sent right now. Please try again later.', 'ecommerce-audit-agent'), '', array('response' => 503));
     }
     set_transient($rate_key, 1, 45);
     $referer = wp_get_referer();
@@ -260,16 +247,8 @@ function eaa_theme_pricing_shortcode() {
 }
 add_shortcode('eaa_pricing', 'eaa_theme_pricing_shortcode');
 
-function eaa_theme_whatsapp_url() {
-    $number = preg_replace('/\\D+/', '', (string) get_option('eaa_theme_whatsapp_number', ''));
-    return $number !== '' ? 'https://wa.me/' . $number : '';
-}
-
 function eaa_theme_contact_shortcode() {
     $status = isset($_GET['contact']) ? sanitize_key(wp_unslash($_GET['contact'])) : '';
-    $support_email = sanitize_email((string) get_option('eaa_theme_support_email', ''));
-    $whatsapp_url = eaa_theme_whatsapp_url();
-    $whatsapp_label = sanitize_text_field((string) get_option('eaa_theme_whatsapp_cta', __('Chat with us on WhatsApp', 'ecommerce-audit-agent')));
     ob_start();
     ?>
     <div class="contact-layout">
@@ -277,8 +256,7 @@ function eaa_theme_contact_shortcode() {
         <span class="card-kicker"><?php esc_html_e('Talk to our team', 'ecommerce-audit-agent'); ?></span>
         <h2><?php esc_html_e('Tell us what you are trying to improve.', 'ecommerce-audit-agent'); ?></h2>
         <p class="muted"><?php esc_html_e('Use this form for product questions, account support and business enquiries. Do not include passwords, license keys, payment details or other secrets.', 'ecommerce-audit-agent'); ?></p>
-        <?php if (is_email($support_email)) : ?><p><strong><?php esc_html_e('Contact email', 'ecommerce-audit-agent'); ?>:</strong> <a href="<?php echo esc_url('mailto:' . $support_email); ?>"><?php echo esc_html($support_email); ?></a></p><?php endif; ?>
-        <?php if ($whatsapp_url) : ?><p><a class="button button-secondary" href="<?php echo esc_url($whatsapp_url); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($whatsapp_label); ?></a></p><?php endif; ?>
+        <p><strong><?php esc_html_e('Support email', 'ecommerce-audit-agent'); ?>:</strong> <?php echo esc_html(get_option('eaa_theme_support_email', get_option('admin_email'))); ?></p>
       </div>
       <form class="contact-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
         <?php if ($status === 'sent') : ?><p class="form-message" role="status"><?php esc_html_e('Thank you. Your message has been sent.', 'ecommerce-audit-agent'); ?></p><?php endif; ?>
@@ -401,34 +379,7 @@ function eaa_theme_register_settings() {
         },
         'default' => EAA_THEME_DEFAULT_API,
     ));
-    register_setting('eaa_theme_settings', 'eaa_theme_support_email', array(
-        'type' => 'string',
-        'sanitize_callback' => function ($value) {
-            $value = sanitize_email(trim((string) $value));
-            return is_email($value) ? $value : '';
-        },
-        'default' => '',
-    ));
-    register_setting('eaa_theme_settings', 'eaa_theme_whatsapp_number', array(
-        'type' => 'string',
-        'sanitize_callback' => function ($value) {
-            return substr(preg_replace('/\\D+/', '', (string) $value), 0, 20);
-        },
-        'default' => '',
-    ));
-    register_setting('eaa_theme_settings', 'eaa_theme_whatsapp_cta', array(
-        'type' => 'string',
-        'sanitize_callback' => 'sanitize_text_field',
-        'default' => __('Chat with us on WhatsApp', 'ecommerce-audit-agent'),
-    ));
-    register_setting('eaa_theme_settings', 'eaa_theme_contact_secret', array(
-        'type' => 'string',
-        'sanitize_callback' => function ($value) {
-            $value = trim((string) $value);
-            return $value !== '' ? $value : (string) get_option('eaa_theme_contact_secret', '');
-        },
-        'default' => '',
-    ));
+    register_setting('eaa_theme_settings', 'eaa_theme_support_email', array('type' => 'string', 'sanitize_callback' => 'sanitize_email', 'default' => get_option('admin_email')));
 }
 add_action('admin_init', 'eaa_theme_register_settings');
 
@@ -444,10 +395,7 @@ function eaa_theme_settings_page() {
         <?php settings_fields('eaa_theme_settings'); ?>
         <table class="form-table" role="presentation">
           <tr><th scope="row"><label for="eaa_theme_api_base"><?php esc_html_e('SaaS API base URL', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="url" id="eaa_theme_api_base" name="eaa_theme_api_base" value="<?php echo esc_attr(eaa_theme_api_base()); ?>" required><p class="description"><?php esc_html_e('Must be an HTTPS origin. Defaults to the existing Ecommerce Audit Agent deployment.', 'ecommerce-audit-agent'); ?></p></td></tr>
-          <tr><th scope="row"><label for="eaa_theme_support_email"><?php esc_html_e('Official public contact email', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="email" id="eaa_theme_support_email" name="eaa_theme_support_email" value="<?php echo esc_attr(get_option('eaa_theme_support_email', '')); ?>"><p class="description"><?php esc_html_e('Displayed on the public website when set. Leave blank to hide the address; the contact form continues to work.', 'ecommerce-audit-agent'); ?></p></td></tr>
-          <tr><th scope="row"><label for="eaa_theme_whatsapp_number"><?php esc_html_e('WhatsApp number', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="tel" id="eaa_theme_whatsapp_number" name="eaa_theme_whatsapp_number" value="<?php echo esc_attr(get_option('eaa_theme_whatsapp_number', '')); ?>"><p class="description"><?php esc_html_e('Use international country code and digits only, for example 923001234567.', 'ecommerce-audit-agent'); ?></p></td></tr>
-          <tr><th scope="row"><label for="eaa_theme_whatsapp_cta"><?php esc_html_e('WhatsApp CTA text', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="text" id="eaa_theme_whatsapp_cta" name="eaa_theme_whatsapp_cta" value="<?php echo esc_attr(get_option('eaa_theme_whatsapp_cta', __('Chat with us on WhatsApp', 'ecommerce-audit-agent'))); ?>"></td></tr>
-          <tr><th scope="row"><label for="eaa_theme_contact_secret"><?php esc_html_e('Vercel contact API shared secret', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="password" autocomplete="new-password" id="eaa_theme_contact_secret" name="eaa_theme_contact_secret" value=""><p class="description"><?php esc_html_e('Set the same random secret as EAA_CONTACT_FORM_SECRET in Vercel. Leave blank to keep the saved secret.', 'ecommerce-audit-agent'); ?></p></td></tr>
+          <tr><th scope="row"><label for="eaa_theme_support_email"><?php esc_html_e('Public support email', 'ecommerce-audit-agent'); ?></label></th><td><input class="regular-text" type="email" id="eaa_theme_support_email" name="eaa_theme_support_email" value="<?php echo esc_attr(get_option('eaa_theme_support_email', get_option('admin_email'))); ?>"><p class="description"><?php esc_html_e('Contact form delivery uses this address; configure SMTP separately to ensure reliable delivery.', 'ecommerce-audit-agent'); ?></p></td></tr>
         </table>
         <?php submit_button(); ?>
       </form>

@@ -12,6 +12,7 @@ import json
 import io
 import zipfile
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from email_service import (
     configured_smtp_port as _configured_smtp_port,
     send_email as _send_email_message,
@@ -4938,7 +4939,7 @@ async def submit_public_contact(payload: PublicContactRequest, request: Request)
     """Accept a signed marketing-site contact request and deliver it through platform SMTP."""
     shared_secret = os.getenv("EAA_CONTACT_FORM_SECRET", "").strip()
     recipient = os.getenv("EAA_CONTACT_TO_EMAIL", "").strip()
-    if not shared_secret or not recipient or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", recipient):
+    if not shared_secret or not recipient or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
         raise HTTPException(status_code=503, detail="Contact form delivery is not configured.")
 
     timestamp = request.headers.get("x-eaa-timestamp", "")
@@ -4950,13 +4951,13 @@ async def submit_public_contact(payload: PublicContactRequest, request: Request)
         raise HTTPException(status_code=401, detail="Contact request has expired.")
 
     raw_body = await request.body()
-    signed_value = timestamp.encode("ascii") + b"\\n" + raw_body
+    signed_value = timestamp.encode("ascii") + b"\n" + raw_body
     expected_signature = hmac.new(shared_secret.encode("utf-8"), signed_value, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected_signature, signature):
         raise HTTPException(status_code=401, detail="Contact request authentication failed.")
 
     email = payload.email.strip()
-    if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email):
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=422, detail="A valid reply email is required.")
     name = payload.name.strip()
     subject = payload.subject.strip()
@@ -4967,13 +4968,17 @@ async def submit_public_contact(payload: PublicContactRequest, request: Request)
     mail = EmailMessage()
     mail["Subject"] = f"[Ecommerce Audit Agent] {subject}"
     mail["To"] = recipient
-    mail["From"] = os.getenv("SMTP_FROM", "").strip()
+    configured_sender = os.getenv("SMTP_FROM", "").strip()
+    _, sender_address = parseaddr(configured_sender)
+    if not sender_address:
+        raise HTTPException(status_code=503, detail="Contact form sender is not configured.")
+    mail["From"] = formataddr(("Ecommerce Audit Agent", sender_address))
     mail["Reply-To"] = email
-    mail.set_content(f"Name: {name}\\nEmail: {email}\\n\\n{message_text}")
+    mail.set_content(f"Name: {name}\nEmail: {email}\n\n{message_text}")
     safe_name = html_lib.escape(name)
     safe_email = html_lib.escape(email)
     safe_subject = html_lib.escape(subject)
-    safe_message = html_lib.escape(message_text).replace("\\n", "<br>")
+    safe_message = html_lib.escape(message_text).replace("\n", "<br>")
     mail.add_alternative(
         "<!doctype html><html><body style='margin:0;padding:24px;background:#f4f7fb;font-family:Arial,sans-serif;color:#172033'>"
         "<div style='max-width:640px;margin:0 auto;background:#fff;border:1px solid #e4eaf2;border-radius:12px;padding:28px'>"
