@@ -7,10 +7,10 @@
 ## Latest verification evidence — 2026-11-24
 
 - Backend CI run [#45310567513](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45310567513) passed on `da64b13a94d59117e22eb97ccbb689fa690545f2`: **1,523 tests passed, 216 warnings**; dependency audits, Python compilation, PHP lint, frontend JavaScript syntax checks and synthetic PDF generation/upload also passed.
-- Current branch HEAD `957dd5a6513eb9eb956f43b1372cac3c79dd5f4d` has the tested commit as its first parent; the first-parent diff is documentation-only (`README.md`, `docs/DEPENDENCIES.md`), so application source remains the tested source tree.
+- At the time of the run, PR #364 pointed to `957dd5a6513eb9eb956f43b1372cac3c79dd5f4d`, whose first parent is the tested SHA and whose first-parent diff changed only `README.md` and `docs/DEPENDENCIES.md`. Subsequent commits in this tracking update changed only checklist/gap-matrix documentation; application source remains unchanged from the successful test tree.
 - This does not verify live database schemas, migrations, browser/provider workflows or production deployment. The PR CI run skipped real-public-website PDF smoke tests by workflow design.
 - The scheduled worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) stopped at configuration validation: repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are missing. The worker endpoint was not invoked.
-- Vercel's current check is blocked by its deployment-rate limit; do not treat that status as a backend test result.
+- The Vercel status observed on the PR head at review time was blocked by its deployment-rate limit; do not treat that status as a backend test result.
 
 ## Status meanings
 
