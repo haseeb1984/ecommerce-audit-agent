@@ -2210,10 +2210,12 @@ async def logout_all_account_sessions(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
-    result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.email == email,
-        CustomerSession.revoked_at.is_(None),
-    ).values(revoked_at=now))
+    result = await operational_db.execute(
+        update(CustomerSession).where(
+            CustomerSession.email == current.email,
+            CustomerSession.revoked_at.is_(None),
+        ).values(revoked_at=now).execution_options(synchronize_session=False)
+    )
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
