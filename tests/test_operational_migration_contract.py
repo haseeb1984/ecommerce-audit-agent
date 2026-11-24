@@ -747,3 +747,22 @@ def test_hostinger_customer_report_file_model_and_schema_cover_pdf_lifecycle_met
         assert f"ADD COLUMN {field}" in migration
     assert "uq_customer_report_files_report_id" in migration
     assert "ix_customer_report_files_expiry" in migration
+
+def test_support_note_migration_blocks_ambiguous_email_to_license_ownership():
+    from scripts.migrate_operational_data_to_hostinger import _apply_blockers
+
+    blockers = _apply_blockers({
+        "admin_customer_notes": {
+            "to_copy": 0,
+            "ambiguous_license_mapping": 1,
+            "field_mismatches": 0,
+        }
+    })
+
+    assert blockers == {
+        "admin_customer_notes": {
+            "unresolved": {"ambiguous_license_mapping": 1},
+            "field_mismatches": 0,
+        }
+    }
+
