@@ -766,3 +766,20 @@ def test_support_note_migration_blocks_ambiguous_email_to_license_ownership():
         }
     }
 
+def test_storage_readme_skips_branding_upgrade_after_fresh_hostinger_baseline():
+    baseline = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    migration = (
+        ROOT / "migrations" / "20261121_hostinger_branding_storage.mysql.sql"
+    ).read_text()
+    readme = (ROOT / "hostinger-storage" / "README.md").read_text()
+
+    branding_start = baseline.index("CREATE TABLE IF NOT EXISTS customer_branding")
+    branding_end = baseline.index(") ENGINE=InnoDB", branding_start)
+    branding_ddl = baseline[branding_start:branding_end]
+    for column in ("logo_storage_key", "logo_sha256", "logo_mime_type", "logo_byte_size"):
+        assert column in branding_ddl
+        assert f"ADD COLUMN {column}" in migration
+
+    assert "fresh baseline already includes all four logo-storage columns" in readme
+    assert "**skip**" in readme
+    assert "information_schema.columns" in readme
