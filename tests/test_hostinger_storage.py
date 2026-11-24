@@ -335,3 +335,16 @@ def test_pdf_migration_cli_requires_explicit_apply(monkeypatch, argv, expected_a
     migration.main()
 
     assert calls == [(10, expected_apply)]
+
+
+
+def test_storage_bridge_readme_declares_php_8_runtime_requirement():
+    from pathlib import Path
+
+    readme = (
+        Path(__file__).resolve().parents[1]
+        / "hostinger-storage"
+        / "README.md"
+    ).read_text()
+    assert "PHP 8.0 or later" in readme
+    assert "marketing" in readme and "PHP 7.4" in readme
