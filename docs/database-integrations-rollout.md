@@ -21,7 +21,7 @@ Take backups of both databases before applying any migration. All migration exec
 4. Reconcile operational data counts and customer ownership before switching off legacy PostgreSQL operational tables. Do not remove legacy source tables as part of the copy.
 5. For new reports, use the Hostinger private storage bridge and Hostinger MySQL metadata path. The application retains legacy PostgreSQL PDF fallback for older reports. Historical PDF-byte backfill and retirement of legacy PostgreSQL PDF bytes require a separately approved, backed-up migration and post-migration verification; do not assume that data migration has run.
 
-The legacy PDF backfill script requires both database connections. It reads the authoritative `report_retention_days` owner setting from Hostinger MySQL and falls back to `REPORT_RETENTION_DAYS` only when no persisted setting exists; this keeps its migration cutoff aligned with the application download and cleanup policy. Do not run the backfill with only PostgreSQL and storage credentials configured.
+The legacy PDF backfill script requires both database connections. It reads the authoritative `report_retention_days` owner setting from Hostinger MySQL and falls back to `REPORT_RETENTION_DAYS` only when no persisted setting exists; this keeps its migration cutoff aligned with the application download and cleanup policy. Do not run the backfill with only PostgreSQL and storage credentials configured. It is read-only by default and only uploads objects/clears PostgreSQL binaries when the operator passes `--apply` after reviewing the eligibility count.
 
 
 
