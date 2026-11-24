@@ -12,7 +12,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database import AsyncSessionLocal
 from hostinger_database import HostingerAsyncSessionLocal
@@ -93,12 +93,25 @@ async def _cleanup_unreferenced_uploads(uploaded_keys: list[str]) -> None:
             logger.error("Orphan cleanup failed (error_type=%s)", type(cleanup_error).__name__)
 
 
-async def migrate(batch_size: int) -> tuple[int, int]:
+async def migrate(batch_size: int, apply_changes: bool = False) -> tuple[int, int]:
     if not storage_configured():
         raise RuntimeError("Configure HOSTINGER_STORAGE_BASE_URL and HOSTINGER_STORAGE_HMAC_SECRET first.")
 
     retention_days = await _effective_retention_days()
     retention_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    eligible_filter = (
+        AuditReport.pdf_bytes.is_not(None),
+        AuditReport.storage_key.is_(None),
+        AuditReport.pdf_deleted_at.is_(None),
+        AuditReport.created_at > retention_cutoff,
+    )
+    if not apply_changes:
+        async with AsyncSessionLocal() as preview_db:
+            eligible = int((await preview_db.execute(
+                select(func.count(AuditReport.id)).where(*eligible_filter)
+            )).scalar_one() or 0)
+        return eligible, 0
 
     migrated = 0
     skipped_or_failed = 0
@@ -106,12 +119,7 @@ async def migrate(batch_size: int) -> tuple[int, int]:
         while True:
             rows = (await db.execute(
                 select(AuditReport)
-                .where(
-                    AuditReport.pdf_bytes.is_not(None),
-                    AuditReport.storage_key.is_(None),
-                    AuditReport.pdf_deleted_at.is_(None),
-                    AuditReport.created_at > retention_cutoff,
-                )
+                .where(*eligible_filter)
                 .order_by(AuditReport.id.asc())
                 .limit(batch_size)
                 .with_for_update(skip_locked=True)
@@ -159,12 +167,23 @@ async def migrate(batch_size: int) -> tuple[int, int]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch-size", type=int, default=10)
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Upload eligible PDFs and clear PostgreSQL bytes after remote verification.",
+    )
     args = parser.parse_args()
     if not 1 <= args.batch_size <= 100:
         parser.error("--batch-size must be between 1 and 100")
     logging.basicConfig(level=logging.INFO)
-    migrated, failed = asyncio.run(migrate(args.batch_size))
-    print(f"Verified and migrated report PDFs: {migrated}; failed/skipped: {failed}")
+    migrated, failed = asyncio.run(migrate(args.batch_size, apply_changes=args.apply))
+    if args.apply:
+        print(f"Verified and migrated report PDFs: {migrated}; failed/skipped: {failed}")
+    else:
+        print(
+            f"Eligible legacy report PDFs: {migrated}; no changes made. "
+            "Pass --apply to perform the verified migration."
+        )
 
 
 if __name__ == "__main__":
