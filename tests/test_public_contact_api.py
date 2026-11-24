@@ -61,7 +61,7 @@ async def test_public_contact_endpoint_sends_branded_html_and_reply_to(monkeypat
     assert message["Reply-To"] == "owner@example.net"
     assert message["From"] == "Ecommerce Audit Agent <mailer@example.com>"
     assert message.get_content_type() == "multipart/alternative"
-    assert "Ecommerce Audit Agent" in message.get_body(subtype="html").get_content()
+    assert "Ecommerce Audit Agent" in message.get_body(preferencelist=("html",)).get_content()
 
 
 @pytest.mark.asyncio
