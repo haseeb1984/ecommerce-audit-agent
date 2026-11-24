@@ -279,3 +279,60 @@ async def test_pdf_migration_rejects_invalid_owner_managed_retention(monkeypatch
 
     with pytest.raises(RuntimeError, match="between 1 and 3650"):
         await migration._effective_retention_days()
+
+@pytest.mark.asyncio
+async def test_pdf_migration_dry_run_only_counts_eligible_rows(monkeypatch):
+    from contextlib import asynccontextmanager
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    class Result:
+        def scalar_one(self):
+            return 3
+
+    class ReadOnlySession:
+        async def execute(self, statement):
+            return Result()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield ReadOnlySession()
+
+    monkeypatch.setattr(migration, "storage_configured", lambda: True)
+    monkeypatch.setattr(migration, "_effective_retention_days", lambda: _resolved(7))
+    monkeypatch.setattr(migration, "AsyncSessionLocal", session_factory)
+
+    async def unexpected_upload(*args, **kwargs):
+        raise AssertionError("dry-run must not upload or mutate report rows")
+
+    monkeypatch.setattr(migration, "upload_report", unexpected_upload)
+
+    assert await migration.migrate(batch_size=10) == (3, 0)
+
+
+async def _resolved(value):
+    return value
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_apply"),
+    [
+        (["migrate_report_pdfs_to_hostinger.py"], False),
+        (["migrate_report_pdfs_to_hostinger.py", "--apply"], True),
+    ],
+)
+def test_pdf_migration_cli_requires_explicit_apply(monkeypatch, argv, expected_apply):
+    import sys
+    from scripts import migrate_report_pdfs_to_hostinger as migration
+
+    calls = []
+
+    async def fake_migrate(batch_size, apply_changes=False):
+        calls.append((batch_size, apply_changes))
+        return (2, 0)
+
+    monkeypatch.setattr(migration, "migrate", fake_migrate)
+    monkeypatch.setattr(sys, "argv", argv)
+
+    migration.main()
+
+    assert calls == [(10, expected_apply)]
