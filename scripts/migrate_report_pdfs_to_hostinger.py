@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from database import AsyncSessionLocal
+from hostinger_database import HostingerAsyncSessionLocal
+from hostinger_models import PlatformSetting
 from models import AuditReport
 from hostinger_storage import (
     HostingerStorageError,
@@ -25,6 +27,35 @@ from hostinger_storage import (
 )
 
 logger = logging.getLogger("migrate_report_storage")
+
+
+async def _effective_retention_days() -> int:
+    """Use the same owner-managed Hostinger policy as report downloads and cleanup."""
+    if HostingerAsyncSessionLocal is None:
+        raise RuntimeError(
+            "Configure HOSTINGER_DATABASE_URL to read the authoritative report-retention policy."
+        )
+
+    async with HostingerAsyncSessionLocal() as operational_db:
+        result = await operational_db.execute(
+            select(PlatformSetting.setting_value).where(
+                PlatformSetting.setting_key == "report_retention_days"
+            )
+        )
+        stored_value = result.scalar_one_or_none()
+
+    raw_value = (
+        str(stored_value).strip()
+        if stored_value is not None
+        else os.getenv("REPORT_RETENTION_DAYS", "7").strip()
+    )
+    try:
+        retention_days = int(raw_value)
+    except (TypeError, ValueError):
+        raise RuntimeError("The effective report-retention setting must be an integer.") from None
+    if not 1 <= retention_days <= 3650:
+        raise RuntimeError("The effective report-retention setting must be between 1 and 3650.")
+    return retention_days
 
 
 async def _cleanup_unreferenced_uploads(uploaded_keys: list[str]) -> None:
@@ -66,13 +97,7 @@ async def migrate(batch_size: int) -> tuple[int, int]:
     if not storage_configured():
         raise RuntimeError("Configure HOSTINGER_STORAGE_BASE_URL and HOSTINGER_STORAGE_HMAC_SECRET first.")
 
-    retention_raw = os.getenv("REPORT_RETENTION_DAYS", "7").strip()
-    try:
-        retention_days = int(retention_raw)
-    except ValueError:
-        raise RuntimeError("REPORT_RETENTION_DAYS must be an integer.") from None
-    if not 1 <= retention_days <= 3650:
-        raise RuntimeError("REPORT_RETENTION_DAYS must be between 1 and 3650.")
+    retention_days = await _effective_retention_days()
     retention_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
 
     migrated = 0
