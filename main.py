@@ -9017,7 +9017,12 @@ async def cleanup_expired_report_pdfs(
                 AuditReport.pdf_bytes.is_not(None),
             ),
         )
-        .order_by(AuditReport.created_at.asc(), AuditReport.id.asc())
+        .order_by(
+            case((AuditReport.pdf_cleanup_last_attempt_at.is_(None), 0), else_=1),
+            AuditReport.pdf_cleanup_last_attempt_at.asc(),
+            AuditReport.created_at.asc(),
+            AuditReport.id.asc(),
+        )
         .limit(100)
         .with_for_update(skip_locked=True)
     )).scalars().all()
@@ -9025,6 +9030,8 @@ async def cleanup_expired_report_pdfs(
     deleted = 0
     failed = 0
     for report in rows:
+        report.pdf_cleanup_attempts = int(report.pdf_cleanup_attempts or 0) + 1
+        report.pdf_cleanup_last_attempt_at = now
         if report.storage_key:
             try:
                 await asyncio.to_thread(delete_file, report.storage_key)
