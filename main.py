@@ -8954,13 +8954,19 @@ async def cleanup_expired_report_pdfs(
             CustomerReportFile.expires_at <= now,
             CustomerReportFile.deleted_at.is_(None),
         )
-        .order_by(CustomerReportFile.expires_at.asc(), CustomerReportFile.id.asc())
+        .order_by(
+            CustomerReportFile.cleanup_last_attempt_at.asc().nullsfirst(),
+            CustomerReportFile.expires_at.asc(),
+            CustomerReportFile.id.asc(),
+        )
         .limit(100)
         .with_for_update(skip_locked=True)
     )).scalars().all()
     hostinger_deleted = 0
     hostinger_failed = 0
     for report_file in hostinger_rows:
+        report_file.cleanup_attempts = int(report_file.cleanup_attempts or 0) + 1
+        report_file.cleanup_last_attempt_at = now
         try:
             await asyncio.to_thread(delete_file, report_file.storage_key)
         except HostingerStorageError as exc:
@@ -8974,7 +8980,11 @@ async def cleanup_expired_report_pdfs(
     # Retry detached customer logo objects from the durable Hostinger queue.
     logo_cleanup_rows = (await operational_db.execute(
         select(CustomerBrandingLogoCleanup)
-        .order_by(CustomerBrandingLogoCleanup.created_at.asc(), CustomerBrandingLogoCleanup.id.asc())
+        .order_by(
+            CustomerBrandingLogoCleanup.last_attempt_at.asc().nullsfirst(),
+            CustomerBrandingLogoCleanup.created_at.asc(),
+            CustomerBrandingLogoCleanup.id.asc(),
+        )
         .limit(100)
         .with_for_update(skip_locked=True)
     )).scalars().all()
