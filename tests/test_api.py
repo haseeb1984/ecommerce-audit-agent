@@ -4575,3 +4575,85 @@ async def test_paddle_active_subscription_update_reactivates_expired_license_pro
             )
         )).scalars().all()
         assert len(queued) == 1
+
+
+@pytest.mark.asyncio
+async def test_paddle_completed_renewal_reactivates_expired_license_projection(client, monkeypatch):
+    from sqlalchemy import text
+    from models import CustomerLifecycleSyncOutbox
+
+    secret = "paddle-completed-renewal-projection-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_expiredrenewalstarter123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    license_id = await create_license(
+        key="completed-expired-renewal-projection-license",
+        quota=100,
+        active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=2),
+        tier="starter",
+    )
+    async with AsyncSessionLocal() as db:
+        await main._ensure_admin_tables(db)
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES ('starter', 'Test Starter', 100, 2, 'pri_expiredrenewalstarter123', TRUE)
+            ON CONFLICT (tier) DO UPDATE SET
+                paddle_price_id = EXCLUDED.paddle_price_id,
+                monthly_audit_allowance = EXCLUDED.monthly_audit_allowance,
+                is_active = TRUE
+        """))
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_completed_expired_renewal",
+            status="delivered",
+            license_id=license_id,
+            recipient_email="completed-renewal@example.com",
+            subscription_id="sub_completed_expired_renewal",
+            paddle_customer_id="ctm_completed_expired_renewal",
+        ))
+        await db.commit()
+
+    event = {
+        "event_id": "evt_completed_expired_renewal",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_completed_expired_renewal",
+            "status": "completed",
+            "subscription_id": "sub_completed_expired_renewal",
+            "customer_id": "ctm_completed_expired_renewal",
+            "customer": {"email": "completed-renewal@example.com"},
+            "items": [{"price": {"id": "pri_expiredrenewalstarter123"}, "quantity": 1}],
+            "billing_period": {
+                "starts_at": datetime.now(timezone.utc).isoformat(),
+                "ends_at": (datetime.now(timezone.utc) + timedelta(days=28)).isoformat(),
+            },
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "subscription_renewed"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        assert license_obj.expires_at > datetime.now(timezone.utc)
+        queued = (await db.execute(
+            select(CustomerLifecycleSyncOutbox).where(
+                CustomerLifecycleSyncOutbox.license_key == license_obj.license_key,
+                CustomerLifecycleSyncOutbox.action == "reactivate",
+                CustomerLifecycleSyncOutbox.status == "pending",
+            )
+        )).scalars().all()
+        assert len(queued) == 1
