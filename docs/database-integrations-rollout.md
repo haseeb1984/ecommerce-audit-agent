@@ -82,3 +82,6 @@ No production migration, provider secret entry, Paddle transaction, test run, au
 - Fresh Hostinger installs receive the report retry fields from `migrations/hostinger_operational_schema.sql`. Existing installs must preflight and apply `migrations/20261127_hostinger_report_cleanup_retry.mysql.sql` once; it conditionally adds both columns and the supporting index.
 - This migration is Hostinger MySQL only. It is not a Supabase/PostgreSQL migration. Do not replay the incremental migration after the fresh baseline without checking schema state.
 - Automated CI verifies source/model contracts. Runtime deletion and retry behavior still require staging verification with controlled test objects; no customer files were deleted during implementation.
+
+- Legacy PostgreSQL `audit_reports` cleanup also persists `pdf_cleanup_attempts` and `pdf_cleanup_last_attempt_at`; existing Supabase installations must apply `migrations/20261127_supabase_report_cleanup_retry.sql`. This is a Supabase PostgreSQL migration only and is separate from the Hostinger MySQL retry migration.
+- Cleanup retry timestamps are written before storage deletion and committed even when deletion fails. Each cleanup queue orders never-attempted records first, then oldest retry timestamps, avoiding permanent first-page starvation across Hostinger reports, detached logos, and legacy reports.
