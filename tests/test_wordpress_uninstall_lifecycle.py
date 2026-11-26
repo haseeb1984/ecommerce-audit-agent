@@ -58,3 +58,11 @@ def test_uninstall_treats_only_expected_site_not_found_404_as_idempotent_success
     assert "WordPress site connection not found." in UNINSTALL
     assert UNINSTALL.count("$eaa_is_already_disconnected($response,") == 2
     assert "json_decode((string) wp_remote_retrieve_body($response), true)" in UNINSTALL
+
+def test_uninstall_only_treats_exact_disconnect_not_found_as_idempotent_success():
+    assert "$eaa_is_already_disconnected = static function ($response, $expected_detail)" in UNINSTALL
+    assert "is_wp_error($response) || 404 !== (int) wp_remote_retrieve_response_code($response)" in UNINSTALL
+    assert "is_array($body) && isset($body['detail']) && $expected_detail === $body['detail']" in UNINSTALL
+    assert "$eaa_is_already_disconnected($response, 'Agency WordPress connection not found.')" in UNINSTALL
+    assert "$eaa_is_already_disconnected($response, 'WordPress site connection not found.')" in UNINSTALL
+    assert UNINSTALL.count("$eaa_is_already_disconnected($response,") == 2
