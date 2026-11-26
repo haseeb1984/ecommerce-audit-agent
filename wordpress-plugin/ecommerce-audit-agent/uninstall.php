@@ -59,7 +59,7 @@ if (is_array($settings) && !empty($settings['agency_site_token'])) {
             'body' => wp_json_encode(array()),
         ));
         $response_code = is_wp_error($response) ? 0 : (int) wp_remote_retrieve_response_code($response);
-        if ($response_code < 200 || $response_code >= 300) {
+        if (($response_code < 200 || $response_code >= 300) && 404 !== $response_code) {
             $disconnect_failed = true;
         }
     }
@@ -107,7 +107,7 @@ if (is_array($settings) && !empty($settings['site_id']) && !empty($settings['lic
             'body' => wp_json_encode(array('site_id' => sanitize_text_field($settings['site_id']))),
         ));
         $response_code = is_wp_error($response) ? 0 : (int) wp_remote_retrieve_response_code($response);
-        if ($response_code < 200 || $response_code >= 300) {
+        if (($response_code < 200 || $response_code >= 300) && 404 !== $response_code) {
             $disconnect_failed = true;
         }
     }
