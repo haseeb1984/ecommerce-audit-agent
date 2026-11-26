@@ -73,3 +73,12 @@ Paddle environment, API key, client token, price IDs and webhook secret must all
 After the operator applies both database schemas and configures the environment, the health endpoint checks PostgreSQL licensing/audit readiness and Hostinger operational readiness independently. Missing mapped tables or columns return a not-ready response.
 
 No production migration, provider secret entry, Paddle transaction, test run, audit run, or deployment is implied by the presence of these source files. Those remain explicit release activities.
+
+
+## Hostinger report-retention retry fairness — 2026-11-27
+
+- Expired private report files now persist cleanup attempt count and last-attempt timestamp. Cleanup orders never-attempted records first, then the oldest retry timestamp, so repeatedly failing objects do not permanently occupy the first page.
+- Detached logo cleanup already stores `last_attempt_at`; the cleanup query now uses that timestamp for the same fair retry ordering.
+- Fresh Hostinger installs receive the report retry fields from `migrations/hostinger_operational_schema.sql`. Existing installs must preflight and apply `migrations/20261127_hostinger_report_cleanup_retry.mysql.sql` once; it conditionally adds both columns and the supporting index.
+- This migration is Hostinger MySQL only. It is not a Supabase/PostgreSQL migration. Do not replay the incremental migration after the fresh baseline without checking schema state.
+- Automated CI verifies source/model contracts. Runtime deletion and retry behavior still require staging verification with controlled test objects; no customer files were deleted during implementation.
