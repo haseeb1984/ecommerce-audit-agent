@@ -181,3 +181,11 @@ Suspending a Business agency now disconnects every active client WordPress site,
 - The missing PostgreSQL tables correspond exactly to existing migrations `migrations/20261106_billing_mirror_sync_outbox.sql` and `migrations/20261105_customer_lifecycle_sync_outbox.sql`. The later `migrations/20261121_billing_mirror_recovery.sql` adds the billing mirror recovery watermark/index and is also listed in PR #364's rollout order. These are PostgreSQL migrations; do not run them against Hostinger MySQL.
 - No schema was changed, no migration was run, no secret was read, and no production resource was modified. The preview response proves the currently connected PostgreSQL schema is missing the two required tables; it does not establish whether the recovery migration or any other migration is applied.
 - Next authorized acceptance: obtain staging/production owner approval and a backup, apply the ordered PostgreSQL migrations to the intended Supabase database and Hostinger MySQL migrations to the separate operational database, configure the missing runtime variables, then recheck health and run the signed private-storage lifecycle tests. Do not treat preview readiness as production release approval.
+
+
+### Report retention retry fairness — implemented / CI verification pending
+
+- Persisted retry count and last-attempt time for expired Hostinger report objects; order never-attempted objects before older retries to prevent a repeatedly failing first page from starving later objects.
+- Reordered detached logo cleanup using its existing last-attempt timestamp.
+- Fresh Hostinger baseline includes the report retry columns/index; existing installations have the conditional MySQL upgrade migration `20261127_hostinger_report_cleanup_retry.mysql.sql`.
+- Staging verification remains pending. No production data or stored files were changed.
