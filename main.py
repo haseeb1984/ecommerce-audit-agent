@@ -148,7 +148,18 @@ def _normalize_wordpress_registration_url(raw_url: str) -> tuple[str, str]:
         host = hostname.encode("idna").decode("ascii").lower().rstrip(".")
     except UnicodeError:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from None
-    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+    labels = host.split(".")
+    if (
+        len(host) > 253
+        or any(
+            not label
+            or len(label) > 63
+            or not label[0].isalnum()
+            or not label[-1].isalnum()
+            or not re.fullmatch(r"[a-z0-9-]+", label)
+            for label in labels
+        )
+    ):
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
     path = parsed.path.rstrip("/")
     site_url = f"https://{host}{path}/" if path else f"https://{host}/"
