@@ -36,6 +36,25 @@ def test_wordpress_link_rejects_unsafe_site_urls(url):
         _normalize_site_url(url)
 
 
+@pytest.mark.parametrize("url", [
+    "https://-example.com/",
+    "https://example-.com/",
+    "https://example..com/",
+    "https://example.com../",
+    "https://exa_mple.com/",
+    "https://" + ("a" * 64) + ".com/",
+])
+def test_wordpress_link_rejects_invalid_dns_hostnames(url):
+    with pytest.raises(HTTPException):
+        _normalize_site_url(url)
+
+
+def test_wordpress_link_accepts_valid_hyphenated_multilabel_hostname():
+    assert _normalize_site_url("https://Shop-2.Example.co.uk/") == (
+        "https://shop-2.example.co.uk/", "shop-2.example.co.uk"
+    )
+
+
 def test_wordpress_link_token_is_stored_as_sha256_digest():
     token = "a" * 48
     assert _token_digest(token) == hashlib.sha256(token.encode("utf-8")).hexdigest()
