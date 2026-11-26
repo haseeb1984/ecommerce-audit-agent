@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Active implementation branch:** `feat/hostinger-private-report-storage` at `1652ab6101d1f94450562473db38300e1f2f8749` (PR #364, draft/unmerged)  
+**Active implementation branch:** `feat/hostinger-private-report-storage` at `8db440f68f1e468b6e56757505199d168c49661c` (PR #364, draft/unmerged)  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
@@ -13,7 +13,10 @@
 
 ## Latest automated verification — 2026-11-26
 
-- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on the exact PR/branch head `1652ab6101d1f94450562473db38300e1f2f8749`: **1,536 passed, 216 warnings**. Dependency vulnerability audits and dependency pin/hash verification passed; Python compilation, PHP lint (including the Hostinger storage bridge, WordPress plugin and theme), frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
+- Current branch head is `8db440f68f1e468b6e56757505199d168c49661c`. CI run [#45872337889](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45872337889) is running; do not mark the new source changes CI-verified until it completes.
+- Latest source-only fixes add strict DNS-label validation to both standard WordPress registration and one-time identity-link claims, and make plugin uninstall treat HTTP 404 (already disconnected) as idempotent success for both standard and agency connections. Focused regression tests were added.
+
+- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on the exact PR/branch head `8db440f68f1e468b6e56757505199d168c49661c`: **1,536 passed, 216 warnings**. Dependency vulnerability audits and dependency pin/hash verification passed; Python compilation, PHP lint (including the Hostinger storage bridge, WordPress plugin and theme), frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
 - The exact PR-head Vercel preview is READY at [preview deployment](https://ecommerce-audit-agent-pexnr5ucm-junction-tec.vercel.app). Its read-only `/health-check` returned HTTP 503: Supabase PostgreSQL is connected but lacks `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox`; Hostinger MySQL is not configured/connected in that preview. This is environment/schema readiness, not a passing runtime acceptance.
 - User confirms the WordPress theme was already uploaded to `https://audit.juncsys.com/`; do not re-upload it. The public site could not be independently fetched in this review, so the URL is recorded as user-reported installation evidence, not independently verified runtime acceptance.
 - Real-public-site PDF smoke tests were skipped by the pull-request workflow. No migration, Hostinger deployment, production change, external payment, or real email action was performed.
