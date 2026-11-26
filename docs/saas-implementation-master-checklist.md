@@ -1,7 +1,7 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `9a4ca72492c27e82d18d5de5b941d5efce730a7e`  
+**Active implementation branch:** `feat/hostinger-private-report-storage` at `1652ab6101d1f94450562473db38300e1f2f8749` (PR #364, draft/unmerged)  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
 
 ## Status rules
