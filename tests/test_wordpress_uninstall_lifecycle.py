@@ -48,3 +48,9 @@ def test_encrypted_standard_license_fails_closed_without_openssl():
     ]
     assert "$license = false;" in encrypted_branch
     assert "if (function_exists('openssl_decrypt'))" in encrypted_branch
+
+
+def test_uninstall_treats_already_disconnected_sites_as_successful_revocation():
+    # The normal plugin disconnect handlers already treat 404 as an idempotent
+    # success. Uninstall must do the same or it strands stale credentials/options.
+    assert UNINSTALL.count("&& 404 !== $response_code") == 2
