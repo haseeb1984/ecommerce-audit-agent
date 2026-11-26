@@ -278,6 +278,8 @@ class CustomerReportFile(HostingerBase):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
+    cleanup_attempts = Column(Integer, nullable=False, default=0)
+    cleanup_last_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class WebsiteScanResult(HostingerBase):
