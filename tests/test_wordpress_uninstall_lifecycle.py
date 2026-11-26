@@ -50,7 +50,11 @@ def test_encrypted_standard_license_fails_closed_without_openssl():
     assert "if (function_exists('openssl_decrypt'))" in encrypted_branch
 
 
-def test_uninstall_treats_already_disconnected_sites_as_successful_revocation():
-    # The normal plugin disconnect handlers already treat 404 as an idempotent
-    # success. Uninstall must do the same or it strands stale credentials/options.
-    assert UNINSTALL.count("&& 404 !== $response_code") == 2
+def test_uninstall_treats_only_expected_site_not_found_404_as_idempotent_success():
+    # A generic 404 (for example, a missing route or stale API base) must fail
+    # closed so the only local revocation credential is not discarded.
+    assert "$eaa_is_already_disconnected = static function" in UNINSTALL
+    assert "Agency WordPress connection not found." in UNINSTALL
+    assert "WordPress site connection not found." in UNINSTALL
+    assert UNINSTALL.count("$eaa_is_already_disconnected($response,") == 2
+    assert "json_decode((string) wp_remote_retrieve_body($response), true)" in UNINSTALL
