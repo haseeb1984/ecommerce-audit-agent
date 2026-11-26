@@ -107,6 +107,8 @@ class AuditReport(Base):
     pdf_sha256 = Column(String(64), nullable=True)
     pdf_byte_size = Column(BigInteger, nullable=True)
     pdf_deleted_at = Column(DateTime(timezone=True), nullable=True)
+    pdf_cleanup_attempts = Column(Integer, nullable=False, default=0)
+    pdf_cleanup_last_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
     coverage_json = Column(Text, nullable=False, default="{}")
     finding_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
