@@ -1,25 +1,12 @@
-# Current Phase Gap Matrix — Ecommerce Audit Agent
-
-**Active implementation branch:** `feat/hostinger-private-report-storage` at `0d3eaa1c05a03959e31c587c62642157fdb7fe2e` (PR #364, draft/unmerged). Re-run real-result acceptance before release claims.  
+**Active implementation branch:** `feat/hostinger-private-report-storage` at `ad44b6508ca3cc84ed932c23e07e8747298ebd72` (PR #364, draft/unmerged). The latest code verification is run #45895544371 on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`; two later commits only update documentation.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
 ## Latest verification evidence — 2026-11-26
-- Follow-up hardening: uninstall now accepts HTTP 404 as an idempotent disconnect only when the JSON `detail` exactly matches the relevant standard/agency "connection not found" response. Generic/misrouted 404s remain failures so the plugin retains its only local revocation credential. Regression test updated; latest CI is pending.
-
-- Current branch head is `0d3eaa1c05a03959e31c587c62642157fdb7fe2e`; CI run [#45872337889](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45872337889) is still running. New changes are not yet marked verified.
-- Added strict DNS-label validation to standard WordPress registration and identity-link claims; plugin uninstall now treats already-disconnected (HTTP 404) standard/agency sites as idempotent success. Regression tests accompany each change.
-
-- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on exact PR head `0d3eaa1c05a03959e31c587c62642157fdb7fe2e`: **1,536 passed, 216 warnings**. Dependency audits, dependency pin/hash verification, Python compilation, PHP lint for storage bridge/plugin/theme, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
-- Exact PR-head Vercel preview is READY: [preview deployment](https://ecommerce-audit-agent-pexnr5ucm-junction-tec.vercel.app). Its read-only `/health-check` returns HTTP 503 because Supabase PostgreSQL is missing `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox`, while Hostinger MySQL is not configured/connected in that preview.
-- User confirms the WordPress theme is already uploaded at `https://audit.juncsys.com/`; do not repeat the upload. The URL could not be independently fetched during this review, so live WordPress runtime acceptance remains pending.
-- Real-public-site PDF smoke tests were skipped. No database migration, Hostinger deployment, production change, payment, or live email action was performed.
-
-- Backend CI run [#45375145059](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45375145059) passed for PR #364 at commit `18294acdaeb31619595a5feeb68081c069462f7a`: **1,523 tests passed, 216 warnings**. Dependency audits, Python compilation, PHP lint, frontend JavaScript syntax checks, synthetic PDF generation, and WordPress theme package build/upload also passed.
-- The WordPress marketing theme customer-login CTA now builds its `/app` URL from the configured SaaS API origin; a regression assertion protects against reintroducing the fixed Vercel host.
-- Vercel reported preview deployment completion for this commit. The pull-request workflow skipped real-public-website PDF smoke tests; live WordPress runtime, provider journeys and production acceptance remain unverified.
-- The scheduled worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) stopped before invocation because repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are missing.
-- Passing CI does not replace staging database/schema validation, migrations, SMTP/Paddle acceptance, private-storage deployment or production approval.
+- CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped.
+- The CI-discovered report-retention cleanup index mismatch and legacy test source-boundary failure were corrected. Follow-up uninstall hardening (accept only exact known already-disconnected 404 responses) and strict WordPress DNS-label validation are included in the passing suite.
+- Admin/customer lifecycle source review confirmed expiry-aware effective access projection, durable lifecycle outbox synchronization, authenticated admin scan operations, bounded pagination, and tenant-scoped session/API-key operations. This is source review, not live database-backed acceptance.
+- Docs-only follow-up commits are `4933abc56d09fe924bb35fe474eb2f39b277caef` and `ad44b6508ca3cc84ed932c23e07e8747298ebd72`; no workflow was triggered for the documentation-only head update.
 
 ## Read-only deployment configuration findings — 2026-11-24
 
