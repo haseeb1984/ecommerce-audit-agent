@@ -17,14 +17,16 @@ def test_report_retention_cleanup_records_failed_attempt_before_storage_delete()
 def test_report_retention_cleanup_orders_report_retries_fairly():
     source = inspect.getsource(main.cleanup_expired_report_pdfs)
     report_query = source[source.index("select(CustomerReportFile)"):source.index("hostinger_deleted = 0")]
-    assert "CustomerReportFile.cleanup_last_attempt_at.asc().nullsfirst()" in report_query
+    assert "case((customerreportfile.cleanup_last_attempt_at.is_(none), 0), else_=1)" in report_query.lower()
+    assert "CustomerReportFile.cleanup_last_attempt_at.asc()" in report_query
     assert "CustomerReportFile.expires_at.asc()" in report_query
 
 
 def test_report_retention_cleanup_orders_logo_retries_by_last_attempt():
     source = inspect.getsource(main.cleanup_expired_report_pdfs)
     logo_query = source[source.index("select(CustomerBrandingLogoCleanup)"):source.index("logo_deleted = 0")]
-    assert "CustomerBrandingLogoCleanup.last_attempt_at.asc().nullsfirst()" in logo_query
+    assert "case((customerbrandinglogocleanup.last_attempt_at.is_(none), 0), else_=1)" in logo_query.lower()
+    assert "CustomerBrandingLogoCleanup.last_attempt_at.asc()" in logo_query
     assert "cleanup.last_attempt_at = now" in source
 
 
