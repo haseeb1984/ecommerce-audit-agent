@@ -23,6 +23,26 @@ def test_wordpress_registration_url_accepts_and_normalizes_standard_https_port()
     )
 
 
+def test_wordpress_registration_url_rejects_invalid_dns_label_boundaries():
+    for value in (
+        "https://-example.com/",
+        "https://example-.com/",
+        "https://example..com/",
+        "https://exa_mple.com/",
+        "https://" + ("a" * 64) + ".com/",
+    ):
+        with pytest.raises(HTTPException) as exc:
+            _normalize_wordpress_registration_url(value)
+        assert exc.value.status_code == 422
+
+
+def test_wordpress_registration_url_accepts_valid_multi_label_hostname():
+    assert _normalize_wordpress_registration_url("https://shop-2.example.co.uk/") == (
+        "https://shop-2.example.co.uk/",
+        "shop-2.example.co.uk",
+    )
+
+
 def test_wordpress_registration_url_rejects_non_https_and_credentials():
     for value in (
         "http://example.com/",
