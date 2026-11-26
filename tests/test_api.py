@@ -4511,3 +4511,67 @@ async def test_customer_branding_logo_api_lifecycle_is_private_and_license_scope
     finally:
         main.app.dependency_overrides.pop(main.verify_customer_account, None)
 
+
+
+@pytest.mark.asyncio
+async def test_paddle_active_subscription_update_reactivates_expired_license_projection(client, monkeypatch):
+    from models import CustomerLifecycleSyncOutbox
+
+    secret = "paddle-expired-renewal-projection-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    license_id = await create_license(
+        key="expired-renewal-projection-license",
+        quota=100,
+        active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=2),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_expired_renewal_projection",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="expired-renewal@example.com",
+            subscription_id="sub_expired_renewal_projection",
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        ))
+        await db.commit()
+
+    event = {
+        "event_id": "evt_expired_renewal_projection",
+        "event_type": "subscription.updated",
+        "data": {
+            "id": "sub_expired_renewal_projection",
+            "status": "active",
+            "items": [],
+            "current_billing_period": {
+                "starts_at": datetime.now(timezone.utc).isoformat(),
+                "ends_at": (datetime.now(timezone.utc) + timedelta(days=28)).isoformat(),
+            },
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+    )
+
+    assert response.status_code == 200, response.text
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        assert license_obj.expires_at > datetime.now(timezone.utc)
+        queued = (await db.execute(
+            select(CustomerLifecycleSyncOutbox).where(
+                CustomerLifecycleSyncOutbox.license_key == license_obj.license_key,
+                CustomerLifecycleSyncOutbox.action == "reactivate",
+                CustomerLifecycleSyncOutbox.status == "pending",
+            )
+        )).scalars().all()
+        assert len(queued) == 1
