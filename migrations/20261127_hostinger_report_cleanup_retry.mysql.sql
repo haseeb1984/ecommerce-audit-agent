@@ -22,3 +22,10 @@ SET @ddl = IF(
     'SELECT 1'
 );
 PREPARE eaa_report_cleanup_index FROM @ddl; EXECUTE eaa_report_cleanup_index; DEALLOCATE PREPARE eaa_report_cleanup_index;
+
+SET @ddl = IF(
+    (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='customer_report_files' AND index_name='ix_customer_report_files_cleanup_last_attempt_at')=0,
+    'CREATE INDEX ix_customer_report_files_cleanup_last_attempt_at ON customer_report_files (cleanup_last_attempt_at)',
+    'SELECT 1'
+);
+PREPARE eaa_report_cleanup_last_attempt_index FROM @ddl; EXECUTE eaa_report_cleanup_last_attempt_index; DEALLOCATE PREPARE eaa_report_cleanup_last_attempt_index;
