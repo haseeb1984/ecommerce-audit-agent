@@ -40,7 +40,9 @@ def test_logo_cleanup_model_retains_last_attempt_marker():
 
 def test_legacy_report_retention_cleanup_records_attempts_and_rotates_failures():
     source = inspect.getsource(main.cleanup_expired_report_pdfs)
-    legacy_query = source[source.index("select(AuditReport)"):source.index("deleted = 0")]
+    legacy_start = source.index("select(AuditReport)")
+    legacy_end = source.index("\n    deleted = 0", legacy_start)
+    legacy_query = source[legacy_start:legacy_end]
     assert "case((AuditReport.pdf_cleanup_last_attempt_at.is_(None), 0), else_=1)" in legacy_query
     assert "AuditReport.pdf_cleanup_last_attempt_at.asc()" in legacy_query
     assert "report.pdf_cleanup_attempts = int(report.pdf_cleanup_attempts or 0) + 1" in source
