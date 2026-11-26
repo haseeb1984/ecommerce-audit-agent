@@ -90,3 +90,16 @@ def test_customer_login_license_identity_lookups_are_bounded_for_ambiguous_owner
     assert source.count(".distinct().limit(2)") == 2
     assert "operational_license_keys | legacy_license_keys" in source
     assert "if len(linked_license_keys) != 1:" in source
+
+
+
+def test_customer_login_request_and_verification_reject_expired_licenses():
+    import inspect
+    import main
+
+    request_source = inspect.getsource(main.request_account_login_code)
+    verify_source = inspect.getsource(main.verify_account_login_code)
+
+    assert "not _license_is_current(linked_license, now)" in request_source
+    assert "not _license_is_current(license_obj, now)" in verify_source
+    assert "license_obj.is_active" not in verify_source
