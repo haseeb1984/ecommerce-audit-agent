@@ -5,6 +5,14 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 
 $settings = get_option('eaa_wp_settings', array());
 $disconnect_failed = false;
+$eaa_is_already_disconnected = static function ($response, $expected_detail) {
+    if (is_wp_error($response) || 404 !== (int) wp_remote_retrieve_response_code($response)) {
+        return false;
+    }
+    $body = json_decode((string) wp_remote_retrieve_body($response), true);
+    return is_array($body) && isset($body['detail']) && $expected_detail === $body['detail'];
+};
+
 $eaa_is_valid_api_base = static function ($value) {
     if (!is_string($value) || '' === trim($value) || false !== strpos($value, '\\')) {
         return false;
@@ -59,7 +67,8 @@ if (is_array($settings) && !empty($settings['agency_site_token'])) {
             'body' => wp_json_encode(array()),
         ));
         $response_code = is_wp_error($response) ? 0 : (int) wp_remote_retrieve_response_code($response);
-        if (($response_code < 200 || $response_code >= 300) && 404 !== $response_code) {
+        if (($response_code < 200 || $response_code >= 300) &&
+            !$eaa_is_already_disconnected($response, 'Agency WordPress connection not found.')) {
             $disconnect_failed = true;
         }
     }
@@ -107,7 +116,8 @@ if (is_array($settings) && !empty($settings['site_id']) && !empty($settings['lic
             'body' => wp_json_encode(array('site_id' => sanitize_text_field($settings['site_id']))),
         ));
         $response_code = is_wp_error($response) ? 0 : (int) wp_remote_retrieve_response_code($response);
-        if (($response_code < 200 || $response_code >= 300) && 404 !== $response_code) {
+        if (($response_code < 200 || $response_code >= 300) &&
+            !$eaa_is_already_disconnected($response, 'WordPress site connection not found.')) {
             $disconnect_failed = true;
         }
     }
