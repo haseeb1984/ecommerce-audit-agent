@@ -1,6 +1,6 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Baseline reviewed:** `main` at `9a4ca72492c27e82d18d5de5b941d5efce730a7e` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
+**Active implementation branch:** `feat/hostinger-private-report-storage` at `1652ab6101d1f94450562473db38300e1f2f8749` (PR #364, draft/unmerged). Re-run real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
