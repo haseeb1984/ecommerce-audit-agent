@@ -11,11 +11,12 @@
 - **Partial** — useful implementation exists, but agreed scope or acceptance is incomplete.
 - **Blocked** — needs production configuration, provider credentials, human approval, or external acceptance.
 
-## Latest automated verification — 2026-11-24
+## Latest automated verification — 2026-11-26
 
-- Latest Backend CI run [#45398438617](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45398438617) passed on the exact PR/branch head `847e10f45093b125fdcf019b9d4ef86ccc08c0cc`: **1,535 passed, 216 warnings**. Dependency vulnerability audits and dependency pin/hash verification passed; Python compilation, PHP lint (including the Hostinger storage bridge), frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
-- The PR-head Vercel status is currently **deployment rate limited** (retry window reported as 24 hours), so there is no preview deployment verified for this exact commit. The previously READY preview belongs to an earlier application commit and must not be treated as validation of this head.
-- Real-public-site PDF smoke tests were skipped by the pull-request workflow. Hostinger MySQL is still unconfigured in the preview environment and Supabase PostgreSQL previously reported the two lifecycle/billing outbox tables missing. No live migration, Hostinger deployment, or production change was performed.
+- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on the exact PR/branch head `1652ab6101d1f94450562473db38300e1f2f8749`: **1,536 passed, 216 warnings**. Dependency vulnerability audits and dependency pin/hash verification passed; Python compilation, PHP lint (including the Hostinger storage bridge, WordPress plugin and theme), frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
+- The exact PR-head Vercel preview is READY at [preview deployment](https://ecommerce-audit-agent-pexnr5ucm-junction-tec.vercel.app). Its read-only `/health-check` returned HTTP 503: Supabase PostgreSQL is connected but lacks `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox`; Hostinger MySQL is not configured/connected in that preview. This is environment/schema readiness, not a passing runtime acceptance.
+- User confirms the WordPress theme was already uploaded to `https://audit.juncsys.com/`; do not re-upload it. The public site could not be independently fetched in this review, so the URL is recorded as user-reported installation evidence, not independently verified runtime acceptance.
+- Real-public-site PDF smoke tests were skipped by the pull-request workflow. No migration, Hostinger deployment, production change, external payment, or real email action was performed.
 
 - Backend CI run [#45375145059](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45375145059) completed successfully for PR #364 at commit `18294acdaeb31619595a5feeb68081c069462f7a`.
 - The run reports **1,523 passed, 216 warnings**. Both dependency vulnerability-audit commands reported no known vulnerabilities. Python compilation, PHP lint for the WordPress plugin/storage bridge/marketing theme, embedded frontend JavaScript syntax checks, synthetic PDF generation/upload, and WordPress theme package build/upload all passed.
