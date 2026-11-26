@@ -6623,6 +6623,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                     )).scalar_one_or_none()
                     if prior_renewal is not None:
                         return {"status": "already_processed", "event_id": prior_renewal.event_id}
+                renewal_now = datetime.now(timezone.utc)
+                was_active = _license_is_current(linked_license, renewal_now)
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
                 billing_period_end = _apply_paddle_billing_period(
@@ -6640,8 +6642,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 )
                 linked_license.is_active = (
                     not subscription_is_paused
-                    and (expiry is None or expiry > datetime.now(timezone.utc))
+                    and (expiry is None or expiry > renewal_now)
                 )
+                _queue_customer_lifecycle_projection(db, linked_license, was_active, renewal_now)
                 renewal_customer_id = str(
                     transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
