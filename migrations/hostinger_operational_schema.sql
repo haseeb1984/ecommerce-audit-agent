@@ -261,10 +261,13 @@ CREATE TABLE IF NOT EXISTS customer_report_files (
   created_at DATETIME(6) NOT NULL,
   expires_at DATETIME(6) NULL,
   deleted_at DATETIME(6) NULL,
+  cleanup_attempts INT NOT NULL DEFAULT 0,
+  cleanup_last_attempt_at DATETIME(6) NULL,
   KEY ix_customer_report_files_license (license_key),
   KEY ix_customer_report_files_job (job_id),
   KEY ix_customer_report_files_domain (domain),
-  KEY ix_customer_report_files_expiry (expires_at, deleted_at)
+  KEY ix_customer_report_files_expiry (expires_at, deleted_at),
+  KEY ix_customer_report_files_cleanup (expires_at, deleted_at, cleanup_last_attempt_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
