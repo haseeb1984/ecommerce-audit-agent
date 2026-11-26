@@ -1,4 +1,4 @@
-**Active implementation branch:** `feat/hostinger-private-report-storage` at `8caf15da9d707e7556e4dd6d75c824388386f4ff` (PR #364, draft/unmerged). The latest code verification is run #45895544371 on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`; two later commits only update documentation.  
+**Active implementation branch:** `feat/hostinger-private-report-storage` (PR #364, draft/unmerged). The latest code verification is run #45895544371 on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`; subsequent commits only update documentation. The latest code verification is run #45895544371 on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`; two later commits only update documentation.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
@@ -6,7 +6,7 @@
 - CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped.
 - The CI-discovered report-retention cleanup index mismatch and legacy test source-boundary failure were corrected. Follow-up uninstall hardening (accept only exact known already-disconnected 404 responses) and strict WordPress DNS-label validation are included in the passing suite.
 - Admin/customer lifecycle source review confirmed expiry-aware effective access projection, durable lifecycle outbox synchronization, authenticated admin scan operations, bounded pagination, and tenant-scoped session/API-key operations. This is source review, not live database-backed acceptance.
-- Docs-only follow-up commits are `4933abc56d09fe924bb35fe474eb2f39b277caef`, `ad44b6508ca3cc84ed932c23e07e8747298ebd72`, and `8caf15da9d707e7556e4dd6d75c824388386f4ff`; no workflow was triggered for the documentation-only head update.
+- Follow-up commits after the verified code commit update documentation only; no workflow was triggered for those documentation-only updates.
 
 ## Read-only deployment configuration findings — 2026-11-24
 
