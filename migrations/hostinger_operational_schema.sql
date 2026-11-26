@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS customer_report_files (
   KEY ix_customer_report_files_job (job_id),
   KEY ix_customer_report_files_domain (domain),
   KEY ix_customer_report_files_expiry (expires_at, deleted_at),
-  KEY ix_customer_report_files_cleanup (expires_at, deleted_at, cleanup_last_attempt_at)
+  KEY ix_customer_report_files_cleanup (deleted_at, cleanup_last_attempt_at, expires_at, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
