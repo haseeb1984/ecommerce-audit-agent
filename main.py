@@ -8943,7 +8943,7 @@ async def cleanup_expired_report_pdfs(
     retention_days = await _get_report_retention_days(operational_db)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=retention_days)
-    from sqlalchemy import or_, select
+    from sqlalchemy import case, or_, select
 
     # Hostinger owns all new customer-facing PDF pointers. Keep failures
     # retryable and mark deletion only after the private bridge confirms it.
@@ -8955,7 +8955,8 @@ async def cleanup_expired_report_pdfs(
             CustomerReportFile.deleted_at.is_(None),
         )
         .order_by(
-            CustomerReportFile.cleanup_last_attempt_at.asc().nullsfirst(),
+            case((CustomerReportFile.cleanup_last_attempt_at.is_(None), 0), else_=1),
+            CustomerReportFile.cleanup_last_attempt_at.asc(),
             CustomerReportFile.expires_at.asc(),
             CustomerReportFile.id.asc(),
         )
@@ -8981,7 +8982,8 @@ async def cleanup_expired_report_pdfs(
     logo_cleanup_rows = (await operational_db.execute(
         select(CustomerBrandingLogoCleanup)
         .order_by(
-            CustomerBrandingLogoCleanup.last_attempt_at.asc().nullsfirst(),
+            case((CustomerBrandingLogoCleanup.last_attempt_at.is_(None), 0), else_=1),
+            CustomerBrandingLogoCleanup.last_attempt_at.asc(),
             CustomerBrandingLogoCleanup.created_at.asc(),
             CustomerBrandingLogoCleanup.id.asc(),
         )
