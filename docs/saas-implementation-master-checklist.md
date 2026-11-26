@@ -190,3 +190,11 @@ Suspending a Business agency now disconnects every active client WordPress site,
 - Fresh Hostinger baseline includes the report retry columns/index; existing installations have the conditional MySQL upgrade migration `20261127_hostinger_report_cleanup_retry.mysql.sql`.
 - Legacy PostgreSQL reports have matching retry metadata and the additive Supabase migration `20261127_supabase_report_cleanup_retry.sql`.
 - Staging verification remains pending. No production data or stored files were changed.
+
+
+## Report retention retry fairness — CI verified — 2026-11-26
+
+- CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on PR head `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped.
+- Fixed the CI-discovered fresh Hostinger schema cleanup-index mismatch and legacy report cleanup test source boundary. The existing-installation MySQL migration adds the retry timestamp index conditionally.
+- Admin/customer lifecycle and scan-operation source review completed for this pass; staging runtime acceptance remains pending.
+- No migration, deployment, database mutation, or production change was performed.
