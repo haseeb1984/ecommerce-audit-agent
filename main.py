@@ -1710,7 +1710,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
     linked_license = await db.scalar(select(SoftwareLicense).where(SoftwareLicense.license_key == linked_license_key))
-    if linked_license is None or not linked_license.is_active:
+    if linked_license is None or not _license_is_current(linked_license, now):
         # Preserve the same response for unknown and suspended accounts.
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
     challenge = CustomerLoginChallenge(
@@ -1766,7 +1766,7 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
     license_obj = (await db.execute(select(SoftwareLicense).where(
         SoftwareLicense.license_key == challenge.license_key,
     ))).scalar_one_or_none()
-    if license_obj is None or not license_obj.is_active:
+    if license_obj is None or not _license_is_current(license_obj, now):
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=401, detail="Customer account is unavailable.")
