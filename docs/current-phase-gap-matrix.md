@@ -984,3 +984,11 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - The two absent PostgreSQL tables are created by existing migrations `20261106_billing_mirror_sync_outbox.sql` and `20261105_customer_lifecycle_sync_outbox.sql`. PR #364 also lists `20261121_billing_mirror_recovery.sql` in its PostgreSQL rollout sequence. Do not apply these PostgreSQL migrations to Hostinger MySQL.
 - This is evidence from the preview's configured connections only. No migration, database write, secret read, Hostinger deployment, or production change was performed. The Hostinger integration is not available in this session, so operational DB connectivity and private-storage bridge acceptance remain blocked.
 - Next step is staging-first: confirm database targets and backup, apply the documented PostgreSQL and Hostinger migration sets to their respective engines with owner authorization, configure missing environment names, then re-run health and signed-storage lifecycle acceptance. No production migration or release without explicit approval.
+
+
+## Report retention retry fairness — CI verification — 2026-11-26
+
+- CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on PR head `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped by workflow conditions.
+- The CI-discovered fresh-schema index mismatch and legacy cleanup test boundary were corrected. Fresh Hostinger baseline and conditional MySQL upgrade migration now include the cleanup timestamp index; regression test source boundary is corrected.
+- Admin/customer lifecycle source review confirmed canonical-license-first lifecycle synchronization, expiry-aware effective access projection, authenticated admin scan operations, bounded pagination, and tenant-scoped API-key/session operations. This is source review, not database-backed staging acceptance.
+- Staging schema and private-storage lifecycle verification remain pending. No migrations, database writes, deployment, customer data deletion, or production changes were performed.
