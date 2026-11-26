@@ -1,4 +1,3 @@
-from pathlib import Path
 import inspect
 
 import main
@@ -37,3 +36,18 @@ def test_customer_report_file_model_has_persisted_cleanup_retry_state():
 
 def test_logo_cleanup_model_retains_last_attempt_marker():
     assert CustomerBrandingLogoCleanup.__table__.c.last_attempt_at.nullable is True
+
+
+def test_legacy_report_retention_cleanup_records_attempts_and_rotates_failures():
+    source = inspect.getsource(main.cleanup_expired_report_pdfs)
+    legacy_query = source[source.index("select(AuditReport)"):source.index("deleted = 0")]
+    assert "case((AuditReport.pdf_cleanup_last_attempt_at.is_(None), 0), else_=1)" in legacy_query
+    assert "AuditReport.pdf_cleanup_last_attempt_at.asc()" in legacy_query
+    assert "report.pdf_cleanup_attempts = int(report.pdf_cleanup_attempts or 0) + 1" in source
+    assert "report.pdf_cleanup_last_attempt_at = now" in source
+
+
+def test_audit_report_model_has_persisted_cleanup_retry_state():
+    from models import AuditReport
+    assert AuditReport.__table__.c.pdf_cleanup_attempts.default.arg == 0
+    assert AuditReport.__table__.c.pdf_cleanup_last_attempt_at.nullable is True
