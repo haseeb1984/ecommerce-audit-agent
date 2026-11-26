@@ -1,15 +1,16 @@
 # Current Phase Gap Matrix — Ecommerce Audit Agent
 
-**Active implementation branch:** `feat/hostinger-private-report-storage` at `8db440f68f1e468b6e56757505199d168c49661c` (PR #364, draft/unmerged). Re-run real-result acceptance before release claims.  
+**Active implementation branch:** `feat/hostinger-private-report-storage` at `0d3eaa1c05a03959e31c587c62642157fdb7fe2e` (PR #364, draft/unmerged). Re-run real-result acceptance before release claims.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
 
 ## Latest verification evidence — 2026-11-26
+- Follow-up hardening: uninstall now accepts HTTP 404 as an idempotent disconnect only when the JSON `detail` exactly matches the relevant standard/agency "connection not found" response. Generic/misrouted 404s remain failures so the plugin retains its only local revocation credential. Regression test updated; latest CI is pending.
 
-- Current branch head is `8db440f68f1e468b6e56757505199d168c49661c`; CI run [#45872337889](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45872337889) is still running. New changes are not yet marked verified.
+- Current branch head is `0d3eaa1c05a03959e31c587c62642157fdb7fe2e`; CI run [#45872337889](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45872337889) is still running. New changes are not yet marked verified.
 - Added strict DNS-label validation to standard WordPress registration and identity-link claims; plugin uninstall now treats already-disconnected (HTTP 404) standard/agency sites as idempotent success. Regression tests accompany each change.
 
-- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on exact PR head `8db440f68f1e468b6e56757505199d168c49661c`: **1,536 passed, 216 warnings**. Dependency audits, dependency pin/hash verification, Python compilation, PHP lint for storage bridge/plugin/theme, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
+- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on exact PR head `0d3eaa1c05a03959e31c587c62642157fdb7fe2e`: **1,536 passed, 216 warnings**. Dependency audits, dependency pin/hash verification, Python compilation, PHP lint for storage bridge/plugin/theme, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
 - Exact PR-head Vercel preview is READY: [preview deployment](https://ecommerce-audit-agent-pexnr5ucm-junction-tec.vercel.app). Its read-only `/health-check` returns HTTP 503 because Supabase PostgreSQL is missing `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox`, while Hostinger MySQL is not configured/connected in that preview.
 - User confirms the WordPress theme is already uploaded at `https://audit.juncsys.com/`; do not repeat the upload. The URL could not be independently fetched during this review, so live WordPress runtime acceptance remains pending.
 - Real-public-site PDF smoke tests were skipped. No database migration, Hostinger deployment, production change, payment, or live email action was performed.
