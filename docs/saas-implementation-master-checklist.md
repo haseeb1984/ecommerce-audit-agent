@@ -188,4 +188,5 @@ Suspending a Business agency now disconnects every active client WordPress site,
 - Persisted retry count and last-attempt time for expired Hostinger report objects; order never-attempted objects before older retries to prevent a repeatedly failing first page from starving later objects.
 - Reordered detached logo cleanup using its existing last-attempt timestamp.
 - Fresh Hostinger baseline includes the report retry columns/index; existing installations have the conditional MySQL upgrade migration `20261127_hostinger_report_cleanup_retry.mysql.sql`.
+- Legacy PostgreSQL reports have matching retry metadata and the additive Supabase migration `20261127_supabase_report_cleanup_retry.sql`.
 - Staging verification remains pending. No production data or stored files were changed.
