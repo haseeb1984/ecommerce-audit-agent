@@ -6304,7 +6304,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             "subscription.activated": "subscription_activated",
         }[event_type]
         now = datetime.now(timezone.utc)
-        was_active = bool(license_obj.is_active)
+        was_active = _license_is_current(license_obj, now)
         if event_type == "subscription.paused":
             license_obj.is_active = False
         elif license_obj.expires_at is None:
@@ -6442,7 +6442,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription customer must be a JSON object.")
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         now = datetime.now(timezone.utc)
-        was_active = bool(license_obj.is_active)
+        was_active = _license_is_current(license_obj, now)
         latest_lifecycle_event = await _latest_paddle_subscription_lifecycle_event(
             db, subscription_id
         )
