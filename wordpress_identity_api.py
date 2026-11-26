@@ -46,6 +46,8 @@ def _normalize_site_url(value: str) -> tuple[str, str]:
         raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
     if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
         raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
+    if parsed.hostname.endswith(".."):
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
     raw_host = parsed.hostname.rstrip(".")
     if "%" in raw_host:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
@@ -60,7 +62,18 @@ def _normalize_site_url(value: str) -> tuple[str, str]:
             host = raw_host.encode("idna").decode("ascii").lower()
         except UnicodeError as exc:
             raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from exc
-        if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+        labels = host.split(".")
+        if (
+            len(host) > 253
+            or any(
+                not label
+                or len(label) > 63
+                or not label[0].isalnum()
+                or not label[-1].isalnum()
+                or not re.fullmatch(r"[a-z0-9-]+", label)
+                for label in labels
+            )
+        ):
             raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
         authority = host
     else:
