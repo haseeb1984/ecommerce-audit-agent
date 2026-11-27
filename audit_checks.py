@@ -178,7 +178,8 @@ def normalize_target(value: str) -> str:
         raise ValueError("Only public HTTP and HTTPS websites can be audited.")
     if not parsed.hostname or parsed.username is not None or parsed.password is not None:
         raise ValueError("The website URL must contain a hostname and no embedded credentials.")
-    if parsed.port not in (None, 80, 443):
+    allowed_port = 443 if parsed.scheme.lower() == "https" else 80
+    if parsed.port not in (None, allowed_port):
         raise ValueError("Non-standard ports are not supported by this public audit.")
     host = parsed.hostname.rstrip(".").lower()
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
