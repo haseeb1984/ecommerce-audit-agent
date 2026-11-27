@@ -2366,7 +2366,12 @@ async def run_phase_one_checks(target: str) -> AuditCheckResult:
                 if filename == "sitemap.xml" and sitemap_cache is not None:
                     status, body, _, final_url = sitemap_cache
                 else:
-                    status, body, _, final_url = await _safe_get(client, file_url)
+                    # Discovery endpoints are part of the audited site's
+                    # origin. Do not let their redirects turn a site audit
+                    # into requests to an unrelated public host.
+                    status, body, _, final_url = await _safe_get(
+                        client, file_url, allowed_origin=origin
+                    )
                 observed_at_utc = datetime.now(timezone.utc).isoformat()
                 check_id = "discovery." + category + ".availability"
                 if 200 <= status < 300:
