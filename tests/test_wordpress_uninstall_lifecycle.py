@@ -57,3 +57,30 @@ def test_uninstall_only_treats_exact_disconnect_not_found_as_idempotent_success(
     assert "$eaa_is_already_disconnected($response, 'Agency WordPress connection not found.')" in UNINSTALL
     assert "$eaa_is_already_disconnected($response, 'WordPress site connection not found.')" in UNINSTALL
     assert UNINSTALL.count("$eaa_is_already_disconnected($response,") == 2
+
+
+PLUGIN = Path(
+    "wordpress-plugin/ecommerce-audit-agent/ecommerce-audit-agent.php"
+).read_text(encoding="utf-8")
+
+
+def test_runtime_disconnect_only_accepts_exact_idempotent_404_responses():
+    helper = PLUGIN[
+        PLUGIN.index("function eaa_wp_is_already_disconnected"):
+        PLUGIN.index("function eaa_wp_disconnect_site")
+    ]
+    assert "if (!is_wp_error($response))" in helper
+    assert "404 === (int) $error_data['status']" in helper
+    assert "$expected_detail === $response->get_error_message()" in helper
+
+
+def test_standard_and_agency_runtime_disconnects_retain_credentials_on_generic_404():
+    disconnect = PLUGIN[
+        PLUGIN.index("function eaa_wp_disconnect_site"):
+        PLUGIN.index("add_action('admin_menu'")
+    ]
+    assert "!eaa_wp_is_already_disconnected($response, 'Agency WordPress connection not found.')" in disconnect
+    assert "!eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')" in disconnect
+    assert disconnect.count("if (is_wp_error($response) &&") == 2
+    assert disconnect.index("return $response;") < disconnect.index("unset($settings['agency_site_token']")
+    assert disconnect.index("return $response;", disconnect.index("unset($settings['agency_site_token']")) < disconnect.index("unset($settings['site_id']")
