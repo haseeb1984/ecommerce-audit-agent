@@ -12,17 +12,15 @@ The plugin requires WordPress 6.2+, PHP 7.4+, and outbound HTTPS. WooCommerce is
 
 ## Database ownership — agreed architecture
 
-The WordPress plugin runs inside the customer's existing WordPress installation and uses that installation's existing Hostinger MySQL database and table prefix (`$wpdb->prefix`). **The plugin is responsible for creating and upgrading its own custom WordPress tables automatically** during activation and plugin upgrades, using WordPress's `dbDelta()` API and a schema-version option.
+The SaaS operational tables live inside the **same existing Hostinger MySQL database used by the WordPress installation**. Do not provision a separate Hostinger database. The backend's `HOSTINGER_DATABASE_URL` must point to that existing WordPress database. WordPress core tables and SaaS operational tables coexist in it.
 
-- No separate database is created for the plugin.
-- No manual SQL migration is required from the WordPress site owner for plugin-owned tables.
-- The plugin must never connect directly to the SaaS operational database or Supabase.
-- WordPress core tables and plugin-owned tables coexist in the same WordPress database, using the active WordPress table prefix.
-- Plugin deactivation must preserve plugin tables and customer data. Uninstall cleanup must follow the documented retention/disconnect policy and must not silently drop customer audit history.
+- **Existing Hostinger WordPress MySQL database:** WordPress core tables plus SaaS operational tables for customer accounts/sessions, website inventory, scan queue/results, WordPress installation registry, billing mirrors, admin records, branding and report metadata.
+- **Existing Supabase PostgreSQL database:** canonical licensing and audit-engine records. It remains a separate database and is not replaced or recreated.
+- Hostinger private file storage holds private report/logo bytes; metadata remains in the existing Hostinger WordPress MySQL database.
 
-The SaaS backend retains its own independent data stores: Hostinger operational MySQL for SaaS customer/account/queue/report metadata, and Supabase PostgreSQL for canonical licensing and audit-engine records. Those are backend databases, not WordPress plugin databases.
+The SaaS operational schema is defined by `migrations/hostinger_operational_schema.sql` and applicable Hostinger/MySQL forward migrations. These are SaaS backend schema migrations to the existing WordPress MySQL database; they are not plugin-activation migrations. Apply them only through the reviewed release procedure after backing up and inspecting that database. Do not create a second database, and do not import PostgreSQL migrations into MySQL.
 
-The backend migration `migrations/20261031_wordpress_sites.sql` creates the SaaS-side WordPress installation registry. It is not a migration for the customer's WordPress database and must never be imported into WordPress.
+The customer plugin uses WordPress APIs and its existing `$wpdb` connection for WordPress integration. It must not connect directly to SaaS operational tables or Supabase. Any plugin-owned tables are distinct from SaaS operational tables and require an explicitly defined plugin schema before implementation.
 
 ## Customer setup
 
