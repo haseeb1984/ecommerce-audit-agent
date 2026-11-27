@@ -91,9 +91,8 @@ def test_admin_customer_detail_sublist_pagination_is_independent_and_bounded():
 def test_admin_customer_detail_does_not_reference_removed_identity_truncation_variable():
     source = inspect.getsource(main.admin_customer_account_detail)
 
-    # The full identity-key stream has no arbitrary truncation state anymore.
-    assert '"identity_keys_truncated": False' in source
-    assert '"identity_keys_truncated": identity_keys_truncated' not in source
+    # The full identity-key stream has no arbitrary truncation state or response flag.
+    assert '"identity_keys_truncated"' not in source
 
 
 

@@ -228,9 +228,26 @@ class CustomerBranding(HostingerBase):
     __tablename__ = "customer_branding"
     license_key = Column(String(100), primary_key=True)
     brand_name = Column(String(100), nullable=False)
+    # logo_url is retained for legacy external HTTPS logos during transition.
     logo_url = Column(String(2048), nullable=True)
+    logo_storage_key = Column(String(1024), nullable=True)
+    logo_sha256 = Column(String(64), nullable=True)
+    logo_mime_type = Column(String(100), nullable=True)
+    logo_byte_size = Column(BigInteger, nullable=True)
     primary_color = Column(String(7), nullable=False, default="#155a8a")
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class CustomerBrandingLogoCleanup(HostingerBase):
+    """Durable retry queue for private logo objects detached from customer branding."""
+    __tablename__ = "customer_branding_logo_cleanup"
+    id = Column(String(64), primary_key=True)
+    license_key = Column(String(100), nullable=False, index=True)
+    storage_key = Column(String(512), nullable=False, unique=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class AdminCustomerNote(HostingerBase):
@@ -244,16 +261,25 @@ class AdminCustomerNote(HostingerBase):
 
 
 class CustomerReportFile(HostingerBase):
+    """Customer-facing PDF pointer; the file itself lives only in Hostinger private storage."""
     __tablename__ = "customer_report_files"
     id = Column(String(64), primary_key=True)
+    report_id = Column(BigInteger, nullable=True, unique=True)
     license_key = Column(String(100), nullable=False, index=True)
     job_id = Column(String(64), nullable=True, index=True)
     report_name = Column(String(255), nullable=False)
+    domain = Column(String(253), nullable=True, index=True)
+    finding_count = Column(Integer, nullable=False, default=0)
     storage_key = Column(String(1024), nullable=False)
     storage_key_hash = Column(String(64), nullable=False, unique=True)
+    pdf_sha256 = Column(String(64), nullable=True)
     mime_type = Column(String(100), nullable=False, default="application/pdf")
     byte_size = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    cleanup_attempts = Column(Integer, nullable=False, default=0)
+    cleanup_last_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class WebsiteScanResult(HostingerBase):
@@ -489,3 +515,11 @@ class AgencyUsageEvent(HostingerBase):
         Index("ix_agency_usage_tenant_period", "agency_id", "period_start", "event_type"),
         UniqueConstraint("agency_id", "source_reference", name="uq_agency_usage_source_reference"),
     )
+
+
+class PlatformSetting(HostingerBase):
+    """Owner-managed platform policy values stored in operational MySQL."""
+    __tablename__ = "platform_settings"
+    setting_key = Column(String(100), primary_key=True)
+    setting_value = Column(String(255), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

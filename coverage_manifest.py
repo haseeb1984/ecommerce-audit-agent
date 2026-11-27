@@ -252,7 +252,7 @@ def build_coverage_manifest(
         if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10_000_000
     }
     raw_module_statuses = context.get("module_statuses") if isinstance(context.get("module_statuses"), dict) else {}
-    allowed_module_states = {"not_started", "running", "completed", "unavailable", "error"}
+    allowed_module_states = {"not_started", "running", "completed", "partial", "unavailable", "error"}
     module_statuses = {
         str(key)[:80]: value
         for key, value in raw_module_statuses.items()

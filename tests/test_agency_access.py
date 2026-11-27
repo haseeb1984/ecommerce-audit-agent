@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from main import _license_is_current
@@ -91,12 +92,14 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
     assert result["team_sessions_revoked"] is True
     from sqlalchemy.sql.dml import Update
 
-    assert len(db.statements) == 3
+    assert len(db.statements) == 5
     assert all(isinstance(statement, Update) for statement in db.statements)
     statement_sql = [str(statement) for statement in db.statements]
     assert any("agency_team_sessions" in sql and "revoked_at" in sql for sql in statement_sql)
     assert any("agency_team_login_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
     assert any("agency_team_members" in sql and "invitation_token_hash" in sql for sql in statement_sql)
+    assert any("agency_client_websites" in sql and "site_token_hash" in sql for sql in statement_sql)
+    assert any("agency_website_connect_challenges" in sql and "consumed_at" in sql for sql in statement_sql)
     invitation_update = next(statement for statement in db.statements if "agency_team_members" in str(statement))
     invitation_values = invitation_update.compile().params
     assert "revoked" in invitation_values.values()
@@ -105,8 +108,8 @@ async def test_admin_suspension_revokes_existing_team_sessions_and_pending_codes
 
 
 class AgencyWorkspaceGrantSession:
-    def __init__(self, agency, access):
-        self.rows = [agency, access]
+    def __init__(self, agency, member, workspace, access):
+        self.rows = [agency, member, workspace, access]
         self.deleted = []
         self.committed = False
 
@@ -126,11 +129,13 @@ async def test_owner_can_remove_one_team_workspace_grant_without_revoking_member
     from main import remove_business_agency_team_workspace_access
 
     agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
+    member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active")
+    workspace = SimpleNamespace(id="workspace-1", agency_id="agency-1", status="active")
     grant = SimpleNamespace(
         id="grant-1", agency_id="agency-1",
         team_member_id="member-1", workspace_id="workspace-1",
     )
-    db = AgencyWorkspaceGrantSession(agency, grant)
+    db = AgencyWorkspaceGrantSession(agency, member, workspace, grant)
     license_obj = SimpleNamespace(license_key="business-license", tier="business")
     monkeypatch.setattr(main, "plan_features", lambda _tier: {"agency_management": True})
 
@@ -396,18 +401,26 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     from main import AgencyTeamLoginRequest, request_agency_team_login
 
     now = datetime.now(timezone.utc)
-    member = SimpleNamespace(id="member-1", agency_id="agency-1")
-    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license")
+    member = SimpleNamespace(id="member-1", agency_id="agency-1", status="active")
+    agency = SimpleNamespace(id="agency-1", owner_license_key="business-license", status="active")
     recent = SimpleNamespace(created_at=now - timedelta(seconds=10))
 
     class OperationalSession:
         def __init__(self):
             self.calls = []
+            self.execute_calls = []
         async def scalar(self, statement):
             self.calls.append(statement)
-            return [member, agency, recent][len(self.calls) - 1]
-        async def execute(self, _statement):
-            raise AssertionError("A recent challenge must stop OTP issuance.")
+            return [
+                SimpleNamespace(email="teammate@example.com"),
+                member,
+                agency,
+                member,
+                recent,
+            ][len(self.calls) - 1]
+        async def execute(self, statement):
+            self.execute_calls.append(statement)
+            return SimpleNamespace(rowcount=1)
         async def commit(self):
             raise AssertionError("A cooldown response must not issue a new challenge.")
 
@@ -428,8 +441,11 @@ async def test_agency_team_login_request_locks_membership_before_cooldown_check(
     )
 
     assert result["status"] == "accepted"
-    assert len(operational.calls) == 3
+    assert len(operational.calls) == 5
+    assert len(operational.execute_calls) == 1
     assert operational.calls[0]._for_update_arg is not None
+    assert operational.calls[2]._for_update_arg is not None
+    assert operational.calls[3]._for_update_arg is not None
 
 
 
@@ -454,7 +470,9 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
     suspend_invite_revoke = suspend_source.index("AgencyTeamMember.status == \"invited\"")
     assert suspend_agency_lock < suspend_invite_revoke
-    assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
+    invitation_update = suspend_source[suspend_invite_revoke:]
+    assert ".values(" in invitation_update
+    assert "invitation_token_hash=None" in invitation_update
 
 
 
@@ -479,7 +497,9 @@ def test_agency_invitation_mutations_follow_agency_first_lock_order():
     suspend_agency_lock = suspend_source.index("AgencyAccount.id == agency_id")
     suspend_invite_revoke = suspend_source.index('AgencyTeamMember.status == "invited"')
     assert suspend_agency_lock < suspend_invite_revoke
-    assert "member.invitation_token_hash = None" in suspend_source[suspend_invite_revoke:]
+    invitation_revoke = suspend_source[suspend_invite_revoke:]
+    assert ".values(" in invitation_revoke
+    assert "invitation_token_hash=None" in invitation_revoke
 
 
 def test_agency_wordpress_connection_mutations_share_tenant_lock_order():
@@ -518,17 +538,20 @@ def test_agency_wordpress_site_registration_rechecks_single_active_workspace_aft
 class BusinessAgencyTeamListSession:
     def __init__(self, agency, members, access_rows=()):
         self.agency = agency
-        self.results = [list(members), list(access_rows)]
+        self.members = list(members)
+        self.access_rows = list(access_rows)
+        self.execute_calls = 0
 
     async def scalar(self, _statement):
         return self.agency
 
     async def execute(self, _statement):
-        values = self.results.pop(0)
-        return SimpleNamespace(
-            scalars=lambda: SimpleNamespace(all=lambda: values),
-            all=lambda: values,
-        )
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return SimpleNamespace(scalar_one=lambda: len(self.members))
+        if self.execute_calls == 2:
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.members))
+        return SimpleNamespace(all=lambda: self.access_rows)
 
 
 @pytest.mark.asyncio
@@ -549,6 +572,9 @@ async def test_agency_team_list_exposes_invitation_expiry_without_token_material
 
     result = await list_business_agency_team(
         Response(),
+        limit=100,
+        offset=0,
+        workspace_ids=[],
         license_obj=SimpleNamespace(license_key="business-license", tier="business"),
         operational_db=db,
     )
@@ -884,10 +910,10 @@ def test_admin_agency_detail_caps_website_connections_per_workspace_and_reports_
     source = inspect.getsource(admin_get_business_agency_detail)
     assert "func.row_number().over(" in source
     assert "partition_by=AgencyClientWebsite.workspace_id" in source
-    assert "ranked_website_ids.c.site_rank <= 100" in source
+    assert "ranked_website_ids.c.site_rank <= website_offset + website_limit" in source
     assert "website_count_rows" in source
     assert '"website_connection_count": website_counts.get(item.id, 0)' in source
-    assert '"website_connections_truncated": website_counts.get(item.id, 0) > len(websites_by_workspace.get(item.id, []))' in source
+    assert '"website_connections_truncated": website_offset + len(websites_by_workspace.get(item.id, [])) < website_counts.get(item.id, 0)' in source
 
 
 def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_truncation():
@@ -896,7 +922,7 @@ def test_admin_agency_detail_ui_displays_website_counts_and_per_workspace_trunca
     source = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text()
     assert "workspace.website_connection_count" in source
     assert "workspace.website_connections_truncated" in source
-    assert "Showing latest 100" in source
+    assert '"Showing latest "+workspace.website_connections.length+" of "+workspace.website_connection_count' in source
 
 
 
@@ -1018,3 +1044,12 @@ def test_agency_team_workspace_listing_locks_current_grants_in_stable_order():
     assert "AgencyWorkspaceAccess.team_member_id == identity[\"member\"].id" in source
     assert "AgencyClientWorkspace.agency_id == identity[\"agency\"].id" in source
     assert "AgencyClientWorkspace.status == \"active\"" in source
+
+def test_admin_agency_detail_pagination_errors_are_session_guarded():
+    portal = (Path(__file__).resolve().parents[1] / "admin_portal.html").read_text(encoding="utf-8")
+    start = portal.index("async function showAgencyDetail(")
+    end = portal.index("async function refreshAgencies()", start)
+    source = portal[start:end]
+
+    assert 'if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){moreSites.disabled=false;status(error.message,"error")}' in source
+    assert source.count('if(requestVersion===agencyDetailRequestVersion&&sessionVersion===adminSessionVersion){more.disabled=false;status(error.message,"error")}') == 2

@@ -77,6 +77,7 @@ REQUIRED_ENV_GROUPS = {
     "ai_provider": ("GROQ_API_KEY",),
     "customer_account_auth": ("ACCOUNT_AUTH_SECRET",),
     "hostinger_operational_database": ("HOSTINGER_DATABASE_URL",),
+    "hostinger_private_storage": ("HOSTINGER_STORAGE_BASE_URL", "HOSTINGER_STORAGE_HMAC_SECRET"),
     "public_app_url": ("PUBLIC_APP_URL",),
     "scheduled_scan_worker": ("SCAN_WORKER_URL", "CRON_SECRET"),
 }
@@ -94,6 +95,28 @@ def _valid_public_app_url(value: str) -> bool:
             and parsed.hostname
             and not parsed.username
             and not parsed.password
+        )
+    except ValueError:
+        return False
+
+
+def _valid_hostinger_storage_url(value: str) -> bool:
+    """Require the private storage bridge to use a credential-free HTTPS URL."""
+    candidate = value.strip()
+    if not candidate:
+        return False
+    try:
+        parsed = urlsplit(candidate)
+        return bool(
+            parsed.scheme == "https"
+            and parsed.hostname
+            and (parsed.port is None or 1 <= parsed.port <= 65535)
+            and parsed.path.rstrip("/") == "/eaa-storage/api/index.php"
+            and not parsed.username
+            and not parsed.password
+            and not parsed.query
+            and not parsed.fragment
+            and not any(character.isspace() for character in parsed.netloc)
         )
     except ValueError:
         return False
@@ -126,7 +149,19 @@ def _configuration_status() -> tuple[list[str], list[str]]:
     details: list[str] = []
 
     for group, names in REQUIRED_ENV_GROUPS.items():
-        if group == "scheduled_scan_worker":
+        if group == "hostinger_private_storage":
+            storage_url_ready = _valid_hostinger_storage_url(
+                os.getenv("HOSTINGER_STORAGE_BASE_URL", "")
+            )
+            storage_secret_ready = len(
+                os.getenv("HOSTINGER_STORAGE_HMAC_SECRET", "").encode("utf-8")
+            ) >= 32
+            ready = storage_url_ready and storage_secret_ready
+            if not storage_url_ready:
+                details.append("HOSTINGER_STORAGE_BASE_URL must be a credential-free HTTPS URL without a query or fragment")
+            if not storage_secret_ready:
+                details.append("HOSTINGER_STORAGE_HMAC_SECRET must contain at least 32 bytes")
+        elif group == "scheduled_scan_worker":
             worker_url_ready = _valid_scan_worker_url(os.getenv("SCAN_WORKER_URL", ""))
             # The scheduled GitHub Actions workflow injects CRON_SECRET.
             # SCAN_WORKER_TOKEN is accepted by direct API invocations only.

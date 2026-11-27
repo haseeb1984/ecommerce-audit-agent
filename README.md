@@ -1,77 +1,61 @@
 # Ecommerce Audit Agent
 
-An AI-assisted ecommerce website audit platform built around a Python API and browser-based audit worker. It evaluates public storefronts and produces structured findings across technical SEO, accessibility, performance, crawlability, and conversion/user-experience areas, with customer-facing reports and agency/admin workflows.
+AI-assisted ecommerce audit SaaS for store owners and agencies. The platform performs bounded, evidence-backed checks on authorized public storefronts and returns structured findings and PDF reports.
 
-## Technology and runtime
+## Architecture at a glance
 
-- Python API: FastAPI (project entrypoint configured as `main:app`).
-- Browser audit worker: Python dependencies in `browser-worker/requirements.txt`.
-- Main dependencies: `requirements.txt`, with source inputs in `requirements.in` and development dependency manifests.
-- Persistence/integrations: PostgreSQL and Hostinger-compatible database integration paths are present in project documentation/source.
-- Reporting: generated audit reports including PDF output.
-- Authentication/licensing: API-key/license and quota-oriented workflows.
+- **API:** Python / FastAPI (entrypoint main:app).
+- **Portals:** static HTML, CSS and JavaScript.
+- **Browser worker:** separate Python / Playwright service.
+- **Hostinger MySQL:** operational SaaS/customer data, website inventory, WordPress operational metadata, scan batches/jobs and queue state.
+- **Supabase PostgreSQL:** canonical licensing, audit-engine and billing/webhook state.
+- **Hostinger private storage:** generated PDF reports, customer logos and private customer files.
+- **WordPress customer plugin:** wordpress-plugin/ecommerce-audit-agent/.
+- **Public marketing theme:** wordpress-theme/ecommerce-audit-agent/.
 
-## Capabilities
+These database and storage boundaries are deliberate. Do not use cross-database foreign keys or one SQL query that joins/unions Hostinger and Supabase tables. See the approved architecture in docs/architecture-source-of-truth.md.
 
-- Website/storefront audit orchestration.
-- Browser-driven page inspection.
-- Technical SEO and crawlability checks.
-- Accessibility checks.
-- Performance diagnostics.
-- Conversion and usability observations.
-- Structured audit findings and recommendations.
-- Customer, agency, and admin portal workflows.
-- License/API-key validation and usage quota controls.
-- PDF report generation and audit persistence.
-- Security-conscious logging and credential redaction.
+## Audit flow
 
-## Architecture
+1. The API validates account/license ownership, package entitlements and quota.
+2. Scan batches and jobs are persisted in Hostinger MySQL.
+3. The worker performs bounded, SSRF-aware inspection and records evidence/check outcomes.
+4. The audit engine and licensing boundary retain canonical state in Supabase PostgreSQL.
+5. Structured findings are assembled into a PDF; screenshots are embedded from memory, not stored separately.
+6. Reports and logos use Hostinger private storage with authorization enforced by the API.
 
-```mermaid
-flowchart TB
-  User[Customer / Agency / Admin] --> UI[Web portal / API client]
-  UI --> Auth[Authentication, license and quota checks]
-  Auth --> API[FastAPI application]
-  API --> Job[Audit orchestration]
-  Job --> Browser[Browser audit worker]
-  Browser --> Site[Target ecommerce website]
-  Browser --> Checks[SEO / Accessibility / Performance / UX checks]
-  Checks --> Findings[Normalized findings and recommendations]
-  Findings --> DB[(PostgreSQL / configured persistence)]
-  Findings --> Report[PDF / structured report generator]
-  Report --> UI
-  Admin[Admin operations] --> API
-```
+## Install and verify
 
-## Typical audit flow
+Use Python 3.12 as in CI.
 
-1. Customer or agency submits an authorized public website URL.
-2. API validates identity/license and applicable usage quota.
-3. Audit orchestration dispatches browser inspection.
-4. Browser worker visits relevant pages and gathers technical evidence.
-5. Audit checks classify findings by category and severity.
-6. Findings are persisted and converted into actionable recommendations.
-7. Customer/agency views results and can export the report.
+    python -m pip install --require-hashes -r requirements.txt
+    python -m pip install --require-hashes -r requirements-dev.txt
+    python -m pytest -q
 
-## Repository map
+Install browser-worker/requirements.txt separately in the browser-worker runtime. CI also runs the dependency audit, Python compilation, PHP lint for the plugin/theme/storage bridge, embedded frontend JavaScript syntax checks and synthetic PDF generation.
 
-- `main.py` — configured FastAPI entrypoint.
-- `browser-worker/` — browser automation worker and its dependencies.
-- `requirements.txt`, `requirements.in`, `pyproject.toml` — Python dependency/build configuration.
-- `docs/` — product, deployment, verification, and production-readiness material.
-- Portal and service modules — account, audit, reporting, and administration workflows.
+## Marketing contact configuration
 
-## Setup
+The public WordPress theme posts signed requests to POST /api/v1/public/contact. To enable delivery, configure:
 
-Use the repository's Python version and install the pinned runtime dependencies from `requirements.txt`. Install browser-worker dependencies separately where required. Configure database, authentication/licensing, and external service credentials using environment variables; never commit secrets. See deployment and operations documents in `docs/` before deploying.
+- EAA_CONTACT_FORM_SECRET in Vercel and the same value in WordPress → Appearance → EAA Website Settings.
+- EAA_CONTACT_TO_EMAIL in Vercel.
+- Existing platform SMTP environment variables.
 
-## Test and verification evidence
+The public contact email field is display-only; leaving it blank hides it and must not expose the WordPress admin email. The contact API sends through platform SMTP with the visitor's address as Reply-To. Customer-specific SMTP is not part of this implementation.
 
-The repository contains a substantial automated test suite and a historical verification snapshot. One reviewed snapshot recorded 547 passed and 33 failed tests; this is dated evidence from that snapshot, not a fresh test run and not a statement about the current deployed state. Run the current test commands from the repository's test/development documentation before release.
+## Documentation
 
-## Operational notes
+- docs/PROJECT_CONTEXT.md — project context and architecture summary.
+- docs/FEATURES.md — implemented feature register and explicit scope boundaries.
+- docs/GAPS.md — review gaps and verification register.
+- docs/ROADMAP.md — release acceptance order.
+- docs/DEPENDENCIES.md — dependency map.
+- docs/architecture-source-of-truth.md — approved database/storage architecture.
+- docs/product-scope-and-package-contract.md — product and package contract.
+- docs/saas-implementation-master-checklist.md — implementation checklist.
+- docs/DEPLOYMENT_OPERATIONS_RUNBOOK.md — deployment operations.
 
-- Audit only websites the operator/customer is authorized to assess.
-- Browser navigation should enforce SSRF protections and block private/internal network targets.
-- Keep credentials and license secrets out of logs.
-- Distinguish measured findings from inferred recommendations.
+## Important release boundary
+
+Repository CI does not prove production migrations, live SMTP delivery, live provider acceptance, DNS changes or deployment. Apply migrations and deploy only through the approved operational process after backup and explicit approval. Do not merge this working branch to main without approval.

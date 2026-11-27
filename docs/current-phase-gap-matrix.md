@@ -1,8 +1,20 @@
-# Current Phase Gap Matrix — Ecommerce Audit Agent
-
-**Baseline reviewed:** `main` at `9a4ca72492c27e82d18d5de5b941d5efce730a7e` after the 2026-11-08 admin billing, customer-directory, and agency scalability work. Re-run CI and real-result acceptance before release claims.  
+**Active implementation branch:** `feat/hostinger-private-report-storage` (PR #364, draft/unmerged). The latest code verification is run #45895544371 on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`; subsequent commits only update documentation. The latest code verification is run #45895544371 on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`; two later commits only update documentation.  
 **Purpose:** Record evidence-backed next steps against the existing agreed scope. This is a planning/acceptance document; it does not claim a live production test was run.  
 **Operational constraint:** This phase changes application code and documentation only; it does not deploy, alter infrastructure, or run live customer-site audits.
+
+## Latest verification evidence — 2026-11-26
+- CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on code commit `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped.
+- The CI-discovered report-retention cleanup index mismatch and legacy test source-boundary failure were corrected. Follow-up uninstall hardening (accept only exact known already-disconnected 404 responses) and strict WordPress DNS-label validation are included in the passing suite.
+- Admin/customer lifecycle source review confirmed expiry-aware effective access projection, durable lifecycle outbox synchronization, authenticated admin scan operations, bounded pagination, and tenant-scoped session/API-key operations. This is source review, not live database-backed acceptance.
+- Follow-up commits after the verified code commit update documentation only; no workflow was triggered for those documentation-only updates.
+
+## Read-only deployment configuration findings — 2026-11-24
+
+- Vercel environment-variable names were inspected without decrypting or reading secret values. The project inventory contains 21 names. Present names include `DATABASE_URL`, Paddle, SMTP, `ADMIN_API_KEY`, `GROQ_API_KEY` and `GOOGLE_PAGESPEED_API_KEY`.
+- Absent required Vercel names: `HOSTINGER_DATABASE_URL`, `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`, `ACCOUNT_AUTH_SECRET`, `CRON_SECRET`, `PUBLIC_APP_URL`, `EAA_CONTACT_FORM_SECRET`, and `EAA_CONTACT_TO_EMAIL`. `REPORT_RETENTION_DAYS` is absent but defaults to seven days.
+- The readiness script accepts `GOOGLE_PAGESPEED_API_KEY` as an alternative to `PAGE_SPEED_API_KEY`, so the listed Google key satisfies the name check.
+- GitHub Actions run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) confirms that GitHub repository variable `SCAN_WORKER_URL` and secret `CRON_SECRET` are missing. The worker was not invoked.
+- These are configuration blockers, not source-code defects. No secrets were read or changed, no database was contacted, and no deployment or migration was performed.
 
 ## Status meanings
 
@@ -950,3 +962,20 @@ Validation result before fixes: dependency installation and dependency vulnerabi
 - The migration apply command now returns an unsuccessful process status when any source rows remain unmapped, account emails cannot fit the destination schema, support-note ownership is ambiguous/unmapped, or existing target rows have field mismatches.
 - Already committed 500-row batches remain safely persisted and source records remain untouched; the nonzero result explicitly means the migration is partial and requires reconciliation before cutover, not that the operation rolled back.
 - Added blocker aggregation and CLI exit-code regression contracts. No live migration is run by this change.
+
+
+## Latest preview database readiness result — 2026-11-24
+
+- CI run [#45377765113](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45377765113) passed at `13e64fa601043356e24320337cc01ef0fed552eb`: **1,524 passed, 216 warnings**; real-public-site PDF screenshot smoke tests were skipped.
+- Preview deployment [`dpl_2awdAvBQ4JdCDE7wveLNTEDrPSxU`](https://ecommerce-audit-agent-m3hzitjn8-junction-tec.vercel.app) is READY. Its read-only `/health-check` response is HTTP 503: Supabase PostgreSQL is reachable but schema readiness is false because `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox` are absent; Hostinger MySQL is disconnected/unconfigured.
+- The two absent PostgreSQL tables are created by existing migrations `20261106_billing_mirror_sync_outbox.sql` and `20261105_customer_lifecycle_sync_outbox.sql`. PR #364 also lists `20261121_billing_mirror_recovery.sql` in its PostgreSQL rollout sequence. Do not apply these PostgreSQL migrations to Hostinger MySQL.
+- This is evidence from the preview's configured connections only. No migration, database write, secret read, Hostinger deployment, or production change was performed. The Hostinger integration is not available in this session, so operational DB connectivity and private-storage bridge acceptance remain blocked.
+- Next step is staging-first: confirm database targets and backup, apply the documented PostgreSQL and Hostinger migration sets to their respective engines with owner authorization, configure missing environment names, then re-run health and signed-storage lifecycle acceptance. No production migration or release without explicit approval.
+
+
+## Report retention retry fairness — CI verification — 2026-11-26
+
+- CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on PR head `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped by workflow conditions.
+- The CI-discovered fresh-schema index mismatch and legacy cleanup test boundary were corrected. Fresh Hostinger baseline and conditional MySQL upgrade migration now include the cleanup timestamp index; regression test source boundary is corrected.
+- Admin/customer lifecycle source review confirmed canonical-license-first lifecycle synchronization, expiry-aware effective access projection, authenticated admin scan operations, bounded pagination, and tenant-scoped API-key/session operations. This is source review, not database-backed staging acceptance.
+- Staging schema and private-storage lifecycle verification remain pending. No migrations, database writes, deployment, customer data deletion, or production changes were performed.

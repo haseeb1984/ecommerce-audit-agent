@@ -4,6 +4,7 @@ import hmac
 import json
 import time
 import threading
+import secrets
 from pathlib import Path
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,8 @@ from sqlalchemy import func, select
 
 import main
 from database import AsyncSessionLocal
+from hostinger_database import HostingerAsyncSessionLocal
+from hostinger_models import CustomerReportFile, CustomerBrandingLogoCleanup, PlatformSetting
 from models import APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSAdminActionLog, SoftwareLicense
 from ecommerce_agent import ContactInfo, LeadDossier, PersonalizedPitch, StoreAuditMetrics
 from audit_checks import AuditCheckResult
@@ -65,6 +68,32 @@ def make_dossier(domain, email="", source="web_audit"):
             email_body="I noticed an opportunity to improve your mobile experience.",
         ),
     )
+
+
+def mock_hostinger_report_storage(monkeypatch):
+    stored_files = {}
+
+    def fake_upload(payload):
+        key = f"reports/{secrets.token_hex(32)}.pdf"
+        content = bytes(payload)
+        stored_files[key] = content
+        return SimpleNamespace(
+            storage_key=key,
+            sha256=hashlib.sha256(content).hexdigest(),
+            byte_size=len(content),
+            mime_type="application/pdf",
+        )
+
+    def fake_download(storage_key, expected_sha256=None):
+        content = stored_files[storage_key]
+        if expected_sha256:
+            assert hashlib.sha256(content).hexdigest() == expected_sha256
+        return content
+
+    monkeypatch.setattr(main, "storage_configured", lambda: True)
+    monkeypatch.setattr(main, "upload_report", fake_upload)
+    monkeypatch.setattr(main, "download_file", fake_download)
+    return stored_files
 
 
 @pytest.fixture
@@ -673,6 +702,7 @@ async def test_report_history_is_scoped_to_authenticated_license(client, monkeyp
 
 @pytest.mark.asyncio
 async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_in_email(client, monkeypatch):
+    mock_hostinger_report_storage(monkeypatch)
     owner_key = "journey-owner-license"
     other_key = "journey-other-license"
     owner_id = await create_license(key=owner_key, quota=3)
@@ -818,8 +848,17 @@ async def test_licensed_comprehensive_audit_saved_pdf_history_ownership_and_opt_
         saved = (await db.execute(
             select(AuditReport).where(AuditReport.id == report_id, AuditReport.license_id == owner_id)
         )).scalar_one()
-        assert saved.pdf_bytes == b"%PDF-journey-test"
+        assert saved.pdf_bytes is None
+        assert saved.storage_key is None
         assert await db.scalar(select(func.count(AuditQuotaReservation.id))) == 0
+
+    async with HostingerAsyncSessionLocal() as operational_db:
+        stored_file = (await operational_db.execute(select(CustomerReportFile).where(
+            CustomerReportFile.report_id == report_id,
+            CustomerReportFile.license_key == owner_key,
+        ))).scalar_one()
+        assert stored_file.pdf_sha256 == hashlib.sha256(b"%PDF-journey-test").hexdigest()
+        assert stored_file.byte_size == len(b"%PDF-journey-test")
 
 
 @pytest.mark.asyncio
@@ -877,6 +916,51 @@ async def test_report_history_requires_authentication(client):
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["pragma"] == "no-cache"
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_admin_report_retention_policy_is_persisted_in_hostinger_mysql(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", "test-report-retention-key")
+    monkeypatch.setenv("REPORT_RETENTION_DAYS", "9")
+    headers = {"X-Admin-Key": "test-report-retention-key"}
+
+    unauthorized = await client.get("/api/v1/admin/settings/report-retention")
+    assert unauthorized.status_code == 401
+
+    initial = await client.get("/api/v1/admin/settings/report-retention", headers=headers)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["retention_days"] == 9
+    assert initial.json()["source"] == "environment_default"
+    assert initial.json()["applies_to"] == "new_reports"
+    assert initial.headers["cache-control"] == "no-store, private"
+
+    invalid = await client.put(
+        "/api/v1/admin/settings/report-retention?days=0", headers=headers
+    )
+    assert invalid.status_code == 422
+
+    saved = await client.put(
+        "/api/v1/admin/settings/report-retention?days=30", headers=headers
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["retention_days"] == 30
+    assert saved.json()["source"] == "hostinger_mysql"
+
+    async with HostingerAsyncSessionLocal() as operational_db:
+        setting = (await operational_db.execute(
+            select(PlatformSetting).where(
+                PlatformSetting.setting_key == "report_retention_days"
+            )
+        )).scalar_one()
+        assert setting.setting_value == "30"
+
+        created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert main._report_file_expiry(created_at, 30) == created_at + timedelta(days=30)
+
+    reloaded = await client.get("/api/v1/admin/settings/report-retention", headers=headers)
+    assert reloaded.status_code == 200
+    assert reloaded.json()["retention_days"] == 30
+    assert reloaded.json()["source"] == "hostinger_mysql"
 
 
 @pytest.mark.asyncio
@@ -1913,6 +1997,7 @@ async def test_admin_package_lifecycle_create_update_and_soft_deactivate(client,
 
 @pytest.mark.asyncio
 async def test_pagespeed_provider_failure_still_saves_partial_audit_without_fake_metrics(client, monkeypatch):
+    mock_hostinger_report_storage(monkeypatch)
     license_key = "partial-audit-pagespeed-failure"
     await create_license(key=license_key, quota=2)
 
@@ -2164,7 +2249,7 @@ async def test_saved_report_evidence_is_allowlisted_redacted_and_email_is_privat
     assert outcomes.json()["total"] == 1
     assert outcomes.json()["outcome_summary"]["denominator"] == 1
 
-    async def fake_send(*args, **kwargs):
+    def fake_send(*args, **kwargs):
         return None
 
     monkeypatch.setattr(main, "_send_pdf_email", fake_send)
@@ -3429,7 +3514,7 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
         )
 
     update = {"event_id": "evt_update_pro", "event_type": "subscription.updated",
-        "data": {"id": "sub_update123", "customer_id": "ctm_update123",
+        "data": {"id": "sub_update123", "customer_id": "ctm_update123", "status": "active",
         "items": [{"price": {"id": "pri_updatepro123"}, "quantity": 1}]}}
     changed = await send(update)
     assert changed.status_code == 200, changed.text
@@ -3442,10 +3527,10 @@ async def test_paddle_subscription_update_reconciles_known_plan_and_ignores_unkn
         before_unknown = (license_obj.tier, license_obj.max_monthly_audits)
 
     unknown = {"event_id": "evt_update_unknown", "event_type": "subscription.updated",
-        "data": {"id": "sub_update123", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
+        "data": {"id": "sub_update123", "status": "active", "items": [{"price": {"id": "pri_unconfigured999"}, "quantity": 1}]}}
     ignored = await send(unknown)
     assert ignored.status_code == 200, ignored.text
-    assert ignored.json()["status"] == "unmapped_price_ignored"
+    assert ignored.json()["status"] == "subscription_active_unmapped_price"
     async with AsyncSessionLocal() as db:
         license_obj = (await db.execute(select(SoftwareLicense).where(
             SoftwareLicense.id == license_id))).scalar_one()
@@ -3611,7 +3696,7 @@ async def test_paddle_subscription_update_refreshes_billing_period_end(client, m
         await db.commit()
 
     event = {"event_id": "evt_period_update", "event_type": "subscription.updated",
-        "data": {"id": "sub_period_update123",
+        "data": {"id": "sub_period_update123", "status": "active",
             "items": [{"price": {"id": "pri_periodupdatepro123"}, "quantity": 1}],
             "current_billing_period": {"starts_at": "2026-10-01T00:00:00Z",
                 "ends_at": "2026-11-15T00:00:00Z"}}}
@@ -4316,3 +4401,259 @@ async def test_paddle_older_subscription_resume_cannot_override_newer_pause(clie
         assert pause_event.updated_at.replace(tzinfo=timezone.utc) == datetime(
             2026, 11, 7, 10, 0, tzinfo=timezone.utc
         )
+
+
+@pytest.mark.asyncio
+async def test_customer_brand_logo_cleanup_queue_retries_storage_failures(client, monkeypatch):
+    """A failed private-object delete remains durable and is retried by the cron endpoint."""
+    monkeypatch.setenv("CRON_SECRET", "brand-logo-cleanup-test-secret")
+    storage_key = "logos/detached-customer-logo-test.png"
+    async with HostingerAsyncSessionLocal() as operational_db:
+        operational_db.add(CustomerBrandingLogoCleanup(
+            id="brand-logo-cleanup-retry-test",
+            license_key="brand-logo-cleanup-license",
+            storage_key=storage_key,
+            attempts=0,
+            created_at=datetime.now(timezone.utc),
+        ))
+        await operational_db.commit()
+
+    attempts = {"count": 0}
+    def flaky_delete(key):
+        assert key == storage_key
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise main.HostingerStorageError("temporary storage outage")
+
+    monkeypatch.setattr(main, "delete_file", flaky_delete)
+    headers = {"Authorization": "Bearer brand-logo-cleanup-test-secret"}
+    first = await client.get("/api/v1/internal/report-retention/cleanup", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["logo_cleanup"] == {"processed": 1, "deleted": 0, "failed": 1}
+    async with HostingerAsyncSessionLocal() as operational_db:
+        pending = await operational_db.get(CustomerBrandingLogoCleanup, "brand-logo-cleanup-retry-test")
+        assert pending is not None
+        assert pending.attempts == 1
+        assert pending.last_error == "HostingerStorageError"
+
+    def successful_delete(key):
+        assert key == storage_key
+        attempts["count"] += 1
+
+    monkeypatch.setattr(main, "delete_file", successful_delete)
+    second = await client.get("/api/v1/internal/report-retention/cleanup", headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json()["logo_cleanup"] == {"processed": 1, "deleted": 1, "failed": 0}
+    async with HostingerAsyncSessionLocal() as operational_db:
+        assert await operational_db.get(CustomerBrandingLogoCleanup, "brand-logo-cleanup-retry-test") is None
+
+
+
+@pytest.mark.asyncio
+async def test_customer_branding_logo_api_lifecycle_is_private_and_license_scoped(client, monkeypatch):
+    owner_id = await create_license(key="branding-logo-api-owner", tier="business")
+    other_id = await create_license(key="branding-logo-api-other", tier="business")
+    async with AsyncSessionLocal() as db:
+        owner = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == owner_id))).scalar_one()
+        other = (await db.execute(select(SoftwareLicense).where(SoftwareLicense.id == other_id))).scalar_one()
+
+    uploaded = []
+    def fake_upload_logo(payload, mime_type):
+        index = len(uploaded) + 1
+        key = f"logos/{index:064x}.png"
+        uploaded.append((key, bytes(payload), mime_type))
+        return SimpleNamespace(storage_key=key, sha256=hashlib.sha256(payload).hexdigest(),
+                               byte_size=len(payload), mime_type=mime_type)
+    monkeypatch.setattr(main, "upload_logo", fake_upload_logo)
+    monkeypatch.setattr(main, "download_file", lambda key, expected=None: next(
+        item[1] for item in uploaded if item[0] == key
+    ))
+    main.app.dependency_overrides[main.verify_customer_account] = lambda: owner
+    try:
+        first = await client.post(
+            "/api/v1/account/branding/logo",
+            content=b"fake-png-bytes",
+            headers={"Content-Type": "image/png"},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["logo_stored"] is True
+
+        second = await client.post(
+            "/api/v1/account/branding/logo",
+            content=b"replacement-png",
+            headers={"Content-Type": "image/png"},
+        )
+        assert second.status_code == 200, second.text
+
+        preview = await client.get("/api/v1/account/branding/logo")
+        assert preview.status_code == 200
+        assert preview.content == b"replacement-png"
+        assert preview.headers["cache-control"] == "no-store, private"
+
+        async with HostingerAsyncSessionLocal() as operational_db:
+            queued = (await operational_db.execute(select(CustomerBrandingLogoCleanup))).scalars().all()
+            assert len(queued) == 1
+            assert queued[0].storage_key == uploaded[0][0]
+
+        main.app.dependency_overrides[main.verify_customer_account] = lambda: other
+        foreign = await client.get("/api/v1/account/branding/logo")
+        assert foreign.status_code == 404
+
+        main.app.dependency_overrides[main.verify_customer_account] = lambda: owner
+        removed = await client.delete("/api/v1/account/branding/logo")
+        assert removed.status_code == 200
+        assert removed.json()["logo_removed"] is True
+        async with HostingerAsyncSessionLocal() as operational_db:
+            queued = (await operational_db.execute(
+                select(CustomerBrandingLogoCleanup).order_by(CustomerBrandingLogoCleanup.created_at.asc())
+            )).scalars().all()
+            assert {row.storage_key for row in queued} == {uploaded[0][0], uploaded[1][0]}
+    finally:
+        main.app.dependency_overrides.pop(main.verify_customer_account, None)
+
+
+
+@pytest.mark.asyncio
+async def test_paddle_active_subscription_update_reactivates_expired_license_projection(client, monkeypatch):
+    from models import CustomerLifecycleSyncOutbox
+
+    secret = "paddle-expired-renewal-projection-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    license_id = await create_license(
+        key="expired-renewal-projection-license",
+        quota=100,
+        active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=2),
+    )
+    async with AsyncSessionLocal() as db:
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_expired_renewal_projection",
+            status="provisioned",
+            license_id=license_id,
+            recipient_email="expired-renewal@example.com",
+            subscription_id="sub_expired_renewal_projection",
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        ))
+        await db.commit()
+
+    event = {
+        "event_id": "evt_expired_renewal_projection",
+        "event_type": "subscription.updated",
+        "data": {
+            "id": "sub_expired_renewal_projection",
+            "status": "active",
+            "items": [],
+            "current_billing_period": {
+                "starts_at": datetime.now(timezone.utc).isoformat(),
+                "ends_at": (datetime.now(timezone.utc) + timedelta(days=28)).isoformat(),
+            },
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+    )
+
+    assert response.status_code == 200, response.text
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        assert license_obj.expires_at > datetime.now(timezone.utc)
+        queued = (await db.execute(
+            select(CustomerLifecycleSyncOutbox).where(
+                CustomerLifecycleSyncOutbox.license_key == license_obj.license_key,
+                CustomerLifecycleSyncOutbox.action == "reactivate",
+                CustomerLifecycleSyncOutbox.status == "pending",
+            )
+        )).scalars().all()
+        assert len(queued) == 1
+
+
+@pytest.mark.asyncio
+async def test_paddle_completed_renewal_reactivates_expired_license_projection(client, monkeypatch):
+    from sqlalchemy import text
+    from models import CustomerLifecycleSyncOutbox
+
+    secret = "paddle-completed-renewal-projection-secret"
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PADDLE_PRICE_ID_STARTER", "pri_expiredrenewalstarter123")
+    monkeypatch.setenv("LICENSE_MONTHLY_AUDITS_STARTER", "100")
+    license_id = await create_license(
+        key="completed-expired-renewal-projection-license",
+        quota=100,
+        active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=2),
+        tier="starter",
+    )
+    async with AsyncSessionLocal() as db:
+        await main._ensure_admin_tables(db)
+        await db.execute(text("""
+            INSERT INTO saas_plan_packages
+                (tier, label, monthly_audit_allowance, max_concurrent_audits, paddle_price_id, is_active)
+            VALUES ('starter', 'Test Starter', 100, 2, 'pri_expiredrenewalstarter123', TRUE)
+            ON CONFLICT (tier) DO UPDATE SET
+                paddle_price_id = EXCLUDED.paddle_price_id,
+                monthly_audit_allowance = EXCLUDED.monthly_audit_allowance,
+                is_active = TRUE
+        """))
+        db.add(PaymentWebhookEvent(
+            event_id="evt_seed_completed_expired_renewal",
+            status="delivered",
+            license_id=license_id,
+            recipient_email="completed-renewal@example.com",
+            subscription_id="sub_completed_expired_renewal",
+            paddle_customer_id="ctm_completed_expired_renewal",
+        ))
+        await db.commit()
+
+    event = {
+        "event_id": "evt_completed_expired_renewal",
+        "event_type": "transaction.completed",
+        "data": {
+            "id": "txn_completed_expired_renewal",
+            "status": "completed",
+            "subscription_id": "sub_completed_expired_renewal",
+            "customer_id": "ctm_completed_expired_renewal",
+            "customer": {"email": "completed-renewal@example.com"},
+            "items": [{"price": {"id": "pri_expiredrenewalstarter123"}, "quantity": 1}],
+            "billing_period": {
+                "starts_at": datetime.now(timezone.utc).isoformat(),
+                "ends_at": (datetime.now(timezone.utc) + timedelta(days=28)).isoformat(),
+            },
+        },
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), str(timestamp).encode() + b":" + body, hashlib.sha256
+    ).hexdigest()
+    response = await client.post(
+        "/api/v1/billing/paddle-webhook",
+        content=body,
+        headers={"Paddle-Signature": f"ts={timestamp};h1={signature}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "subscription_renewed"
+    async with AsyncSessionLocal() as db:
+        license_obj = (await db.execute(
+            select(SoftwareLicense).where(SoftwareLicense.id == license_id)
+        )).scalar_one()
+        assert license_obj.is_active is True
+        assert license_obj.expires_at > datetime.now(timezone.utc)
+        queued = (await db.execute(
+            select(CustomerLifecycleSyncOutbox).where(
+                CustomerLifecycleSyncOutbox.license_key == license_obj.license_key,
+                CustomerLifecycleSyncOutbox.action == "reactivate",
+                CustomerLifecycleSyncOutbox.status == "pending",
+            )
+        )).scalars().all()
+        assert len(queued) == 1

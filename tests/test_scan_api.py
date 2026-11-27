@@ -502,5 +502,41 @@ def test_customer_scan_pagination_offsets_are_bounded():
         get_customer_website,
     ):
         offset = inspect.signature(handler).parameters["offset"].default
-        assert offset.ge == 0
-        assert offset.le == 1_000_000
+        metadata = getattr(offset, "metadata", ())
+        bounds = {
+            key: value
+            for item in metadata
+            for key, value in (
+                ("ge", getattr(item, "ge", None)),
+                ("le", getattr(item, "le", None)),
+            )
+            if value is not None
+        }
+        assert bounds.get("ge") == 0
+        assert bounds.get("le") == 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_customer_website_reactivation_is_license_scoped():
+    from scan_api import reactivate_customer_website
+
+    license_obj = SimpleNamespace(license_key="license-customer-a")
+    website = SimpleNamespace(
+        id="website-a", license_key="license-customer-a", status="archived",
+    )
+    db = WebsiteInventorySession(scalar_rows=[website])
+    response = Response()
+
+    result = await reactivate_customer_website(
+        "website-a", response, license_obj=license_obj, db=db,
+    )
+
+    statement = db.scalar_statements[0]
+    assert "license_key" in str(statement).lower()
+    assert "license-customer-a" in statement.compile().params.values()
+    assert website.status == "active"
+    assert result["status"] == "active"
+    assert db.committed
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["pragma"] == "no-cache"
+

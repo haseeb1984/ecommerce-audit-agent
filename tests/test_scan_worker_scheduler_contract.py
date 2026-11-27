@@ -29,3 +29,31 @@ def test_scheduled_worker_has_visible_configuration_validation_and_bounded_retri
     assert '--header "Authorization: Bearer $CRON_SECRET"' in workflow
     # The scheduler must not silently skip when its endpoint variable is absent.
     assert "if: ${{ vars.SCAN_WORKER_URL" not in workflow
+
+
+
+def test_scan_worker_rechecks_license_under_lock_before_first_quota_commit():
+    worker = (ROOT / "scan_worker.py").read_text(encoding="utf-8")
+
+    audit_complete = worker.index("result = await _run_audit_with_lease_guard")
+    revalidation = worker.index("select(SoftwareLicense)", audit_complete)
+    row_lock = worker.index(".with_for_update()", revalidation)
+    first_lead_insert = worker.index("lead = AuditLead(", row_lock)
+    entitlement_check = worker.index("LICENSE_INACTIVE_OR_EXPIRED", row_lock)
+
+    assert audit_complete < revalidation < row_lock < entitlement_check < first_lead_insert
+    assert "if existing_lead is None:" in worker[row_lock:first_lead_insert]
+
+
+def test_scan_worker_heartbeat_renews_quota_reservation_and_stops_on_loss():
+    worker = (ROOT / "scan_worker.py").read_text(encoding="utf-8")
+    quota = (ROOT / "quota.py").read_text(encoding="utf-8")
+
+    heartbeat_start = worker.index("async def _heartbeat():")
+    queue_renewal = worker.index("renew_scan_job_lease(", heartbeat_start)
+    reservation_renewal = worker.index("renew_audit_reservation(", queue_renewal)
+    stop_signal = worker.index("lease_unconfirmed.set()", reservation_renewal)
+
+    assert heartbeat_start < queue_renewal < reservation_renewal < stop_signal
+    assert "AuditQuotaReservation.expires_at > now" in quota
+    assert ".values(expires_at=now + ttl)" in quota

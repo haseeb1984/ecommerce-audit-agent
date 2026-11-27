@@ -61,8 +61,9 @@
   <div><label for="brandName">Brand name</label><input id="brandName" type="text" maxlength="100" placeholder="Your agency name"></div>
   <div><label for="brandColor">Primary brand color</label><input id="brandColor" type="color" value="#155a8a" style="width:100%;min-height:44px"></div>
 </div>
-<label for="brandLogoUrl">Logo URL (HTTPS)</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.png">
-<div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
+<label for="brandLogoFile">Upload logo (PNG, JPEG, or WebP; max 5 MB)</label><input id="brandLogoFile" type="file" accept="image/png,image/jpeg,image/webp">
+<label for="brandLogoUrl">Or use an external HTTPS logo URL</label><input id="brandLogoUrl" type="url" maxlength="2048" placeholder="https://example.com/logo.png">
+<div class="report-actions" style="margin-top:12px"><button id="saveBranding" type="button" disabled>Save branding</button><button id="uploadBrandLogo" class="secondary" type="button" disabled>Upload logo</button><button id="removeBrandLogo" class="secondary" type="button" disabled>Remove logo</button><button id="refreshBranding" class="secondary" type="button" disabled>Refresh branding</button></div>
 <div id="brandingStatus" class="status" role="status" aria-live="polite">Connect your account to load white-label settings.</div>
 </section>
 <section class="panel" id="agencyPanel" aria-labelledby="agencyHeading" hidden>
@@ -174,6 +175,7 @@
   let pendingBulkScanFingerprint = "";
   let pendingBulkScanRequestId = "";
   let sessionToken = "";
+  let brandLogoObjectUrl = "";
   let headerName = "X-License-Key";
   // Invalidate in-flight authenticated requests whenever the connected identity changes
   // or the user disconnects, so late responses cannot repopulate another account's view.
@@ -225,12 +227,16 @@
     const node = $(id); node.textContent = message; node.className = "status" + (kind ? " " + kind : "");
   };
   function applyBranding(branding) {
+    if (!branding?.logo_stored && brandLogoObjectUrl) {
+      URL.revokeObjectURL(brandLogoObjectUrl);
+      brandLogoObjectUrl = "";
+    }
     const color = /^#[0-9a-fA-F]{6}$/.test(branding?.primary_color || "") ? branding.primary_color : "#155a8a";
     const name = typeof branding?.brand_name === "string" && branding.brand_name.trim() ? branding.brand_name.trim() : "E-commerce Audit Dashboard";
     document.documentElement.style.setProperty("--brand-primary", color);
     $("portalBrandName").textContent = name;
     const logo = $("brandLogo");
-    const logoUrl = typeof branding?.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(branding.logo_url) ? branding.logo_url : "";
+    const logoUrl = !branding?.logo_stored && typeof branding?.logo_url === "string" && /^https:\/\/[^\s]+$/i.test(branding.logo_url) ? branding.logo_url : "";
     logo.alt = name + " logo";
     logo.onerror = () => { logo.removeAttribute("src"); logo.style.display = "none"; };
     if (logoUrl) { logo.src = logoUrl; logo.style.display = "block"; }
@@ -238,7 +244,7 @@
   }
   const authHeaders = () => sessionToken ? {Authorization: "Bearer " + sessionToken} : ({[headerName]: credential});
   function setAccountControls(connected) {
-    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
+    for (const id of ["disconnectAccount", "saveProfile", "saveBranding", "uploadBrandLogo", "removeBrandLogo", "brandLogoFile", "refreshBranding", "createAgencyClient", "refreshAgencyClients", "inviteAgencyTeam", "refreshAgencyTeam", "loadMoreAgencyUsage", "loadMoreAgencyClients", "loadMoreAgencyTeam", "createApiKey", "refreshApiKeys", "openBillingPortal", "refreshBillingHistory", "generateWordPressLinkCode", "submitBulkScans", "refreshScanBatches"]) $(id).disabled = !connected;
     $("logoutOtherSessions").disabled = !connected || !sessionToken;
     $("logoutAllSessions").disabled = !connected || !sessionToken;
   }
@@ -756,9 +762,18 @@
     const response = await api("/api/v1/account/branding");
     const branding = await response.json();
     $("brandName").value = branding.brand_name || "";
-    $("brandLogoUrl").value = branding.logo_url || "";
+    $("brandLogoUrl").value = branding.logo_stored ? "" : (branding.logo_url || "");
     $("brandColor").value = /^#[0-9a-fA-F]{6}$/.test(branding.primary_color || "") ? branding.primary_color : "#155a8a";
     applyBranding(branding);
+    if (branding.logo_stored) {
+      const logoResponse = await api("/api/v1/account/branding/logo");
+      const logoBlob = await logoResponse.blob();
+      if (brandLogoObjectUrl) URL.revokeObjectURL(brandLogoObjectUrl);
+      brandLogoObjectUrl = URL.createObjectURL(logoBlob);
+      const logo = $("brandLogo");
+      logo.src = brandLogoObjectUrl;
+      logo.style.display = "block";
+    }
     setStatus("brandingStatus", branding.configured ? "Saved white-label settings loaded." : "No custom branding saved yet. Set your brand details and save.", "success");
     return branding;
   }
@@ -779,10 +794,40 @@
       });
       const saved = await response.json();
       $("brandName").value = saved.brand_name || brandName;
-      $("brandLogoUrl").value = saved.logo_url || "";
+      $("brandLogoUrl").value = saved.logo_stored ? "" : (saved.logo_url || "");
       $("brandColor").value = saved.primary_color || primaryColor;
-      applyBranding(saved);
+      await loadBranding();
       setStatus("brandingStatus", "White-label branding saved and applied to this portal.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message, "error");
+    } finally { button.disabled = !credential && !sessionToken; }
+  }
+  async function uploadBrandLogo() {
+    const file = $("brandLogoFile").files && $("brandLogoFile").files[0];
+    if (!file) { setStatus("brandingStatus", "Choose a PNG, JPEG, or WebP logo first.", "error"); return; }
+    if (file.size > 5 * 1024 * 1024) { setStatus("brandingStatus", "Logo must be 5 MB or smaller.", "error"); return; }
+    const button = $("uploadBrandLogo"); button.disabled = true;
+    try {
+      const response = await api("/api/v1/account/branding/logo", {
+        method: "POST", headers: {"Content-Type": file.type}, body: file
+      });
+      await response.json();
+      $("brandLogoFile").value = "";
+      $("brandLogoUrl").value = "";
+      await loadBranding();
+      setStatus("brandingStatus", "Logo uploaded to private storage and applied.", "success");
+    } catch (error) {
+      setStatus("brandingStatus", error.message, "error");
+    } finally { button.disabled = !credential && !sessionToken; }
+  }
+  async function removeBrandLogo() {
+    const button = $("removeBrandLogo"); button.disabled = true;
+    try {
+      await api("/api/v1/account/branding/logo", {method: "DELETE"});
+      $("brandLogoFile").value = "";
+      $("brandLogoUrl").value = "";
+      await loadBranding();
+      setStatus("brandingStatus", "Logo removed.", "success");
     } catch (error) {
       setStatus("brandingStatus", error.message, "error");
     } finally { button.disabled = !credential && !sessionToken; }
@@ -975,6 +1020,7 @@
             const websiteResponse = await api("/api/v1/account/agency/clients/" + encodeURIComponent(item.id) + "/website");
             website = await websiteResponse.json();
           }
+          if (requestVersion !== agencyClientRequestVersion || sessionVersion !== accountSessionVersion) return;
           if (website.connected) {
             const health = website.connection_health === "healthy" ? "Healthy heartbeat"
               : website.connection_health === "stale" ? "Heartbeat stale — check the WordPress plugin"
@@ -991,7 +1037,9 @@
         } catch (error) {
           websiteStatus.textContent = error.message;
         } finally {
-          refreshWebsite.disabled = false;
+          if (requestVersion === agencyClientRequestVersion && sessionVersion === accountSessionVersion) {
+            refreshWebsite.disabled = false;
+          }
         }
       }
       connectWebsite.addEventListener("click", async () => {
@@ -1521,6 +1569,16 @@
       const detail = document.createElement("small");
       detail.textContent = new Date(item.created_at).toLocaleString() + " · " + item.finding_count + " findings · report #" + item.id;
       meta.append(name, detail);
+      const expiry = document.createElement("small");
+      if (item.pdf_available && item.pdf_expires_at) {
+        const expiryDate = new Date(item.pdf_expires_at);
+        const remaining = Math.max(0, Number(item.pdf_days_remaining) || 0);
+        expiry.textContent = "PDF expires " + expiryDate.toLocaleString() + " · " + remaining + " day(s) remaining. Download and save it before expiry.";
+      } else {
+        expiry.textContent = "PDF expired or unavailable. Report summary and history remain available.";
+      }
+      expiry.className = "muted";
+      meta.append(expiry);
       const outcomeSummary = item.check_outcome_summary;
       if (outcomeSummary && Number(outcomeSummary.denominator) > 0 && outcomeSummary.counts) {
         const outcomeLine = document.createElement("small");
@@ -1543,6 +1601,8 @@
       }
       const actions = document.createElement("div"); actions.className = "report-actions";
       const download = document.createElement("button"); download.type = "button"; download.textContent = "Download PDF";
+      download.disabled = item.pdf_available !== true;
+      download.title = download.disabled ? "This PDF has expired or is unavailable." : "Download and save this PDF before its expiry date.";
       download.addEventListener("click", async () => {
         try { const r = await api(item.download_url); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "ecommerce-audit-" + item.id + ".pdf"; a.hidden = true; document.body.append(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 30000); }
         catch (e) { setStatus("connectStatus", e.message, "error"); }
@@ -1833,24 +1893,26 @@
       const archive = document.createElement("button");
       archive.type = "button";
       archive.className = "secondary";
-      archive.textContent = "Archive";
-      archive.disabled = site.status === "archived";
+      archive.textContent = site.status === "archived" ? "Reactivate" : "Archive";
       archive.addEventListener("click", async () => {
-        if (!window.confirm("Archive this website from your inventory? Existing scan history will be preserved.")) return;
+        const isArchived = site.status === "archived";
+        if (isArchived && !window.confirm("Reactivate this website in your inventory? Existing scan history will be preserved.")) return;
+        if (!isArchived && !window.confirm("Archive this website from your inventory? Existing scan history will be preserved.")) return;
         archive.disabled = true;
         try {
-          const result = await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
+          const result = isArchived
+            ? await api("/api/v1/websites/" + encodeURIComponent(site.id) + "/reactivate", {method: "POST"})
+            : await api("/api/v1/websites/" + encodeURIComponent(site.id), {method: "DELETE"});
           if (!result.ok) {
-            let message = "Website archive failed.";
+            let message = isArchived ? "Website reactivation failed." : "Website archive failed.";
             try { const body = await result.json(); if (typeof body.detail === "string") message = body.detail; } catch (_) {}
             throw new Error(message);
           }
-          setStatus("connectStatus", "Website archived. Existing scan history is preserved.", "success");
+          setStatus("connectStatus", isArchived ? "Website reactivated." : "Website archived. Existing scan history is preserved.", "success");
           await loadWebsites();
         } catch (error) {
-          setStatus("connectStatus", error.message || "Website archive failed.", "error");
-        } finally {
-          archive.disabled = site.status === "archived";
+          setStatus("connectStatus", error.message || (site.status === "archived" ? "Website reactivation failed." : "Website archive failed."), "error");
+          archive.disabled = false;
         }
       });
       card.append(label, view, save, archive);
@@ -2516,6 +2578,8 @@
     catch (error) { setStatus("agencyStatus", error.message, "error"); }
   });
   $("saveBranding").addEventListener("click", saveBranding);
+  $("uploadBrandLogo").addEventListener("click", uploadBrandLogo);
+  $("removeBrandLogo").addEventListener("click", removeBrandLogo);
   $("refreshBranding").addEventListener("click", async () => {
     try { await loadBranding(); }
     catch (error) { setStatus("brandingStatus", error.message, "error"); }

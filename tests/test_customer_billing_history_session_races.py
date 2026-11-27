@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 
 import pytest
 
@@ -62,3 +63,13 @@ async def test_billing_history_union_count_handles_empty_and_disjoint_streams():
     assert await _count_sorted_billing_event_id_union(
         _AsyncValues(["a", "c"]), _AsyncValues(["b", "d"])
     ) == 4
+
+def test_billing_history_count_uses_separate_database_streams():
+    from main import account_billing_history
+
+    source = inspect.getsource(account_billing_history)
+    assert "await db.stream_scalars(" in source
+    assert "await operational_db.stream_scalars(" in source
+    assert "_count_sorted_billing_event_id_union" in source
+    assert "_billing_history_event_count_query" not in source
+

@@ -17,13 +17,13 @@ def test_agency_team_revocation_uses_agency_first_lock_order():
 
 def test_customer_portal_confirms_and_reports_team_member_revocation():
     portal = Path("customer_portal.html").read_text(encoding="utf-8")
-    start = portal.index("async function loadAgencyTeam()")
+    start = portal.index("async function loadAgencyTeam(append = false)")
     end = portal.index("async function inviteAgencyTeam()", start)
     section = portal[start:end]
 
     assert 'window.confirm("Revoke access for " + item.email' in section
     assert 'method:"DELETE"' in section
-    assert 'setStatus("agencyStatus", "Access revoked for " + item.email, "success")' in section
+    assert 'setStatus("agencyStatus", "Access revoked for " + item.email + ".", "success")' in section
     assert "revoke.disabled = true" in section
 
 
@@ -49,7 +49,7 @@ def test_workspace_grant_mutations_follow_agency_member_workspace_grant_lock_ord
     assert agency_lock < member_lock < workspace_lock < grant_lock
     assert grant_routes.count(".with_for_update()") >= 8
     assert "agency.status != \"active\"" in grant_routes
-    assert "workspace.status == \"active\"" in grant_routes
+    assert 'AgencyClientWorkspace.status == "active"' in grant_routes
 
 
 def test_agency_workspace_creation_locks_active_agency_before_insert():
@@ -108,17 +108,18 @@ def test_owner_wordpress_disconnect_uses_agency_workspace_site_challenge_lock_or
     agency_lock = source.index("AgencyAccount.owner_license_key")
     workspace_lock = source.index("AgencyClientWorkspace.id == workspace_id")
     site_lock = source.index("AgencyClientWebsite.agency_id == agency.id")
-    challenge_lock = source.index("AgencyWebsiteConnectChallenge.agency_id == agency.id")
+    challenge_update = source.index("update(AgencyWebsiteConnectChallenge)")
     commit = source.index("await operational_db.commit()")
 
-    assert agency_lock < workspace_lock < site_lock < challenge_lock < commit
+    assert agency_lock < workspace_lock < site_lock < challenge_update < commit
     assert ".with_for_update()" in source[agency_lock:workspace_lock]
     assert ".with_for_update()" in source[workspace_lock:site_lock]
-    assert ".with_for_update()" in source[site_lock:challenge_lock]
-    assert ".with_for_update()" in source[challenge_lock:commit]
+    assert ".with_for_update()" in source[site_lock:challenge_update]
+    assert "AgencyWebsiteConnectChallenge.consumed_at.is_(None)" in source[challenge_update:commit]
+    assert ".values(consumed_at=now)" in source[challenge_update:commit]
     assert 'agency.status != "active"' in source[agency_lock:workspace_lock]
     assert 'workspace.status != "active"' in source[workspace_lock:site_lock]
-    assert "site.site_token_hash = None" in source[site_lock:challenge_lock]
+    assert "site.site_token_hash = None" in source[site_lock:challenge_update]
 
 
 def test_agency_wordpress_heartbeat_revalidates_credential_under_lifecycle_locks():

@@ -284,7 +284,7 @@ def test_billing_attention_recovery_queries_only_latest_event_per_subscription()
     [
         ("evt_older", True),
         ("evt_same", True),
-        ("evt_newer", False),
+        ("evt_znewer", False),
     ],
 )
 async def test_equal_timestamp_subscription_events_use_event_id_tie_break(

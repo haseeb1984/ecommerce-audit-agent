@@ -214,8 +214,24 @@ CREATE TABLE IF NOT EXISTS customer_branding (
   license_key VARCHAR(100) NOT NULL PRIMARY KEY,
   brand_name VARCHAR(100) NOT NULL,
   logo_url VARCHAR(2048) NULL,
+  logo_storage_key VARCHAR(1024) NULL,
+  logo_sha256 VARCHAR(64) NULL,
+  logo_mime_type VARCHAR(100) NULL,
+  logo_byte_size BIGINT NULL,
   primary_color VARCHAR(7) NOT NULL DEFAULT '#155a8a',
   updated_at DATETIME(6) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS customer_branding_logo_cleanup (
+  id VARCHAR(64) NOT NULL PRIMARY KEY,
+  license_key VARCHAR(100) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(120) NULL,
+  created_at DATETIME(6) NOT NULL,
+  last_attempt_at DATETIME(6) NULL,
+  UNIQUE KEY uq_brand_logo_cleanup_storage_key (storage_key),
+  KEY ix_brand_logo_cleanup_license_created (license_key, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS admin_customer_notes (
@@ -231,16 +247,28 @@ CREATE TABLE IF NOT EXISTS admin_customer_notes (
 
 CREATE TABLE IF NOT EXISTS customer_report_files (
   id VARCHAR(64) NOT NULL PRIMARY KEY,
+  report_id BIGINT NULL UNIQUE,
   license_key VARCHAR(100) NOT NULL,
   job_id VARCHAR(64) NULL,
   report_name VARCHAR(255) NOT NULL,
+  domain VARCHAR(253) NULL,
+  finding_count INT NOT NULL DEFAULT 0,
   storage_key VARCHAR(1024) NOT NULL,
   storage_key_hash CHAR(64) NOT NULL UNIQUE,
+  pdf_sha256 CHAR(64) NULL,
   mime_type VARCHAR(100) NOT NULL DEFAULT 'application/pdf',
   byte_size BIGINT NOT NULL,
   created_at DATETIME(6) NOT NULL,
+  expires_at DATETIME(6) NULL,
+  deleted_at DATETIME(6) NULL,
+  cleanup_attempts INT NOT NULL DEFAULT 0,
+  cleanup_last_attempt_at DATETIME(6) NULL,
   KEY ix_customer_report_files_license (license_key),
-  KEY ix_customer_report_files_job (job_id)
+  KEY ix_customer_report_files_job (job_id),
+  KEY ix_customer_report_files_domain (domain),
+  KEY ix_customer_report_files_expiry (expires_at, deleted_at),
+  KEY ix_customer_report_files_cleanup (deleted_at, cleanup_last_attempt_at, expires_at, id),
+  KEY ix_customer_report_files_cleanup_last_attempt_at (cleanup_last_attempt_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -505,3 +533,10 @@ SET @scan_batch_workspace_fk_sql = IF(
 PREPARE scan_batch_workspace_fk_stmt FROM @scan_batch_workspace_fk_sql;
 EXECUTE scan_batch_workspace_fk_stmt;
 DEALLOCATE PREPARE scan_batch_workspace_fk_stmt;
+
+
+CREATE TABLE IF NOT EXISTS platform_settings (
+  setting_key VARCHAR(100) NOT NULL PRIMARY KEY,
+  setting_value VARCHAR(255) NOT NULL,
+  updated_at DATETIME(6) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

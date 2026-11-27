@@ -55,3 +55,18 @@ def test_billing_mirror_worker_uses_ordered_claim_before_source_event_lock():
     )
     assert "await operational_db.commit()" in source
     assert "_mark_billing_mirror_outbox_completed(" in source
+
+
+def test_billing_worker_recovers_missing_outbox_rows_before_claiming_retries():
+    source = inspect.getsource(scan_worker.reconcile_billing_mirror_outbox)
+    backfill = inspect.getsource(scan_worker._backfill_missing_billing_mirror_outbox)
+
+    assert '"recovered"' in source
+    assert source.index("_backfill_missing_billing_mirror_outbox(") < source.index(
+        "_billing_mirror_outbox_claim_statement(now)"
+    )
+    assert "PaymentWebhookEvent.billing_mirror_synced_at.is_(None)" in backfill
+    assert "PaymentWebhookEvent.billing_mirror_synced_at < PaymentWebhookEvent.updated_at" in backfill
+    assert "~has_outbox" in backfill
+    assert "with_for_update(skip_locked=True)" in backfill
+    assert "created_at=event.created_at" in backfill

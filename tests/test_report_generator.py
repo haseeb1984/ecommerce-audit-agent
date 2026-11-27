@@ -29,6 +29,30 @@ def test_render_audit_pdf_returns_pdf_with_evidence_and_limitations():
     assert len(pdf) > 1000
 
 
+def test_render_audit_pdf_accepts_customer_white_label_branding():
+    import base64
+
+    result = AuditCheckResult(
+        target_url="https://shop.example/",
+        checked_at_utc="2026-10-17T00:00:00+00:00",
+        pages_checked=["https://shop.example/"],
+        findings=[],
+    )
+    # A tiny valid PNG proves the optional private logo path is renderable.
+    logo = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/"
+        "lZkAAAAASUVORK5CYII="
+    )
+    pdf = render_audit_pdf(
+        result,
+        brand_name="Example Store",
+        brand_color="#224466",
+        brand_logo_bytes=logo,
+    )
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 1000
+
+
 def test_consolidated_findings_retain_stable_ids_for_pdf_cards():
     from report_generator import _consolidate_findings
 

@@ -23,7 +23,7 @@ def test_scan_operations_refresh_ignores_stale_session_and_older_page_requests()
 
 def test_admin_logout_invalidates_inflight_scan_operations_refresh():
     source = PORTAL.read_text(encoding="utf-8")
-    clear = _section(source, "function clearAdminData", ' $("createClientApiKey")')
+    clear = _section(source, "function clearAdminData", '$("createClientApiKey")')
 
     assert "scanOperationsRequestVersion++" in clear
 

@@ -46,6 +46,8 @@ def _normalize_site_url(value: str) -> tuple[str, str]:
         raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
     if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
         raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
+    if parsed.hostname.endswith(".."):
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
     raw_host = parsed.hostname.rstrip(".")
     if "%" in raw_host:
         raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
@@ -60,7 +62,18 @@ def _normalize_site_url(value: str) -> tuple[str, str]:
             host = raw_host.encode("idna").decode("ascii").lower()
         except UnicodeError as exc:
             raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from exc
-        if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
+        labels = host.split(".")
+        if (
+            len(host) > 253
+            or any(
+                not label
+                or len(label) > 63
+                or not label[0].isalnum()
+                or not label[-1].isalnum()
+                or not re.fullmatch(r"[a-z0-9-]+", label)
+                for label in labels
+            )
+        ):
             raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
         authority = host
     else:
@@ -168,8 +181,9 @@ async def claim_wordpress_site_identity(
         raise HTTPException(status_code=422, detail="WordPress user login contains unsupported characters.")
     wp_email = _valid_email(payload.wp_user_email)
     token_hash = _token_digest(payload.token)
-    # Read the license key without taking an operational-row lock. All identity
-    # mutations acquire the canonical PostgreSQL license lock before locking
+    # All identity mutations acquire the canonical PostgreSQL license lock
+    # before locking Hostinger operational rows. Read the license key without
+    # taking an operational-row lock first; reversing this order can deadlock.
     # Hostinger rows; taking these locks in the opposite order can deadlock across
     # the two independent database transactions.
     challenge_reference = await operational_db.scalar(

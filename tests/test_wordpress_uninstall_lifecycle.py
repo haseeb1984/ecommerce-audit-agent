@@ -48,3 +48,58 @@ def test_encrypted_standard_license_fails_closed_without_openssl():
     ]
     assert "$license = false;" in encrypted_branch
     assert "if (function_exists('openssl_decrypt'))" in encrypted_branch
+
+
+def test_uninstall_only_treats_exact_disconnect_not_found_as_idempotent_success():
+    assert "$eaa_is_already_disconnected = static function ($response, $expected_detail)" in UNINSTALL
+    assert "is_wp_error($response) || 404 !== (int) wp_remote_retrieve_response_code($response)" in UNINSTALL
+    assert "is_array($body) && isset($body['detail']) && $expected_detail === $body['detail']" in UNINSTALL
+    assert "$eaa_is_already_disconnected($response, 'Agency WordPress connection not found.')" in UNINSTALL
+    assert "$eaa_is_already_disconnected($response, 'WordPress site connection not found.')" in UNINSTALL
+    assert UNINSTALL.count("$eaa_is_already_disconnected($response,") == 2
+
+
+PLUGIN = Path(
+    "wordpress-plugin/ecommerce-audit-agent/ecommerce-audit-agent.php"
+).read_text(encoding="utf-8")
+
+
+def test_runtime_disconnect_only_accepts_exact_idempotent_404_responses():
+    helper = PLUGIN[
+        PLUGIN.index("function eaa_wp_is_already_disconnected"):
+        PLUGIN.index("function eaa_wp_disconnect_site")
+    ]
+    assert "if (!is_wp_error($response))" in helper
+    assert "404 === (int) $error_data['status']" in helper
+    assert "$expected_detail === $response->get_error_message()" in helper
+
+
+def test_standard_and_agency_runtime_disconnects_retain_credentials_on_generic_404():
+    disconnect = PLUGIN[
+        PLUGIN.index("function eaa_wp_disconnect_site"):
+        PLUGIN.index("add_action('admin_menu'")
+    ]
+    assert "!eaa_wp_is_already_disconnected($response, 'Agency WordPress connection not found.')" in disconnect
+    assert "!eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')" in disconnect
+    assert disconnect.count("if (is_wp_error($response) &&") == 2
+    assert disconnect.index("return $response;") < disconnect.index("unset($settings['agency_site_token']")
+    assert disconnect.index("return $response;", disconnect.index("unset($settings['agency_site_token']")) < disconnect.index("unset($settings['site_id']")
+
+
+
+def test_wordpress_status_sync_only_clears_credentials_for_exact_revocation_404s():
+    sync = PLUGIN[
+        PLUGIN.index("function eaa_wp_sync_site_status"):
+        PLUGIN.index("add_action('eaa_wp_scheduled_status_sync'")
+    ]
+    admin = PLUGIN[
+        PLUGIN.index("function eaa_wp_render_admin_page"):
+        PLUGIN.index("function eaa_wp_render_admin_page") + 18000
+    ]
+    assert "eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')" in sync
+    assert "eaa_wp_is_already_disconnected($response, 'Agency WordPress connection is no longer active.')" in sync
+    assert "eaa_wp_is_already_disconnected($agency_status, 'Agency WordPress connection is no longer active.')" in admin
+    assert "eaa_wp_is_already_disconnected($status_response, 'WordPress site connection not found.')" in admin
+    assert "if (404 === $http_status)" not in sync
+    assert "if (404 === $http_status)" not in admin
+    assert admin.count("eaa_wp_clear_identity_link_settings($settings);") >= 2

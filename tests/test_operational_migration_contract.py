@@ -1,5 +1,6 @@
 """Keep the Hostinger scan-batch migration aligned with its ORM contract."""
 
+import ast
 from pathlib import Path
 
 from hostinger_models import ScanBatch
@@ -185,24 +186,24 @@ def test_fresh_hostinger_schema_preserves_operational_index_and_unique_constrain
 
 
 def test_support_note_migration_refuses_ambiguous_email_to_license_mapping():
-    from types import SimpleNamespace
+    import ast
 
-    from scripts.migrate_operational_data_to_hostinger import _billing_license_map
-
-    billing_rows = [
-        SimpleNamespace(recipient_email=" Shared@Example.com ", license_id=1),
-        SimpleNamespace(recipient_email="shared@example.com", license_id=2),
-        SimpleNamespace(recipient_email="single@example.com", license_id=3),
-        SimpleNamespace(recipient_email="orphan@example.com", license_id=None),
-    ]
-
-    resolved, ambiguous = _billing_license_map(
-        billing_rows,
-        {1: "license-one", 2: "license-two", 3: "license-three"},
+    source = (
+        ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
+    ).read_text()
+    tree = ast.parse(source)
+    migrate = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "migrate"
     )
+    segment = ast.get_source_segment(source, migrate)
 
-    assert resolved == {"single@example.com": "license-three"}
-    assert ambiguous == {"shared@example.com"}
+    assert "if license_count > 1:" in segment
+    assert "note_ambiguous += 1" in segment
+    assert "continue" in segment
+    assert "if license_count is None or license_count == 0:" in segment
+    assert "note_unmapped += 1" in segment
+    assert "AdminCustomerNote(**expected_note)" in segment
 
 
 
@@ -350,13 +351,32 @@ def test_operational_migration_cli_offers_mutually_exclusive_apply_and_verify_mo
 
 
 def test_dry_run_and_verify_never_stage_target_inserts():
+    import ast
+
     source = (
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
-
-    assert "if stage_missing:\n                    target.add(target_model(**values))" in source
-    assert "if apply_changes:\n                    target.add(CustomerAccount(**expected_account))" in source
-    assert "if apply_changes:\n                    target.add(AdminCustomerNote(**expected_note))" in source
+    tree = ast.parse(source)
+    guarded_models = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "apply_changes"
+        ):
+            continue
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "add"
+                and child.args
+                and isinstance(child.args[0], ast.Call)
+                and isinstance(child.args[0].func, ast.Name)
+            ):
+                guarded_models.add(child.args[0].func.id)
+    assert {"CustomerAccount", "AdminCustomerNote"} <= guarded_models
+    assert "if stage_missing:" in source
     assert source.count("stage_missing=apply_changes") == 8
 
 
@@ -398,29 +418,33 @@ def test_account_and_support_note_migration_streams_source_and_batches_target_lo
     assert "_stream_rows(source, AccountSession)" not in migrate_segment
     assert "_stream_rows(source, WordPressSite)" not in migrate_segment
     assert "account_candidates = {}" not in migrate_segment
-    assert '"source": account_candidate_count' in migrate_segment
-    assert "_stream_rows(source, SaaSAdminCustomerNote)" in migrate_segment
+    assert '"source_candidates": account_candidate_count' in migrate_segment
+    assert "source.stream(_support_note_migration_statement())" in migrate_segment
+    assert "_stream_rows(source, SaaSAdminCustomerNote)" not in migrate_segment
     assert "tuple_(CustomerAccount.license_key, CustomerAccount.email).in_(identity_keys)" in migrate_segment
     assert "AdminCustomerNote.id.in_(list(expected_by_id))" in migrate_segment
     assert '"source": note_source_count' in migrate_segment
 
 
-def test_operational_license_identity_map_uses_streaming_projection():
+def test_operational_license_identity_lookup_is_batched_per_source_page():
     import ast
 
     source = (
         ROOT / "scripts" / "migrate_operational_data_to_hostinger.py"
     ).read_text()
     tree = ast.parse(source)
-    license_map = next(
+    copy_rows = next(
         node for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_license_map"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_copy_rows"
     )
-    segment = ast.get_source_segment(source, license_map)
+    segment = ast.get_source_segment(source, copy_rows)
 
-    assert "source.stream(" in segment
-    assert "SoftwareLicense.id, SoftwareLicense.license_key, SoftwareLicense.client_name" in segment
-    assert ".scalars().all()" not in segment
+    assert "license_ids = {" in segment
+    assert "row.license_id for row in rows" in segment
+    assert "SoftwareLicense.id.in_(license_ids)" in segment
+    assert "license_key_by_id = {" in segment
+    assert "source.stream_scalars(statement)" in segment
+    assert "async for row in result" in segment
     assert "await result.close()" in segment
 
 
@@ -698,3 +722,103 @@ def test_operational_apply_returns_nonzero_when_reconciliation_blockers_remain()
     assert "blockers = _apply_blockers(reports)" in source
     assert "if (args.apply or args.verify) and not verified:" in source
     assert "Operational migration applied partially." in source
+
+def test_hostinger_customer_report_file_model_and_schema_cover_pdf_lifecycle_metadata():
+    from hostinger_models import CustomerReportFile
+
+    columns = set(CustomerReportFile.__table__.columns.keys())
+    assert {
+        "report_id", "license_key", "report_name", "domain", "finding_count",
+        "storage_key", "storage_key_hash", "pdf_sha256", "mime_type", "byte_size",
+        "created_at", "expires_at", "deleted_at",
+    } <= columns
+
+    baseline = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    table_start = baseline.index("CREATE TABLE IF NOT EXISTS customer_report_files")
+    table_end = baseline.index(") ENGINE=InnoDB", table_start)
+    report_ddl = baseline[table_start:table_end]
+    for field in ("report_id", "domain", "finding_count", "expires_at", "deleted_at", "pdf_sha256"):
+        assert field in report_ddl
+
+    migration = (
+        ROOT / "migrations" / "20261122_hostinger_report_metadata.mysql.sql"
+    ).read_text()
+    for field in ("report_id", "domain", "finding_count", "expires_at", "deleted_at", "pdf_sha256"):
+        assert f"ADD COLUMN {field}" in migration
+    assert "uq_customer_report_files_report_id" in migration
+    assert "ix_customer_report_files_expiry" in migration
+
+def test_support_note_migration_blocks_ambiguous_email_to_license_ownership():
+    from scripts.migrate_operational_data_to_hostinger import _apply_blockers
+
+    blockers = _apply_blockers({
+        "admin_customer_notes": {
+            "to_copy": 0,
+            "ambiguous_license_mapping": 1,
+            "field_mismatches": 0,
+        }
+    })
+
+    assert blockers == {
+        "admin_customer_notes": {
+            "unresolved": {"ambiguous_license_mapping": 1},
+            "field_mismatches": 0,
+        }
+    }
+
+def test_storage_readme_skips_branding_upgrade_after_fresh_hostinger_baseline():
+    baseline = (ROOT / "migrations" / "hostinger_operational_schema.sql").read_text()
+    migration = (
+        ROOT / "migrations" / "20261121_hostinger_branding_storage.mysql.sql"
+    ).read_text()
+    readme = (ROOT / "hostinger-storage" / "README.md").read_text()
+
+    branding_start = baseline.index("CREATE TABLE IF NOT EXISTS customer_branding")
+    branding_end = baseline.index(") ENGINE=InnoDB", branding_start)
+    branding_ddl = baseline[branding_start:branding_end]
+    for column in ("logo_storage_key", "logo_sha256", "logo_mime_type", "logo_byte_size"):
+        assert column in branding_ddl
+        assert f"ADD COLUMN {column}" in migration
+
+    assert "fresh baseline already includes all four logo-storage columns" in readme
+    assert "**skip**" in readme
+    assert "information_schema.columns" in readme
+
+
+
+def test_wordpress_installation_migration_rejects_unrepresentable_required_admin_email():
+    from types import SimpleNamespace
+    from scripts.migrate_operational_data_to_hostinger import (
+        _wordpress_installation_payload,
+    )
+
+    row = SimpleNamespace(
+        id="wp-1",
+        license_id=7,
+        site_url="https://shop.example.com",
+        site_host="shop.example.com",
+        admin_email=" Admin@Example.com ",
+        customer_email=" Customer@Example.com ",
+        wordpress_version="6.8",
+        woocommerce_version="10.0",
+        plugin_version="1.2.3",
+        status="active",
+        created_at=None,
+        last_seen_at=None,
+        disconnected_at=None,
+    )
+
+    payload = _wordpress_installation_payload(row, {7: "license-key"})
+    assert payload["admin_email"] == "admin@example.com"
+    assert payload["customer_email"] == "customer@example.com"
+
+    row.admin_email = " " * 2
+    assert _wordpress_installation_payload(row, {7: "license-key"}) is None
+
+    row.admin_email = "x" * 250 + "@example.com"
+    assert _wordpress_installation_payload(row, {7: "license-key"}) is None
+
+    row.admin_email = "admin@example.com"
+    row.customer_email = "x" * 250 + "@example.com"
+    payload = _wordpress_installation_payload(row, {7: "license-key"})
+    assert payload["customer_email"] is None

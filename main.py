@@ -1,16 +1,23 @@
 import asyncio
+import math
 import ipaddress
 import hashlib
+import html as html_lib
 import hmac
 import secrets
 import time
 import logging
 import os
-import smtplib
 import json
 import io
 import zipfile
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
+from email_service import (
+    configured_smtp_port as _configured_smtp_port,
+    send_email as _send_email_message,
+    smtp_configuration_status as _smtp_configuration_status,
+)
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import re
@@ -47,7 +54,7 @@ from wordpress_identity_api import router as wordpress_identity_router
 from ecommerce_agent import UniversalEcommerceAgent, LeadDossier
 from models import SoftwareLicense, APIKey, AuditLead, AuditQuotaReservation, AuditReport, PaymentWebhookEvent, SaaSOperationEvent, CustomerLifecycleSyncOutbox, BillingMirrorSyncOutbox
 from outbox_retry import outbox_retry_delay_seconds, next_outbox_attempt_count
-from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, get_customer_session_credentials
+from auth import verify_license_or_api_key, verify_customer_account, verify_account_credentials_for_key_revocation, verify_customer_account_for_management, verify_customer_account_for_usage, get_customer_session_credentials
 from quota import reserve_audit_slot, release_audit_reservation
 from audit_checks import AuditCheckResult, AuditFinding, CheckOutcome, MAX_RESPONSE_BYTES, USER_AGENT, run_phase_one_checks
 from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
@@ -58,13 +65,51 @@ from coverage_manifest import build_coverage_manifest
 from unavailable_checks import append_unavailable_check_outcomes
 from plan_features import plan_features
 from hostinger_database import get_hostinger_db, get_optional_hostinger_db, HostingerBase, HostingerAsyncSessionLocal
-from hostinger_models import CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
+from hostinger_storage import HostingerStorageError, storage_configured, upload_report, download_file, delete_file, upload_logo
+from hostinger_models import PlatformSetting, CustomerReportFile, CustomerAccount, CustomerLoginThrottle, CustomerEmailChangeThrottle, CustomerLoginChallenge, CustomerSession, CustomerEmailChangeChallenge, CustomerBranding, CustomerBrandingLogoCleanup, WordPressInstallation, CustomerUsageEvent, CustomerActivityEvent, WebsiteScanResult, AdminCustomerNote, AdminActionLog, CustomerBillingEvent, CustomerEmailIdentitySyncOutbox, OperationalDiagnosticEvent, WordPressSiteLinkChallenge, AgencyAccount, AgencyClientWorkspace, AgencyClientWebsite, AgencyTeamMember, AgencyWorkspaceAccess, AgencyUsageEvent, AgencyTeamLoginChallenge, AgencyTeamSession, AgencyWebsiteConnectChallenge, ScanBatch, WebsiteScanJob
 
 logger = logging.getLogger("audit_service")
+
+
+async def _queue_brand_logo_cleanup(operational_db, license_key: str, storage_key: str | None) -> None:
+    """Persist detached logo keys so transient storage failures can be retried safely."""
+    if not storage_key:
+        return
+    from sqlalchemy import select
+    existing = await operational_db.scalar(select(CustomerBrandingLogoCleanup).where(
+        CustomerBrandingLogoCleanup.storage_key == storage_key
+    ))
+    if existing is None:
+        operational_db.add(CustomerBrandingLogoCleanup(
+            id=secrets.token_urlsafe(24),
+            license_key=license_key,
+            storage_key=storage_key,
+            attempts=0,
+            created_at=datetime.now(timezone.utc),
+        ))
+
 MAX_ACTIVE_WORDPRESS_SITES_PER_LICENSE = 1
 
 
-def _license_is_current(license_obj) -> bool:
+def _queue_customer_lifecycle_projection(db, license_obj, was_active: bool, now: datetime | None = None) -> bool:
+    """Queue Hostinger projection using effective access, including license expiry."""
+    is_active = _license_is_current(license_obj, now)
+    if bool(was_active) == is_active:
+        return False
+    queued_at = now or datetime.now(timezone.utc)
+    db.add(CustomerLifecycleSyncOutbox(
+        id=secrets.token_urlsafe(24),
+        license_key=license_obj.license_key,
+        action="reactivate" if is_active else "suspend",
+        status="pending",
+        attempts=0,
+        next_attempt_at=queued_at,
+        created_at=queued_at,
+    ))
+    return True
+
+
+def _license_is_current(license_obj, now: datetime | None = None) -> bool:
     """Return true only for an active, non-expired licensing record."""
     if license_obj is None or not bool(license_obj.is_active):
         return False
@@ -73,7 +118,7 @@ def _license_is_current(license_obj) -> bool:
         return True
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    return expires_at > datetime.now(timezone.utc)
+    return expires_at > (now or datetime.now(timezone.utc))
 
 
 def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool) -> None:
@@ -83,6 +128,167 @@ def _ensure_wordpress_site_capacity(active_count: int, existing_is_active: bool)
             status_code=409,
             detail="This license already has a connected WordPress site. Disconnect it before connecting another site.",
         )
+
+
+def _normalize_wordpress_registration_url(raw_url: str) -> tuple[str, str]:
+    """Validate and canonicalize a standard-port HTTPS WordPress site URL."""
+    try:
+        parsed = urlsplit(raw_url.strip())
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        raise HTTPException(status_code=422, detail="WordPress site URL is malformed.") from None
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
+    if parsed.query or parsed.fragment or len(hostname) > 253:
+        raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
+    if port not in (None, 443):
+        raise HTTPException(status_code=422, detail="WordPress site URL must use the standard HTTPS port.")
+    try:
+        host = hostname.encode("idna").decode("ascii").lower().rstrip(".")
+    except UnicodeError:
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.") from None
+    labels = host.split(".")
+    if (
+        len(host) > 253
+        or any(
+            not label
+            or len(label) > 63
+            or not label[0].isalnum()
+            or not label[-1].isalnum()
+            or not re.fullmatch(r"[a-z0-9-]+", label)
+            for label in labels
+        )
+    ):
+        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    path = parsed.path.rstrip("/")
+    site_url = f"https://{host}{path}/" if path else f"https://{host}/"
+    return site_url, host
+
+
+def _report_retention_days() -> int:
+    """Read the shared retention policy; it is evaluated against each report's original creation time."""
+    raw_value = os.getenv("REPORT_RETENTION_DAYS", "7").strip()
+    try:
+        days = int(raw_value)
+    except (TypeError, ValueError):
+        raise RuntimeError("REPORT_RETENTION_DAYS must be an integer.") from None
+    if not 1 <= days <= 3650:
+        raise RuntimeError("REPORT_RETENTION_DAYS must be between 1 and 3650.")
+    return days
+
+
+async def _get_report_retention_days(operational_db: AsyncSession) -> int:
+    """Read the persisted owner policy, falling back to the deployment default before initialization."""
+    from sqlalchemy import select
+    setting = (await operational_db.execute(
+        select(PlatformSetting).where(PlatformSetting.setting_key == "report_retention_days")
+    )).scalar_one_or_none()
+    if setting is None:
+        return _report_retention_days()
+    try:
+        days = int(setting.setting_value)
+    except (TypeError, ValueError):
+        raise RuntimeError("Stored report_retention_days setting is invalid.") from None
+    if not 1 <= days <= 3650:
+        raise RuntimeError("Stored report_retention_days setting is outside the supported range.")
+    return days
+
+
+def _report_expires_at(report: AuditReport, retention_days: int) -> datetime:
+    created_at = report.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at + timedelta(days=retention_days)
+
+
+def _report_pdf_available(report: AuditReport, retention_days: int, now: datetime | None = None) -> bool:
+    current = now or datetime.now(timezone.utc)
+    if report.pdf_deleted_at is not None or _report_expires_at(report, retention_days) <= current:
+        return False
+    return bool(report.storage_key or report.pdf_bytes is not None)
+
+
+async def _read_report_pdf(report: AuditReport, retention_days: int) -> bytes:
+    """Read a legacy PostgreSQL-linked report while its retention window is active."""
+    if not _report_pdf_available(report, retention_days):
+        raise HTTPException(
+            status_code=410,
+            detail="This PDF has expired or is no longer available. The report history remains in your dashboard.",
+        )
+    if report.storage_key:
+        try:
+            return await asyncio.to_thread(
+                download_file, report.storage_key, report.pdf_sha256
+            )
+        except HostingerStorageError as exc:
+            logger.error("Legacy report storage read failed (error_type=%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Report file storage is temporarily unavailable.") from None
+    if report.pdf_bytes is not None:
+        return bytes(report.pdf_bytes)
+    raise HTTPException(status_code=410, detail="The report PDF is no longer available.")
+
+
+def _report_file_expiry(created_at: datetime, retention_days: int) -> datetime:
+    created = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at
+    return created + timedelta(days=retention_days)
+
+
+def _customer_report_file_available(report_file: CustomerReportFile, now: datetime | None = None) -> bool:
+    current = now or datetime.now(timezone.utc)
+    expires_at = report_file.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return bool(report_file.storage_key and report_file.deleted_at is None
+                and (expires_at is None or expires_at > current))
+
+
+async def _read_customer_report_file(report_file: CustomerReportFile) -> bytes:
+    """Read a customer-owned PDF from Hostinger private storage, checking expiry and integrity."""
+    if not _customer_report_file_available(report_file):
+        raise HTTPException(
+            status_code=410,
+            detail="This PDF has expired or is no longer available. The report history remains in your dashboard.",
+        )
+    try:
+        return await asyncio.to_thread(download_file, report_file.storage_key, report_file.pdf_sha256)
+    except HostingerStorageError as exc:
+        logger.error("Customer report storage read failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Report file storage is temporarily unavailable.") from None
+
+async def _compensate_customer_report_upload(
+    operational_db: AsyncSession,
+    report_file_data: dict,
+) -> None:
+    """Delete a failed audit's PDF, or retain an immediately-expiring retry pointer."""
+    await operational_db.rollback()
+    storage_key = report_file_data["storage_key"]
+    try:
+        await asyncio.to_thread(delete_file, storage_key)
+    except HostingerStorageError as exc:
+        logger.error("Report upload compensation delete failed (error_type=%s)", type(exc).__name__)
+        try:
+            existing = await operational_db.get(CustomerReportFile, report_file_data["id"])
+            if existing is None:
+                recovery_data = dict(report_file_data)
+                recovery_data["expires_at"] = datetime.now(timezone.utc)
+                operational_db.add(CustomerReportFile(**recovery_data))
+            else:
+                existing.expires_at = datetime.now(timezone.utc)
+            await operational_db.commit()
+        except Exception as recovery_exc:
+            await operational_db.rollback()
+            logger.error("Retryable report cleanup pointer could not be persisted (error_type=%s)", type(recovery_exc).__name__)
+        return
+
+    try:
+        existing = await operational_db.get(CustomerReportFile, report_file_data["id"])
+        if existing is not None:
+            await operational_db.delete(existing)
+        await operational_db.commit()
+    except Exception as cleanup_exc:
+        await operational_db.rollback()
+        logger.error("Compensated report metadata cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
 
 
 app = FastAPI(
@@ -139,6 +345,13 @@ class ReportEmailRequest(BaseModel):
     # Bound untrusted request data before the route performs DB lookup or SMTP work.
     recipient_email: str = Field(..., min_length=3, max_length=254)
     recipient_confirmed: bool = False
+
+
+class PublicContactRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    email: str = Field(..., min_length=3, max_length=254)
+    subject: str = Field(..., min_length=1, max_length=160)
+    message: str = Field(..., min_length=15, max_length=6000)
 
 
 class AdminAgencyStatusUpdate(BaseModel):
@@ -288,12 +501,20 @@ async def health_check(
         "customer_lifecycle_sync_outbox",
         "billing_mirror_sync_outbox",
     }
+    licensing_connected = False
+    operational_connected = None
+    licensing_ready = None
+    operational_ready = None
+    active_database = "licensing"
+    pg_missing_tables = []
+    pg_missing_columns = {}
+    pg_missing_indexes = []
+    mysql_missing_tables = []
+    mysql_missing_columns = {}
+    mysql_missing_indexes = []
     try:
-        # Optional dependency lets this endpoint normalize missing Hostinger
-        # configuration into the same structured 503 response as DB outages.
-        if operational_db is None:
-            raise RuntimeError("Hostinger operational database is not configured.")
         pg_ping = await db.execute(text("SELECT 1"))
+        licensing_connected = True
         pg_table_result = await db.execute(text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = current_schema()"
@@ -336,7 +557,17 @@ async def health_check(
             pg_required_indexes.add("uq_saas_plan_packages_paddle_price_id")
             pg_missing_indexes = sorted(pg_required_indexes - pg_existing_indexes)
 
+        licensing_ready = not (
+            pg_missing_tables or pg_missing_columns or pg_missing_indexes
+        )
+
+        active_database = "operational"
+        if operational_db is None:
+            operational_connected = False
+            raise RuntimeError("Hostinger operational database is not configured.")
+        operational_connected = False
         mysql_ping = await operational_db.execute(text("SELECT 1"))
+        operational_connected = True
         mysql_table_result = await operational_db.execute(text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = DATABASE()"
@@ -385,9 +616,6 @@ async def health_check(
             }
             mysql_missing_indexes = sorted(mysql_required_indexes - mysql_existing_indexes)
 
-        licensing_ready = not (
-            pg_missing_tables or pg_missing_columns or pg_missing_indexes
-        )
         operational_ready = not (
             mysql_missing_tables or mysql_missing_columns or mysql_missing_indexes
         )
@@ -440,12 +668,37 @@ async def health_check(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Health check failed (error_type=%s)", type(exc).__name__)
+        logger.error(
+            "Health check failed (database=%s, error_type=%s)",
+            active_database,
+            type(exc).__name__,
+        )
+        failed_database = (
+            "The Supabase PostgreSQL licensing/audit database is unavailable."
+            if active_database == "licensing"
+            else "The Hostinger MySQL operational database is unavailable or not configured."
+        )
         raise HTTPException(
             status_code=503,
             detail={
                 "status": "not_ready",
-                "message": "One or more required databases are unavailable.",
+                "message": failed_database,
+                "licensing_database": {
+                    "engine": "postgresql",
+                    "connected": licensing_connected,
+                    "schema_ready": licensing_ready,
+                    "missing_tables": pg_missing_tables if licensing_connected else [],
+                    "missing_columns": pg_missing_columns if licensing_connected else {},
+                    "missing_indexes": pg_missing_indexes if licensing_connected else [],
+                },
+                "operational_database": {
+                    "engine": "mysql",
+                    "connected": operational_connected,
+                    "schema_ready": operational_ready,
+                    "missing_tables": mysql_missing_tables if operational_connected else [],
+                    "missing_columns": mysql_missing_columns if operational_connected else {},
+                    "missing_indexes": mysql_missing_indexes if operational_connected else [],
+                },
             },
         )
 
@@ -601,6 +854,7 @@ async def comprehensive_audit_pdf(
     domain: str = Query(..., min_length=1, max_length=2048, description="Public website URL or domain"),
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Create an evidence report as a PDF, using the existing license quota."""
     if not plan_features(license_obj.tier)["standard_audits"]:
@@ -610,8 +864,13 @@ async def comprehensive_audit_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    if not storage_configured():
+        raise HTTPException(status_code=503, detail="Private report storage is not configured; the audit report was not generated.")
     license_id = license_obj.id
     reservation_id = None
+    uploaded_storage_key = None
+    uploaded_report_file_id = None
+    uploaded_report_file_data = None
     try:
         audit_started_at_utc = datetime.now(timezone.utc).isoformat()
         module_statuses = {
@@ -794,16 +1053,46 @@ async def comprehensive_audit_pdf(
                 )
             else:
                 module_statuses["browser_rendered"] = "partial"
+                result.check_outcomes.append(CheckOutcome(
+                    check_id="browser.rendered_viewport",
+                    category="mobile_ux",
+                    page_url=target_url,
+                    outcome="not_assessed",
+                    observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    method="isolated rendered-browser diagnostics",
+                    evidence="The browser service responded but did not render a page successfully; rendered DOM and viewport checks were not assessed.",
+                    evidence_ref="browser.rendered_viewport",
+                ))
                 result.limitations.append(
                     "The isolated browser service responded but could not complete page navigation; rendered DOM and viewport checks remain not assessed."
                 )
         except BrowserAuditUnavailable as browser_exc:
             module_statuses["browser_rendered"] = "unavailable"
+            result.check_outcomes.append(CheckOutcome(
+                check_id="browser.rendered_viewport",
+                category="mobile_ux",
+                page_url=target_url,
+                outcome="not_assessed",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="isolated rendered-browser diagnostics",
+                evidence=f"Rendered-browser checks were not assessed because the browser service was unavailable ({type(browser_exc).__name__}).",
+                evidence_ref="browser.rendered_viewport",
+            ))
             result.limitations.append(
                 f"Rendered-browser diagnostics were not assessed ({str(browser_exc)}); static HTML signals do not establish rendered mobile behavior."
             )
         except Exception as browser_exc:
             module_statuses["browser_rendered"] = "error"
+            result.check_outcomes.append(CheckOutcome(
+                check_id="browser.rendered_viewport",
+                category="mobile_ux",
+                page_url=target_url,
+                outcome="not_assessed",
+                observed_at_utc=datetime.now(timezone.utc).isoformat(),
+                method="isolated rendered-browser diagnostics",
+                evidence=f"Rendered-browser checks were not assessed after a safe failure ({type(browser_exc).__name__}).",
+                evidence_ref="browser.rendered_viewport",
+            ))
             result.limitations.append(
                 f"Rendered-browser diagnostics failed safely ({type(browser_exc).__name__}); no browser pass is inferred."
             )
@@ -1088,11 +1377,38 @@ async def comprehensive_audit_pdf(
                 },
             },
         )
+        # Apply the authenticated customer's saved white-label settings to the PDF.
+        # Logo bytes are fetched from private storage only for plans entitled to branding;
+        # they remain in memory and are never persisted as a separate file.
+        pdf_brand_name = None
+        pdf_brand_color = None
+        pdf_brand_logo_bytes = None
+        if plan_features(license_obj.tier)["white_label_branding"]:
+            from sqlalchemy import select
+            branding = await operational_db.scalar(select(CustomerBranding).where(
+                CustomerBranding.license_key == license_obj.license_key
+            ))
+            if branding is not None:
+                pdf_brand_name = branding.brand_name
+                pdf_brand_color = branding.primary_color
+                if branding.logo_storage_key:
+                    try:
+                        pdf_brand_logo_bytes = await asyncio.to_thread(
+                            download_file, branding.logo_storage_key, branding.logo_sha256
+                        )
+                    except HostingerStorageError as exc:
+                        # A logo outage must not block an otherwise valid audit report.
+                        logger.warning("PDF branding logo unavailable (error_type=%s)", type(exc).__name__)
         pdf_bytes = render_audit_pdf(
             result,
             screenshot_data_uri=getattr(metrics, "screenshot_data_uri", None),
             coverage_manifest=coverage_manifest,
+            brand_name=pdf_brand_name,
+            brand_color=pdf_brand_color,
+            brand_logo_bytes=pdf_brand_logo_bytes,
         )
+        report_generated_at = datetime.now(timezone.utc)
+        report_retention_days = await _get_report_retention_days(operational_db)
         # Persist the explicit bounded outcome records beside the conservative
         # coverage manifest so saved-report history retains the evidence behind PDF counts.
         report_metadata = {
@@ -1148,17 +1464,51 @@ async def comprehensive_audit_pdf(
                 "query_strings_and_fragments_removed_from_evidence_urls": True,
             },
         }
+        try:
+            storage_receipt = await asyncio.to_thread(upload_report, pdf_bytes)
+            uploaded_storage_key = storage_receipt.storage_key
+        except HostingerStorageError as exc:
+            logger.error("Report storage upload failed (error_type=%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Report storage is not available; the audit report was not saved.") from None
+
+        report_domain = urlsplit(target_url).hostname or (metrics.domain if metrics else "website")
         report = AuditReport(
             license_id=license_id,
-            domain=urlsplit(target_url).hostname or (metrics.domain if metrics else "website"),
-            pdf_bytes=pdf_bytes,
+            domain=report_domain,
+            # PostgreSQL retains audit evidence/history; PDF binary and pointer
+            # are authoritative in Hostinger MySQL + private file storage.
+            pdf_bytes=None,
+            storage_key=None,
+            pdf_sha256=None,
+            pdf_byte_size=storage_receipt.byte_size,
             coverage_json=json.dumps(report_metadata, separators=(",", ":")),
             finding_count=len(result.findings),
-            created_at=reserved_at,
+            created_at=report_generated_at,
         )
         db.add(report)
         await db.flush()
         report_id = report.id
+
+        uploaded_report_file_id = secrets.token_urlsafe(32)
+        uploaded_report_file_data = {
+            "id": uploaded_report_file_id,
+            "report_id": report_id,
+            "license_key": license_obj.license_key,
+            "report_name": f"ecommerce-audit-{report_domain[:180]}-{report_id}.pdf",
+            "domain": report_domain[:253],
+            "finding_count": len(result.findings),
+            "storage_key": storage_receipt.storage_key,
+            "storage_key_hash": hashlib.sha256(storage_receipt.storage_key.encode("utf-8")).hexdigest(),
+            "pdf_sha256": storage_receipt.sha256,
+            "mime_type": storage_receipt.mime_type,
+            "byte_size": storage_receipt.byte_size,
+            "created_at": report_generated_at,
+            "expires_at": _report_file_expiry(report_generated_at, report_retention_days),
+        }
+        operational_db.add(CustomerReportFile(**uploaded_report_file_data))
+        # If the PostgreSQL transaction later fails, the exception handler
+        # compensates by deleting this metadata row and its private object.
+        await operational_db.commit()
 
         db.add(AuditLead(
             license_id=license_id,
@@ -1177,6 +1527,9 @@ async def comprehensive_audit_pdf(
         )
         await db.commit()
         reservation_id = None
+        uploaded_storage_key = None
+        uploaded_report_file_id = None
+        uploaded_report_file_data = None
 
         hostname = urlsplit(target_url).hostname or "website"
         safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", hostname)[:180]
@@ -1191,6 +1544,16 @@ async def comprehensive_audit_pdf(
         )
     except HTTPException as exc:
         await db.rollback()
+        await operational_db.rollback()
+        if uploaded_report_file_data is not None:
+            await _compensate_customer_report_upload(operational_db, uploaded_report_file_data)
+            uploaded_storage_key = None
+        elif uploaded_storage_key:
+            try:
+                await asyncio.to_thread(delete_file, uploaded_storage_key)
+            except HostingerStorageError as cleanup_exc:
+                logger.error("Uncommitted report cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+            uploaded_storage_key = None
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
@@ -1201,6 +1564,20 @@ async def comprehensive_audit_pdf(
         raise
     except Exception as exc:
         await db.rollback()
+        await operational_db.rollback()
+        if uploaded_report_file_id:
+            try:
+                await operational_db.execute(delete(CustomerReportFile).where(CustomerReportFile.id == uploaded_report_file_id))
+                await operational_db.commit()
+            except Exception as cleanup_exc:
+                await operational_db.rollback()
+                logger.error("Report metadata compensation failed (error_type=%s)", type(cleanup_exc).__name__)
+        if uploaded_storage_key:
+            try:
+                await asyncio.to_thread(delete_file, uploaded_storage_key)
+            except HostingerStorageError as cleanup_exc:
+                logger.error("Uncommitted report cleanup failed (error_type=%s)", type(cleanup_exc).__name__)
+            uploaded_storage_key = None
         if reservation_id is not None:
             try:
                 await release_audit_reservation(db, reservation_id)
@@ -1344,7 +1721,7 @@ async def request_account_login_code(payload: AccountLoginRequest, response: Res
     challenge_id = secrets.token_urlsafe(24)
     digest = hmac.new(auth_secret.encode(), f"{challenge_id}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
     linked_license = await db.scalar(select(SoftwareLicense).where(SoftwareLicense.license_key == linked_license_key))
-    if linked_license is None or not linked_license.is_active:
+    if linked_license is None or not _license_is_current(linked_license, now):
         # Preserve the same response for unknown and suspended accounts.
         return {"status": "accepted", "message": "If an account exists for this email, a sign-in code will be sent."}
     challenge = CustomerLoginChallenge(
@@ -1400,7 +1777,7 @@ async def verify_account_login_code(payload: AccountLoginVerify, request: Reques
     license_obj = (await db.execute(select(SoftwareLicense).where(
         SoftwareLicense.license_key == challenge.license_key,
     ))).scalar_one_or_none()
-    if license_obj is None or not license_obj.is_active:
+    if license_obj is None or not _license_is_current(license_obj, now):
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=401, detail="Customer account is unavailable.")
@@ -1825,11 +2202,21 @@ async def revoke_other_customer_sessions(
     ))
     if current is None:
         raise HTTPException(status_code=401, detail="Customer session is invalid.")
+    # Serialize with OTP verification so a newly minted session cannot slip
+    # into the account after the revoke-others snapshot.
+    email = current.email.strip().lower()
+    await _lock_customer_login_email(operational_db, email)
+    current = await operational_db.scalar(select(CustomerSession).where(
+        CustomerSession.token_hash == digest,
+        CustomerSession.email == email,
+        CustomerSession.revoked_at.is_(None),
+    ).with_for_update())
+    if current is None:
+        raise HTTPException(status_code=401, detail="Customer session is invalid.")
     now = datetime.now(timezone.utc)
     result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.email == current.email,
+        CustomerSession.email == email,
         CustomerSession.token_hash != digest,
-        CustomerSession.created_at <= now,
         CustomerSession.revoked_at.is_(None),
     ).values(revoked_at=now))
     await operational_db.commit()
@@ -1883,11 +2270,12 @@ async def logout_all_account_sessions(
         CustomerLoginChallenge.email == email,
         CustomerLoginChallenge.consumed_at.is_(None),
     ).values(consumed_at=now))
-    result = await operational_db.execute(update(CustomerSession).where(
-        CustomerSession.email == current.email,
-        CustomerSession.created_at <= now,
-        CustomerSession.revoked_at.is_(None),
-    ).values(revoked_at=now))
+    result = await operational_db.execute(
+        update(CustomerSession).where(
+            CustomerSession.email == current.email,
+            CustomerSession.revoked_at.is_(None),
+        ).values(revoked_at=now).execution_options(synchronize_session=False)
+    )
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
@@ -1915,19 +2303,10 @@ async def register_wordpress_site(
     ).with_for_update())
     if locked_license_id is None:
         raise HTTPException(status_code=404, detail="The license is no longer available for WordPress registration.")
-    raw_url = payload.site_url.strip()
-    parsed = urlsplit(raw_url)
-    if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise HTTPException(status_code=422, detail="WordPress site URL must be a valid HTTPS URL.")
-    if parsed.query or parsed.fragment or len(parsed.hostname) > 253:
-        raise HTTPException(status_code=422, detail="WordPress site URL contains unsupported components.")
-    host = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
-    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
-        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    site_url, host = _normalize_wordpress_registration_url(payload.site_url)
     admin_email = payload.admin_email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
-    site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     now = datetime.now(timezone.utc)
     owner_email = await operational_db.scalar(select(CustomerBillingEvent.recipient_email).where(
         CustomerBillingEvent.license_key == license_obj.license_key,
@@ -2128,7 +2507,7 @@ async def list_account_wordpress_sites(
     response: Response,
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List a bounded page of WordPress installations linked to the customer license."""
@@ -2187,7 +2566,7 @@ async def list_account_wordpress_sites(
 async def customer_disconnect_wordpress_site(
     site_id: str,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -2236,7 +2615,7 @@ async def customer_disconnect_wordpress_site(
 @app.get("/api/v1/account/profile")
 async def get_account_profile(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return customer profile from Hostinger and licensing status from Supabase."""
@@ -2272,7 +2651,7 @@ async def get_account_profile(
 async def update_account_profile(
     payload: AccountProfileUpdate,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Update the operational customer display name in Hostinger."""
@@ -2405,7 +2784,7 @@ async def get_business_agency_usage(
     response: Response,
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -2514,7 +2893,7 @@ async def get_business_agency_usage(
 
 @app.get("/api/v1/account/agency/clients/{workspace_id}/website")
 async def get_agency_client_website(workspace_id: str, response: Response,
-                                    license_obj: SoftwareLicense = Depends(verify_customer_account),
+                                    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
                                     operational_db: AsyncSession = Depends(get_hostinger_db)):
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website connections are available on the Business plan.")
@@ -2568,7 +2947,7 @@ async def get_agency_client_website(workspace_id: str, response: Response,
 
 @app.post("/api/v1/account/agency/clients/{workspace_id}/website/disconnect")
 async def disconnect_agency_client_website(workspace_id: str, response: Response,
-                                            license_obj: SoftwareLicense = Depends(verify_customer_account),
+                                            license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
                                             operational_db: AsyncSession = Depends(get_hostinger_db)):
     if not plan_features(license_obj.tier)["agency_management"]:
         raise HTTPException(status_code=403, detail="Agency website management is available on the Business plan.")
@@ -2733,20 +3112,10 @@ async def register_agency_wordpress_site(
         challenge.consumed_at = now
         await operational_db.commit()
         raise HTTPException(status_code=403, detail="The agency Business subscription is not active.")
-    raw_url = payload.site_url.strip()
-    try:
-        parsed = urlsplit(raw_url)
-        host = (parsed.hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
-    except (ValueError, UnicodeError):
-        raise HTTPException(status_code=422, detail="WordPress site URL is invalid.")
-    if parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise HTTPException(status_code=422, detail="WordPress site URL must be HTTPS without credentials, query, or fragment.")
-    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or ".." in host:
-        raise HTTPException(status_code=422, detail="WordPress site hostname is invalid.")
+    site_url, host = _normalize_wordpress_registration_url(payload.site_url)
     admin_email = payload.admin_email.strip().lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", admin_email):
         raise HTTPException(status_code=422, detail="WordPress administrator email is invalid.")
-    site_url = f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/" if parsed.path else f"https://{parsed.netloc.lower()}/"
     agency_host_owner = await operational_db.scalar(select(AgencyClientWebsite).where(
         AgencyClientWebsite.agency_id == agency.id,
         AgencyClientWebsite.site_host == host,
@@ -3479,7 +3848,7 @@ async def list_business_agency_team(
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
     workspace_ids: list[str] = Query(default=[], max_length=100),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     if not plan_features(license_obj.tier)["agency_management"]:
@@ -3788,7 +4157,7 @@ async def remove_business_agency_team_workspace_access(
     member_id: str,
     workspace_id: str,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Remove one explicit client workspace grant without revoking the whole team account."""
@@ -3833,7 +4202,7 @@ async def remove_business_agency_team_workspace_access(
 async def revoke_business_agency_team_member(
     member_id: str,
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     if not plan_features(license_obj.tier)["agency_management"]:
@@ -3883,7 +4252,7 @@ async def list_business_agency_clients(
     response: Response,
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=1000000),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List only the client workspaces owned by the caller's Business agency."""
@@ -4123,10 +4492,12 @@ async def get_account_branding(
     item = await operational_db.scalar(select(CustomerBranding).where(
         CustomerBranding.license_key == license_obj.license_key
     ))
+    logo_url = item.logo_url if item else None
     response.headers["Cache-Control"] = "no-store, private"
     return {
         "brand_name": item.brand_name if item else license_obj.client_name,
-        "logo_url": item.logo_url if item else None,
+        "logo_url": logo_url,
+        "logo_stored": bool(item and item.logo_storage_key),
         "primary_color": item.primary_color if item else "#155a8a",
         "configured": item is not None,
         "updated_at": item.updated_at.isoformat() if item and item.updated_at else None,
@@ -4155,6 +4526,7 @@ async def update_account_branding(
     item = await operational_db.scalar(select(CustomerBranding).where(
         CustomerBranding.license_key == license_obj.license_key
     ).with_for_update())
+    old_storage_key = None
     now = datetime.now(timezone.utc)
     if item is None:
         item = CustomerBranding(
@@ -4166,11 +4538,158 @@ async def update_account_branding(
         )
         operational_db.add(item)
     else:
-        item.brand_name, item.logo_url, item.primary_color = brand_name, logo_url, color
+        item.brand_name = brand_name
+        item.primary_color = color
+        # A blank external URL means "leave the current logo unchanged". Use the
+        # dedicated DELETE endpoint when the customer explicitly removes a logo.
+        if logo_url:
+            old_storage_key = item.logo_storage_key
+            item.logo_url = logo_url
+            item.logo_storage_key = None
+            item.logo_sha256 = None
+            item.logo_mime_type = None
+            item.logo_byte_size = None
         item.updated_at = now
+    await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, old_storage_key)
+    await operational_db.commit()
+    effective_logo_url = item.logo_url
+    logo_stored = bool(item.logo_storage_key)
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"brand_name": brand_name, "logo_url": effective_logo_url, "logo_stored": logo_stored, "primary_color": color, "updated": True}
+
+
+@app.post("/api/v1/account/branding/logo")
+async def upload_account_branding_logo(
+    request: Request,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Store a customer logo privately; browser previews use the authenticated API proxy."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=415, detail="Logo must be PNG, JPEG, or WebP.")
+    chunks = []
+    total_bytes = 0
+    async for chunk in request.stream():
+        total_bytes += len(chunk)
+        if total_bytes > 5 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Logo exceeds the 5 MB upload limit.")
+        chunks.append(chunk)
+    image_bytes = b"".join(chunks)
+    try:
+        receipt = await asyncio.to_thread(upload_logo, image_bytes, content_type)
+    except HostingerStorageError as exc:
+        logger.error("Brand logo upload failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Brand logo storage is unavailable.") from None
+
+    from sqlalchemy import select
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == license_obj.license_key
+    ).with_for_update())
+    old_storage_key = item.logo_storage_key if item else None
+    now = datetime.now(timezone.utc)
+    if item is None:
+        item = CustomerBranding(
+            license_key=license_obj.license_key,
+            brand_name=license_obj.client_name,
+            logo_url=None,
+            logo_storage_key=receipt.storage_key,
+            logo_sha256=receipt.sha256,
+            logo_mime_type=receipt.mime_type,
+            logo_byte_size=receipt.byte_size,
+            primary_color="#155a8a",
+            updated_at=now,
+        )
+        operational_db.add(item)
+    else:
+        item.logo_url = None
+        item.logo_storage_key = receipt.storage_key
+        item.logo_sha256 = receipt.sha256
+        item.logo_mime_type = receipt.mime_type
+        item.logo_byte_size = receipt.byte_size
+        item.updated_at = now
+    await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, old_storage_key)
+    try:
+        await operational_db.commit()
+    except Exception:
+        await operational_db.rollback()
+        try:
+            await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, receipt.storage_key)
+            await operational_db.commit()
+        except Exception as cleanup_exc:
+            await operational_db.rollback()
+            logger.error("Uncommitted logo cleanup queue persistence failed (error_type=%s)", type(cleanup_exc).__name__)
+        raise
+    response.headers["Cache-Control"] = "no-store, private"
+    return {"logo_stored": True, "mime_type": receipt.mime_type, "byte_size": receipt.byte_size}
+
+
+@app.get("/api/v1/account/branding/logo", response_class=Response)
+async def get_account_branding_logo(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Stream a private logo through the authenticated API; never expose its storage key."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
+    from sqlalchemy import select
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == license_obj.license_key
+    ))
+    if item is None or not item.logo_storage_key:
+        raise HTTPException(status_code=404, detail="No uploaded brand logo is available.")
+    try:
+        logo_bytes = await asyncio.to_thread(
+            download_file, item.logo_storage_key, item.logo_sha256
+        )
+    except HostingerStorageError as exc:
+        logger.error("Brand logo read failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Brand logo storage is temporarily unavailable.") from None
+    mime_type = item.logo_mime_type or "application/octet-stream"
+    return Response(
+        content=logo_bytes,
+        media_type=mime_type,
+        headers={
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline; filename=brand-logo",
+        },
+    )
+
+
+@app.delete("/api/v1/account/branding/logo")
+async def delete_account_branding_logo(
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Remove a customer's stored or legacy logo without affecting report retention."""
+    if not plan_features(license_obj.tier)["white_label_branding"]:
+        raise HTTPException(status_code=403, detail="White-label branding is not included in this plan.")
+    from sqlalchemy import select
+    item = await operational_db.scalar(select(CustomerBranding).where(
+        CustomerBranding.license_key == license_obj.license_key
+    ).with_for_update())
+    if item is None:
+        return {"logo_removed": True}
+    old_storage_key = item.logo_storage_key
+    item.logo_url = None
+    item.logo_storage_key = None
+    item.logo_sha256 = None
+    item.logo_mime_type = None
+    item.logo_byte_size = None
+    item.updated_at = datetime.now(timezone.utc)
+    await _queue_brand_logo_cleanup(operational_db, license_obj.license_key, old_storage_key)
     await operational_db.commit()
     response.headers["Cache-Control"] = "no-store, private"
-    return {"brand_name": brand_name, "logo_url": logo_url, "primary_color": color, "updated": True}
+    return {"logo_removed": True}
+
+
 
 
 def _load_customer_usage_details(details_json: str | None) -> dict:
@@ -4187,7 +4706,7 @@ def _load_customer_usage_details(details_json: str | None) -> dict:
 @app.get("/api/v1/account/usage")
 async def get_account_usage(
     response: Response,
-    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_usage),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -4284,7 +4803,7 @@ async def account_audit_activity(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=10000000),
     domain: str = Query(default="", max_length=253),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Return customer scan history from Hostinger without exposing lead-contact data."""
@@ -4354,7 +4873,7 @@ async def account_billing_history(
     response: Response,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=10000000),
-    license_obj: SoftwareLicense = Depends(verify_customer_account),
+    license_obj: SoftwareLicense = Depends(verify_customer_account_for_management),
     db: AsyncSession = Depends(get_async_db),
     operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
@@ -4466,6 +4985,71 @@ async def account_billing_history(
         },
     }
 
+@app.post("/api/v1/public/contact")
+async def submit_public_contact(payload: PublicContactRequest, request: Request):
+    """Accept a signed marketing-site contact request and deliver it through platform SMTP."""
+    shared_secret = os.getenv("EAA_CONTACT_FORM_SECRET", "").strip()
+    recipient = os.getenv("EAA_CONTACT_TO_EMAIL", "").strip()
+    if not shared_secret or not recipient or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
+        raise HTTPException(status_code=503, detail="Contact form delivery is not configured.")
+
+    timestamp = request.headers.get("x-eaa-timestamp", "")
+    signature = request.headers.get("x-eaa-signature", "")
+    if not timestamp.isdigit() or len(timestamp) > 12 or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise HTTPException(status_code=401, detail="Contact request authentication failed.")
+    request_time = int(timestamp)
+    if abs(int(time.time()) - request_time) > 300:
+        raise HTTPException(status_code=401, detail="Contact request has expired.")
+
+    raw_body = await request.body()
+    signed_value = timestamp.encode("ascii") + b"\n" + raw_body
+    expected_signature = hmac.new(shared_secret.encode("utf-8"), signed_value, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature):
+        raise HTTPException(status_code=401, detail="Contact request authentication failed.")
+
+    email = payload.email.strip()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=422, detail="A valid reply email is required.")
+    name = payload.name.strip()
+    subject = payload.subject.strip()
+    message_text = payload.message.strip()
+    if not name or not subject or len(message_text) < 15:
+        raise HTTPException(status_code=422, detail="Please complete all contact form fields.")
+
+    mail = EmailMessage()
+    mail["Subject"] = f"[Ecommerce Audit Agent] {subject}"
+    mail["To"] = recipient
+    configured_sender = os.getenv("SMTP_FROM", "").strip()
+    _, sender_address = parseaddr(configured_sender)
+    if not sender_address:
+        raise HTTPException(status_code=503, detail="Contact form sender is not configured.")
+    mail["From"] = formataddr(("Ecommerce Audit Agent", sender_address))
+    mail["Reply-To"] = email
+    mail.set_content(f"Name: {name}\nEmail: {email}\n\n{message_text}")
+    safe_name = html_lib.escape(name)
+    safe_email = html_lib.escape(email)
+    safe_subject = html_lib.escape(subject)
+    safe_message = html_lib.escape(message_text).replace("\n", "<br>")
+    mail.add_alternative(
+        "<!doctype html><html><body style='margin:0;padding:24px;background:#f4f7fb;font-family:Arial,sans-serif;color:#172033'>"
+        "<div style='max-width:640px;margin:0 auto;background:#fff;border:1px solid #e4eaf2;border-radius:12px;padding:28px'>"
+        "<p style='margin:0 0 8px;color:#155a8a;font-weight:700;letter-spacing:.08em;text-transform:uppercase'>Ecommerce Audit Agent</p>"
+        f"<h1 style='font-size:22px;margin:0 0 22px'>{safe_subject}</h1>"
+        f"<p><strong>From:</strong> {safe_name} &lt;{safe_email}&gt;</p>"
+        f"<div style='line-height:1.65'>{safe_message}</div>"
+        "<hr style='border:0;border-top:1px solid #e4eaf2;margin:24px 0'>"
+        "<p style='font-size:12px;color:#64748b'>Submitted through the Ecommerce Audit Agent website contact form.</p>"
+        "</div></body></html>",
+        subtype="html",
+    )
+    try:
+        await asyncio.to_thread(_send_email_message, mail)
+    except Exception as exc:
+        logger.error("Public contact email delivery failed (error_type=%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Your message could not be delivered right now.") from None
+    return {"status": "sent"}
+
+
 @app.post("/api/v1/account/billing-portal")
 async def create_account_billing_portal(
     response: Response,
@@ -4499,6 +5083,8 @@ async def create_account_billing_portal(
         ),
         None,
     )
+    if not customer_id:
+        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     subscription_rows = await db.execute(
         select(PaymentWebhookEvent.subscription_id)
         .where(
@@ -4517,8 +5103,6 @@ async def create_account_billing_portal(
         for subscription_id in subscription_rows.scalars().all()
         if isinstance(subscription_id, str) and re.fullmatch(r"sub_[A-Za-z0-9]+", subscription_id)
     ]
-    if not customer_id:
-        raise HTTPException(status_code=409, detail="No linked Paddle customer is available for this account yet.")
     payload = {"subscription_ids": subscription_ids} if subscription_ids else {}
     try:
         result = await asyncio.to_thread(
@@ -4780,6 +5364,7 @@ async def list_audit_reports(
     domain: str = Query(default="", max_length=253),
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """List only reports owned by the authenticated license; never expose PDF bytes here."""
     from sqlalchemy import select, func as sql_func
@@ -4795,26 +5380,44 @@ async def list_audit_reports(
         .order_by(AuditReport.created_at.desc(), AuditReport.id.desc())
         .offset(offset).limit(limit)
     )).scalars().all()
+    report_ids = [row.id for row in rows]
+    report_files = {}
+    if report_ids:
+        file_rows = (await operational_db.execute(select(CustomerReportFile).where(
+            CustomerReportFile.report_id.in_(report_ids),
+            CustomerReportFile.license_key == license_obj.license_key,
+        ))).scalars().all()
+        report_files = {item.report_id: item for item in file_rows}
+
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
-    return {
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "domain": normalized_domain,
-        "reports": [
-            {
-                "id": row.id,
-                "domain": row.domain,
-                "finding_count": row.finding_count,
-                "created_at": row.created_at.isoformat(),
-                "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
-                "download_url": f"/api/v1/reports/{row.id}/pdf",
-                "coverage_url": f"/api/v1/reports/{row.id}/coverage",
-            }
-            for row in rows
-        ],
-    }
+    now = datetime.now(timezone.utc)
+    report_retention_days = await _get_report_retention_days(operational_db)
+    reports = []
+    for row in rows:
+        report_file = report_files.get(row.id)
+        if report_file is not None:
+            expiry = report_file.expires_at
+            if expiry is not None and expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            available = _customer_report_file_available(report_file, now)
+        else:
+            # Legacy reports remain visible and downloadable during transition.
+            expiry = _report_expires_at(row, report_retention_days)
+            available = _report_pdf_available(row, report_retention_days, now)
+        reports.append({
+            "id": row.id,
+            "domain": row.domain,
+            "finding_count": row.finding_count,
+            "created_at": row.created_at.isoformat(),
+            "pdf_expires_at": expiry.isoformat() if expiry else None,
+            "pdf_days_remaining": max(0, int(((expiry - now).total_seconds() + 86399) // 86400)) if expiry else None,
+            "pdf_available": available,
+            "check_outcome_summary": _saved_report_outcome_summary(row.coverage_json),
+            "download_url": f"/api/v1/reports/{row.id}/pdf",
+            "coverage_url": f"/api/v1/reports/{row.id}/coverage",
+        })
+    return {"total": total, "limit": limit, "offset": offset, "domain": normalized_domain, "reports": reports}
 
 
 @app.get("/api/v1/reports/{report_id}/pdf", response_class=Response)
@@ -4822,6 +5425,7 @@ async def download_audit_report(
     report_id: int,
     license_obj: SoftwareLicense = Depends(verify_license_with_optional_wordpress_site),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Download a stored report only when it belongs to the authenticated license."""
     from sqlalchemy import select
@@ -4831,9 +5435,15 @@ async def download_audit_report(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
+    report_file = (await operational_db.execute(select(CustomerReportFile).where(
+        CustomerReportFile.report_id == row.id,
+        CustomerReportFile.license_key == license_obj.license_key,
+    ))).scalar_one_or_none()
+    retention_days = await _get_report_retention_days(operational_db)
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row, retention_days)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", row.domain)[:180] or "website"
     return Response(
-        content=row.pdf_bytes,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{row.id}.pdf"',
@@ -4933,56 +5543,10 @@ async def get_audit_report_evidence(
 
 
 
-def _smtp_configuration_status() -> dict:
-    """Describe SMTP readiness without returning configured values or secrets."""
-    issues = []
-    if not os.getenv("SMTP_HOST", "").strip():
-        issues.append("SMTP_HOST missing")
-    if not os.getenv("SMTP_FROM", "").strip():
-        issues.append("SMTP_FROM missing")
-    try:
-        port = int(os.getenv("SMTP_PORT", "587").strip())
-        if not 1 <= port <= 65535:
-            raise ValueError
-    except (TypeError, ValueError):
-        issues.append("SMTP_PORT must be an integer from 1 to 65535")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        issues.append("SMTP_TLS_MODE must be starttls or ssl")
-    username = os.getenv("SMTP_USERNAME", "").strip()
-    password = os.getenv("SMTP_PASSWORD", "")
-    if bool(username) != bool(password):
-        issues.append("SMTP_USERNAME and SMTP_PASSWORD must both be set or both be empty")
-    return {"configured": not issues, "issues": issues}
-
-
-def _configured_smtp_port() -> int:
-    """Validate SMTP port configuration before opening a network connection."""
-    raw_port = os.getenv("SMTP_PORT", "587").strip()
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("SMTP port configuration is invalid") from exc
-    if not 1 <= port <= 65535:
-        raise RuntimeError("SMTP port configuration is invalid")
-    return port
-
-
 def _send_license_email(recipient: str, license_key: str, tier: str, quota: int) -> None:
     """Deliver a newly provisioned license using SMTP secrets from the runtime environment."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     message = EmailMessage()
     message["Subject"] = "Your E-commerce Audit Agent license"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         "Your payment has been confirmed and your audit license is ready.\n\n"
@@ -4990,33 +5554,11 @@ def _send_license_email(recipient: str, license_key: str, tier: str, quota: int)
         "Open the customer dashboard, choose License key, and paste this key to access your reports. "
         "Keep this key private; it authorizes use of your account allowance."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role: str) -> None:
     """Send a single-use, 48-hour agency team invitation through configured SMTP."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     app_url = os.getenv("PUBLIC_APP_URL", "").strip().rstrip("/")
     if not app_url:
         raise RuntimeError("PUBLIC_APP_URL is required for secure agency invitation links")
@@ -5026,79 +5568,32 @@ def _send_agency_invitation_email(recipient: str, token: str, inviter: str, role
     invite_url = app_url + "/app?agency_invitation=" + token
     message = EmailMessage()
     message["Subject"] = "Invitation to join an Ecommerce Audit Agent agency"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
-        f"{inviter} invited you to join their agency as {role}.\\n\\n"
-        f"Accept this invitation within 48 hours: {invite_url}\\n\\n"
+        f"{inviter} invited you to join their agency as {role}.\n\n"
+        f"Accept this invitation within 48 hours: {invite_url}\n\n"
         "This link is single-use. If you were not expecting this invitation, ignore this email."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _send_account_login_code(recipient: str, code: str) -> None:
     """Send a short-lived passwordless sign-in code through the configured SMTP relay."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     message = EmailMessage()
     message["Subject"] = "Your E-commerce Audit Agent sign-in code"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your customer account sign-in code is: {code}\n\n"
         "This code expires in 10 minutes and can be used once. "
         "If you did not request it, you can ignore this email."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _send_account_email_change_code(recipient: str, code: str) -> None:
     """Deliver a new-address ownership challenge using the configured SMTP relay."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
     message = EmailMessage()
     message["Subject"] = "Verify your new E-commerce Audit Agent account email"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your new customer account email verification code is: {code}\n\n"
@@ -5106,19 +5601,7 @@ def _send_account_email_change_code(recipient: str, code: str) -> None:
         "Your existing account email remains active until this code is verified. "
         "If you did not request this change, ignore this message and your account will remain unchanged."
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 def _is_valid_paddle_hosted_url(value: object) -> bool:
@@ -5821,7 +6304,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             "subscription.activated": "subscription_activated",
         }[event_type]
         now = datetime.now(timezone.utc)
-        was_active = bool(license_obj.is_active)
+        was_active = _license_is_current(license_obj, now)
         if event_type == "subscription.paused":
             license_obj.is_active = False
         elif license_obj.expires_at is None:
@@ -5841,6 +6324,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=occurred_at,
             updated_at=occurred_at,
         ))
+        _queue_customer_lifecycle_projection(db, license_obj, was_active, now)
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
         if was_active != bool(license_obj.is_active):
@@ -5890,6 +6374,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             created_at=occurred_at,
             updated_at=occurred_at,
         ))
+        _queue_customer_lifecycle_projection(db, license_obj, changed, now)
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
         if changed:
@@ -5957,7 +6442,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             raise HTTPException(status_code=400, detail="Paddle subscription customer must be a JSON object.")
         customer_id = str(transaction.get("customer_id") or customer.get("id") or "").strip()
         now = datetime.now(timezone.utc)
-        was_active = bool(license_obj.is_active)
+        was_active = _license_is_current(license_obj, now)
         latest_lifecycle_event = await _latest_paddle_subscription_lifecycle_event(
             db, subscription_id
         )
@@ -6010,6 +6495,7 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
             paddle_customer_id=(customer_id[:100] or linked_event.paddle_customer_id),
             created_at=occurred_at, updated_at=occurred_at,
         ))
+        _queue_customer_lifecycle_projection(db, license_obj, was_active, now)
         await db.commit()
         await _sync_billing_event_to_hostinger(db, event_id)
         if was_active != bool(license_obj.is_active) or (plan is not None and not is_canceled and status_supported):
@@ -6137,6 +6623,8 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                     )).scalar_one_or_none()
                     if prior_renewal is not None:
                         return {"status": "already_processed", "event_id": prior_renewal.event_id}
+                renewal_now = datetime.now(timezone.utc)
+                was_active = _license_is_current(linked_license, renewal_now)
                 linked_license.tier = plan["tier"]
                 linked_license.max_monthly_audits = plan["monthly_audit_allowance"]
                 billing_period_end = _apply_paddle_billing_period(
@@ -6154,8 +6642,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
                 )
                 linked_license.is_active = (
                     not subscription_is_paused
-                    and (expiry is None or expiry > datetime.now(timezone.utc))
+                    and (expiry is None or expiry > renewal_now)
                 )
+                _queue_customer_lifecycle_projection(db, linked_license, was_active, renewal_now)
                 renewal_customer_id = str(
                     transaction.get("customer_id") or customer.get("id") or ""
                 ).strip()
@@ -6292,20 +6781,9 @@ async def paddle_webhook(request: Request, db: AsyncSession = Depends(get_async_
 
 def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: bytes) -> None:
     """Send a user-requested report using SMTP configuration supplied only via environment."""
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", "").strip()
-    if not host or not sender:
-        raise RuntimeError("Email delivery is not configured")
-    port = _configured_smtp_port()
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    mode = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
-    if mode not in {"starttls", "ssl"}:
-        raise RuntimeError("Unsupported SMTP TLS mode")
 
     message = EmailMessage()
     message["Subject"] = f"Your e-commerce audit report for {domain}"
-    message["From"] = sender
     message["To"] = recipient
     message.set_content(
         f"Your requested e-commerce audit report for {domain} is attached.\n\n"
@@ -6319,19 +6797,7 @@ def _send_pdf_email(recipient: str, domain: str, report_id: int, pdf_bytes: byte
         subtype="pdf",
         filename=f"ecommerce-audit-{report_id}.pdf",
     )
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            if username:
-                server.login(username, password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            if username:
-                server.login(username, password)
-            server.send_message(message)
+    _send_email_message(message)
 
 
 @app.post("/api/v1/reports/{report_id}/email")
@@ -6341,6 +6807,7 @@ async def email_audit_report(
     response: Response,
     license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
     db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
 ):
     """Email a saved PDF only on explicit request and only for a report owned by this license."""
     from sqlalchemy import select
@@ -6355,11 +6822,17 @@ async def email_audit_report(
     ))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Audit report not found")
-    if len(row.pdf_bytes) > 10 * 1024 * 1024:
+    report_file = (await operational_db.execute(select(CustomerReportFile).where(
+        CustomerReportFile.report_id == row.id,
+        CustomerReportFile.license_key == license_obj.license_key,
+    ))).scalar_one_or_none()
+    retention_days = await _get_report_retention_days(operational_db)
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(row, retention_days)
+    if len(pdf_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Report exceeds the email attachment size limit.")
     try:
         await asyncio.to_thread(
-            _send_pdf_email, recipient, row.domain, row.id, row.pdf_bytes
+            _send_pdf_email, recipient, row.domain, row.id, pdf_bytes
         )
     except RuntimeError as exc:
         if str(exc) == "Email delivery is not configured":
@@ -6652,6 +7125,14 @@ async def _sync_billing_event_to_hostinger(db: AsyncSession, event_id: str) -> b
 
         if pending is not None:
             await db.delete(pending)
+        # The marker is committed with the canonical event row. If this commit
+        # fails after the Hostinger write, the worker's missing-marker backfill
+        # safely replays the idempotent mirror operation.
+        synced_at = datetime.now(timezone.utc)
+        event_updated_at = event.updated_at
+        if event_updated_at is not None and event_updated_at.tzinfo is None:
+            event_updated_at = event_updated_at.replace(tzinfo=timezone.utc)
+        event.billing_mirror_synced_at = max(synced_at, event_updated_at or synced_at)
         # Release both row locks before the caller proceeds with any other work.
         await db.commit()
         return True
@@ -7540,6 +8021,68 @@ async def admin_dashboard_page():
     return FileResponse(Path(__file__).resolve().parent / "admin_portal.html")
 
 
+@app.get("/api/v1/admin/settings/report-retention")
+async def admin_get_report_retention(
+    request: Request,
+    response: Response,
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Return the owner-managed PDF retention policy from Hostinger MySQL."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    days = await _get_report_retention_days(operational_db)
+    setting = (await operational_db.execute(
+        select(PlatformSetting).where(PlatformSetting.setting_key == "report_retention_days")
+    )).scalar_one_or_none()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "retention_days": days,
+        "source": "hostinger_mysql" if setting is not None else "environment_default",
+        "minimum_days": 1,
+        "maximum_days": 3650,
+        "applies_to": "new_reports",
+    }
+
+
+@app.put("/api/v1/admin/settings/report-retention")
+async def admin_update_report_retention(
+    request: Request,
+    response: Response,
+    days: int = Query(..., ge=1, le=3650),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Persist the retention policy for newly generated reports in Hostinger MySQL."""
+    _require_admin_key(request)
+    from sqlalchemy import select
+    setting = (await operational_db.execute(
+        select(PlatformSetting)
+        .where(PlatformSetting.setting_key == "report_retention_days")
+        .with_for_update()
+    )).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if setting is None:
+        operational_db.add(PlatformSetting(
+            setting_key="report_retention_days",
+            setting_value=str(days),
+            updated_at=now,
+        ))
+    else:
+        setting.setting_value = str(days)
+        setting.updated_at = now
+    await operational_db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "retention_days": days,
+        "source": "hostinger_mysql",
+        "minimum_days": 1,
+        "maximum_days": 3650,
+        "applies_to": "new_reports",
+        "updated_at": now.isoformat(),
+    }
+
+
 
 @app.get("/api/v1/admin/payment-events")
 async def admin_payment_events(
@@ -8357,16 +8900,26 @@ async def admin_overview(
 
 @app.get("/api/v1/admin/reports/{report_id}/pdf", response_class=Response)
 async def admin_download_audit_report(report_id: int, request: Request,
-                                      db: AsyncSession = Depends(get_async_db)):
+                                      db: AsyncSession = Depends(get_async_db),
+                                      operational_db: AsyncSession = Depends(get_hostinger_db)):
     """Allow authenticated operators to retrieve a saved customer report for support."""
     _require_admin_key(request)
     from sqlalchemy import select
     report = (await db.execute(select(AuditReport).where(AuditReport.id == report_id))).scalar_one_or_none()
     if report is None:
         raise HTTPException(status_code=404, detail="Audit report not found.")
+    owner = await db.get(SoftwareLicense, report.license_id)
+    report_file = None
+    if owner is not None:
+        report_file = (await operational_db.execute(select(CustomerReportFile).where(
+            CustomerReportFile.report_id == report.id,
+            CustomerReportFile.license_key == owner.license_key,
+        ))).scalar_one_or_none()
+    retention_days = await _get_report_retention_days(operational_db)
+    pdf_bytes = await _read_customer_report_file(report_file) if report_file else await _read_report_pdf(report, retention_days)
     safe_hostname = re.sub(r"[^a-zA-Z0-9.-]", "-", report.domain)[:180] or "website"
     return Response(
-        content=report.pdf_bytes,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="ecommerce-audit-{safe_hostname}-{report.id}.pdf"',
@@ -8375,6 +8928,138 @@ async def admin_download_audit_report(report_id: int, request: Request,
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@app.get("/api/v1/internal/report-retention/cleanup", include_in_schema=False)
+async def cleanup_expired_report_pdfs(
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+    operational_db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Daily scheduler endpoint; removes expired PDF objects but preserves report metadata."""
+    cron_secret = os.getenv("CRON_SECRET", "")
+    authorization = request.headers.get("authorization", "")
+    expected_authorization = f"Bearer {cron_secret}" if cron_secret else ""
+    if not cron_secret or not hmac.compare_digest(authorization, expected_authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    retention_days = await _get_report_retention_days(operational_db)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=retention_days)
+    from sqlalchemy import case, or_, select
+
+    # Hostinger owns all new customer-facing PDF pointers. Keep failures
+    # retryable and mark deletion only after the private bridge confirms it.
+    hostinger_rows = (await operational_db.execute(
+        select(CustomerReportFile)
+        .where(
+            CustomerReportFile.expires_at.is_not(None),
+            CustomerReportFile.expires_at <= now,
+            CustomerReportFile.deleted_at.is_(None),
+        )
+        .order_by(
+            case((CustomerReportFile.cleanup_last_attempt_at.is_(None), 0), else_=1),
+            CustomerReportFile.cleanup_last_attempt_at.asc(),
+            CustomerReportFile.expires_at.asc(),
+            CustomerReportFile.id.asc(),
+        )
+        .limit(100)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    hostinger_deleted = 0
+    hostinger_failed = 0
+    for report_file in hostinger_rows:
+        report_file.cleanup_attempts = int(report_file.cleanup_attempts or 0) + 1
+        report_file.cleanup_last_attempt_at = now
+        try:
+            await asyncio.to_thread(delete_file, report_file.storage_key)
+        except HostingerStorageError as exc:
+            hostinger_failed += 1
+            logger.error("Expired Hostinger report deletion failed (error_type=%s)", type(exc).__name__)
+            continue
+        report_file.deleted_at = now
+        hostinger_deleted += 1
+    await operational_db.commit()
+
+    # Retry detached customer logo objects from the durable Hostinger queue.
+    logo_cleanup_rows = (await operational_db.execute(
+        select(CustomerBrandingLogoCleanup)
+        .order_by(
+            case((CustomerBrandingLogoCleanup.last_attempt_at.is_(None), 0), else_=1),
+            CustomerBrandingLogoCleanup.last_attempt_at.asc(),
+            CustomerBrandingLogoCleanup.created_at.asc(),
+            CustomerBrandingLogoCleanup.id.asc(),
+        )
+        .limit(100)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    logo_deleted = 0
+    logo_failed = 0
+    for cleanup in logo_cleanup_rows:
+        cleanup.attempts = int(cleanup.attempts or 0) + 1
+        cleanup.last_attempt_at = now
+        try:
+            await asyncio.to_thread(delete_file, cleanup.storage_key)
+        except HostingerStorageError as exc:
+            logo_failed += 1
+            cleanup.last_error = type(exc).__name__[:120]
+            logger.error("Queued brand logo cleanup failed (error_type=%s)", type(exc).__name__)
+            continue
+        await operational_db.delete(cleanup)
+        logo_deleted += 1
+    await operational_db.commit()
+
+    # Preserve legacy cleanup for PDFs whose pointers/bytes still live in PostgreSQL.
+    rows = (await db.execute(
+        select(AuditReport)
+        .where(
+            AuditReport.created_at <= cutoff,
+            AuditReport.pdf_deleted_at.is_(None),
+            or_(
+                AuditReport.storage_key.is_not(None),
+                AuditReport.pdf_bytes.is_not(None),
+            ),
+        )
+        .order_by(
+            case((AuditReport.pdf_cleanup_last_attempt_at.is_(None), 0), else_=1),
+            AuditReport.pdf_cleanup_last_attempt_at.asc(),
+            AuditReport.created_at.asc(),
+            AuditReport.id.asc(),
+        )
+        .limit(100)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+
+    deleted = 0
+    failed = 0
+    for report in rows:
+        report.pdf_cleanup_attempts = int(report.pdf_cleanup_attempts or 0) + 1
+        report.pdf_cleanup_last_attempt_at = now
+        if report.storage_key:
+            try:
+                await asyncio.to_thread(delete_file, report.storage_key)
+            except HostingerStorageError as exc:
+                failed += 1
+                logger.error("Expired report deletion failed (error_type=%s)", type(exc).__name__)
+                continue
+        # Legacy PostgreSQL-only PDFs are also purged once their retention
+        # deadline has passed; unexpired binaries are handled by the verified
+        # migration script before they are cleared.
+        report.storage_key = None
+        report.pdf_bytes = None
+        report.pdf_deleted_at = now
+        deleted += 1
+
+    await db.commit()
+    return {
+        "status": "completed",
+        "retention_days": retention_days,
+        "processed": len(hostinger_rows) + len(logo_cleanup_rows) + len(rows),
+        "deleted": hostinger_deleted + logo_deleted + deleted,
+        "failed": hostinger_failed + logo_failed + failed,
+        "logo_cleanup": {"processed": len(logo_cleanup_rows), "deleted": logo_deleted, "failed": logo_failed},
+        "has_more": len(hostinger_rows) == 100 or len(logo_cleanup_rows) == 100 or len(rows) == 100,
+    }
 
 
 @app.get("/api/v1/admin/reports/{report_id}/evidence")
@@ -8583,7 +9268,9 @@ async def admin_reconcile_subscription(
         None,
     )
     now = datetime.now(timezone.utc)
-    was_active = bool(license_obj.is_active)
+    # Compare effective access, not only the raw is_active flag. The verified
+    # Paddle billing period below may extend expires_at and restore access.
+    was_active = _license_is_current(license_obj, now)
     if provider_status in {"canceled", "cancelled", "paused"}:
         license_obj.is_active = False
     elif provider_status in {"active", "trialing"}:
@@ -8600,6 +9287,19 @@ async def admin_reconcile_subscription(
         license_obj, data,
         extend_expiry=provider_status in {"active", "trialing"},
     )
+    current_active = _license_is_current(license_obj, now)
+    # Queue only after the provider billing period has been applied, so an
+    # active renewal that extends an expired license also reactivates Hostinger.
+    if was_active != current_active:
+        db.add(CustomerLifecycleSyncOutbox(
+            id=secrets.token_urlsafe(24),
+            license_key=license_obj.license_key,
+            action="reactivate" if current_active else "suspend",
+            status="pending",
+            attempts=0,
+            next_attempt_at=now,
+            created_at=now,
+        ))
 
     lifecycle_status = {
         "active": "subscription_updated_active",
@@ -9132,7 +9832,6 @@ async def admin_customer_account_detail(
             "offset": license_offset,
             "total": license_total,
             "has_more": license_offset + len(rows) < license_total,
-            "identity_keys_truncated": False,
         },
         "licenses": [{
             "id": item.id, "client_name": item.client_name, "tier": item.tier,
@@ -9329,7 +10028,6 @@ async def admin_customer_account_action(
         "reason": payload.reason.strip(),
         "operational_sync": "queued",
     })
-
     if payload.action in {"suspend", "reactivate"}:
         active = payload.action == "reactivate"
         await operational_db.execute(update(CustomerAccount).where(
@@ -9805,7 +10503,8 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     )).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found.")
-    previous_active = bool(client.is_active)
+    lifecycle_now = datetime.now(timezone.utc)
+    previous_active = _license_is_current(client, lifecycle_now)
     audited_fields = ("client_name", "tier", "max_monthly_audits", "is_active", "expires_at")
     previous_values = {
         key: (getattr(client, key).isoformat() if isinstance(getattr(client, key), datetime) else getattr(client, key))
@@ -9831,15 +10530,16 @@ async def admin_update_client(license_id: int, payload: AdminClientUpdate, reque
     # lifecycle outbox used by account-wide admin actions. Without this record,
     # the canonical license changes but Hostinger customer status and browser
     # sessions can remain stale indefinitely.
-    if "is_active" in changes and bool(client.is_active) != previous_active:
+    current_active = _license_is_current(client, lifecycle_now)
+    if current_active != previous_active:
         db.add(CustomerLifecycleSyncOutbox(
             id=secrets.token_urlsafe(24),
             license_key=client.license_key,
-            action="reactivate" if bool(client.is_active) else "suspend",
+            action="reactivate" if current_active else "suspend",
             status="pending",
             attempts=0,
-            next_attempt_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc),
+            next_attempt_at=lifecycle_now,
+            created_at=lifecycle_now,
         ))
     await db.commit()
     await db.refresh(client)

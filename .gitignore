@@ -17,3 +17,10 @@ venv/
 *.log
 .coverage
 htmlcov/
+
+# Hostinger storage runtime secrets and private customer files
+hostinger-storage/eaa-storage/config.php
+hostinger-storage/eaa-storage/private/reports/*
+hostinger-storage/eaa-storage/private/logos/*
+hostinger-storage/eaa-storage/private/nonce-cache*
+hostinger-storage/eaa-storage/private/.upload-*

@@ -80,7 +80,14 @@ class AgencyArchiveSession:
         return self.rows.pop(0)
 
     async def execute(self, _statement):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.challenges))
+        now = datetime.now(timezone.utc)
+        pending = [item for item in self.challenges if item.consumed_at is None]
+        for item in pending:
+            item.consumed_at = now
+        return SimpleNamespace(
+            rowcount=len(pending),
+            scalars=lambda: SimpleNamespace(all=lambda: self.challenges),
+        )
 
     async def commit(self):
         self.committed = True
@@ -199,7 +206,7 @@ def test_agency_wordpress_connection_ui_supports_health_refresh_and_token_replac
     assert 'connectWebsite.textContent = "Generate replacement token";' in section
     assert 'window.confirm("Generate a replacement token?' in section
     assert 'Generating another token invalidates this one.' in section
-    assert 'refreshWebsiteStatus();' in section
+    assert 'refreshWebsite.addEventListener("click", () => refreshWebsiteStatus())' in section
 
 
 

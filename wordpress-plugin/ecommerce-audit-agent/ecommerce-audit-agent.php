@@ -353,6 +353,17 @@ function eaa_wp_clear_identity_link_settings(&$settings) {
     }
 }
 
+function eaa_wp_is_already_disconnected($response, $expected_detail) {
+    if (!is_wp_error($response)) {
+        return false;
+    }
+    $error_data = $response->get_error_data();
+    return is_array($error_data) &&
+        isset($error_data['status']) &&
+        404 === (int) $error_data['status'] &&
+        $expected_detail === $response->get_error_message();
+}
+
 function eaa_wp_disconnect_site() {
     $settings = eaa_wp_settings();
     if (!empty($settings['agency_site_token'])) {
@@ -361,10 +372,9 @@ function eaa_wp_disconnect_site() {
             return $token;
         }
         $response = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/disconnect', 'POST', array(), $token);
-        if (is_wp_error($response)) {
-            $error_data = $response->get_error_data();
-            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-            if (404 !== $http_status) return $response;
+        if (is_wp_error($response) &&
+            !eaa_wp_is_already_disconnected($response, 'Agency WordPress connection not found.')) {
+            return $response;
         }
         unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
               $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
@@ -381,13 +391,9 @@ function eaa_wp_disconnect_site() {
     $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/disconnect', 'POST', array(
         'site_id' => sanitize_text_field($settings['site_id']),
     ));
-    if (is_wp_error($response)) {
-        $error_data = $response->get_error_data();
-        $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-        // A 404 means the remote installation is already disconnected.
-        if (404 !== $http_status) {
-            return $response;
-        }
+    if (is_wp_error($response) &&
+        !eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')) {
+        return $response;
     }
     unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
     eaa_wp_clear_identity_link_settings($settings);
@@ -419,9 +425,7 @@ function eaa_wp_sync_site_status() {
         $response = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $token);
         $settings['last_sync'] = time();
         if (is_wp_error($response)) {
-            $error_data = $response->get_error_data();
-            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-            if (404 === $http_status) {
+            if (eaa_wp_is_already_disconnected($response, 'Agency WordPress connection is no longer active.')) {
                 unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                       $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at'],
                       $settings['last_status']);
@@ -443,9 +447,7 @@ function eaa_wp_sync_site_status() {
     $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
     $settings['last_sync'] = time();
     if (is_wp_error($response)) {
-        $error_data = $response->get_error_data();
-        $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-        if (404 === $http_status) {
+        if (eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')) {
             // The SaaS customer portal can disconnect this site remotely.
             unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
             eaa_wp_clear_identity_link_settings($settings);
@@ -793,11 +795,10 @@ function eaa_wp_render_admin_page() {
         } else {
             $agency_status = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $agency_token);
             if (is_wp_error($agency_status)) {
-                $error_data = $agency_status->get_error_data();
-                $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-                if (404 === $http_status) {
+                if (eaa_wp_is_already_disconnected($agency_status, 'Agency WordPress connection is no longer active.')) {
                     unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                           $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+                    eaa_wp_clear_identity_link_settings($settings);
                     $settings['connection_error'] = __('The agency owner disconnected this client website. Generate a new token to reconnect.', 'ecommerce-audit-agent');
                     update_option(EAA_WP_OPTION, $settings, false);
                     $agency_mode = false;
@@ -818,12 +819,11 @@ function eaa_wp_render_admin_page() {
             $settings['connection_error'] = '';
             update_option(EAA_WP_OPTION, $settings, false);
         } else {
-            $error_data = $status_response->get_error_data();
-            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-            if (404 === $http_status) {
+            if (eaa_wp_is_already_disconnected($status_response, 'WordPress site connection not found.')) {
                 // Reflect a customer-portal disconnect immediately when the
                 // administrator opens this screen, not only on the next cron.
                 unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+                eaa_wp_clear_identity_link_settings($settings);
                 $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
                 update_option(EAA_WP_OPTION, $settings, false);
                 $error = $settings['connection_error'];

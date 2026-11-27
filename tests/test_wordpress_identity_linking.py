@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
@@ -33,6 +34,25 @@ def test_wordpress_site_url_is_normalized_to_https_origin_and_path():
 def test_wordpress_link_rejects_unsafe_site_urls(url):
     with pytest.raises(HTTPException):
         _normalize_site_url(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://-example.com/",
+    "https://example-.com/",
+    "https://example..com/",
+    "https://example.com../",
+    "https://exa_mple.com/",
+    "https://" + ("a" * 64) + ".com/",
+])
+def test_wordpress_link_rejects_invalid_dns_hostnames(url):
+    with pytest.raises(HTTPException):
+        _normalize_site_url(url)
+
+
+def test_wordpress_link_accepts_valid_hyphenated_multilabel_hostname():
+    assert _normalize_site_url("https://Shop-2.Example.co.uk/") == (
+        "https://shop-2.example.co.uk/", "shop-2.example.co.uk"
+    )
 
 
 def test_wordpress_link_token_is_stored_as_sha256_digest():
@@ -153,7 +173,9 @@ def test_remote_agency_disconnect_clears_identity_and_cached_status_metadata():
     agency_sync = plugin[start:end]
 
     assert "agency/sites/status" in agency_sync
-    assert "unset($settings['last_status']);" in agency_sync
+    unset_start = agency_sync.index("unset(")
+    unset_end = agency_sync.index(");", unset_start)
+    assert "$settings['last_status']" in agency_sync[unset_start:unset_end]
     assert "eaa_wp_clear_identity_link_settings($settings);" in agency_sync
 
 

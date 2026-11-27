@@ -74,7 +74,7 @@ async def test_recovers_to_available_model_that_passes_json_validation(audit_and
     valid_pitch = {
         "revenue_leak_hypothesis": "Slow mobile performance may reduce conversions.",
         "email_subject": "A quick mobile performance idea",
-        "email_body": "I noticed your mobile score. It may affect conversions. Would a short video help?",
+        "email_body": "I noticed your mobile score is 72/100 and Speed Index is 2.40 seconds. Would a 90-second Loom video be useful?",
     }
     agent = make_agent(
         {

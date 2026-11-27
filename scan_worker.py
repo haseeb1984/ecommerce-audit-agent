@@ -22,7 +22,7 @@ from models import (
     SaaSPlanPackage,
     SoftwareLicense,
 )
-from quota import reserve_audit_slot, release_audit_reservation
+from quota import reserve_audit_slot, release_audit_reservation, renew_audit_reservation
 from audit_checks import AuditFinding, CheckOutcome, run_phase_one_checks
 from browser_audit_client import BrowserAuditUnavailable, run_browser_audit
 from crawl_checks import run_bounded_site_crawl
@@ -188,6 +188,19 @@ def _lifecycle_action_applies(action: str, license_is_active: bool | None) -> bo
         return license_is_active is True
     return action == "revoke_sessions"
 
+def _license_projection_is_active(license_obj, now: datetime | None = None) -> bool | None:
+    """Return canonical effective access state for Hostinger lifecycle projection."""
+    if license_obj is None:
+        return None
+    if not bool(license_obj.is_active):
+        return False
+    expires_at = license_obj.expires_at
+    if expires_at is None:
+        return True
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at > (now or datetime.now(timezone.utc))
+
 def _customer_lifecycle_license_lock_query(license_key: str):
     """Lock canonical license state before mirroring lifecycle changes to Hostinger."""
     return (
@@ -204,6 +217,44 @@ def _mark_billing_mirror_outbox_completed(item, processed_at: datetime) -> None:
     item.last_error = None
 
 
+async def _backfill_missing_billing_mirror_outbox(
+    licensing_db, *, now: datetime, batch_size: int
+) -> int:
+    """Recreate retry rows for committed billing events whose mirror bookkeeping was lost."""
+    has_outbox = select(BillingMirrorSyncOutbox.event_id).where(
+        BillingMirrorSyncOutbox.event_id == PaymentWebhookEvent.event_id
+    ).exists()
+    stale_mirror = or_(
+        PaymentWebhookEvent.billing_mirror_synced_at.is_(None),
+        PaymentWebhookEvent.billing_mirror_synced_at < PaymentWebhookEvent.updated_at,
+    )
+    events = list((await licensing_db.execute(
+        select(PaymentWebhookEvent)
+        .where(
+            PaymentWebhookEvent.license_id.is_not(None),
+            stale_mirror,
+            ~has_outbox,
+        )
+        .order_by(
+            PaymentWebhookEvent.created_at.asc(),
+            PaymentWebhookEvent.event_id.asc(),
+        )
+        .limit(batch_size)
+        .with_for_update(skip_locked=True)
+    )).scalars().all())
+    for event in events:
+        licensing_db.add(BillingMirrorSyncOutbox(
+            event_id=event.event_id,
+            status="pending",
+            attempts=0,
+            next_attempt_at=now,
+            created_at=event.created_at,
+        ))
+    if events:
+        await licensing_db.commit()
+    return len(events)
+
+
 def _customer_email_identity_license_lock_query(license_key: str):
     """Lock the canonical tenant before changing its billing identity projection."""
     return (
@@ -218,7 +269,25 @@ def _customer_email_identity_update_statement(license_id: int, old_email: str, n
     return update(PaymentWebhookEvent).where(
         PaymentWebhookEvent.license_id == license_id,
         func.lower(PaymentWebhookEvent.recipient_email) == old_email.strip().lower(),
-    ).values(recipient_email=new_email.strip())
+    ).values(
+        recipient_email=new_email.strip(),
+        updated_at=func.now(),
+        billing_mirror_synced_at=None,
+    )
+
+
+def _customer_email_identity_completed_billing_outbox_cleanup_statement(
+    license_id: int, old_email: str
+):
+    """Remove only completed mirrors before changing canonical billing identity."""
+    affected_event_ids = select(PaymentWebhookEvent.event_id).where(
+        PaymentWebhookEvent.license_id == license_id,
+        func.lower(PaymentWebhookEvent.recipient_email) == old_email.strip().lower(),
+    )
+    return delete(BillingMirrorSyncOutbox).where(
+        BillingMirrorSyncOutbox.status == "completed",
+        BillingMirrorSyncOutbox.event_id.in_(affected_event_ids),
+    )
 
 
 
@@ -371,6 +440,21 @@ async def _release_scan_reservation(reservation_id: int | None) -> None:
         )
 
 
+async def _confirm_scan_job_lease(
+    job_id: str,
+    worker_id: str,
+    lease_unconfirmed: asyncio.Event,
+) -> bool:
+    """Renew and confirm queue ownership immediately before committing billable work."""
+    if lease_unconfirmed.is_set():
+        return False
+    async with HostingerAsyncSessionLocal() as operational_db:
+        owned = await renew_scan_job_lease(
+            operational_db, job_id=job_id, worker_id=worker_id,
+        )
+    return bool(owned and not lease_unconfirmed.is_set())
+
+
 async def process_one_scan(worker_id: str) -> dict:
     if HostingerAsyncSessionLocal is None:
         raise RuntimeError("Hostinger operational database is not configured.")
@@ -397,6 +481,17 @@ async def process_one_scan(worker_id: str) -> dict:
                     logger.warning("Scan worker lease ownership lost (job_id=%s)", job_id)
                     lease_unconfirmed.set()
                     return
+                # Queue ownership alone is not enough: the PostgreSQL quota hold
+                # must remain live for the entire external audit as well.
+                if reservation_id is not None:
+                    async with AsyncSessionLocal() as licensing_db:
+                        reservation_renewed = await renew_audit_reservation(
+                            licensing_db, reservation_id,
+                        )
+                    if not reservation_renewed:
+                        logger.warning("Scan quota reservation renewal failed (job_id=%s)", job_id)
+                        lease_unconfirmed.set()
+                        return
             except Exception as heartbeat_error:
                 # If ownership cannot be renewed or confirmed, stop doing billable work.
                 # The stale-lease reconciler will safely recover the job after its lease expires.
@@ -431,12 +526,37 @@ async def process_one_scan(worker_id: str) -> dict:
 
         result = await _run_audit_with_lease_guard(target_url, lease_unconfirmed)
 
-        # Persist the successful quota consumption in Supabase exactly once per scan job.
+        # The audit guard may return just before a lease expires or ownership is
+        # reclaimed. Renew under the operational DB's owner predicate before
+        # writing the billable lead to PostgreSQL.
+        if not await _confirm_scan_job_lease(job_id, worker_id, lease_unconfirmed):
+            raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
+
+        # Re-check entitlement after the external audit and serialize the final
+        # quota commit with Paddle/admin license transitions. A pause, cancellation,
+        # expiry, or admin suspension during a long-running scan must not create a
+        # newly billable lead after access has been revoked.
         async with AsyncSessionLocal() as licensing_db:
+            current_license = await licensing_db.scalar(
+                select(SoftwareLicense)
+                .where(SoftwareLicense.license_key == license_key)
+                .with_for_update()
+            )
+            if current_license is None:
+                raise HTTPException(status_code=403, detail="LICENSE_NOT_FOUND")
             existing_lead = await licensing_db.scalar(
                 select(AuditLead).where(AuditLead.source_job_id == job_id)
             )
             if existing_lead is None:
+                current_expiry = current_license.expires_at
+                if current_expiry is not None and current_expiry.tzinfo is None:
+                    current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+                if (
+                    not current_license.is_active
+                    or (current_expiry is not None and current_expiry <= datetime.now(timezone.utc))
+                ):
+                    raise HTTPException(status_code=403, detail="LICENSE_INACTIVE_OR_EXPIRED")
+                license_obj = current_license
                 lead = AuditLead(
                     license_id=license_obj.id,
                     domain=target_url.split("/")[2],
@@ -453,6 +573,11 @@ async def process_one_scan(worker_id: str) -> dict:
                     await licensing_db.execute(
                         delete(AuditQuotaReservation).where(AuditQuotaReservation.id == reservation_id)
                     )
+                # The queue heartbeat can fail while this transaction waits on
+                # the canonical license row lock. Re-check before committing the
+                # billable lead so a worker that has lost its lease cannot charge.
+                if lease_unconfirmed.is_set():
+                    raise RuntimeError("SCAN_JOB_LEASE_UNCONFIRMED")
                 await licensing_db.commit()
                 reservation_id = None
 
@@ -605,7 +730,7 @@ async def reconcile_customer_lifecycle_outbox(*, batch_size: int = 50) -> dict:
                 canonical_license = await licensing_db.scalar(
                     _customer_lifecycle_license_lock_query(license_key)
                 )
-                license_is_active = bool(canonical_license.is_active) if canonical_license is not None else None
+                license_is_active = _license_projection_is_active(canonical_license)
                 action_applies = _lifecycle_action_applies(action, license_is_active)
                 async with HostingerAsyncSessionLocal() as operational_db:
                     if action_applies and action in {"suspend", "reactivate"}:
@@ -718,6 +843,15 @@ async def reconcile_customer_email_identity_outbox(*, batch_size: int = 50) -> d
                     )
                     if canonical_license is None:
                         raise RuntimeError("LicenseReferenceUnavailable")
+                    # Delete completed delivery markers first (outbox -> source
+                    # lock order), then invalidate the watermark while changing the
+                    # canonical email. Pending retries remain queued and will mirror
+                    # the latest recipient instead of being discarded.
+                    await licensing_db.execute(
+                        _customer_email_identity_completed_billing_outbox_cleanup_statement(
+                            canonical_license.id, event.old_email
+                        )
+                    )
                     await licensing_db.execute(_customer_email_identity_update_statement(
                         canonical_license.id, event.old_email, event.new_email
                     ))
@@ -807,8 +941,14 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
     if batch_size < 1 or batch_size > 200:
         raise ValueError("batch_size must be between 1 and 200.")
     now = datetime.now(timezone.utc)
-    counts = {"processed": 0, "deferred": 0, "discarded": 0}
+    counts = {"processed": 0, "deferred": 0, "discarded": 0, "recovered": 0}
     async with AsyncSessionLocal() as licensing_db:
+        # A webhook may commit its canonical event and then lose both the direct
+        # mirror write and the outbox insert. Recreate those queue rows from the
+        # canonical table before claiming work; this is bounded and idempotent.
+        counts["recovered"] = await _backfill_missing_billing_mirror_outbox(
+            licensing_db, now=now, batch_size=batch_size
+        )
         for _ in range(batch_size):
             item = (await licensing_db.execute(
                 _billing_mirror_outbox_claim_statement(now)
@@ -855,9 +995,12 @@ async def reconcile_billing_mirror_outbox(*, batch_size: int = 50) -> dict:
                         stored.paddle_customer_id = event.paddle_customer_id
                         stored.updated_at = event.updated_at
                     await operational_db.commit()
-                _mark_billing_mirror_outbox_completed(
-                    item, datetime.now(timezone.utc)
-                )
+                processed_at = datetime.now(timezone.utc)
+                event_updated_at = event.updated_at
+                if event_updated_at is not None and event_updated_at.tzinfo is None:
+                    event_updated_at = event_updated_at.replace(tzinfo=timezone.utc)
+                event.billing_mirror_synced_at = max(processed_at, event_updated_at or processed_at)
+                _mark_billing_mirror_outbox_completed(item, processed_at)
                 await licensing_db.commit()
                 counts["processed"] += 1
             except Exception as exc:

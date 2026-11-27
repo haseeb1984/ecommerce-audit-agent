@@ -67,15 +67,16 @@ def test_admin_client_status_updates_enqueue_durable_lifecycle_sync():
     source = inspect.getsource(admin_update_client)
     assert ".with_for_update()" in source
     assert "CustomerLifecycleSyncOutbox(" in source
-    assert 'action="reactivate" if bool(client.is_active) else "suspend"' in source
-    assert 'if "is_active" in changes and bool(client.is_active) != previous_active:' in source
+    assert 'action="reactivate" if current_active else "suspend"' in source
+    assert "if current_active != previous_active:" in source
+    assert "previous_active = _license_is_current(client, lifecycle_now)" in source
 
 
 def test_admin_client_non_status_updates_do_not_enqueue_lifecycle_sync():
     from main import admin_update_client
 
     source = inspect.getsource(admin_update_client)
-    condition = 'if "is_active" in changes and bool(client.is_active) != previous_active:'
+    condition = "if current_active != previous_active:"
     assert condition in source
     assert source.index(condition) < source.index('await _write_admin_log(db, "client.updated"')
 
@@ -294,7 +295,7 @@ async def test_admin_sync_outbox_retry_requeues_bounded_pending_rows(
 
     monkeypatch.setattr(main, "_write_admin_log", write_log)
     result = await main.admin_retry_sync_outbox(
-        request=_admin_request(), queue=queue, limit=2, db=db
+        request=_admin_request(), queue=queue, limit=2, db=db, operational_db=db
     )
 
     assert result["queue"] == queue

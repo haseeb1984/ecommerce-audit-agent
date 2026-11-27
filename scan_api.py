@@ -559,6 +559,27 @@ async def archive_customer_website(
     return {"id": website.id, "status": website.status, "message": "Website archived; scan history is preserved."}
 
 
+@router.post("/api/v1/websites/{website_id}/reactivate")
+async def reactivate_customer_website(
+    website_id: str,
+    response: Response,
+    license_obj: SoftwareLicense = Depends(verify_license_or_api_key),
+    db: AsyncSession = Depends(get_hostinger_db),
+):
+    """Restore an archived website to the customer's active inventory."""
+    website = await db.scalar(select(CustomerWebsite).where(
+        CustomerWebsite.id == website_id,
+        CustomerWebsite.license_key == license_obj.license_key,
+    ).with_for_update())
+    if website is None:
+        raise HTTPException(status_code=404, detail="Website not found.")
+    website.status = "active"
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return {"id": website.id, "status": website.status, "message": "Website reactivated."}
+
+
 @router.get("/api/v1/websites/{website_id}")
 async def get_customer_website(
     website_id: str,

@@ -2896,14 +2896,14 @@ async def run_bounded_site_crawl(
             "Parameterized internal catalog URLs detected",
             "manual_review_required",
             "low",
-            f"Observed {len(parameterized_url_signatures)} unique same-origin internal URL pattern(s) with recognized ecommerce query parameters in the bounded link sample. Parameter classes: {kinds or 'not classified'}. Parameter names: {names or 'not available'}. Query values were not stored; query variants were normalized away from crawl keys and were not fetched as separate pages.",
+            f"Observed {len(parameterized_url_signatures)} unique same-origin internal URL pattern(s) with recognized ecommerce query parameters in the bounded link sample. Parameter classes: {kinds or 'not classified'}. Parameter names: {names or 'not available'}. Query values were omitted; query variants were normalized away from crawl keys and were not fetched as separate pages.",
             "Variant, pagination, sorting, search, and faceted-filter parameters can represent useful catalog states or create duplicate crawl paths. Their presence alone does not prove duplicate indexing, crawl-budget waste, or an incorrect canonical strategy.",
             "Review representative parameterized product and category URLs. Confirm that pagination and variants expose the intended products, filtered/sorted states have an intentional canonical or noindex strategy, and important products remain reachable through ordinary links.",
             ["Inspect representative URLs using the listed parameter names without sharing session or tracking values.", "Compare visible product sets and canonical/noindex directives for the base and parameterized states.", "Confirm pagination changes the product set and that variant URLs identify the intended variant."],
             normalized,
         ))
         limitations.append(
-            "Parameterized ecommerce URL signals come from the bounded same-origin link sample. Query values were not stored and query variants were not fetched as separate crawl pages."
+            "Parameterized ecommerce URL signals come from the bounded same-origin link sample. Query values were omitted and query variants were not fetched as separate crawl pages."
         )
     if outcome_records is not None:
         catalog_page_sampled = any(

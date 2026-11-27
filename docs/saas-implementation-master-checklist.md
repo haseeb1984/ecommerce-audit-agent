@@ -1,8 +1,16 @@
 # SaaS Implementation Master Checklist
 
 **Repository:** `haseeb1984/ecommerce-audit-agent`  
-**Merged baseline:** `main` at `9a4ca72492c27e82d18d5de5b941d5efce730a7e`  
+**Active implementation branch:** `feat/hostinger-private-report-storage` (PR #364, draft/unmerged). Latest code commit verified by CI: `d415f3b7f3ec53a411e086546283c7ee93a2aac5`.  
 **Purpose:** Single evidence-based tracker for implementation. This is not a release approval and does not claim production deployment or live-provider acceptance.
+
+## Latest automated verification — 2026-11-27
+
+- GitHub Actions run [#45918435374](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45918435374) completed successfully for code commit `d415f3b7f3ec53a411e086546283c7ee93a2aac5`: **1,560 passed, 216 warnings**.
+- Dependency pin/hash verification and both dependency vulnerability-audit steps passed; the logs report no known vulnerabilities. Python compilation, WordPress plugin/uninstall/theme PHP lint, embedded frontend JavaScript syntax, synthetic PDF generation/upload, and both WordPress theme and customer-plugin package build/upload passed.
+- The real-public-site browser/PDF smoke-test steps were skipped by workflow conditions. They are not counted as passed.
+- WordPress disconnect hardening now requires the exact endpoint-specific 404 detail before treating remote disconnect as idempotent success. The same fail-closed check is used by explicit disconnect, scheduled status sync, and dashboard status refresh; regression tests cover these paths.
+- PR #364 remains open, draft and unmerged. No production deployment, migration, database mutation, live payment/email, or real customer-site audit was performed. Staging runtime acceptance remains separate from CI.
 
 ## Status rules
 
@@ -10,6 +18,33 @@
 - **Implemented / verification pending** — code exists, but the latest relevant CI/runtime acceptance has not passed yet.
 - **Partial** — useful implementation exists, but agreed scope or acceptance is incomplete.
 - **Blocked** — needs production configuration, provider credentials, human approval, or external acceptance.
+
+## Latest automated verification — 2026-11-26
+- Follow-up hardening: uninstall now accepts HTTP 404 as an idempotent disconnect only when the JSON `detail` exactly matches the relevant standard/agency "connection not found" response. Generic/misrouted 404s remain failures so the plugin retains its only local revocation credential. Regression test updated; latest CI is pending.
+
+- Current branch head is `0d3eaa1c05a03959e31c587c62642157fdb7fe2e`. CI run [#45872337889](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45872337889) is running; do not mark the new source changes CI-verified until it completes.
+- Latest source-only fixes add strict DNS-label validation to both standard WordPress registration and one-time identity-link claims, and make plugin uninstall treat HTTP 404 (already disconnected) as idempotent success for both standard and agency connections. Focused regression tests were added.
+
+- Backend CI run [#45763106471](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45763106471) passed on the exact PR/branch head `0d3eaa1c05a03959e31c587c62642157fdb7fe2e`: **1,536 passed, 216 warnings**. Dependency vulnerability audits and dependency pin/hash verification passed; Python compilation, PHP lint (including the Hostinger storage bridge, WordPress plugin and theme), frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed.
+- The exact PR-head Vercel preview is READY at [preview deployment](https://ecommerce-audit-agent-pexnr5ucm-junction-tec.vercel.app). Its read-only `/health-check` returned HTTP 503: Supabase PostgreSQL is connected but lacks `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox`; Hostinger MySQL is not configured/connected in that preview. This is environment/schema readiness, not a passing runtime acceptance.
+- User confirms the WordPress theme was already uploaded to `https://audit.juncsys.com/`; do not re-upload it. The public site could not be independently fetched in this review, so the URL is recorded as user-reported installation evidence, not independently verified runtime acceptance.
+- Real-public-site PDF smoke tests were skipped by the pull-request workflow. No migration, Hostinger deployment, production change, external payment, or real email action was performed.
+
+- Backend CI run [#45375145059](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45375145059) completed successfully for PR #364 at commit `18294acdaeb31619595a5feeb68081c069462f7a`.
+- The run reports **1,523 passed, 216 warnings**. Both dependency vulnerability-audit commands reported no known vulnerabilities. Python compilation, PHP lint for the WordPress plugin/storage bridge/marketing theme, embedded frontend JavaScript syntax checks, synthetic PDF generation/upload, and WordPress theme package build/upload all passed.
+- The WordPress marketing theme customer-login CTA now derives its `/app` destination from the configured SaaS API origin rather than embedding the Vercel hostname. A regression assertion protects this contract.
+- Vercel reported the preview deployment completed for this commit. This is deployment/check status only; it does not establish live WordPress installation or customer journey acceptance.
+- Real-public-website PDF smoke tests were skipped because this was a pull-request workflow. Staging database schemas/migrations, SMTP inbox delivery, Paddle sandbox lifecycle, WordPress runtime, worker scheduling and Hostinger private-storage deployment remain separate acceptance gates.
+- The scheduled Durable scan worker run [#45334487612](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45334487612) failed before invocation because repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are not configured. No worker request was sent.
+
+## Read-only Vercel configuration review — 2026-11-24
+
+- The Vercel project environment-variable inventory was inspected with decryption disabled; no secret values were read. The project lists 21 variable names, including `DATABASE_URL`, Paddle, SMTP, `ADMIN_API_KEY`, `GROQ_API_KEY`, and `GOOGLE_PAGESPEED_API_KEY`.
+- Required names absent from the Vercel inventory: `HOSTINGER_DATABASE_URL`, `HOSTINGER_STORAGE_BASE_URL`, `HOSTINGER_STORAGE_HMAC_SECRET`, `ACCOUNT_AUTH_SECRET`, `CRON_SECRET`, `PUBLIC_APP_URL`, `EAA_CONTACT_FORM_SECRET`, and `EAA_CONTACT_TO_EMAIL`. `REPORT_RETENTION_DAYS` is also not set; code defaults retention to seven days.
+- `PAGE_SPEED_API_KEY` is absent, but `GOOGLE_PAGESPEED_API_KEY` is present and the production-readiness script accepts either name.
+- The scan-worker workflow independently confirmed that GitHub repository variable `SCAN_WORKER_URL` and repository secret `CRON_SECRET` are missing. No worker request was sent.
+- This inventory proves only that the variable names are absent/present; secret values and provider connectivity were not inspected. Do not infer that listed Paddle, SMTP or database credentials are valid.
+- These missing settings block customer passwordless auth, Hostinger operational DB access, private report storage, agency invitation URLs, the WordPress contact form, and scheduled worker operation until configured. No environment variables were changed.
 
 ## SaaS product flows
 
@@ -116,7 +151,7 @@
 - Current `main`: `9a4ca72492c27e82d18d5de5b941d5efce730a7e`.
 - PR #260 and #263: linked-license inventory in admin customer detail is paginated at 100 per request with SQL-side deduplicated totals and a Load more control. PR #263 removed the temporary 1,000-key ceiling by streaming all Hostinger identity keys in batches of 500 into a transaction-scoped PostgreSQL temporary table.
 - PR #261: support-note identity selection uses SQL `MIN` aggregates across Hostinger and PostgreSQL instead of loading all keys into Python.
-- Session/payment/WordPress/support-note sublists still have fixed caps (200/200/100/100) without independent pagination metadata; this is a known follow-up.
+- Customer detail session, billing-event, WordPress-site and support-note sublists now have independent bounded pagination (`limit`/`offset`/`total`/`has_more`) in the admin detail API and matching Load more controls in `admin_portal.html`. Regression coverage is present in `tests/test_admin_customer_detail_redaction.py`; latest branch CI verification is tracked separately.
 - Regression tests were added but not executed. No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
 
@@ -128,7 +163,7 @@
 - PR #261: support-note identity selection uses database-side minimum-key aggregates rather than loading every key into Python.
 - PR #263: all Hostinger customer identity keys are streamed in batches of 500 into a transaction-scoped PostgreSQL temporary table; PostgreSQL combines them with legacy billing identities for exact deduplicated license totals and stable pagination. The earlier 1,000-key cap has been removed.
 - The temporary-table/cross-database path has regression contract coverage but tests have not been executed and live MySQL/PostgreSQL runtime acceptance is pending.
-- Customer detail sublists remain bounded: sessions 200, billing events 200, WordPress sites 100, support notes 100. Independent pagination/count metadata for these sublists remains follow-up work.
+- Customer detail sublists are independently paginated: sessions, billing events, WordPress sites and support notes each expose their own bounded page metadata and Load more control. This supersedes the earlier fixed-cap follow-up note.
 - No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed. PDF/private-storage and final audit-result presentation remain reserved for the final phase.
 
 
@@ -145,3 +180,37 @@ Admin-initiated customer-site disconnect now locks the canonical PostgreSQL lice
 ### Agency suspension revokes WordPress credentials
 
 Suspending a Business agency now disconnects every active client WordPress site, clears its site-token hash, and consumes all outstanding workspace connection challenges in the same Hostinger transaction as team-session/invitation revocation. Reactivating the agency therefore does not restore old plugin credentials; each client site must be explicitly connected again.
+
+
+## Latest preview readiness diagnostics — 2026-11-24
+
+- Backend CI run [#45377765113](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45377765113) completed successfully for branch `feat/hostinger-private-report-storage`, commit `13e64fa601043356e24320337cc01ef0fed552eb`: **1,524 passed, 216 warnings**. Dependency vulnerability audits, Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme packaging passed. Real-public-website PDF smoke tests were skipped by the pull-request workflow.
+- The matching Vercel preview deployment is READY: [preview deployment](https://ecommerce-audit-agent-m3hzitjn8-junction-tec.vercel.app). A read-only request to `/health-check` returned HTTP 503 and safely identified two separate blockers: PostgreSQL connects but reports missing tables `billing_mirror_sync_outbox` and `customer_lifecycle_sync_outbox`; Hostinger MySQL is not connected/configured.
+- The missing PostgreSQL tables correspond exactly to existing migrations `migrations/20261106_billing_mirror_sync_outbox.sql` and `migrations/20261105_customer_lifecycle_sync_outbox.sql`. The later `migrations/20261121_billing_mirror_recovery.sql` adds the billing mirror recovery watermark/index and is also listed in PR #364's rollout order. These are PostgreSQL migrations; do not run them against Hostinger MySQL.
+- No schema was changed, no migration was run, no secret was read, and no production resource was modified. The preview response proves the currently connected PostgreSQL schema is missing the two required tables; it does not establish whether the recovery migration or any other migration is applied.
+- Next authorized acceptance: obtain staging/production owner approval and a backup, apply the ordered PostgreSQL migrations to the intended Supabase database and Hostinger MySQL migrations to the separate operational database, configure the missing runtime variables, then recheck health and run the signed private-storage lifecycle tests. Do not treat preview readiness as production release approval.
+
+
+### Report retention retry fairness — implemented / CI verification pending
+
+- Persisted retry count and last-attempt time for expired Hostinger report objects; order never-attempted objects before older retries to prevent a repeatedly failing first page from starving later objects.
+- Reordered detached logo cleanup using its existing last-attempt timestamp.
+- Fresh Hostinger baseline includes the report retry columns/index; existing installations have the conditional MySQL upgrade migration `20261127_hostinger_report_cleanup_retry.mysql.sql`.
+- Legacy PostgreSQL reports have matching retry metadata and the additive Supabase migration `20261127_supabase_report_cleanup_retry.sql`.
+- Staging verification remains pending. No production data or stored files were changed.
+
+
+## Report retention retry fairness — CI verified — 2026-11-26
+
+- CI run [#45895544371](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45895544371) passed on PR head `76b3c11142c663b817d4c1951855e8e39c0a4f62`: **1,553 passed, 216 warnings**. Dependency pin/hash verification, vulnerability audit (0 known vulnerabilities), Python compilation, PHP lint, frontend JavaScript syntax, synthetic PDF generation/upload, and WordPress theme package build/upload passed. Real-public-site PDF smoke tests were skipped.
+- Fixed the CI-discovered fresh Hostinger schema cleanup-index mismatch and legacy report cleanup test source boundary. The existing-installation MySQL migration adds the retry timestamp index conditionally.
+- Admin/customer lifecycle and scan-operation source review completed for this pass; staging runtime acceptance remains pending.
+- No migration, deployment, database mutation, or production change was performed.
+
+
+## Latest CI verification — 2026-11-27
+
+- Backend CI run [#45917099731](https://github.com/haseeb1984/ecommerce-audit-agent/actions/runs/45917099731) passed on commit `32daa1db871023637dbd685fb68f94cdbaaf5e50`.
+- Python test suite, dependency pin/hash verification, vulnerability audit, Python compilation, PHP lint for the WordPress plugin and marketing theme, embedded frontend JavaScript syntax checks, synthetic PDF generation/upload, and WordPress theme and customer-plugin package build/upload all completed successfully.
+- Real-public-website PDF smoke tests were skipped by the pull-request workflow. This CI result does not establish staging database readiness, live WordPress runtime acceptance, Paddle sandbox lifecycle, SMTP delivery, or production readiness.
+- No migration, deployment, database mutation, external payment/email action, or production change was performed.

@@ -101,3 +101,41 @@ def test_missing_operational_license_mapping_releases_billing_mirror_row_locks()
     missing_mapping = source[source.index("if not license_key:"):source.index("mirror_error = None")]
     assert "await db.rollback()" in missing_mapping
     assert missing_mapping.index("await db.rollback()") < missing_mapping.index("return False")
+
+
+def test_successful_live_mirror_persists_recovery_watermark():
+    import inspect
+    import main
+
+    source = inspect.getsource(main._sync_billing_event_to_hostinger)
+    assert "event.billing_mirror_synced_at = max(synced_at, event_updated_at or synced_at)" in source
+    assert source.index("event.billing_mirror_synced_at =") < source.index("await db.commit()", source.index("if pending is not None:"))
+
+
+def test_customer_email_change_invalidates_watermark_and_cleans_completed_outbox_first():
+    import inspect
+    import scan_worker
+
+    compiled_update = _compile_sql(
+        scan_worker._customer_email_identity_update_statement(7, "old@example.com", "new@example.com")
+    )
+    update_sql = str(compiled_update).lower()
+    compiled_cleanup = _compile_sql(
+        scan_worker._customer_email_identity_completed_billing_outbox_cleanup_statement(7, "old@example.com")
+    )
+    cleanup_sql = str(compiled_cleanup).lower()
+    worker_source = inspect.getsource(scan_worker.reconcile_customer_email_identity_outbox)
+
+    assert "billing_mirror_synced_at=" in update_sql
+    assert compiled_update.params["billing_mirror_synced_at"] is None
+    assert "recipient_email" in update_sql
+    assert "status" in cleanup_sql and "completed" in compiled_cleanup.params.values()
+    assert "billing_mirror_sync_outbox.event_id in" in cleanup_sql
+    assert worker_source.index("_customer_email_identity_completed_billing_outbox_cleanup_statement(") < worker_source.index(
+        "_customer_email_identity_update_statement("
+    )
+
+
+def _compile_sql(statement):
+    from sqlalchemy.dialects import postgresql
+    return statement.compile(dialect=postgresql.dialect())

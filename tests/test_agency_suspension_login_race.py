@@ -25,8 +25,9 @@ def test_agency_team_verification_locks_agency_before_challenge():
 
 def test_agency_team_code_issuance_serializes_with_admin_suspension():
     request_source = inspect.getsource(_endpoint("/api/v1/agency/team/auth/request-code"))
-    admin_source = inspect.getsource(_endpoint("/api/v1/admin/agencies/{agency_id}"))
-    agency_lock = request_source.index("AgencyAccount.id == member.agency_id")
+    import main
+    admin_source = inspect.getsource(main.admin_update_business_agency)
+    agency_lock = request_source.index("AgencyAccount.id == candidate.agency_id")
     challenge_read = request_source.index("AgencyTeamLoginChallenge.email == email")
     admin_agency_lock = admin_source.index("AgencyAccount.id == agency_id")
     admin_challenge_revoke = admin_source.index("AgencyTeamLoginChallenge.agency_id == agency.id")

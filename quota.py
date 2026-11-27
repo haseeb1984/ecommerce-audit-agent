@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import os
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import AuditLead, AuditQuotaReservation, SoftwareLicense
@@ -141,6 +141,32 @@ async def reserve_audit_slot(db: AsyncSession, license_id: int) -> tuple[int, da
         reserved_at = reservation.created_at
         await db.commit()
         return reservation_id, reserved_at
+    except Exception:
+        await db.rollback()
+        raise
+
+
+async def renew_audit_reservation(
+    db: AsyncSession,
+    reservation_id: int,
+    *,
+    ttl: timedelta = RESERVATION_TTL,
+) -> bool:
+    """Extend a live quota hold without resurrecting an expired or deleted reservation."""
+    now = datetime.now(timezone.utc)
+    if ttl <= timedelta(0):
+        raise ValueError("Reservation renewal TTL must be positive.")
+    try:
+        result = await db.execute(
+            update(AuditQuotaReservation)
+            .where(
+                AuditQuotaReservation.id == reservation_id,
+                AuditQuotaReservation.expires_at > now,
+            )
+            .values(expires_at=now + ttl)
+        )
+        await db.commit()
+        return bool(result.rowcount)
     except Exception:
         await db.rollback()
         raise
