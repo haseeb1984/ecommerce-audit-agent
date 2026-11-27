@@ -143,7 +143,7 @@
 - Current `main`: `9a4ca72492c27e82d18d5de5b941d5efce730a7e`.
 - PR #260 and #263: linked-license inventory in admin customer detail is paginated at 100 per request with SQL-side deduplicated totals and a Load more control. PR #263 removed the temporary 1,000-key ceiling by streaming all Hostinger identity keys in batches of 500 into a transaction-scoped PostgreSQL temporary table.
 - PR #261: support-note identity selection uses SQL `MIN` aggregates across Hostinger and PostgreSQL instead of loading all keys into Python.
-- Session/payment/WordPress/support-note sublists still have fixed caps (200/200/100/100) without independent pagination metadata; this is a known follow-up.
+- Customer detail session, billing-event, WordPress-site and support-note sublists now have independent bounded pagination (`limit`/`offset`/`total`/`has_more`) in the admin detail API and matching Load more controls in `admin_portal.html`. Regression coverage is present in `tests/test_admin_customer_detail_redaction.py`; latest branch CI verification is tracked separately.
 - Regression tests were added but not executed. No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed.
 - PDF/private-storage and final audit-result presentation remain reserved for the final phase.
 
@@ -155,7 +155,7 @@
 - PR #261: support-note identity selection uses database-side minimum-key aggregates rather than loading every key into Python.
 - PR #263: all Hostinger customer identity keys are streamed in batches of 500 into a transaction-scoped PostgreSQL temporary table; PostgreSQL combines them with legacy billing identities for exact deduplicated license totals and stable pagination. The earlier 1,000-key cap has been removed.
 - The temporary-table/cross-database path has regression contract coverage but tests have not been executed and live MySQL/PostgreSQL runtime acceptance is pending.
-- Customer detail sublists remain bounded: sessions 200, billing events 200, WordPress sites 100, support notes 100. Independent pagination/count metadata for these sublists remains follow-up work.
+- Customer detail sublists are independently paginated: sessions, billing events, WordPress sites and support notes each expose their own bounded page metadata and Load more control. This supersedes the earlier fixed-cap follow-up note.
 - No CI pass, production database verification, migration, external provider acceptance, or production deployment is claimed. PDF/private-storage and final audit-result presentation remain reserved for the final phase.
 
 
