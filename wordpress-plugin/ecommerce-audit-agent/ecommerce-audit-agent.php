@@ -425,8 +425,6 @@ function eaa_wp_sync_site_status() {
         $response = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $token);
         $settings['last_sync'] = time();
         if (is_wp_error($response)) {
-            $error_data = $response->get_error_data();
-            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
             if (eaa_wp_is_already_disconnected($response, 'Agency WordPress connection is no longer active.')) {
                 unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                       $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at'],
@@ -799,8 +797,6 @@ function eaa_wp_render_admin_page() {
         } else {
             $agency_status = eaa_wp_agency_api_request('/api/v1/integrations/wordpress/agency/sites/status', 'GET', null, $agency_token);
             if (is_wp_error($agency_status)) {
-                $error_data = $agency_status->get_error_data();
-                $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
                 if (eaa_wp_is_already_disconnected($agency_status, 'Agency WordPress connection is no longer active.')) {
                     unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                           $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
@@ -825,8 +821,6 @@ function eaa_wp_render_admin_page() {
             $settings['connection_error'] = '';
             update_option(EAA_WP_OPTION, $settings, false);
         } else {
-            $error_data = $status_response->get_error_data();
-            $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
             if (eaa_wp_is_already_disconnected($status_response, 'WordPress site connection not found.')) {
                 // Reflect a customer-portal disconnect immediately when the
                 // administrator opens this screen, not only on the next cron.
