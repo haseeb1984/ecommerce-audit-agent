@@ -427,7 +427,7 @@ function eaa_wp_sync_site_status() {
         if (is_wp_error($response)) {
             $error_data = $response->get_error_data();
             $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-            if (404 === $http_status) {
+            if (eaa_wp_is_already_disconnected($response, 'Agency WordPress connection is no longer active.')) {
                 unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                       $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at'],
                       $settings['last_status']);
@@ -804,6 +804,7 @@ function eaa_wp_render_admin_page() {
                 if (404 === $http_status) {
                     unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                           $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
+                    eaa_wp_clear_identity_link_settings($settings);
                     $settings['connection_error'] = __('The agency owner disconnected this client website. Generate a new token to reconnect.', 'ecommerce-audit-agent');
                     update_option(EAA_WP_OPTION, $settings, false);
                     $agency_mode = false;
@@ -830,6 +831,7 @@ function eaa_wp_render_admin_page() {
                 // Reflect a customer-portal disconnect immediately when the
                 // administrator opens this screen, not only on the next cron.
                 unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
+                eaa_wp_clear_identity_link_settings($settings);
                 $settings['connection_error'] = __('This site was disconnected from your SaaS account. Save settings to connect it again.', 'ecommerce-audit-agent');
                 update_option(EAA_WP_OPTION, $settings, false);
                 $error = $settings['connection_error'];
