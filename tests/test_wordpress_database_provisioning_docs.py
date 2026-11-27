@@ -10,7 +10,7 @@ def test_saas_operational_tables_share_existing_hostinger_wordpress_database():
     assert "Do not provision a separate Hostinger database" in integration
     assert "same existing WordPress database" in runbook
     assert "must point to that existing WordPress database" in runbook
-    assert "same existing WordPress database used by WordPress" in rollout
+    assert "same existing Hostinger MySQL database used by WordPress" in rollout
     assert "no new Hostinger database is provisioned" in rollout
 
 
