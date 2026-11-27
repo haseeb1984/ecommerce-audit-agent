@@ -477,6 +477,19 @@ async def test_safe_get_rejects_redirect_to_localhost():
         await audit_checks._safe_get(client, "https://shop.example/")
     assert len(client.urls) == 1
 
+@pytest.mark.asyncio
+async def test_safe_get_rejects_cross_origin_redirect_when_origin_is_pinned():
+    client = FakeSession(lambda url: FakeResponse(
+        302, {"Location": "https://other.example/robots.txt"}
+    ))
+    with pytest.raises(ValueError, match="same-origin crawl boundary"):
+        await audit_checks._safe_get(
+            client,
+            "https://shop.example/robots.txt",
+            allowed_origin="https://shop.example/",
+        )
+    assert len(client.urls) == 1
+
 
 @pytest.mark.asyncio
 async def test_safe_get_follows_relative_redirect():
