@@ -451,7 +451,7 @@ function eaa_wp_sync_site_status() {
     if (is_wp_error($response)) {
         $error_data = $response->get_error_data();
         $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-        if (404 === $http_status) {
+        if (eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')) {
             // The SaaS customer portal can disconnect this site remotely.
             unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
             eaa_wp_clear_identity_link_settings($settings);
@@ -801,7 +801,7 @@ function eaa_wp_render_admin_page() {
             if (is_wp_error($agency_status)) {
                 $error_data = $agency_status->get_error_data();
                 $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-                if (404 === $http_status) {
+                if (eaa_wp_is_already_disconnected($agency_status, 'Agency WordPress connection is no longer active.')) {
                     unset($settings['agency_site_token'], $settings['agency_site_id'], $settings['agency_workspace_id'],
                           $settings['agency_workspace_name'], $settings['agency_site_url'], $settings['agency_connected_at']);
                     eaa_wp_clear_identity_link_settings($settings);
@@ -827,7 +827,7 @@ function eaa_wp_render_admin_page() {
         } else {
             $error_data = $status_response->get_error_data();
             $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
-            if (404 === $http_status) {
+            if (eaa_wp_is_already_disconnected($status_response, 'WordPress site connection not found.')) {
                 // Reflect a customer-portal disconnect immediately when the
                 // administrator opens this screen, not only on the next cron.
                 unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
