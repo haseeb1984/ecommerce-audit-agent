@@ -1,7 +1,8 @@
-"""Hostinger MySQL connection for SaaS operational data.
+"""Connection to SaaS operational tables in the existing Hostinger WordPress MySQL database.
 
+HOSTINGER_DATABASE_URL must point to the same physical database used by WordPress.
 Supabase/PostgreSQL remains isolated in database.py for licensing and audit-engine
-records. This module deliberately owns a separate SQLAlchemy metadata registry.
+records. This module owns a separate SQLAlchemy metadata registry, not a separate DB.
 """
 import os
 import ssl
