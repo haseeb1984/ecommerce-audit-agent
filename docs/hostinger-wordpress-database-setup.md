@@ -1,25 +1,23 @@
-# WordPress plugin database setup
+# Hostinger WordPress database setup
 
-This is the agreed database contract for the customer WordPress plugin and the marketing site at audit.juncsys.com.
+## One existing MySQL database — no new database
 
-## One existing WordPress database
+The SaaS runs its operational tables inside the **same existing Hostinger MySQL database used by the WordPress installation**. Do not create a second Hostinger database. The backend's `HOSTINGER_DATABASE_URL` must connect to that existing WordPress database, using a MySQL user with the required table privileges.
 
-The WordPress installation already has its own Hostinger MySQL database. The Ecommerce Audit Agent plugin uses that same database through WordPress's global `$wpdb` connection and the active `$wpdb->prefix`. It must not create, request, or connect to a second database.
+The Supabase PostgreSQL database remains separate and unchanged; it continues to own canonical licenses and audit-engine data. Thus the architecture has one existing Hostinger/MySQL database shared by WordPress and SaaS operational tables, plus the existing Supabase/PostgreSQL database.
 
-## Plugin-owned custom tables
+## SaaS operational tables
 
-The plugin is responsible for creating and upgrading its own custom tables automatically with WordPress's `dbDelta()` API. The schema version is tracked in a WordPress option so activation and upgrades can apply additive schema changes safely. The site owner installs/activates the plugin in wp-admin; no phpMyAdmin import, SQL file, or separate manual migration is part of WordPress plugin installation.
+The SaaS operational schema is defined by `migrations/hostinger_operational_schema.sql` and the applicable Hostinger/MySQL incremental migrations. These tables are created in the existing WordPress database alongside the WordPress tables. The SaaS backend accesses them through its Hostinger MySQL connection; it does not create or connect to another physical database.
 
-Plugin deactivation must not drop tables. Uninstall behavior must preserve customer data unless a clearly documented and explicitly selected data-removal policy says otherwise.
+Apply the reviewed baseline and only the required forward migrations to the existing WordPress database during the approved release procedure. Do not import PostgreSQL migrations into MySQL. Back up the existing WordPress database first, inspect its current schema, and avoid replaying incremental migrations already represented in the fresh baseline.
 
-## Keep SaaS databases separate
+## WordPress plugin ownership
 
-- **WordPress Hostinger database:** WordPress core tables plus the plugin's custom tables, all under the existing WordPress database and prefix.
-- **Hostinger SaaS operational MySQL:** SaaS customer/account, queue, billing mirror, WordPress registry and private-report metadata. Its schema baseline is `migrations/hostinger_operational_schema.sql`.
-- **Supabase PostgreSQL:** canonical licenses and audit-engine data.
+The customer WordPress plugin continues to use WordPress's global `$wpdb` connection and active `$wpdb->prefix` for any plugin-owned tables. Plugin-owned tables, if/when defined, must be created/upgraded by `dbDelta()`; the plugin must not create another database or connect directly to the SaaS operational tables. Deactivation must preserve plugin data, and uninstall must follow the documented retention policy.
 
-The backend migration `migrations/20261031_wordpress_sites.sql` is for the Hostinger SaaS operational database. It creates the backend's WordPress-site registry; it is not intended for the WordPress database and must not be imported into WordPress.
+The SaaS operational schema is **not** a plugin-owned schema and must not be created by plugin activation. Its migration files are applied to the existing WordPress database by the approved SaaS database setup procedure.
 
 ## Existing marketing site
 
-The theme at `wordpress-theme/ecommerce-audit-agent/` creates pages and menus using WordPress APIs and stores its configuration in WordPress options. It does not provision databases. The customer integration plugin is separately installed where a WordPress/WooCommerce store is to be connected to the SaaS.
+The theme at `wordpress-theme/ecommerce-audit-agent/` creates pages and menus using WordPress APIs and stores its configuration in WordPress options. It does not create databases or provision SaaS operational tables.
