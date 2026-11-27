@@ -447,8 +447,6 @@ function eaa_wp_sync_site_status() {
     $response = eaa_wp_api_request('/api/v1/integrations/wordpress/sites/status?site_id=' . rawurlencode($settings['site_id']));
     $settings['last_sync'] = time();
     if (is_wp_error($response)) {
-        $error_data = $response->get_error_data();
-        $http_status = is_array($error_data) && isset($error_data['status']) ? (int) $error_data['status'] : 0;
         if (eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')) {
             // The SaaS customer portal can disconnect this site remotely.
             unset($settings['site_id'], $settings['connected_at'], $settings['last_status']);
