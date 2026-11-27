@@ -10,6 +10,20 @@ The installable plugin source is in `wordpress-plugin/ecommerce-audit-agent/`:
 
 The plugin requires WordPress 6.2+, PHP 7.4+, and outbound HTTPS. WooCommerce is optional; when active, its version is registered as site metadata.
 
+## Database ownership — agreed architecture
+
+The WordPress plugin runs inside the customer's existing WordPress installation and uses that installation's existing Hostinger MySQL database and table prefix (`$wpdb->prefix`). **The plugin is responsible for creating and upgrading its own custom WordPress tables automatically** during activation and plugin upgrades, using WordPress's `dbDelta()` API and a schema-version option.
+
+- No separate database is created for the plugin.
+- No manual SQL migration is required from the WordPress site owner for plugin-owned tables.
+- The plugin must never connect directly to the SaaS operational database or Supabase.
+- WordPress core tables and plugin-owned tables coexist in the same WordPress database, using the active WordPress table prefix.
+- Plugin deactivation must preserve plugin tables and customer data. Uninstall cleanup must follow the documented retention/disconnect policy and must not silently drop customer audit history.
+
+The SaaS backend retains its own independent data stores: Hostinger operational MySQL for SaaS customer/account/queue/report metadata, and Supabase PostgreSQL for canonical licensing and audit-engine records. Those are backend databases, not WordPress plugin databases.
+
+The backend migration `migrations/20261031_wordpress_sites.sql` creates the SaaS-side WordPress installation registry. It is not a migration for the customer's WordPress database and must never be imported into WordPress.
+
 ## Customer setup
 
 The SaaS deployment exposes a public customer-facing setup guide at `/wordpress-plugin-guide` and a WordPress-installable ZIP at `/wordpress-plugin.zip`. The ZIP has the expected `ecommerce-audit-agent/` root directory for the WordPress plugin uploader. The customer portal links directly to both resources.
@@ -17,10 +31,11 @@ The SaaS deployment exposes a public customer-facing setup guide at `/wordpress-
 1. Complete a SaaS checkout and receive the provisioned license key.
 2. Download the plugin ZIP from `/wordpress-plugin.zip` or use the download link in the customer portal.
 3. In WordPress, open Plugins → Add New → Upload Plugin, upload the ZIP, install it, and activate it.
-4. Open **Ecommerce Audit** in the WordPress administrator menu.
-5. Enter the license key and keep the API base URL on HTTPS. The hosted service URL is prefilled.
-6. Save and connect. The plugin registers the WordPress installation against the authenticated license.
-7. Use the dashboard to view plan/quota and billing state, run a comprehensive audit, and download saved reports. The customer portal also lists linked WordPress sites and lets the account owner disconnect an installation.
+4. Plugin activation creates or upgrades its own custom tables in the existing WordPress database automatically. No separate database or manual plugin SQL migration is needed.
+5. Open **Ecommerce Audit** in the WordPress administrator menu.
+6. Enter the license key and keep the API base URL on HTTPS. The hosted service URL is prefilled.
+7. Save and connect. The plugin registers the WordPress installation against the authenticated license.
+8. Use the dashboard to view plan/quota and billing state, run a comprehensive audit, and download saved reports. The customer portal also lists linked WordPress sites and lets the account owner disconnect an installation.
 
 The plugin encrypts the saved license credential at rest with AES-256-GCM using a key derived from the WordPress authentication salt, and decrypts it only when making a server-side API request. The license key is sent server-to-server in the `X-License-Key` header. It is never rendered into the admin HTML, public page markup, browser JavaScript, shortcode output, or report URLs. Rotating WordPress salts requires the administrator to enter the license key again. A site connection is scoped to the exact license that authenticated the request. The SaaS backend derives the billing customer email from the verified Paddle provisioning event for that license; the plugin does not let a site submit an arbitrary customer identity.
 
@@ -60,10 +75,6 @@ The plugin dashboard includes:
 - Twice-daily WordPress scheduled entitlement/status heartbeat, with status visible in the dashboard.
 
 The WooCommerce version is detected automatically. The plugin does not modify WooCommerce checkout, customer orders, payment methods, or storefront output.
-
-## Database rollout
-
-Apply `migrations/20261031_wordpress_sites.sql` before deploying the backend revision. The migration creates the site identity table, foreign key, unique per-license hostname index, and lookup indexes. The application schema readiness endpoint includes this table.
 
 ## Security and operational notes
 
