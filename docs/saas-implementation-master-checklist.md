@@ -19,6 +19,14 @@
 - `HOSTINGER_DATABASE_URL` must connect to that same physical WordPress database. WordPress core tables and SaaS operational tables coexist there.
 - Apply the SaaS Hostinger/MySQL schema and applicable forward migrations to that existing WordPress database only after backup and schema preflight. This is a SaaS backend schema operation, not plugin activation. No production migration is authorized by this documentation.
 
+## Shared Hostinger database alignment — 2026-11-27
+
+- Corrected the authoritative database contract across the WordPress integration guide, Hostinger database setup guide, database rollout runbook, production-readiness runbook, readiness-check comments, and this checklist: SaaS operational tables reside in the existing WordPress MySQL database; no second Hostinger database is created.
+- `HOSTINGER_DATABASE_URL` must point to that same physical WordPress database. Supabase PostgreSQL remains separate.
+- The operational schema remains a SaaS backend schema, not a WordPress-plugin activation schema. Existing WordPress database backup, schema preflight, approved migration execution, and post-migration readiness checks are still required.
+- Added regression assertions in `tests/test_wordpress_database_provisioning_docs.py`. These newest documentation/test changes have not yet been executed by CI; do not treat them as verified.
+- No database was created or modified, no migration was executed, and no production deployment occurred.
+
 ## Status rules
 
 - **Implemented / CI verified** — code and relevant automated tests pass on the cited commit.
