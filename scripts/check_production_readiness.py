@@ -277,8 +277,9 @@ async def main() -> int:
     for index_name in missing_indexes:
         print(f"postgres_missing_schema_index: {index_name}")
 
-    # The operational database is a separate schema owner and must be checked
-    # independently; a healthy Supabase connection does not imply Hostinger is ready.
+    # The operational tables share the existing WordPress MySQL database. They
+    # are a separate schema owner within that same database; a healthy Supabase
+    # connection does not imply the shared Hostinger schema is ready.
     hostinger_missing: list[str] = []
     hostinger_missing_indexes: list[str] = []
     hostinger_missing_foreign_keys: list[tuple] = []
