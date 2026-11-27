@@ -47,6 +47,18 @@ def test_normalize_target_rejects_unsafe_or_unsupported_targets(target):
         audit_checks.normalize_target(target)
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://example.com:443/",
+        "https://example.com:80/",
+    ],
+)
+def test_normalize_target_rejects_default_port_for_wrong_scheme(target):
+    with pytest.raises(ValueError, match="Non-standard ports"):
+        audit_checks.normalize_target(target)
+
+
 def test_parser_detects_viewport_and_missing_alt():
     html = """
     <html><head><title>Shop home</title>
