@@ -1,6 +1,6 @@
--- Hostinger MySQL operational schema.
--- Apply only to the Hostinger operational database after its credentials and
--- backup/restore procedure are configured. This file does not alter Supabase.
+-- SaaS operational tables for the existing Hostinger WordPress MySQL database.
+-- Apply to the existing WordPress database after backup and schema preflight;
+-- do not create a separate database. This file does not alter Supabase.
 -- All license_key columns are external references; no cross-database FKs exist.
 
 CREATE TABLE IF NOT EXISTS customer_accounts (
