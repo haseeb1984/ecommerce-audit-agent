@@ -84,3 +84,22 @@ def test_standard_and_agency_runtime_disconnects_retain_credentials_on_generic_4
     assert disconnect.count("if (is_wp_error($response) &&") == 2
     assert disconnect.index("return $response;") < disconnect.index("unset($settings['agency_site_token']")
     assert disconnect.index("return $response;", disconnect.index("unset($settings['agency_site_token']")) < disconnect.index("unset($settings['site_id']")
+
+
+
+def test_wordpress_status_sync_only_clears_credentials_for_exact_revocation_404s():
+    sync = PLUGIN[
+        PLUGIN.index("function eaa_wp_sync_site_status"):
+        PLUGIN.index("add_action('eaa_wp_scheduled_status_sync'")
+    ]
+    admin = PLUGIN[
+        PLUGIN.index("function eaa_wp_render_admin_page"):
+        PLUGIN.index("function eaa_wp_render_admin_page") + 18000
+    ]
+    assert "eaa_wp_is_already_disconnected($response, 'WordPress site connection not found.')" in sync
+    assert "eaa_wp_is_already_disconnected($response, 'Agency WordPress connection is no longer active.')" in sync
+    assert "eaa_wp_is_already_disconnected($agency_status, 'Agency WordPress connection is no longer active.')" in admin
+    assert "eaa_wp_is_already_disconnected($status_response, 'WordPress site connection not found.')" in admin
+    assert "if (404 === $http_status)" not in sync
+    assert "if (404 === $http_status)" not in admin
+    assert admin.count("eaa_wp_clear_identity_link_settings($settings);") >= 2
