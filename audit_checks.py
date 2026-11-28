@@ -2035,13 +2035,28 @@ async def crawl_same_origin_pages(
             ))
         return checked, findings, ["Same-origin crawling was skipped because homepage links could not be parsed safely."]
     # Sitemap URLs are lower-priority seeds; the same origin, URL, and page
-    # budgets apply to them as to ordinary homepage links.
+    # budgets apply to them as to ordinary homepage links. Count the homepage
+    # in the global discovered-URL budget so the initial seed/link queues cannot
+    # each independently consume MAX_DISCOVERED_LINKS.
+    discovery_budget_reported = False
     for seed in (seed_urls or [])[:MAX_DISCOVERED_LINKS]:
+        if len(seen) >= MAX_DISCOVERED_LINKS:
+            limitations.append(
+                f"Same-origin URL discovery was capped at {MAX_DISCOVERED_LINKS} total URLs including the homepage; additional seeds and links were not queued."
+            )
+            discovery_budget_reported = True
+            break
         candidate = _crawl_candidate(seed, homepage_url, origin)
         if candidate and candidate not in seen:
             seen.add(candidate)
             queue.append((candidate, "sitemap"))
     for href in parser.link_hrefs[:MAX_DISCOVERED_LINKS]:
+        if len(seen) >= MAX_DISCOVERED_LINKS:
+            if not discovery_budget_reported:
+                limitations.append(
+                    f"Same-origin URL discovery was capped at {MAX_DISCOVERED_LINKS} total URLs including the homepage; additional seeds and links were not queued."
+                )
+            break
         candidate = _crawl_candidate(href, homepage_url, origin)
         if candidate and candidate not in seen:
             seen.add(candidate)
