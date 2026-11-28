@@ -1192,6 +1192,33 @@ def test_homepage_outcomes_record_jsonld_parseability(jsonld, expected):
 
 
 
+def test_crawl_applies_one_global_discovery_budget_to_sitemap_and_homepage_links(monkeypatch):
+    requested = []
+
+    async def fake_safe_get(client, url, allowed_origin=None):
+        requested.append(url)
+        return 404, "not found", {"content-type": "text/plain"}, url
+
+    monkeypatch.setattr(audit_checks, "_safe_get", fake_safe_get)
+    sitemap_seeds = [f"https://shop.example/sitemap/{index}" for index in range(250)]
+    homepage_links = "".join(
+        f'<a href="/product/{index}">Product</a>' for index in range(250)
+    )
+    checked, findings, limitations = asyncio.run(audit_checks.crawl_same_origin_pages(
+        client=object(),
+        homepage_url="https://shop.example/",
+        homepage_html=f"<html><body>{homepage_links}</body></html>",
+        max_pages=300,
+        seed_urls=sitemap_seeds,
+    ))
+
+    # The homepage counts as one of the 250 admitted URLs, leaving 249
+    # discovery slots. Sitemap seeds retain priority over homepage links.
+    assert len(requested) == audit_checks.MAX_DISCOVERED_LINKS - 1
+    assert requested == sitemap_seeds[:audit_checks.MAX_DISCOVERED_LINKS - 1]
+    assert any("discovery was capped at 250 total URLs" in item for item in limitations)
+
+
 def test_sitemap_seed_http_failure_records_explicit_url_status(monkeypatch):
     async def fake_safe_get(client, url, allowed_origin=None):
         return 404, "not found", {"content-type": "text/plain"}, url
